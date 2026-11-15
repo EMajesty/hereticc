@@ -61,9 +61,24 @@ Acceptance criteria:
 - minimum adapter responsibilities remain outside `hereticc-core` and no speculative public hardware traits are frozen;
 - UI architecture and separately reviewable experiments A–E are documented.
 
-### M0.3b Device feasibility experiments — planned
+### M0.3b-A0 SDK hook safety investigation — complete
+
+This is source analysis and architecture only. It creates no device executable or SDK dependency.
+
+Acceptance criteria:
+
+- the pinned v0.6.0 loader, 22 branch hooks, trampoline engine, callback publication, and separate paint-vtable patch are traced from source;
+- stock-code mutation, page-permission, cache-maintenance, rollback, partial-installation, and process-lifetime risks are explicit;
+- every hook is inventoried with dependencies and experiment-A necessity;
+- a zero-hook compatibility probe is selected for the first physical experiment;
+- selective and hardened-full alternatives have reviewable failure-state requirements;
+- M0.3b-A remains blocked pending separate implementation review.
+
+### M0.3b Device feasibility experiments — planned and blocked
 
 This requires a separate, explicitly reviewed task because it creates device-facing executable code.
+
+The first implementation, M0.3b-A, must not use the pinned SDK's full installer unchanged. It is blocked until the owner approves the fork/review policy, zero-hook probe contract, bounded diagnostic output, and process-restart recovery boundary in [SDK hook safety](SDK-HOOK-SAFETY.md). Experiments B–E remain unimplemented and unauthorized.
 
 Acceptance criteria:
 
@@ -185,4 +200,4 @@ Acceptance criteria:
 
 ## Practical next engineering task
 
-Owner review should now approve or revise the thresholds, stop conditions, and ordering in [M0.3b integration experiments](INTEGRATION-EXPERIMENTS.md). The next implementation task, if authorized, is experiment A only: a disposable firmware/SDK compatibility check at the pinned revision. Input, rendering, stock voice, and timing experiments remain separate approvals. No complete UI, DSP, deployment product, or M1 expansion belongs in M0.3b.
+Owner review should approve or revise the zero-hook probe and recovery decisions in [SDK hook safety](SDK-HOOK-SAFETY.md). The next implementation task, only if separately authorized, is M0.3b-A: a disposable read-only compatibility probe based on a reviewed HERETICC-specific SDK fork. Input, rendering, stock voice, hook installation, and timing experiments remain separate approvals. No complete UI, DSP, deployment product, or M1 expansion belongs in M0.3b.

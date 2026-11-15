@@ -18,9 +18,14 @@ Keep private research inputs outside the repository. Record only the minimum non
 - Prefer host tests and an emulator before physical-device work, but never label those as hardware tests.
 - Treat every firmware pointer, address, object layout, and thread-affinity assumption as version-specific and unsafe.
 - Verify the complete target firmware fingerprint before installing any in-memory hook; fail closed on mismatch.
+- Derive the expected fingerprint count from the pinned SDK table. At SDK v0.6.0 commit `e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39`, the implementation checks 63 instruction words despite older documentation saying 59.
+- Before any hook publication, require every member of the explicitly requested hook group to validate and prepare. A partial group is failure, not degraded success.
+- Treat the SDK's Sample-page paint-vtable rewrite as a separate hook outside its 22-branch transaction. It must be explicitly authorized, preflighted, checked, and recoverable; never install it implicitly for a compatibility probe.
+- After the first stock-page permission change or instruction/data write, a failed rollback is an indeterminate process state. Keep all possibly referenced code mapped and restart the stock service/process; do not unload the extension or claim stock is unmodified.
 - Bound all queues and buffers. Audio callbacks must not allocate, block, perform file I/O, draw, log synchronously, or take contended locks.
 - Separate UI/project mutation from real-time scheduling with validated snapshots and explicit ownership.
 - Restore intercepted controls, repaint state, audio hooks, and native pad lighting on every normal/error exit path.
+- Do not attempt live hook removal without a proven callback-quiescence protocol. The pinned SDK has none; process-lifetime hooks and controlled process restart are safer than `dlclose` or trampoline unmapping.
 - Never experiment with undocumented control-surface service/update commands.
 
 ## Backup before any future device test

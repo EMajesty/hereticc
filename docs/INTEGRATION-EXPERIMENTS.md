@@ -2,7 +2,7 @@
 
 ## Status and rules
 
-These are plans for separately authorized physical-device work. Nothing here is implemented. Each experiment is independently reviewable and stops before the next one. Firmware 1.3.0.12 and SDK `e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39` are research inputs, not supported targets.
+These are plans for separately authorized physical-device work. Nothing here is implemented. Each experiment is independently reviewable and stops before the next one. Firmware 1.3.0.12 and SDK `e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39` are research inputs, not supported targets. The host-only M0.3b-A0 investigation found that the upstream full installer accepts partial preparation, can retain live forwarding hooks after rollback failure, and patches the Sample-page paint vtable outside the branch transaction. See [SDK hook safety](SDK-HOOK-SAFETY.md). Consequently A is blocked pending a reviewed zero-hook probe implementation.
 
 Common prerequisites: owner authorization for that experiment; exact source/build hashes; spare backed-up SD card; saved projects/samples; stable power; stock boot verified without the card; no unique identifiers in logs; bounded run time; and the recovery rules in `SAFETY.md`. No experiment flashes firmware, modifies partitions, saves a project, or installs persistent device state.
 
@@ -10,15 +10,15 @@ Common prerequisites: owner authorization for that experiment; exact source/buil
 
 **Purpose:** prove fail-closed recognition before any feature hook is trusted.
 
-**Prerequisites:** reviewed minimal SDK build containing no feature behavior; documented 59-word fingerprint set and hook transaction; test on the exact reported firmware only.
+**Prerequisites:** reviewed HERETICC-specific zero-hook probe; table-derived 63-word fingerprint set; no ALSA interposition, generated executable pages, feature hooks, or paint-vtable patch; test on the exact reported firmware only. Any later hook test requires its own authorization and hardened installation state machine.
 
-**Procedure and observations:** record firmware version; attempt initialization on the supported image and an emulator fixture with one altered fingerprint; record whether hook preparation/installation is all-or-nothing and whether stock continues after rejection and after module exit.
+**Procedure and observations:** record firmware version; load the read-only probe on the supported image and test a host/emulator fixture with one altered fingerprint; record bounded image-recognition and dry-run site-validation results. Do not infer hook atomicity from the zero-hook probe. Process exit/service restart, not live detach, is the lifecycle boundary.
 
 **Failure conditions:** any write before complete verification, partial installed hook, stock restart/boot loop, mismatch accepted, or stock behavior changed after rejection.
 
 **Recovery:** terminate the transient process if possible, reboot without the SD package, verify stock input/audio/UI, stop the milestone on any incomplete restoration.
 
-**Pass:** the exact image is recognized; every altered/unsupported image is rejected before feature hooks; rejection and SD removal leave stock behavior unchanged.
+**Pass:** the exact image is recognized; every altered/unsupported image is rejected; the probe performs no executable-memory or vtable write; rejection and SD removal leave stock behavior unchanged. Passing A authorizes no feature hook.
 
 ## B. Input interception and forwarding
 
