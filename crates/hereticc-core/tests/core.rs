@@ -1,10 +1,10 @@
 use hereticc_core::codec;
 use hereticc_core::{
-    CoreError, EventId, EventKind, MacroId, MusicalTime, PPQN, ParameterAddress, ParameterChange,
-    ParameterEvent, ParameterId, ParameterIntent, ParameterOwner, ParameterScope, Pattern,
-    PatternId, PatternLength, PatternTick, ProcessorSlot, Project, Scene, SceneId,
-    SceneVoicePolicy, Scheduler, SoundSource, StepEvent, TickInterval, TrackId, ValidationError,
-    VoiceToken,
+    CoreError, DecodeError, DecodeLimit, EventId, EventKind, MacroId, MusicalTime, PPQN,
+    ParameterAddress, ParameterChange, ParameterEvent, ParameterId, ParameterIntent,
+    ParameterOwner, ParameterScope, Pattern, PatternId, PatternLength, PatternTick, ProcessorSlot,
+    Project, Scene, SceneId, SceneVoicePolicy, Scheduler, SoundSource, StepEvent, TickInterval,
+    TrackId, ValidationError, VoiceToken,
 };
 
 const STEP: u64 = PPQN as u64 / 4;
@@ -440,8 +440,169 @@ fn project_codec_round_trips_and_revalidates() {
     trailing.push(0);
     assert_eq!(
         codec::decode(&trailing),
-        Err(CoreError::InvalidProject(ValidationError::TrailingData))
+        Err(CoreError::Decode(DecodeError::TrailingData { bytes: 1 }))
     );
+}
+
+#[test]
+fn large_valid_timestamps_do_not_fail_from_intermediate_overflow() {
+    let mut project = project_with_lengths([u64::MAX; 16]);
+    project.patterns[0].notes.push(note(1, 0, 1));
+    let mut scheduler = Scheduler::new(&project).expect("scheduler");
+    let first_end = u64::MAX - 1;
+    let first = scheduler
+        .schedule(interval(0, first_end), 4)
+        .expect("large first window");
+    assert_eq!(note_ons(&first).len(), 1);
+    let final_window = scheduler
+        .schedule(interval(first_end, u64::MAX), 4)
+        .expect("mathematically next occurrence is beyond u64");
+    assert_eq!(final_window, []);
+}
+
+#[test]
+fn extreme_note_end_overflow_is_transactional() {
+    let mut project = project_with_lengths([u64::MAX; 16]);
+    project.patterns[0].notes.push(note(1, u64::MAX - 1, 2));
+    let mut scheduler = Scheduler::new(&project).expect("scheduler");
+    assert_eq!(
+        scheduler.schedule(interval(0, u64::MAX), 8),
+        Err(CoreError::ArithmeticOverflow)
+    );
+    assert_eq!(scheduler.cursor(), MusicalTime::new(0));
+}
+
+#[test]
+fn huge_combined_and_contiguous_windows_are_equivalent() {
+    let length = u64::MAX / 4;
+    let mut project = project_with_lengths([length; 16]);
+    project.patterns[0].notes.push(note(1, 7, 1));
+    let split = length * 2;
+    let end = length * 3 + 8;
+    let mut combined = Scheduler::new(&project).expect("combined");
+    let expected = combined.schedule(interval(0, end), 16).expect("combined");
+    let mut chunked = Scheduler::new(&project).expect("chunked");
+    let mut actual = chunked.schedule(interval(0, split), 16).expect("first");
+    actual.extend(chunked.schedule(interval(split, end), 16).expect("second"));
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn decoder_rejects_truncation_and_oversized_counts_before_allocation() {
+    let encoded = codec::encode(&project()).expect("encode");
+    for length in 0..encoded.len() {
+        assert!(
+            codec::decode(&encoded[..length]).is_err(),
+            "prefix {length}"
+        );
+    }
+
+    let mut oversized_patterns = encoded.clone();
+    let pattern_count_offset = 8 + 4 + 8 + 16 * (2 + 4 + 8);
+    oversized_patterns[pattern_count_offset..pattern_count_offset + 4]
+        .copy_from_slice(&u32::MAX.to_le_bytes());
+    assert_eq!(
+        codec::decode(&oversized_patterns),
+        Err(CoreError::Decode(DecodeError::LimitExceeded {
+            limit: DecodeLimit::Patterns,
+            declared: u64::from(u32::MAX),
+            maximum: 4_096,
+        }))
+    );
+
+    let mut oversized_notes = encoded;
+    let first_pattern_offset = pattern_count_offset + 4;
+    let note_count_offset = first_pattern_offset + 8 + 1 + 8;
+    oversized_notes[note_count_offset..note_count_offset + 4]
+        .copy_from_slice(&u32::MAX.to_le_bytes());
+    assert!(matches!(
+        codec::decode(&oversized_notes),
+        Err(CoreError::Decode(DecodeError::LimitExceeded {
+            limit: DecodeLimit::EventsPerPattern,
+            ..
+        }))
+    ));
+}
+
+#[test]
+fn decoder_rejects_invalid_utf8_oversized_strings_and_references() {
+    let mut parameter_project = project();
+    parameter_project.patterns[0]
+        .parameters
+        .push(ParameterEvent {
+            id: EventId::new(500),
+            at: PatternTick::new(0),
+            change: ParameterChange {
+                address: ParameterAddress {
+                    scope: ParameterScope::Track,
+                    owner: ParameterOwner::Track(track(0)),
+                    processor_slot: None,
+                    parameter: ParameterId::new("cutoff").expect("parameter"),
+                },
+                intent: ParameterIntent::Absolute(0.5),
+            },
+        });
+    let encoded = codec::encode(&parameter_project).expect("encode");
+    let position = encoded
+        .windows(b"cutoff".len())
+        .position(|window| window == b"cutoff")
+        .expect("identifier bytes");
+
+    let mut invalid_utf8 = encoded.clone();
+    invalid_utf8[position] = 0xff;
+    assert_eq!(
+        codec::decode(&invalid_utf8),
+        Err(CoreError::Decode(DecodeError::InvalidUtf8))
+    );
+
+    let mut oversized_string = encoded;
+    oversized_string[position - 4..position].copy_from_slice(&u32::MAX.to_le_bytes());
+    assert!(matches!(
+        codec::decode(&oversized_string),
+        Err(CoreError::Decode(DecodeError::LimitExceeded {
+            limit: DecodeLimit::ParameterIdentifierBytes,
+            ..
+        }))
+    ));
+
+    let mut dangling = codec::encode(&project()).expect("encode");
+    let first_scene_pattern = dangling.len() - TrackId::COUNT * 8;
+    dangling[first_scene_pattern..first_scene_pattern + 8]
+        .copy_from_slice(&999_999_u64.to_le_bytes());
+    assert!(matches!(
+        codec::decode(&dangling),
+        Err(CoreError::InvalidProject(
+            ValidationError::DanglingPattern { .. }
+        ))
+    ));
+}
+
+#[test]
+fn decoder_custom_size_and_allocation_budgets_are_enforced() {
+    let encoded = codec::encode(&project()).expect("encode");
+    let limits = codec::DecodeLimits {
+        max_encoded_project_bytes: encoded.len() - 1,
+        ..codec::DecodeLimits::default()
+    };
+    assert!(matches!(
+        codec::decode_with_limits(&encoded, limits),
+        Err(CoreError::Decode(DecodeError::LimitExceeded {
+            limit: DecodeLimit::EncodedProjectBytes,
+            ..
+        }))
+    ));
+
+    let limits = codec::DecodeLimits {
+        max_decoded_allocation_bytes: 1,
+        ..codec::DecodeLimits::default()
+    };
+    assert!(matches!(
+        codec::decode_with_limits(&encoded, limits),
+        Err(CoreError::Decode(DecodeError::LimitExceeded {
+            limit: DecodeLimit::DecodedAllocationBytes,
+            ..
+        }))
+    ));
 }
 
 #[test]

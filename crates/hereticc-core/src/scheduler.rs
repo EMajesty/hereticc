@@ -374,31 +374,38 @@ fn occurrences(
     length: u64,
 ) -> Result<Vec<(MusicalTime, u64)>, CoreError> {
     let start_relative = start.checked_sub(epoch)?;
-    let first_cycle = if event_tick >= start_relative {
-        0
+    let (mut absolute, mut cycle) = if event_tick >= start_relative {
+        (epoch.checked_add(event_tick)?, 0)
     } else {
         let difference = start_relative
             .checked_sub(event_tick)
             .ok_or(CoreError::ArithmeticOverflow)?;
-        difference
-            .checked_add(length - 1)
-            .ok_or(CoreError::ArithmeticOverflow)?
-            / length
-    };
-    let mut cycle = first_cycle;
-    let mut output = Vec::new();
-    loop {
-        let cycle_tick = cycle
-            .checked_mul(length)
-            .and_then(|value| value.checked_add(event_tick))
+        let quotient = difference / length;
+        let remainder = difference % length;
+        let cycle = quotient
+            .checked_add(u64::from(remainder != 0))
             .ok_or(CoreError::ArithmeticOverflow)?;
-        let absolute = epoch.checked_add(cycle_tick)?;
-        if absolute >= end {
-            break;
-        }
+        let advance = if remainder == 0 {
+            0
+        } else {
+            length - remainder
+        };
+        let Some(absolute) = start.ticks().checked_add(advance).map(MusicalTime::new) else {
+            // The next mathematical occurrence is beyond the representable
+            // timestamp domain, so it cannot belong to this valid interval.
+            return Ok(Vec::new());
+        };
+        (absolute, cycle)
+    };
+    let mut output = Vec::new();
+    while absolute < end {
         if absolute >= start {
             output.push((absolute, cycle));
         }
+        let Some(next_absolute) = absolute.ticks().checked_add(length).map(MusicalTime::new) else {
+            break;
+        };
+        absolute = next_absolute;
         cycle = cycle.checked_add(1).ok_or(CoreError::ArithmeticOverflow)?;
     }
     Ok(output)

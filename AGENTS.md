@@ -4,7 +4,7 @@ These instructions apply to the entire repository.
 
 ## Project state
 
-HERETICC is currently research and architecture. Read `README.md` and the relevant files in `docs/` before changing scope. Keep planned, implemented, emulator-tested, and hardware-tested behavior explicitly distinct.
+HERETICC currently has a host-only sequencer core and validation adapter; device integration remains research and architecture. Read `README.md` and the relevant files in `docs/` before changing scope. Keep planned, implemented, emulator-tested, and hardware-tested behavior explicitly distinct.
 
 ## Engineering conventions
 
@@ -17,6 +17,7 @@ HERETICC is currently research and architecture. Read `README.md` and the releva
 - Avoid blocking operations, memory allocation, file I/O, drawing, and contended locks in real-time audio callbacks. Preallocate bounded storage and define overload behavior.
 - Validate unsupported firmware before installing hooks and fail closed.
 - Document external dependencies, exact revisions where relevant, and their licenses. Do not add or copy external code without a separate reviewed task.
+- HERETICC's original contributions are MIT-licensed. Preserve the root license and all upstream copyright/license notices; do not imply that the MIT license covers proprietary firmware, SDK components, or third-party material.
 - Do not claim hardware functionality is tested unless it has actually been tested on physical hardware. Identify host and emulator results as such.
 - Keep documentation concise, technical, linked to primary sources, and maintainable. Pin research links to commits when practical.
 
@@ -44,4 +45,3 @@ HERETICC is currently research and architecture. Read `README.md` and the releva
 - Grid and tracker editors must share one event representation.
 - Performance overrides are separate from saved pattern data unless explicitly recorded.
 - A replacement audio engine is not an implicit fallback. If stock-engine integration fails, document the evidence and request an architecture decision.
-

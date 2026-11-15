@@ -1,6 +1,6 @@
 # Roadmap
 
-Status labels: **planned**, **in progress**, **complete**. M0.1, M0.1b, and the scoped M0.2 host core are complete; no device functionality is implemented.
+Status labels: **planned**, **in progress**, **complete**. M0.1, M0.1b, M0.2, and the M0.2a hardening pass are complete; no device functionality is implemented.
 
 ## M0 — Foundation
 
@@ -36,6 +36,17 @@ Acceptance criteria:
 - serialization has a version and round-trip/revalidation tests; stable golden-file compatibility is deferred while the schema is provisional;
 - core has no SDK, OS, audio, UI, or firmware dependency;
 - real-time-facing APIs document allocation and capacity behavior.
+
+### M0.2a Scheduler hardening and host adapter — complete
+
+Acceptance criteria:
+
+- large valid timestamps and extreme pattern lengths avoid intermediate arithmetic overflow while genuinely unrepresentable note ends fail transactionally;
+- version-1 decoding rejects truncated, malformed, oversized, and invalid-reference data under centralized allocation/count/string limits;
+- a separate host-only adapter validates voice lifecycle, parameter/scene records, order, and deterministic trace output;
+- a two-track polymeter/scene-transition demonstration runs without device, audio, MIDI, or wall-clock integration;
+- original HERETICC code is explicitly MIT-licensed while upstream/proprietary material remains outside that grant;
+- format, Clippy, workspace tests, Nix flake checks, and whitespace checks pass.
 
 ### M0.3 Integration feasibility spike — planned
 
@@ -157,4 +168,4 @@ Acceptance criteria:
 
 ## Practical next engineering task
 
-Review and freeze the M0.2 public semantics before adding device code. The next implementation task should be a narrowly authorized **M0.3 integration feasibility spike** using a host fake first and `mpc-sample-sdk` only after its exact revision/license is approved. It should consume semantic events without changing the core model and test clock/trigger feasibility; it must not add DSP, a complete UI, or M1 features.
+Review and freeze the M0.2a public semantics and [device adapter contract](ADAPTER.md) before adding device code. The next implementation task should be a narrowly authorized **M0.3 integration feasibility spike** using the host adapter as a behavioral oracle and `mpc-sample-sdk` only after its exact revision/license is approved. It should consume semantic events without changing the core model and test clock/trigger feasibility; it must not add DSP, a complete UI, or M1 features.

@@ -4,7 +4,7 @@ HERETICC is an open-source custom firmware extension for the Akai MPC Sample. It
 
 ## Status
 
-HERETICC is in **M0: host core and integration research**. M0.2 provides a hardware-independent Rust sequencer core with deterministic host tests. No firmware, device binary, audio engine, installer, or deployment tool has been implemented. Nothing in this repository has been tested on MPC Sample hardware.
+HERETICC is in **M0: host core and integration research**. M0.2a hardens the hardware-independent Rust sequencer and project decoder and adds a host-only semantic event adapter. No firmware, device binary, audio engine, installer, or deployment tool has been implemented. Nothing in this repository has been tested on MPC Sample hardware.
 
 The initial technical direction is:
 
@@ -16,16 +16,17 @@ This is approach **C first**, with **A as the leading integration candidate**. T
 
 ## Host development
 
-The workspace contains [`hereticc-core`](crates/hereticc-core), a standard-library-only Rust crate. A Nix development shell supplies Cargo, rustc, rustfmt, and Clippy:
+The workspace contains [`hereticc-core`](crates/hereticc-core), a standard-library-only Rust crate, and [`hereticc-host`](crates/hereticc-host), a host-only event consumer and demonstration. A Nix development shell supplies Cargo, rustc, rustfmt, and Clippy:
 
 ```sh
 nix develop
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+cargo run -p hereticc-host --bin demo
 ```
 
-The core currently implements integer musical time, validated sixteen-track projects, independent patterns, scenes, basic note/parameter scheduling, overlapping runtime voices, phase-reset scene transitions, capacity errors, and a versioned host-side codec. It is not real-time safe and does not process audio.
+The core currently implements integer musical time, validated sixteen-track projects, independent patterns, scenes, basic note/parameter scheduling, overlapping runtime voices, phase-reset scene transitions, transactional capacity/arithmetic errors, and a bounded versioned host-side codec. The host adapter verifies event order and voice lifecycle and produces deterministic text traces. Neither crate is real-time safe or processes audio.
 
 ## Design goals
 
@@ -48,7 +49,12 @@ The core currently implements integer musical time, validated sixteen-track proj
 - [Research](docs/RESEARCH.md) — source-based review of related projects
 - [Roadmap](docs/ROADMAP.md) — milestones and acceptance criteria
 - [Safety](docs/SAFETY.md) — development, deployment, and recovery rules
+- [Device adapter contract](docs/ADAPTER.md) — future clock, voice, capacity, and recovery boundary
 - [AGENTS.md](AGENTS.md) — conventions for future Codex work
+
+## License
+
+HERETICC's original code and documentation are available under the [MIT License](LICENSE), copyright 2026 Lassi Laitinen. This license does not cover Akai/inMusic firmware, SDK components, trademarks, or third-party projects. Any future dependency or imported third-party material requires a separate provenance and license review, with upstream notices preserved.
 
 ## Scope and legal notice
 

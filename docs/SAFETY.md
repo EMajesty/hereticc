@@ -58,10 +58,11 @@ An SD autorun may execute as root and can still damage the device if wrong. “R
 - Keep a previous known-good generation and include format version/checksum information.
 - Never overwrite source audio for slicing, offsets, reverse, or rendering without an explicit export action.
 - Detect missing/remapped samples and ask for resolution; do not guess by firmware pointer or pad position.
+- Treat project bytes as untrusted. Apply encoded-size, collection, identifier, event-total, and decoded-allocation limits before allocating; reject malformed/truncated data without partial project state or panics.
+- Keep decode policy limits reviewable and configurable for host tools. A raised limit requires memory-impact review and does not make stock project formats supported.
 
 ## Test evidence
 
 Every test report must state environment: host unit test, emulator, or physical device. Physical claims include firmware version, build revision, procedure, and observed result. A test on one unit/firmware does not establish general compatibility.
 
 Stop testing and return to stock if there are boot loops, persistent crashes, unexpected writes, corrupted projects, audio instability, overheating, loss of controls, or inability to restore the stock service. Preserve logs only after redacting identifiers.
-

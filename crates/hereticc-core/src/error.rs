@@ -39,7 +39,6 @@ pub enum ValidationError {
         pattern: PatternId,
         event: EventId,
     },
-    TrailingData,
     InvalidEncoding(&'static str),
 }
 
@@ -50,6 +49,46 @@ impl fmt::Display for ValidationError {
 }
 
 impl std::error::Error for ValidationError {}
+
+/// Decoder policy limit exceeded by untrusted input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DecodeLimit {
+    EncodedProjectBytes,
+    Patterns,
+    Scenes,
+    TrackPatternReferences,
+    EventsPerPattern,
+    EventsPerProject,
+    ParameterChangesPerEvent,
+    ParameterIdentifierBytes,
+    DecodedAllocationBytes,
+}
+
+/// Syntactic or resource-policy failure while decoding project bytes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DecodeError {
+    Truncated,
+    InvalidMagic,
+    InvalidTag(&'static str),
+    InvalidUtf8,
+    TrailingData {
+        bytes: usize,
+    },
+    LengthOverflow,
+    LimitExceeded {
+        limit: DecodeLimit,
+        declared: u64,
+        maximum: u64,
+    },
+}
+
+impl fmt::Display for DecodeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+
+impl std::error::Error for DecodeError {}
 
 /// Runtime, arithmetic, capacity, or persistence failure.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -64,7 +103,7 @@ pub enum CoreError {
     TransitionAlreadyPending,
     UnsupportedSceneVoicePolicy,
     InvalidProject(ValidationError),
-    TruncatedProjectData,
+    Decode(DecodeError),
 }
 
 impl fmt::Display for CoreError {
@@ -78,5 +117,11 @@ impl std::error::Error for CoreError {}
 impl From<ValidationError> for CoreError {
     fn from(value: ValidationError) -> Self {
         Self::InvalidProject(value)
+    }
+}
+
+impl From<DecodeError> for CoreError {
+    fn from(value: DecodeError) -> Self {
+        Self::Decode(value)
     }
 }

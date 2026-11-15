@@ -1,6 +1,9 @@
 use crate::id::{EventId, TrackId};
 use crate::time::PatternTick;
 
+/// Maximum UTF-8 byte length of a stable symbolic parameter identifier.
+pub const MAX_PARAMETER_ID_BYTES: usize = 127;
+
 macro_rules! logical_id {
     ($name:ident) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -48,7 +51,7 @@ pub struct ParameterId(String);
 impl ParameterId {
     pub fn new(value: impl Into<String>) -> Option<Self> {
         let value = value.into();
-        if value.is_empty() || value.len() > 127 {
+        if value.is_empty() || value.len() > MAX_PARAMETER_ID_BYTES {
             None
         } else {
             Some(Self(value))

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/hereticc-core"]
+members = ["crates/hereticc-core", "crates/hereticc-host"]
 resolver = "2"
 
 [workspace.package]
@@ -13,4 +13,3 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = "warn"
 pedantic = "warn"
-

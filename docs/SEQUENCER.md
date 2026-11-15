@@ -2,7 +2,7 @@
 
 ## Status
 
-This is the agreed musical model. M0.2 implements a minimal host-testable subset: sixteen tracks, reusable independent patterns, scenes, note/parameter events, deterministic scheduling, overlapping voices, one scene-transition policy, validation, and a versioned binary round trip. The remaining behavior is design-only. Numeric limits other than sixteen tracks remain provisional until tests and device measurements justify them.
+This is the agreed musical model. M0.2a implements a minimal host-testable subset: sixteen tracks, reusable independent patterns, scenes, note/parameter events, deterministic scheduling, overlapping voices, one scene-transition policy, validation, a bounded versioned binary round trip, and a host event-consumer trace. The remaining behavior is design-only. Numeric musical limits other than sixteen tracks remain provisional until tests and device measurements justify them.
 
 ## Model
 
@@ -35,7 +35,7 @@ A song is an ordered arrangement of scene entries with repeat counts and transit
 
 The core uses integer musical time, not floating-point seconds. M0.2 provisionally uses **960 PPQN** because it represents common binary and triplet subdivisions with useful edit resolution. This is a project-format design choice, not a measured or guaranteed MPC Sample clock. Events are stored at an integer tick relative to their track pattern. Conversion to seconds/device frames is deferred to a runtime adapter.
 
-M0.2 supports checked absolute time, positive pattern lengths, pattern-relative ticks, exact modular wrapping, and half-open intervals `[start, end)`. Scheduling windows must be contiguous for a stateful scheduler. Arithmetic overflow is an explicit error; there is no floating-point accumulation or wall-clock timing.
+M0.2a supports checked absolute time, positive pattern lengths, pattern-relative ticks, exact modular wrapping, and half-open intervals `[start, end)`. Scheduling windows must be contiguous for a stateful scheduler. Occurrence lookup uses quotient/remainder arithmetic rather than overflow-prone ceiling addition or `cycle * length` reconstruction. A next mathematical occurrence beyond `u64` is outside the representable timeline, while a note end or emitted timestamp that cannot be represented is an explicit transactional error. There is no floating-point accumulation or wall-clock timing.
 
 Tempo is global initially. Tempo automation and external clock following are deferred until the base clock contract is measured.
 
@@ -98,7 +98,9 @@ M0.2 supports one pending launch at an explicit absolute boundary. All sixteen p
 
 `Project` carries format version 1 and uses stable typed IDs. The standard-library-only codec is deterministic and little-endian, and decode always revalidates the project. Validation rejects unsupported versions, duplicate pattern/scene/event IDs, invalid track slots, unowned patterns, zero durations, out-of-range event positions, invalid parameter addresses, missing initial scenes, and dangling/wrong-track scene references.
 
-The binary format is an internal M0.2 format and is not yet promised as a permanent compatibility contract. It does not read stock MPC projects or perform filesystem/SD operations.
+The binary format is an internal M0.2 format and is not yet promised as a permanent compatibility contract. M0.2a retains format version 1 and adds decoder policy rather than changing the wire schema. Default limits cover encoded project bytes, patterns, scenes, per-track references, per-pattern and total events, per-note parameter changes, parameter identifier bytes, and an estimated decoded-allocation budget. Declared sizes are checked before allocation; malformed tags, UTF-8, truncation, trailing data, and limit violations have structured errors. The allocation budget is a conservative accounting guard, not a precise heap measurement. The codec does not read stock MPC projects or perform filesystem/SD operations.
+
+The `hereticc-host` consumer preserves scheduler order, maintains voices by `VoiceToken`, and rejects malformed lifecycle events. It is useful for deterministic integration traces but does not convert ticks to time, render audio, send MIDI, or establish real-time safety.
 
 ## Explicitly deferred
 

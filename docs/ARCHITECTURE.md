@@ -2,7 +2,7 @@
 
 ## Status and recommendation
 
-The device architecture remains proposed. M0.2 implements only the hardware-independent `hereticc-core` model, validator, scheduler, typed parameter representation, and versioned codec. There is no device adapter, voice adapter, effects engine, audio processing, UI, MIDI, or deployment code.
+The device architecture remains proposed. M0.2a implements the hardware-independent `hereticc-core` model, validator, scheduler, typed parameter representation, and bounded versioned codec, plus a separate host-only `hereticc-host` semantic event consumer. There is no device adapter, voice adapter, effects engine, audio processing, UI, MIDI, or deployment code.
 
 Start with **C: a separate host-testable sequencer core**, then integrate through **A: `mpc-sample-sdk`** if a focused device spike validates the required contracts. Do not fork or adapt a complete existing mod at this stage.
 
@@ -60,15 +60,19 @@ No allocation, file I/O, drawing, logging, or blocking synchronization is permit
 
 ### Current allocation and real-time boundary
 
-The M0.2 scheduler is intentionally host-oriented:
+The M0.2a scheduler is intentionally host-oriented:
 
 - project construction, validation, encoding, and decoding allocate;
 - `Scheduler::new` validates the editable project;
 - each `schedule` call clones scheduler state transactionally, allocates occurrence/event vectors, sorts them, and returns a new `Vec`;
 - a capacity limit produces an error and leaves scheduler state unchanged, but it does not prevent temporary allocation before the check;
-- the dependency-free codec allocates strings and collections and is never an audio-thread operation.
+- the dependency-free codec allocates strings and collections and is never an audio-thread operation; it bounds encoded bytes, collections, identifiers, event totals, and an estimated decoded-allocation budget before allocating from untrusted declarations.
 
 Therefore no current public scheduling operation is claimed real-time safe. A future boundary should compile a validated project into an immutable, canonically ordered snapshot and schedule into caller-owned preallocated storage. That work must preserve the M0.2 half-open interval and ordering semantics; it does not require changing the persistent model.
+
+### `hereticc-host`
+
+The host adapter is a test oracle and integration-shape prototype, not a device implementation. It consumes already ordered `ScheduledEvent` batches, transactionally tracks active voices by runtime token, records parameter addresses and scene commits, rejects duplicate tokens/unmatched releases/order violations, and emits a deterministic human-readable trace. The included demonstration uses two audible polymetric tracks and an explicit scene boundary without audio, MIDI, clocks, sleeping, or firmware access.
 
 ### Device adapter
 
@@ -82,6 +86,8 @@ Potentially backed by `mpc-sample-sdk`, behind HERETICC-owned traits. Responsibi
 - detecting supported firmware and failing closed.
 
 Firmware pointers, offsets, unsafe calls, and thread-affinity rules stay inside this boundary. A host fake implements the same traits.
+
+The future contract is specified in [Device adapter contract](ADAPTER.md). In particular, tick-to-frame conversion belongs at the transport/adapter boundary; it must use checked rational or fixed-point arithmetic and must not change semantic event ordering.
 
 ### Voice adapter
 
