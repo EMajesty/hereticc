@@ -57,6 +57,8 @@ An event may contain:
 - parameter locks;
 - tracker command plus command memory where applicable.
 
+Effect and mixer changes are semantic parameter events addressed through the common model in [Effects](EFFECTS.md). The scheduler emits values and musical timestamps; it does not process audio, own effect instances, or infer firmware routing.
+
 References are logical IDs resolved by the device/project adapter. Events never store firmware pointers.
 
 Polyphony is per track: overlapping events remain distinct voices until ended, choked, stolen by an explicit policy, or stopped by transport. The core must assign stable voice tokens so note-offs cannot terminate the wrong overlapping voice.
@@ -68,6 +70,10 @@ A parameter lock overrides a track default for the scope defined by that paramet
 Tracker-inspired commands include retrigger, pitch/portamento slide, sample offset, note delay/cut, and related timing effects. Command memory must be explicit and scoped to a track. Compatibility with MOD/XM/IT quirks is not a goal unless a command is documented as a compatibility mode.
 
 If locks and commands target the same parameter at the same instant, the command-specific rule must be deterministic and tested. Unsupported device parameters remain in the project model but must be reported as unavailable rather than silently ignored during editing or export.
+
+For polyphonic tracks, a voice-scoped lock applies only to the voice token created by that event. A track/insert/send/master lock targets a continuously running processor and remains effective for its declared scope; it must not instantiate or restart the processor on every note. Pattern- or step-scoped restoration is scheduled explicitly so independent pattern lengths cannot leave a value accidentally latched.
+
+Tracker commands are time-domain musical operations. When a tracker command and a parameter lock address the same destination, the lock establishes the event baseline and the command supplies its documented absolute or relative evolution. Performance gestures and MIDI modulation are composed later by the effects control plane and do not rewrite the event.
 
 ## Transitions
 
@@ -90,6 +96,8 @@ Live recording stores raw captured time first, then applies the chosen quantizat
 
 Macros and track overrides are a separate runtime layer above saved pattern data. They can temporarily alter parameters, mute state, or pattern choice and can be cleared without rewriting events. Recording a performance override into automation is a future explicit operation, never an accidental side effect.
 
+Performance-FX pad presses produce transient engagement/release commands. They do not restart patterns, retrigger notes, reset effect state, or modify saved parameters. Quantized engagement uses the same integer musical clock as scene transitions but a separate command queue, so an effect boundary cannot partially apply a scene.
+
 ## Required host tests
 
 - independent pattern lengths and wrap points over long runs;
@@ -98,8 +106,10 @@ Macros and track overrides are a separate runtime layer above saved pattern data
 - quantized transitions for reset/preserve/wait policies;
 - overlapping voices and correct note-off association;
 - lock scope/reset and tracker command memory;
+- absolute/relative parameter composition, smoothing boundaries, and restoration;
+- continuously running effect locks across overlapping voices and pattern wraps;
+- performance-FX engage/release without sequencer restart;
 - retrigger, slide, delay, cut, and sample-offset edge cases;
 - deterministic playback after serialize/deserialize;
 - malformed input, extreme lengths, queue capacity, and overload behavior;
 - randomized/property tests comparing chunked scheduling with one-shot scheduling.
-

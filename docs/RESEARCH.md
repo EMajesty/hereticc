@@ -166,3 +166,36 @@ Do not choose B now:
 
 The decision should be revisited if the integration spike cannot trigger stock voices with adequate timing and parameter control.
 
+## Effects and mixer research addendum
+
+Research date: **2026-11-15**, using the same pinned snapshots above.
+
+### Stock effects exposed by `mpc-sample-sdk`
+
+**Verified in source/documentation:** the SDK wraps firmware factories for exactly three named processors—reverb, vinyl, and decimator—and renders a complete mono/stereo buffer in 512-frame blocks. It can write raw values to six parameter-array positions and allocates the rendered output. Reverb rendering appends and trims a tail. The module describes itself as applying firmware effects to a whole sample offline: [effect documentation](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/21-effects.md), [effect source](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/src/platform/effect.rs).
+
+**Not established:** live insert attachment, automation safety, parameter names/ranges, processor latency, arbitrary catalog access, send/return routing, per-track buses, master replacement, or preservation of an existing processor's state. Parameter-array access is firmware-specific and should not become HERETICC's public parameter model.
+
+### SDK audio taps and output mixing
+
+**Verified in source/documentation:** the SDK interposes on ALSA input/output calls. The output hook receives mutable signed-32-bit interleaved frames immediately before the app writes them and is documented for adding/mixing audio. It reports channel/rate/block geometry and ring-derived latency. Input hooks observe capture. Reentrant taps forward untouched, and the callback rules prohibit allocation, locks, UI work, and blocking: [audio documentation](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/11-audio.md), [audio source](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/src/audio.rs).
+
+**Inference:** because the slice is mutable, replacement may be technically possible, but the supported documentation only promises additive mixing. HERETICC must not claim a master insert until unity replacement, dry-path behavior, channel geometry, and restoration are tested.
+
+**Not established:** the final tap's relationship to every stock effect/output route, isolated track buffers, callback deadline, format/rate stability, or a way to compensate different per-path effect latencies.
+
+### Am MOD mixer research
+
+Am MOD's inspected tree contains a substantially broader experimental mixer architecture: eight logical buses plus master, routing adapters, native effect catalog work, metering, and stock-path analysis. Its [mixer design](https://github.com/AlekseyMalykh/am-mod/blob/6cdc67276f43cd39f64871cb7e36782481244c65/docs/MIXER_DESIGN.md), [native audit](https://github.com/AlekseyMalykh/am-mod/blob/6cdc67276f43cd39f64871cb7e36782481244c65/docs/MIXER_NATIVE_AUDIT.md), [bus design](https://github.com/AlekseyMalykh/am-mod/blob/6cdc67276f43cd39f64871cb7e36782481244c65/docs/MIXER_BUSES.md), and [native adapter](https://github.com/AlekseyMalykh/am-mod/blob/6cdc67276f43cd39f64871cb7e36782481244c65/docs/MIXER_NATIVE_ADAPTER.md) explicitly distinguish fixture/ARM-QEMU checks from complete live integration.
+
+**Verified at repository evidence level:** native object layouts and callbacks have been investigated; test adapters exercise stereo buffers, native processors, gain/pan/routing concepts, and a catalog broader than the SDK's three offline effects.
+
+**Not verified for HERETICC or as a general hardware API:** sixteen complete live track buses, every voice/source/output path, two shared feedback-safe sends, master replacement, persistence, latency compensation, CPU capacity, and physical-device behavior. Some Am MOD documents state that live voices, non-empty native insert chains, physical/multi-output, preview/live input, and other renderers remain incomplete or outside a scoped adapter. These findings justify experiments, not code reuse or capability claims.
+
+### Consequences
+
+- Option A, controlling stock effects, is promising but requires a new guarded live interface and parameter metadata.
+- Option B, custom master DSP, may fit the SDK output location only if replacement rather than additive mixing is validated.
+- Option C, true track inserts/sends, requires pre-sum isolated audio that the current SDK does not expose. It needs deeper reverse engineering or a custom voice/mixer architecture.
+- Offline stock rendering is useful for destructive/export workflows but does not satisfy live performance FX.
+- No reviewed source supports assuming that sixteen HERETICC tracks equal sixteen stock audio buses.

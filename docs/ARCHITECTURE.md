@@ -26,6 +26,11 @@ sequencer core -----> scheduled semantic events -----> voice adapter
         ^                                                   |
         |                                                   v
  transport clock                                  stock engine or fallback
+        |
+        +------ control events ------> effects control plane
+                                             |
+                                             v
+                                      audio routing/DSP adapter
 ```
 
 ### `hereticc-core`
@@ -42,6 +47,8 @@ Responsibilities:
 - versioned, platform-neutral project representation.
 
 The core accepts explicit time/transport input and emits semantic events such as note start/stop, sample offset, slice selection, parameter change, and scene commit. It must not know how the stock firmware represents samples or voices.
+
+Effects are not part of event generation. The core may schedule typed parameter intents and performance engagement boundaries, but an effects control plane resolves them into immutable/bounded parameter updates for an audio adapter. Audio never flows through the sequencer core.
 
 ### Scheduler runtime
 
@@ -66,6 +73,20 @@ Firmware pointers, offsets, unsafe calls, and thread-affinity rules stay inside 
 
 The key unresolved boundary. Preferred behavior is to trigger and control voices through the stock audio engine so stock routing, effects, and stereo I/O remain intact. That capability is **not yet verified** by the reviewed SDK documentation. A separate mixer is not an assumed fallback: it would require an explicit architecture decision because it can bypass stock voice behavior and effects.
 
+### Effects control plane and audio adapter
+
+The logical mixer has sixteen stereo track paths, two insert slots per track, two stereo send/return buses, two stereo master insert slots, and independent performance-FX stages. This is a platform-neutral target, not evidence that the stock application exposes those buses.
+
+The control plane owns effect descriptors, parameter addresses, modulation composition, routing snapshots, bypass transitions, tail policy, and performance gestures. It consumes sequencer parameter events, UI gestures, macros, and MIDI control without generating notes or changing transport.
+
+The audio adapter maps that graph onto one of three separately evaluated backends:
+
+- stock effect objects/routing, if safe live interfaces can be established;
+- custom stereo-master processing at a confirmed replaceable final-output point;
+- custom per-track processing only if isolated pre-sum track audio is available with defined ownership and latency.
+
+An output callback that can add samples to the final mix does not by itself provide replace-in-place master processing or isolated tracks. Logical tracks must never be equated with stock audio buses without measurement. See [Effects](EFFECTS.md).
+
 ### UI adapter
 
 Grid and tracker views are projections of the same event model. UI state such as cursor, selection, and temporary audition is separate from saved musical state. Input ownership must be page-scoped; events not owned by HERETICC are forwarded to the stock application.
@@ -85,6 +106,9 @@ A minimal, non-release spike must establish:
 5. behavior while the stock transport and sequencer are running;
 6. safe project/sample changes without stale object access;
 7. inert behavior on unsupported firmware and stock boot after SD removal.
+8. whether the audio tap is additive-only or permits safe in-place master replacement without double audio;
+9. whether sixteen isolated stereo track paths and two feedback-safe send returns exist or must be custom-built;
+10. stock effect creation, real-time processing, parameter, tail, latency, and destruction contracts.
 
 If item 3 cannot be achieved safely, reconsider the preservation requirement and compare a replacement application separately. Do not silently mix the two architectures.
 
@@ -96,4 +120,3 @@ If item 3 cannot be achieved safely, reconsider the preservation requirement and
 - Stock-engine triggering may not expose every voice parameter needed for locks and tracker commands.
 - Long operations in the stock application may stall UI-driven callbacks.
 - SD autorun is reversible but unofficial; recovery from an unbootable device is not verified by the reviewed projects.
-

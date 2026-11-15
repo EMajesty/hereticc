@@ -23,7 +23,7 @@ This is approach **C first**, with **A as the leading integration candidate**. N
 - Quantized transitions, parameter locks, retriggers, pitch slides, and sample offsets.
 - Grid and tracker editing over one event model.
 - Non-destructive slicing and live slice capture.
-- Performance macros, temporary track overrides, and MIDI control.
+- A logical mixer with track inserts, shared sends, master inserts, performance effects, macros, temporary track overrides, and MIDI control.
 - Reversible SD-card deployment, with no partition or firmware flashing.
 
 ## Documentation
@@ -31,6 +31,7 @@ This is approach **C first**, with **A as the leading integration candidate**. N
 - [Architecture](docs/ARCHITECTURE.md) — boundaries, data flow, and technical recommendation
 - [Hardware](docs/HARDWARE.md) — verified controls, display/audio facts, and compatibility limits
 - [Sequencer](docs/SEQUENCER.md) — musical model and behavior
+- [Effects](docs/EFFECTS.md) — logical routing, parameter model, performance controls, and feasibility gates
 - [Research](docs/RESEARCH.md) — source-based review of related projects
 - [Roadmap](docs/ROADMAP.md) — milestones and acceptance criteria
 - [Safety](docs/SAFETY.md) — development, deployment, and recovery rules

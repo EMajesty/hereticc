@@ -53,6 +53,27 @@ Still unknown:
 - whether all stereo input/output and stock effects paths remain intact under the required hooks;
 - stable sample identity across load, save, project switch, and pool mutation.
 
+## Effects and routing evidence
+
+The following statements describe reviewed upstream interfaces, not HERETICC hardware results:
+
+- **Supported by the inspected SDK:** an output callback receives the app's signed-32-bit interleaved block immediately before the ALSA write and may add samples; input callbacks can observe interleaved or planar capture. Stream geometry and estimated input/output latency are exposed. The callback contract forbids allocation, blocking, drawing, and locks. See [SDK audio](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/11-audio.md).
+- **Supported by the inspected SDK, offline only:** firmware factories can render reverb, vinyl, and decimator over mono/stereo buffers, with up to six raw parameter indices. This allocates output and is intended for whole-sample rendering, not a live insert: [SDK effects](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/21-effects.md) and [implementation](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/src/platform/effect.rs).
+- **Needs reverse engineering:** safe replacement rather than addition at the final output; live stock-effect lifecycle; named/ranged parameters; transport synchronization; effect latency; tail handling; stock insert/send/master topology; and isolated per-pad/per-track buffers.
+- **May require custom DSP:** performance effects, a true master chain, sends, or per-track processing where no suitable stock interface exists. Custom DSP still requires a replaceable audio point; adding a wet signal to an unchanged dry final mix is not a general insert.
+
+Am MOD documents experimental stock mixer/effect work, including native effect catalog and routing tests, but its inspected mixer documents distinguish ARM/QEMU fixtures and adapters from physical-device confirmation and leave several live paths open. Treat this as evidence of promising internal structures, not a supported API or HERETICC capability.
+
+Stereo preservation means two channels remain distinct from stock voice/input source through every enabled HERETICC stage to physical output. Mono-only processors require an explicit stereo policy; silent downmixing is not acceptable.
+
+## Performance control inventory
+
+The real control inventory available to a proposed performance mode is sixteen pressure-capable pads, SHIFT, ERASE, transport and mode buttons, three screen buttons (B1–B3), DATA turn/push, PLUS/MINUS, MAIN VOLUME, K1–K3, and the pad-volume fader. Exact button interception conflicts depend on the current stock page.
+
+HERETICC's default philosophy is: **“Pads decide what happens. Knobs decide how it happens. The fader decides how much.”** Pads engage/release effects; K1–K3 edit explicit parameters; the fader controls wet/dry or a selected morph. Velocity and aftertouch do not alter intensity by default. Aftertouch is optional modulation only.
+
+No shortcut is reserved yet. In particular, MIX/FX entry, PAD BANK, 16 LEVELS, NOTE REPEAT, transport, and stock Knob FX may conflict with existing behavior. A future integration must produce a per-page ownership table and forward every unowned event.
+
 ## Firmware compatibility
 
 All five reviewed projects target or were researched against **1.3.0.12**. The SDK checks 59 firmware fingerprint words and refuses installation on a mismatch. Firmware constants and object layouts must be treated as version-specific.
@@ -71,4 +92,3 @@ Policy:
 - Safe control and restoration of button/bank LEDs through an extension.
 - Reliable recovery procedure if the device itself fails to boot.
 - Whether a future firmware release changes autorun, service, security, or object layouts.
-
