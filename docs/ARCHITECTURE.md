@@ -2,7 +2,7 @@
 
 ## Status and recommendation
 
-This document proposes an architecture; none of it is implemented.
+The device architecture remains proposed. M0.2 implements only the hardware-independent `hereticc-core` model, validator, scheduler, typed parameter representation, and versioned codec. There is no device adapter, voice adapter, effects engine, audio processing, UI, MIDI, or deployment code.
 
 Start with **C: a separate host-testable sequencer core**, then integrate through **A: `mpc-sample-sdk`** if a focused device spike validates the required contracts. Do not fork or adapt a complete existing mod at this stage.
 
@@ -50,11 +50,25 @@ The core accepts explicit time/transport input and emits semantic events such as
 
 Effects are not part of event generation. The core may schedule typed parameter intents and performance engagement boundaries, but an effects control plane resolves them into immutable/bounded parameter updates for an audio adapter. Audio never flows through the sequencer core.
 
+M0.2 implements the first part of this boundary. Persistent parameter addresses use logical scopes/owners, optional processor slots, and symbolic parameter IDs. The scheduler carries absolute/relative intents but does not implement lock lifetimes, smoothing, modulation composition, or DSP.
+
 ### Scheduler runtime
 
 Owns the active snapshot, converts musical positions to the integration clock, and emits events into preallocated bounded queues. It must define overload behavior explicitly; dropping diagnostics is preferable to blocking audio, while musical-event overflow must be visible and testable.
 
 No allocation, file I/O, drawing, logging, or blocking synchronization is permitted in a real-time audio callback. Project edits are prepared off the real-time path and swapped at a safe boundary.
+
+### Current allocation and real-time boundary
+
+The M0.2 scheduler is intentionally host-oriented:
+
+- project construction, validation, encoding, and decoding allocate;
+- `Scheduler::new` validates the editable project;
+- each `schedule` call clones scheduler state transactionally, allocates occurrence/event vectors, sorts them, and returns a new `Vec`;
+- a capacity limit produces an error and leaves scheduler state unchanged, but it does not prevent temporary allocation before the check;
+- the dependency-free codec allocates strings and collections and is never an audio-thread operation.
+
+Therefore no current public scheduling operation is claimed real-time safe. A future boundary should compile a validated project into an immutable, canonically ordered snapshot and schedule into caller-owned preallocated storage. That work must preserve the M0.2 half-open interval and ordering semantics; it does not require changing the persistent model.
 
 ### Device adapter
 

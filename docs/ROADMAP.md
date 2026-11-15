@@ -1,6 +1,6 @@
 # Roadmap
 
-Status labels: **planned**, **in progress**, **complete**. M0.1 and M0.1b documentation are complete; no device functionality is implemented.
+Status labels: **planned**, **in progress**, **complete**. M0.1, M0.1b, and the scoped M0.2 host core are complete; no device functionality is implemented.
 
 ## M0 — Foundation
 
@@ -24,16 +24,16 @@ Acceptance criteria:
 - stereo, latency, smoothing, overload, feedback, tail, and state-restoration constraints are documented;
 - no DSP, firmware hook, dependency, executable, or deployment artifact is added.
 
-### M0.2 Core specification and test harness — planned
+### M0.2 Core specification and test harness — complete
 
-Create a minimal Rust workspace for a platform-neutral core only.
+Implemented as the standard-library-only `crates/hereticc-core` workspace member.
 
 Acceptance criteria:
 
 - integer time, IDs, track/pattern/scene/song/event types are specified;
 - deterministic scheduler handles independent lengths and boundary ordering;
 - transition, polyphony, and lock semantics have unit and property tests;
-- serialization has a version and round-trip/golden tests;
+- serialization has a version and round-trip/revalidation tests; stable golden-file compatibility is deferred while the schema is provisional;
 - core has no SDK, OS, audio, UI, or firmware dependency;
 - real-time-facing APIs document allocation and capacity behavior.
 
@@ -157,4 +157,4 @@ Acceptance criteria:
 
 ## Practical next engineering task
 
-Implement **M0.2 only**: a small Rust core with `MusicalTime`, stable IDs, sixteen tracks, independent pattern lengths, scene references, typed parameter addresses/intents, a deterministic scheduling iterator, and host tests for polymeter and atomic scene transitions. Parameter types must not depend on an effect implementation. Do not add `mpc-sample-sdk` until the core boundary and integration-spike acceptance tests are reviewed.
+Review and freeze the M0.2 public semantics before adding device code. The next implementation task should be a narrowly authorized **M0.3 integration feasibility spike** using a host fake first and `mpc-sample-sdk` only after its exact revision/license is approved. It should consume semantic events without changing the core model and test clock/trigger feasibility; it must not add DSP, a complete UI, or M1 features.

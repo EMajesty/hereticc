@@ -4,7 +4,7 @@ HERETICC is an open-source custom firmware extension for the Akai MPC Sample. It
 
 ## Status
 
-HERETICC is in **M0: research and architecture**. No firmware, device binary, installer, or deployment tool has been implemented. Nothing in this repository has been tested on MPC Sample hardware.
+HERETICC is in **M0: host core and integration research**. M0.2 provides a hardware-independent Rust sequencer core with deterministic host tests. No firmware, device binary, audio engine, installer, or deployment tool has been implemented. Nothing in this repository has been tested on MPC Sample hardware.
 
 The initial technical direction is:
 
@@ -12,7 +12,20 @@ The initial technical direction is:
 2. validate a narrow integration spike against [`mpc-sample-sdk`](https://github.com/ioma8/mpc-sample-sdk) on the supported firmware;
 3. choose the final stock-engine integration only after measuring event timing, trigger control, persistence, and coexistence with the stock sequencer.
 
-This is approach **C first**, with **A as the leading integration candidate**. No external dependency has been added yet. See [Architecture](docs/ARCHITECTURE.md) and [Research](docs/RESEARCH.md).
+This is approach **C first**, with **A as the leading integration candidate**. The Rust workspace has no third-party crate dependencies. See [Architecture](docs/ARCHITECTURE.md) and [Research](docs/RESEARCH.md).
+
+## Host development
+
+The workspace contains [`hereticc-core`](crates/hereticc-core), a standard-library-only Rust crate. A Nix development shell supplies Cargo, rustc, rustfmt, and Clippy:
+
+```sh
+nix develop
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+The core currently implements integer musical time, validated sixteen-track projects, independent patterns, scenes, basic note/parameter scheduling, overlapping runtime voices, phase-reset scene transitions, capacity errors, and a versioned host-side codec. It is not real-time safe and does not process audio.
 
 ## Design goals
 

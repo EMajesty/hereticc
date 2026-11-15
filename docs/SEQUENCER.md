@@ -2,7 +2,7 @@
 
 ## Status
 
-This is the agreed musical model for the host-testable core. It is a design specification, not an implementation claim. Numeric limits other than sixteen tracks remain provisional until tests and device measurements justify them.
+This is the agreed musical model. M0.2 implements a minimal host-testable subset: sixteen tracks, reusable independent patterns, scenes, note/parameter events, deterministic scheduling, overlapping voices, one scene-transition policy, validation, and a versioned binary round trip. The remaining behavior is design-only. Numeric limits other than sixteen tracks remain provisional until tests and device measurements justify them.
 
 ## Model
 
@@ -33,7 +33,9 @@ A song is an ordered arrangement of scene entries with repeat counts and transit
 
 ## Time and scheduling
 
-The core uses integer musical time, not floating-point seconds. Events are stored at a high-resolution pulse position relative to their track pattern; microtiming is a signed offset with a defined clamp/wrap policy. Conversion to device frames occurs only in the runtime adapter.
+The core uses integer musical time, not floating-point seconds. M0.2 provisionally uses **960 PPQN** because it represents common binary and triplet subdivisions with useful edit resolution. This is a project-format design choice, not a measured or guaranteed MPC Sample clock. Events are stored at an integer tick relative to their track pattern. Conversion to seconds/device frames is deferred to a runtime adapter.
+
+M0.2 supports checked absolute time, positive pattern lengths, pattern-relative ticks, exact modular wrapping, and half-open intervals `[start, end)`. Scheduling windows must be contiguous for a stateful scheduler. Arithmetic overflow is an explicit error; there is no floating-point accumulation or wall-clock timing.
 
 Tempo is global initially. Tempo automation and external clock following are deferred until the base clock contract is measured.
 
@@ -46,6 +48,8 @@ The scheduler uses bounded look-ahead and deterministic ordering. At the same ti
 5. continuous command updates.
 
 This precedence must be encoded in tests before implementation is considered stable.
+
+M0.2 implements the first four categories: scene transition, note-off, parameter change, and note-on. Stable tie-breaking uses track, persistent event identity, parameter address/intent, and runtime voice token rather than collection insertion order. Tracker commands and continuous updates are deferred.
 
 ## Events
 
@@ -62,6 +66,8 @@ Effect and mixer changes are semantic parameter events addressed through the com
 References are logical IDs resolved by the device/project adapter. Events never store firmware pointers.
 
 Polyphony is per track: overlapping events remain distinct voices until ended, choked, stolen by an explicit policy, or stopped by transport. The core must assign stable voice tokens so note-offs cannot terminate the wrong overlapping voice.
+
+M0.2 assigns monotonically increasing runtime `VoiceToken`s after canonically ordering note starts. Tokens are not persisted. Notes may overlap the same sound and span pattern or scene boundaries; note-offs retain the originating token.
 
 ## Parameter locks and commands
 
@@ -85,6 +91,23 @@ Scene changes are requested immediately but committed on a quantization boundary
 - queued requests resolve by a documented last-request-wins or queue policy.
 
 No transition may expose a partially changed scene.
+
+M0.2 supports one pending launch at an explicit absolute boundary. All sixteen pattern references switch atomically, every new pattern resets to phase zero, and already-active voices continue until their scheduled note-off. `Cut` and `Release` are represented by the policy enum but rejected as unsupported. Song arrangement and queued/replaceable launch requests are deferred.
+
+## Persistence implemented in M0.2
+
+`Project` carries format version 1 and uses stable typed IDs. The standard-library-only codec is deterministic and little-endian, and decode always revalidates the project. Validation rejects unsupported versions, duplicate pattern/scene/event IDs, invalid track slots, unowned patterns, zero durations, out-of-range event positions, invalid parameter addresses, missing initial scenes, and dangling/wrong-track scene references.
+
+The binary format is an internal M0.2 format and is not yet promised as a permanent compatibility contract. It does not read stock MPC projects or perform filesystem/SD operations.
+
+## Explicitly deferred
+
+- tracker commands, probability, ratchets, microtiming offsets, tempo conversion, and external clock;
+- song arrangement, pattern editing APIs, undo/redo, and live recording;
+- scene phase-preserve/wait policies and cut/release transition behavior;
+- voice limits, stealing, choke groups, mute/solo behavior, and device triggers;
+- parameter-lock lifetimes/restoration, modulation composition, smoothing, and DSP;
+- immutable compiled snapshots and allocation-free caller-provided event buffers.
 
 ## Editing views
 
