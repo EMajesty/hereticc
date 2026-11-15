@@ -33,7 +33,7 @@ Inspected commit: [`e62ffd3`](https://github.com/ioma8/mpc-sample-sdk/commit/e62
 - Pad RGB overrides use the app's native callback and can restore saved native colors; button LEDs are explicitly unsupported: [lighting](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/25-lighting.md).
 - Typed helpers expose selected sample metadata/data, pad-to-sample lookup, slice count/markers, stock slice mutation calls, and Manual chop mode: [samples](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/09-samples.md), [slices](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/10-slices-and-trim.md).
 - ALSA hooks observe input and can mix S32 data into output. The documentation forbids allocation, locking, drawing, or blocking in audio callbacks: [audio](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/11-audio.md).
-- The loader targets 1.3.0.12, verifies 59 instruction fingerprints, and rolls back failed hook installation: [firmware](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/17-firmware.md), [loader](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/src/loader.rs).
+- The loader targets 1.3.0.12. Upstream prose says 59 fingerprints, while the pinned implementation iterates 63 instruction words; HERETICC treats the table as authoritative. Hook rollback limitations are documented in [SDK hook safety](SDK-HOOK-SAFETY.md): [firmware](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/17-firmware.md), [loader](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/src/loader.rs).
 - Its generated SD package checks the firmware hash, copies the library to `/run`, installs a transient service drop-in, and restarts the app. Removing `autorun` and rebooting restores stock behavior; device disk is claimed unchanged: [build/install](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/22-build-and-install.md).
 - License is [MIT](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/LICENSE).
 
@@ -203,6 +203,22 @@ Am MOD's inspected tree contains a substantially broader experimental mixer arch
 ## Stock trigger and UI feasibility addendum (M0.3a)
 
 Research date: **2026-11-15**. Exact branch heads were queried and cloned for source inspection; no upstream code was copied into HERETICC.
+
+### Zero-hook compatibility implementation addendum (M0.3b-A)
+
+HERETICC now carries a patch, not generated upstream source, against SDK commit
+`e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39`. The patch adds a compile-time
+read-only probe mode using the SDK's actual fingerprint iterator. It does not
+compile the normal loader, hook sites, patch engine, audio interposition, MIDI,
+input, lighting, drawing, or feature-platform modules into the diagnostic.
+
+Host fixtures exercise all 63 words matching, a changed word, unreadable word,
+zero/unsupported image, missing image, repeated verification, and the
+compile-time absence of feature hooks. A separate report test enforces the
+768-byte bound and absence of raw addresses. The AArch64 ELF inspection finds
+no defined dynamic exports, ALSA symbols, `mprotect`, `pwrite`, hook identifiers,
+or writable/executable sections. This supports the zero-hook source claim but
+does not establish device loader behavior or physical compatibility.
 
 ### Revisions and licenses
 

@@ -2,9 +2,10 @@
 
 ## Status and evidence
 
-M0.3b-A0 is a host-only source investigation. No SDK fork, dependency, device
-binary, cross-build, package, or firmware operation was created. M0.3b-A remains
-blocked pending review and a separately authorized implementation.
+M0.3b-A0 is the completed host-only source investigation. M0.3b-A implements
+its recommended zero-hook probe as an isolated crate and a repository-owned
+patch series. A cross-built package exists for inspection, but no physical
+execution has occurred and experiments B–E remain unauthorized.
 
 The inspected upstream is `ioma8/mpc-sample-sdk` v0.6.0 at exact commit
 [`e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39`](https://github.com/ioma8/mpc-sample-sdk/tree/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39),
@@ -353,3 +354,36 @@ Before device-facing implementation, the owner must approve:
 
 Passing the compatibility probe will not approve input, UI, note, audio, MIDI,
 or timing hooks and will not establish physical safety of hook installation.
+
+## Implemented M0.3b-A patch series
+
+The implementation is under `device/m03b-a`. `prepare-sdk.sh` clones exact
+upstream commit `e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39` into ignored build
+state, verifies `HEAD`, applies every patch with `git apply --check`, and records
+the upstream revision, patch-set ID, and patch-series SHA-256. A two-checkout
+test produced identical patched diffs.
+
+Patch `0001-add-read-only-probe-mode.patch`:
+
+- adds the compile-time `probe-only` SDK feature;
+- excludes audio, drawing, event, hook, loader, MIDI, platform-feature, render,
+  sites, state, and task modules in that configuration;
+- adds the actual 63-word verifier with injected read-only fixtures;
+- publishes `image::BASE` only after all words match;
+- pins the SDK's existing `libc` dependency to `0.2.191`;
+- makes the SDK checkout an isolated Cargo workspace;
+- makes the upstream cross-build honor the lockfile; and
+- normalizes autorun ZIP timestamps/metadata for byte reproducibility.
+
+The diagnostic supplies its own `.init_array` constructor instead of using
+`export_mod!` or `loader::install`. It calls only `probe::inspect_process`,
+writes a bounded transient report, and returns. It does not perform optional
+prologue or paint-vtable inspection in this revision.
+
+The inspected AArch64 ELF is ET_DYN and requires `libc.so.6`,
+`libpthread.so.0`, and `libdl.so.2`, with highest imported glibc version 2.30.
+It has no defined dynamic export; no ALSA, `mprotect`, `pwrite`, hook, note, or
+paint-install symbol; no writable/executable section; and one probe entry among
+the `.init_array` constructors. `mmap64`/`munmap` remain general Rust standard
+library allocator imports; no `mprotect` or executable trampoline machinery is
+linked. This is static binary evidence, not physical validation.

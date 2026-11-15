@@ -6,7 +6,9 @@
 - **Inferred** means supported by multiple observations or implementation structure but not directly demonstrated for HERETICC.
 - **Unknown** means no adequate evidence was found.
 
-HERETICC itself has performed **no hardware testing**.
+HERETICC itself has performed **no hardware testing**. The owner reports that
+the intended test unit runs firmware 1.3.0.12; this is owner-provided inventory,
+not a compatibility result.
 
 ## Known platform facts
 
@@ -98,7 +100,7 @@ No shortcut is reserved yet. In particular, MIX/FX entry, PAD BANK, 16 LEVELS, N
 
 ## Firmware compatibility
 
-All five reviewed projects target or were researched against **1.3.0.12**. The SDK checks 59 firmware fingerprint words and refuses installation on a mismatch. Firmware constants and object layouts must be treated as version-specific.
+All five reviewed projects target or were researched against **1.3.0.12**. The pinned SDK implementation checks 63 instruction words (22 hook sites, 20 guards, and 21 code-call entries); older upstream prose saying 59 is stale. The M0.3b-A probe reuses this actual table without calling the SDK installer. Firmware constants and object layouts remain version-specific.
 
 Policy:
 

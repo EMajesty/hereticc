@@ -56,6 +56,12 @@ The only acceptable initial deployment model is SD-card based and reversible:
 
 An SD autorun may execute as root and can still damage the device if wrong. “Runs from SD” is not itself a safety guarantee.
 
+The M0.3b-A package's `autorun.json` sets `askQuestion` to false. Treat copying
+its `autorun` directory to a card and inserting/booting that card as physical
+execution, not package inspection. The script performs one guarded transient
+`ac50` restart; repeated restarts are a stop condition. Inspect the extracted
+script and checksums before any separately approved run.
+
 ## Data integrity
 
 - HERETICC project data should initially be an SD sidecar, not an undocumented modification of stock project files.

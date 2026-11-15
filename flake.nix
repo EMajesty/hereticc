@@ -24,8 +24,14 @@
             packages = with pkgs; [
               cargo
               clippy
+              git
+              llvm
+              python3
               rustc
               rustfmt
+              rustup
+              zig
+              zip
             ];
           };
         }

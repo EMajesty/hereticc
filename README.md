@@ -8,7 +8,7 @@ HERETICC is an open-source custom firmware extension for the Akai MPC Sample. It
 
 ## Status
 
-HERETICC is in **M0: host core and integration research**. M0.3a documents the pinned SDK, stock-engine/UI feasibility, host adapter boundary, and separately reviewable device experiments. No firmware, device binary, audio engine, installer, or deployment tool has been implemented. Nothing in this repository has been tested on MPC Sample hardware.
+HERETICC is in **M0: host core and guarded integration feasibility**. M0.3b-A now contains an isolated, zero-hook AArch64 firmware-compatibility probe and an inspectable transient SD package. The probe has passed host fixtures, cross-build, ELF inspection, and package reproducibility checks, but it has not been executed on MPC Sample hardware. It installs no feature hooks and is not a sequencer adapter, audio engine, UI, or product installer.
 
 The initial technical direction is:
 
@@ -56,6 +56,8 @@ The core currently implements integer musical time, validated sixteen-track proj
 - [Device adapter contract](docs/ADAPTER.md) — future clock, voice, capacity, and recovery boundary
 - [UI architecture](docs/UI.md) — page model, rendering targets, focus, and restoration
 - [Integration experiments](docs/INTEGRATION-EXPERIMENTS.md) — gated physical-device feasibility plan
+- [SDK hook safety](docs/SDK-HOOK-SAFETY.md) — pinned loader audit and zero-hook design
+- [Device testing](docs/DEVICE-TESTING.md) — package inspection and separately authorized physical procedure
 - [AGENTS.md](AGENTS.md) — conventions for future Codex work
 
 ## License

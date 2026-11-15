@@ -72,13 +72,32 @@ Acceptance criteria:
 - every hook is inventoried with dependencies and experiment-A necessity;
 - a zero-hook compatibility probe is selected for the first physical experiment;
 - selective and hardened-full alternatives have reviewable failure-state requirements;
-- M0.3b-A remains blocked pending separate implementation review.
+- M0.3b-A implementation remains a separate review gate.
 
-### M0.3b Device feasibility experiments — planned and blocked
+### M0.3b-A Zero-hook compatibility probe — implemented, awaiting review and physical validation
+
+Acceptance criteria achieved in source/build evidence:
+
+- exact SDK commit retrieval, revision verification, deterministic patch
+  application, and patched-tree identity are automated;
+- the actual SDK table verifier handles 63 matches, altered/unreadable words,
+  unsupported/missing images, and repeated verification in host tests;
+- the firmware base is published only after complete match;
+- the AArch64 ELF has no feature-hook modules, defined interposition exports,
+  ALSA symbols, `mprotect`, process-memory write import, or writable/executable
+  section;
+- the transient autorun package and all constituent files are inspectable and
+  checksummed, and two package generations are byte-identical;
+- no package has been installed or executed on hardware.
+
+Physical execution remains a separate owner approval. Passing it would validate
+only firmware recognition and transient loader behavior.
+
+### M0.3b-B–E Device feasibility experiments — planned and blocked
 
 This requires a separate, explicitly reviewed task because it creates device-facing executable code.
 
-The first implementation, M0.3b-A, must not use the pinned SDK's full installer unchanged. It is blocked until the owner approves the fork/review policy, zero-hook probe contract, bounded diagnostic output, and process-restart recovery boundary in [SDK hook safety](SDK-HOOK-SAFETY.md). Experiments B–E remain unimplemented and unauthorized.
+M0.3b-A does not use the pinned SDK's full installer. Experiments B–E remain unimplemented and unauthorized until A passes physical validation and each later experiment receives separate approval.
 
 Acceptance criteria:
 
@@ -200,4 +219,4 @@ Acceptance criteria:
 
 ## Practical next engineering task
 
-Owner review should approve or revise the zero-hook probe and recovery decisions in [SDK hook safety](SDK-HOOK-SAFETY.md). The next implementation task, only if separately authorized, is M0.3b-A: a disposable read-only compatibility probe based on a reviewed HERETICC-specific SDK fork. Input, rendering, stock voice, hook installation, and timing experiments remain separate approvals. No complete UI, DSP, deployment product, or M1 expansion belongs in M0.3b.
+The next action is owner source/package review followed, only with explicit approval, by the bounded M0.3b-A procedure in [Device testing](DEVICE-TESTING.md). Input, rendering, stock voice, hook installation, and timing work remain separate approvals. Do not begin M0.3b-B automatically.

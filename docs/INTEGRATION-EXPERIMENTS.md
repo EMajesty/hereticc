@@ -2,11 +2,15 @@
 
 ## Status and rules
 
-These are plans for separately authorized physical-device work. Nothing here is implemented. Each experiment is independently reviewable and stops before the next one. Firmware 1.3.0.12 and SDK `e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39` are research inputs, not supported targets. The host-only M0.3b-A0 investigation found that the upstream full installer accepts partial preparation, can retain live forwarding hooks after rollback failure, and patches the Sample-page paint vtable outside the branch transaction. See [SDK hook safety](SDK-HOOK-SAFETY.md). Consequently A is blocked pending a reviewed zero-hook probe implementation.
+These are separately authorized device experiments. M0.3b-A is implemented as a zero-hook probe and inspectable package, awaiting source/package review and physical validation; it has not run on hardware. B–E remain unimplemented and unauthorized. Firmware 1.3.0.12 and SDK `e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39` remain guarded research inputs, not generally supported targets. See [SDK hook safety](SDK-HOOK-SAFETY.md) and [device testing](DEVICE-TESTING.md).
 
 Common prerequisites: owner authorization for that experiment; exact source/build hashes; spare backed-up SD card; saved projects/samples; stable power; stock boot verified without the card; no unique identifiers in logs; bounded run time; and the recovery rules in `SAFETY.md`. No experiment flashes firmware, modifies partitions, saves a project, or installs persistent device state.
 
 ## A. Firmware and SDK compatibility
+
+**Implementation status:** source, host tests, AArch64 build, ELF inspection,
+and deterministic SD package complete; awaiting owner review and separately
+authorized physical validation.
 
 **Purpose:** prove fail-closed recognition before any feature hook is trusted.
 
