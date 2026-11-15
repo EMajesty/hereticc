@@ -2,7 +2,7 @@
 
 ## Status
 
-This is a design contract for a separately authorized M0.3 experiment. No Akai adapter, SDK dependency, audio callback, MIDI backend, or device executable exists. `hereticc-host` validates semantic event consumption only; it does not verify any MPC Sample capability.
+This is a design contract prepared by M0.3a for separately authorized M0.3b experiments. No Akai adapter, SDK dependency, audio callback, MIDI backend, or device executable exists. `hereticc-host` validates semantic event consumption only; it does not verify any MPC Sample capability.
 
 ## Boundary
 
@@ -30,6 +30,8 @@ All clock access, callback cadence, jitter, and stock-transport correlation rema
 
 Stock-engine note triggering, explicit release, polyphony, sample/slice selection, and stable voice handles are unknown until M0.3 hardware experiments. Public SDK sample/slice inspection is not evidence of a usable live trigger API.
 
+The pinned SDK does expose unsafe `midi::send_note_on` and `send_note_off` wrappers around the displaced stock pad handlers. They require live firmware-owned input/property objects on their owning UI thread, address a source/pad rather than a sample/slice or returned voice, and bypass normal mod input policy. This narrows the experiment but does not satisfy the token-to-voice contract. See [Research](RESEARCH.md#stock-trigger-and-ui-feasibility-addendum-m03a).
+
 ## Parameters and capabilities
 
 - Dispatch logical `ParameterAddress` and absolute/relative intent through a versioned capability table. The table names supported scopes, owners, slots, ranges, update rates, timing precision, and reset behavior.
@@ -38,6 +40,20 @@ Stock-engine note triggering, explicit release, polyphony, sample/slice selectio
 - Return unsupported, temporarily unavailable, and failed parameter application as distinct diagnostics. DSP smoothing/composition remains outside the sequencer.
 
 No reviewed evidence currently proves comprehensive stock-effect parameter control or independent stock buses for sixteen logical tracks.
+
+## Minimum host-owned interfaces
+
+Do not add these traits to `hereticc-core`. A future integration-support crate should introduce them only after M0.3b fixes the missing contracts:
+
+- `SoundResolver`: resolve a stable logical sound plus project generation into an opaque, adapter-owned target; report default-pad, sample, and slice capabilities separately.
+- `VoiceSink`: accept frame-stamped note-on/note-off commands keyed by `VoiceToken`; return applied/rejected/partially-applied status without exposing firmware pointers.
+- `ParameterSink`: publish a capability snapshot and dispatch logical parameter changes with explicit unsupported/range/timing errors.
+- `FrameClock`: observe an absolute audio-frame position, sample rate, transport generation, and discontinuities; no wall-clock substitution.
+- `InputRouter`: classify a decoded control, return consume/forward, and retain press ownership until the paired release.
+- `DisplayLease`: enter/leave one verified screen scope, request repaint, and guarantee a stock repaint on release.
+- `PadLightLease`: apply bounded overrides and restore the most recently observed native colors on release/error.
+
+The existing `HostAdapter` remains the semantic event oracle. M0.3a deliberately adds no speculative Rust traits: the SDK evidence does not yet establish whether stock note dispatch can be frame-stamped, whether one token maps to one releasable stock voice, or what lifetime a display lease can safely hold. Encoding guesses in public interfaces now would harden unknown firmware behavior into the architecture.
 
 ## Capacity, errors, and recovery
 

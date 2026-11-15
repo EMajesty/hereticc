@@ -147,7 +147,7 @@ Its frame-driven scheduler, tracker effects, input-thread audition, and host ren
 | Custom screen while stock runs | Overlay/paint verified | Verified use | Deep custom UI reported | Replacement DRM UI | Replacement DRM UI |
 | Pad LED control | Verified SDK API | Verified use | Reported/confirmed broadly | Raw protocol verified | Raw protocol implementation |
 | Button LED control | Not in SDK API | Not established | Patched stock behavior | Raw protocol partly verified | Raw protocol implementation |
-| Trigger stock sample engine arbitrarily | **Unknown** | Not proven as scheduler API | Stock event edits/playback show feasibility, reusable trigger contract unknown | No | No |
+| Trigger stock sample engine arbitrarily | Unsafe pad-path calls verified; scheduler/voice contract unknown | Incoming-event replay proven; not a scheduler API | Deeper native playback shows feasibility; reusable contract unknown | No | No |
 | Read stock sample/slice data | Verified typed helpers | Verified use | Deep internal access | No stock access while replacement runs | No stock access |
 | Sequencing timing evidence | Audio callback available; stock integration unknown | Looper timing only | Stock sequencer edits; external scheduling unknown | Own engine only | Own frame-driven mixer + host tests |
 | Reversible SD deployment | Documented | Documented | Documented | RAM replacement procedure | Documented |
@@ -199,3 +199,52 @@ Am MOD's inspected tree contains a substantially broader experimental mixer arch
 - Option C, true track inserts/sends, requires pre-sum isolated audio that the current SDK does not expose. It needs deeper reverse engineering or a custom voice/mixer architecture.
 - Offline stock rendering is useful for destructive/export workflows but does not satisfy live performance FX.
 - No reviewed source supports assuming that sixteen HERETICC tracks equal sixteen stock audio buses.
+
+## Stock trigger and UI feasibility addendum (M0.3a)
+
+Research date: **2026-11-15**. Exact branch heads were queried and cloned for source inspection; no upstream code was copied into HERETICC.
+
+### Revisions and licenses
+
+| Project | Revision inspected | License evidence | Result |
+|---|---|---|---|
+| `mpc-sample-sdk` | [`e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39`](https://github.com/ioma8/mpc-sample-sdk/tree/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39), tag `v0.6.0`, dated 2026-11-14 | [MIT](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/LICENSE), Jakub Kolcar; manifest declares MIT | `main` still equals the previously reviewed commit; there is no newer SDK revision to compare. |
+| MINIMOD | [`3770fb7edcfb432cd45ca4e8fa8bcbefe0435c25`](https://github.com/ioma8/mpc-minimod/tree/3770fb7edcfb432cd45ca4e8fa8bcbefe0435c25), dated 2026-11-14 | Rust workspace/crates declare MIT; no repository-root license file was found | Useful current SDK consumer; whole-repository reuse remains ambiguous. |
+| Am MOD | [`6cdc67276f43cd39f64871cb7e36782481244c65`](https://github.com/AlekseyMalykh/am-mod/tree/6cdc67276f43cd39f64871cb7e36782481244c65), dated 2026-11-15 | [MIT](https://github.com/AlekseyMalykh/am-mod/blob/6cdc67276f43cd39f64871cb7e36782481244c65/LICENSE), AM Mod contributors | Comparative reverse-engineering evidence only; no code reuse. |
+
+The SDK is Rust 2024, version 0.6.0, MSRV 1.97, and depends on `libc`. HERETICC has not added it as a dependency.
+
+### Stock voice path
+
+**Verified in the SDK source:** physical pad press/release hooks decode `PadEvent`, ask the mod for `Forward` or `Consume`, and call the displaced stock handlers only when forwarded. The public unsafe [`midi::send_note_on`/`send_note_off`](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/src/midi.rs) wrappers can call those displaced handlers directly. `send_note_on` takes live `input`, `source`, `pad`, `properties`, and velocity; `send_note_off` takes the matching input/source/pad. Their documented contract requires live app objects on their owning UI thread and says they bypass normal mod policy. The [pad guide](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/03-pads.md) confirms that consuming the physical event prevents normal stock sample playback.
+
+This proves a callable stock pad-input path, not a complete voice API:
+
+- no stock voice handle/token or completion is returned;
+- the call addresses a pad/source, not a stable sample ID or independent slice;
+- properties are borrowed firmware state, not documented per-event parameters;
+- release matching and repeated/overlapping triggers of one sound are not specified;
+- calls are UI-thread/lifetime constrained and accept no target audio frame;
+- there is no documented contract for transport, stock-sequence coexistence, voice stealing, choke/mono behavior, or project changes.
+
+The SDK's [`NoteEvent::replay_as_pad`](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/src/midi.rs) rewrites an already-arriving MIDI event as a selected pad/16-Levels row, forwards it, and restores the bytes. MINIMOD pairs overlapping external MIDI presses/releases with a fixed-capacity ledger before using this path: [policy](https://github.com/ioma8/mpc-minimod/blob/3770fb7edcfb432cd45ca4e8fa8bcbefe0435c25/rust/crates/minimod/src/midi.rs). This supports safe interception/rewrite of incoming events; it does not create arbitrary frame-stamped scheduler events.
+
+Am MOD constructs native step events and calls deeper engine play/release entries for Poly/Chords: [implementation](https://github.com/AlekseyMalykh/am-mod/blob/6cdc67276f43cd39f64871cb7e36782481244c65/sd-mod-session/src/poly_record.c). Its comments and tests explicitly manage held-note maps, release choice, track/engine pointers, record queues, and native object generations. This is evidence that deeper stock playback control is possible with substantial reverse engineering, not a stable SDK contract and not proof of per-voice HERETICC token mapping.
+
+### Clock correlation
+
+The SDK exposes a millisecond monotonic clock used by the app and an output callback immediately before ALSA write with block geometry and estimated input/output latency: [time](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/16-status-and-time.md), [audio](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/11-audio.md). It does not expose an absolute audio-frame clock tied to a note call. Correlation can be measured by maintaining a callback-local frame counter and observing recorded output onset, but neither sample accuracy nor a stable offset is currently verified.
+
+### Drawing, repaint, and restoration
+
+**Verified in source:** the SDK changes the Sample-page vtable paint slot. Its handler calls the stock paint first, records the component, then invokes the mod with the live graphics handle: [paint site](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/src/sites.rs). Public drawing wraps ARGB color, filled rectangle, and stock-font text with a size: [drawing source](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/src/draw.rs). Text is truncated to a 95-byte UTF-8 boundary; the font constructor uses the stock face index `0`. Repaint helpers target the observed component, and the optional pump retries every 60 ms because busy native work may coalesce/drop a request.
+
+**Inferred:** a final full-screen rectangle can visually replace the completed Sample-page paint during that callback. This makes a distinctive 320×240 HERETICC surface plausible.
+
+**Unknown:** whether child/dialog/toast components paint afterward, whether every desired stock page uses the hooked class, sustained refresh cost, partial redraw behavior, font glyph coverage, and clean restoration under every page/error transition. There is no exposed bitmap/image primitive or custom-font loader. Leaving HERETICC must clear pad-light overrides and request an unoverlaid stock repaint; the SDK's [lighting API](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/src/platform/lighting.rs) retains observed native pad colors and provides per-pad/all-pad restore, but button-light restoration is outside that API.
+
+### Smallest discriminating stock-trigger experiment
+
+Use one populated pad with transport stopped and no project writes. First forward a physical press/release as a baseline. In a separate run, consume that pad's physical event and, inside the same still-live press/release callbacks, call `send_note_on`/`send_note_off` with the callback arguments. Retain no firmware pointers afterward. An audio-output observer records only an atomic request sequence, callback-local cumulative frame count, and block peaks; offline host analysis compares call-to-onset block and release behavior.
+
+Run successive, separately stoppable phases: one synthetic press/release; two overlapping presses of the same pad followed by releases; physical and synthetic overlap; then repeat with stock transport stopped versus playing. Abort on restart, stale-object indication, stuck audio, unmatched release, project mutation, or inability to restore native input/lights/screen. Passing demonstrates callable, repeatable pad-path audition and measurable block correlation only. It does not pass token-addressable polyphony or sample-accurate scheduling unless distinct releases and stable frame offsets are directly observed.

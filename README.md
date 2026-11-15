@@ -1,10 +1,14 @@
 # HERETICC
 
+<p align="center">
+  <img src="assets/images/vibeslop.png" alt="Absolute vibeslop" width="512">
+</p>
+
 HERETICC is an open-source custom firmware extension for the Akai MPC Sample. It aims to add a 16-track polyphonic sequencer, independent track patterns, scenes, song arrangements, parameter locks, tracker-style commands, non-destructive slicing, performance controls, and MIDI integration while preserving the stock sampling workflow and hardware experience wherever practical.
 
 ## Status
 
-HERETICC is in **M0: host core and integration research**. M0.2a hardens the hardware-independent Rust sequencer and project decoder and adds a host-only semantic event adapter. No firmware, device binary, audio engine, installer, or deployment tool has been implemented. Nothing in this repository has been tested on MPC Sample hardware.
+HERETICC is in **M0: host core and integration research**. M0.3a documents the pinned SDK, stock-engine/UI feasibility, host adapter boundary, and separately reviewable device experiments. No firmware, device binary, audio engine, installer, or deployment tool has been implemented. Nothing in this repository has been tested on MPC Sample hardware.
 
 The initial technical direction is:
 
@@ -50,6 +54,8 @@ The core currently implements integer musical time, validated sixteen-track proj
 - [Roadmap](docs/ROADMAP.md) — milestones and acceptance criteria
 - [Safety](docs/SAFETY.md) — development, deployment, and recovery rules
 - [Device adapter contract](docs/ADAPTER.md) — future clock, voice, capacity, and recovery boundary
+- [UI architecture](docs/UI.md) — page model, rendering targets, focus, and restoration
+- [Integration experiments](docs/INTEGRATION-EXPERIMENTS.md) — gated physical-device feasibility plan
 - [AGENTS.md](AGENTS.md) — conventions for future Codex work
 
 ## License

@@ -39,11 +39,15 @@ Known limitation: the SDK lighting API covers the sixteen pad RGB LEDs, not butt
 
 The SDK provides stock-app paint interception and wrappers for color, rectangle, font, text, toasts, and repaint requests. Graphics handles are valid only during the paint callback. Its pad-lighting layer remembers native colors and can restore them, but overrides are last-writer-wins and restoration is the feature's responsibility. See [drawing](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/08-drawing.md) and [lighting](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/25-lighting.md).
 
-Full-screen HERETICC ownership while the stock app remains alive is plausible but not yet verified. UI refresh rate, screen-transfer cost, and interaction with long stock operations remain unknown.
+At the pinned SDK revision, the paint hook replaces vtable slot 27 only on the firmware's Sample-page class. It invokes the original paint first and HERETICC-style code afterward. Filling `(0, 0, 320, 240)` can cover that completed paint, but this is an overlay on one page class—not verified exclusive ownership of every child, dialog, toast, or later paint. The public primitives are ARGB color, filled rectangle, and one-line stock-font text with size; no image/bitmap blit, clipping API, custom typeface loader, font-family/style selector, or dirty-rectangle API is exposed. The SDK's repaint helper requests a broad rectangle and a 60 ms pump can retry coalesced/dropped requests. See [paint hook](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/src/sites.rs), [drawing implementation](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/src/draw.rs), and [drawing guide](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/08-drawing.md).
+
+Custom bitmap glyphs are architecturally possible using filled rectangles, but usable cost and appearance are unverified; there is no current bitmap upload/blit API. Custom firmware fonts or global stock-screen theming are not established. Required measurements are paint duration, sustained refresh rate, dropped/coalesced repaint behavior, stock overlays after the hook, and restoration after page changes/errors.
 
 ## Sample, slice, and audio limits
 
 The SDK documents typed access to the selected sample, pad-to-sample lookup, WAV metadata/audio reads, slice count/positions, stock reset/insert marker calls, Manual chop mode, audio input taps, and output mixing. These are verified at source/documentation level for SDK firmware 1.3.0.12, not by HERETICC.
+
+The SDK additionally exposes unsafe calls to the stock note-on/off handlers. This is a direct stock input path, but it needs live input/property objects and identifies source/pad rather than a persistent voice. It does not select an arbitrary sample or slice independently and does not correlate the call to an audio-frame timestamp. Therefore scheduler-quality stock triggering remains unverified.
 
 Still unknown:
 
@@ -52,6 +56,24 @@ Still unknown:
 - maximum safe polyphony and scheduling jitter while the stock UI is active;
 - whether all stereo input/output and stock effects paths remain intact under the required hooks;
 - stable sample identity across load, save, project switch, and pool mutation.
+
+## Proposed page-scoped input ownership
+
+Ownership is a state machine, not a global key map. When HERETICC is closed, every event is forwarded. On entry, the adapter captures the current page/surface generation; any mismatch or exit releases ownership, restores pad lights, and requests a stock repaint. A consumed press owns its matching release even if focus changes, preventing stuck stock notes or accidental release actions.
+
+| Control | HERETICC-owned page behavior | Default outside that scope |
+|---|---|---|
+| 16 pads | Grid/tracker selection, performance gestures, or explicit audition; velocity is note velocity, aftertouch ignored unless mapped | Forward press, release, and pressure |
+| DATA turn/push | Cursor/value navigation and confirm when the focused widget declares ownership | Forward |
+| K1–K3 | Focused parameter bank with pickup; consume only after pickup/explicit edit focus | Forward |
+| Pad-volume fader | Wet/dry or macro morph with pickup in performance/MIX-FX | Forward |
+| B1–B3 | Page-local soft actions shown on screen | Forward when no matching displayed action |
+| SHIFT | Modifier only; do not consume a lone press until a HERETICC chord is committed | Forward or replay the complete native pair if the chord is not claimed |
+| ERASE | Delete/clear only in an editing focus, with press/release pairing | Forward |
+| Transport | Observe by default; consume only in a future explicitly validated transport-owner mode | Forward |
+| Mode buttons | Proposed exit/page requests only after conflict testing; no permanent activation key is reserved | Forward |
+
+The SDK provides generic raw button codes and consume/forward decisions, but only a subset of codes has named constants. B1/B2, transport, mode-button, and fader mappings must be confirmed against the current page and physical device before use. Surface-pad events can duplicate the higher-level pad path; one router must deduplicate or assign distinct purposes rather than process both blindly.
 
 ## Effects and routing evidence
 

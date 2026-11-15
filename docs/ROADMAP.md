@@ -1,6 +1,6 @@
 # Roadmap
 
-Status labels: **planned**, **in progress**, **complete**. M0.1, M0.1b, M0.2, and the M0.2a hardening pass are complete; no device functionality is implemented.
+Status labels: **planned**, **in progress**, **complete**. M0.1, M0.1b, M0.2, M0.2a, and the research-only M0.3a are complete; no device functionality is implemented.
 
 ## M0 — Foundation
 
@@ -48,7 +48,20 @@ Acceptance criteria:
 - original HERETICC code is explicitly MIT-licensed while upstream/proprietary material remains outside that grant;
 - format, Clippy, workspace tests, Nix flake checks, and whitespace checks pass.
 
-### M0.3 Integration feasibility spike — planned
+### M0.3a Stock engine and custom UI feasibility research — complete
+
+This milestone contains source research, interface boundaries, UI architecture, and experiment plans only.
+
+Acceptance criteria:
+
+- SDK `e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39` is re-pinned, its current branch state and MIT license are recorded, and no dependency is added;
+- stock pad-path note calls are distinguished from token-addressable/sample-accurate voice scheduling;
+- Sample-page post-paint drawing, public primitives, repaint behavior, font/bitmap limits, and pad-light restoration are evidence-classified;
+- page-scoped input ownership forwards unowned controls and retains consumed press/release pairs;
+- minimum adapter responsibilities remain outside `hereticc-core` and no speculative public hardware traits are frozen;
+- UI architecture and separately reviewable experiments A–E are documented.
+
+### M0.3b Device feasibility experiments — planned
 
 This requires a separate, explicitly reviewed task because it creates device-facing executable code.
 
@@ -64,6 +77,8 @@ Acceptance criteria:
 - SD removal/reboot returns to stock without persistent device changes.
 
 Decision gate: proceed with the SDK adapter only if stock-engine control and timing satisfy an agreed threshold. Otherwise reassess the preservation goal before implementing a mixer.
+
+UI feasibility is a separate gate within M0.3b: one named page scope must sustain an agreed repaint/primitive budget and restore the stock screen and pad lights on every exit. Passing that gate approves renderer implementation work, not a complete UI.
 
 ### M0.4 Effects feasibility gates — planned
 
@@ -129,6 +144,8 @@ Acceptance criteria:
 - UI and pad lights restore on every exit/error path;
 - measured timing and physical test matrix are published.
 
+The first UI remains a diagnostic/grid slice sufficient to validate the adapter. Complete Tracker, Perform, MIX/FX, project browsing, typography refinement, and animation are later UI implementation work after M0.3b rendering/input feasibility passes; they are not hidden inside M2 acceptance.
+
 ## M3 — Editing and transitions
 
 Planned scope: grid/tracker views, independent pattern editing, scenes, songs, quantized launches, live event capture, undo/redo.
@@ -168,4 +185,4 @@ Acceptance criteria:
 
 ## Practical next engineering task
 
-Review and freeze the M0.2a public semantics and [device adapter contract](ADAPTER.md) before adding device code. The next implementation task should be a narrowly authorized **M0.3 integration feasibility spike** using the host adapter as a behavioral oracle and `mpc-sample-sdk` only after its exact revision/license is approved. It should consume semantic events without changing the core model and test clock/trigger feasibility; it must not add DSP, a complete UI, or M1 features.
+Owner review should now approve or revise the thresholds, stop conditions, and ordering in [M0.3b integration experiments](INTEGRATION-EXPERIMENTS.md). The next implementation task, if authorized, is experiment A only: a disposable firmware/SDK compatibility check at the pinned revision. Input, rendering, stock voice, and timing experiments remain separate approvals. No complete UI, DSP, deployment product, or M1 expansion belongs in M0.3b.

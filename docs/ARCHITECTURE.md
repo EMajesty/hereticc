@@ -2,7 +2,7 @@
 
 ## Status and recommendation
 
-The device architecture remains proposed. M0.2a implements the hardware-independent `hereticc-core` model, validator, scheduler, typed parameter representation, and bounded versioned codec, plus a separate host-only `hereticc-host` semantic event consumer. There is no device adapter, voice adapter, effects engine, audio processing, UI, MIDI, or deployment code.
+The device architecture remains proposed. M0.2a implements the hardware-independent `hereticc-core` model, validator, scheduler, typed parameter representation, and bounded versioned codec, plus a separate host-only `hereticc-host` semantic event consumer. M0.3a adds only stock-engine/UI research and interface/experiment documentation. There is no device adapter, voice adapter, effects engine, audio processing, UI renderer, MIDI backend, or deployment code.
 
 Start with **C: a separate host-testable sequencer core**, then integrate through **A: `mpc-sample-sdk`** if a focused device spike validates the required contracts. Do not fork or adapt a complete existing mod at this stage.
 
@@ -110,6 +110,8 @@ An output callback that can add samples to the final mix does not by itself prov
 ### UI adapter
 
 Grid and tracker views are projections of the same event model. UI state such as cursor, selection, and temporary audition is separate from saved musical state. Input ownership must be page-scoped; events not owned by HERETICC are forwarded to the stock application.
+
+The proposed renderer consumes immutable view frames and emits bounded rectangles/text; it never receives firmware pointers or owns sequencer state. The initial device backend may target only the verified Sample-page post-paint scope. Full-screen coverage, repaint budget, child/dialog ordering, typography, and restoration must pass M0.3b before a complete UI is authorized. See [UI architecture](UI.md).
 
 ### Persistence adapter
 
