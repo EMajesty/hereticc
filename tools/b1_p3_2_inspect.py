@@ -11,6 +11,9 @@ from pathlib import Path
 from typing import Callable
 
 MAX_INPUT_BYTES = 256 * 1024
+MAX_COLLECTION_BYTES = 4096
+MAX_COLLECTION_FIELDS = 32
+MAX_COLLECTION_VALUE_BYTES = 128
 EXPECTED_ADDRESS = "192.168.155.1"
 EXPECTED_SUBNET = "192.168.155.0/28"
 CATEGORIES = (
@@ -22,6 +25,7 @@ CATEGORIES = (
     "sockets",
     "firewall",
     "stock",
+    "collection",
 )
 
 
@@ -201,6 +205,18 @@ def analyze_process(text: str) -> dict[str, object]:
             executables.add(stripped == "/usr/bin/MPC Sample")
             continue
         malformed += 1
+    if len(ppids) != 1 or not parent_pids:
+        parent_match = _fact(
+            "unknown", None, "missing or ambiguous stock PPID or parent process row"
+        )
+    elif parent_pids == ppids:
+        parent_match = _fact(
+            "confirmed", True, "bounded parent process row matches stock PPID"
+        )
+    else:
+        parent_match = _fact(
+            "conflicting", False, "parent process rows contradict stock PPID"
+        )
     return {
         "facts": {
             "pid": _single(pids, "process PID"),
@@ -209,11 +225,7 @@ def analyze_process(text: str) -> dict[str, object]:
             "gid": _single(gids, "process GID"),
             "start_ticks": _single(starts, "Linux process start token"),
             "exact_stock_executable": _single(executables, "exact executable path"),
-            "parent_row_matches_ppid": _fact(
-                "confirmed" if len(ppids) == 1 and parent_pids else "unknown",
-                len(ppids) == 1 and parent_pids == ppids,
-                "bounded parent process row compared with stock PPID",
-            ),
+            "parent_row_matches_ppid": parent_match,
         },
         "malformed_lines": malformed,
     }
@@ -282,47 +294,66 @@ def analyze_mount(text: str) -> dict[str, object]:
 
 
 def analyze_network(text: str) -> dict[str, object]:
-    expected_interfaces: set[str] = set()
+    expected_addresses: set[tuple[str, int]] = set()
     expected_routes: set[str] = set()
-    up_interfaces: set[str] = set()
+    link_states: dict[str, set[bool]] = {}
     other_addresses = 0
     for line in text.splitlines():
-        link = re.match(r"\d+:\s+([A-Za-z0-9_.-]+):?.*(?:state\s+UP|<[^>]*\bUP\b[^>]*>)", line)
-        if link:
-            up_interfaces.add(link.group(1).rstrip(":"))
+        link = re.match(r"\d+:\s+([A-Za-z0-9_.-]+):\s+<([^>]*)>.*\bstate\s+(UP|DOWN|UNKNOWN)\b", line)
+        if link and " inet " not in f" {line} ":
+            interface, flags, state = link.groups()
+            link_states.setdefault(interface, set()).add(
+                state == "UP" or "UP" in flags.split(",")
+            )
         match = re.search(r"(?:^\d+:\s+|^)([A-Za-z0-9_.-]+).*?\binet\s+(\d{1,3}(?:\.\d{1,3}){3})/(\d{1,2})", line)
         if match:
             interface, address, prefix = match.groups()
             if address == EXPECTED_ADDRESS:
-                expected_interfaces.add(interface)
+                expected_addresses.add((interface, int(prefix)))
             else:
                 other_addresses += 1
-            if " UP " in f" {line} " or "state UP" in line:
-                up_interfaces.add(interface)
         route = re.search(r"192\.168\.155\.0/28\s+dev\s+([A-Za-z0-9_.-]+)", line)
         if route:
             expected_routes.add(route.group(1))
-    relation = (
-        "matching"
-        if len(expected_interfaces) == 1 and expected_interfaces == expected_routes
-        else "conflicting"
-        if expected_interfaces and expected_routes and expected_interfaces != expected_routes
-        else None
-    )
+    correct_interfaces = {interface for interface, prefix in expected_addresses if prefix == 28}
+    wrong_prefix = any(prefix != 28 for _, prefix in expected_addresses)
+    address_conflict = wrong_prefix or len(correct_interfaces) > 1
+    route_conflict = len(expected_routes) > 1
+    if address_conflict or route_conflict:
+        relation = "conflicting"
+    elif len(correct_interfaces) == 1 and len(expected_routes) == 1:
+        relation = "matching" if correct_interfaces == expected_routes else "conflicting"
+    else:
+        relation = None
+
+    if address_conflict:
+        address_fact = _fact(
+            "conflicting", None, "expected address has wrong /28 prefix or multiple interfaces"
+        )
+    else:
+        address_fact = _single(set(correct_interfaces), "expected USB /28 address assignment")
+
+    if len(correct_interfaces) != 1 or address_conflict:
+        up_fact = _fact("unknown", None, "expected USB interface is not uniquely established")
+    else:
+        interface = next(iter(correct_interfaces))
+        states = link_states.get(interface, set())
+        if not states:
+            up_fact = _fact("unknown", None, "missing explicit link-state evidence")
+        elif len(states) > 1:
+            up_fact = _fact("conflicting", None, "contradictory link-state observations")
+        else:
+            up_fact = _fact("confirmed", next(iter(states)), "explicit link-state evidence")
     return {
         "facts": {
-            "expected_address_interface": _single(set(expected_interfaces), "expected USB address assignment"),
+            "expected_address_interface": address_fact,
             "expected_subnet_route_interface": _single(set(expected_routes), "expected USB subnet route"),
             "address_route_relation": _fact(
                 "confirmed" if relation == "matching" else "conflicting" if relation == "conflicting" else "unknown",
                 relation,
                 "address and route interface comparison",
             ),
-            "expected_interface_up": _fact(
-                "confirmed" if len(expected_interfaces) == 1 else "unknown",
-                bool(expected_interfaces & up_interfaces),
-                "interface state from supplied address evidence",
-            ),
+            "expected_interface_up": up_fact,
         },
         "other_address_count": other_addresses,
     }
@@ -404,6 +435,184 @@ def analyze_stock(text: str) -> dict[str, object]:
     return {"facts": normal, "unexpected_fields": sorted(unexpected), "malformed_lines": malformed}
 
 
+COLLECTION_FIELDS = {
+    "evidence_schema",
+    "collection_phase",
+    "collection_status",
+    "restart_observed",
+    "systemd_version",
+    "service_type",
+    "service_kill_mode",
+    "service_restart",
+    "service_main_pid",
+    "service_cgroup",
+    "process_executable",
+    "process_pid",
+    "process_parent_pid",
+    "process_start_ticks",
+    "process_uid",
+    "process_gid",
+    "process_cgroup",
+    "run_filesystem",
+    "run_read_write",
+    "run_mode",
+    "usb_interface",
+    "usb_ipv4",
+    "usb_link_up",
+    "usb_route",
+    "usb_route_interface",
+    "listener_exact_ports",
+    "listener_wildcard_ports",
+}
+COLLECTION_REQUIRED = {
+    "evidence_schema",
+    "collection_phase",
+    "collection_status",
+    "restart_observed",
+}
+
+
+def analyze_collection(text: str) -> dict[str, object]:
+    """Validate the proposed bounded P3.2c selected-fact report."""
+    encoded = text.encode("utf-8")
+    values: dict[str, set[str]] = {}
+    counts: dict[str, int] = {}
+    unexpected: set[str] = set()
+    malformed = 0
+    oversized = len(encoded) > MAX_COLLECTION_BYTES
+    lines = text.splitlines()
+    for line in lines:
+        if not line or "=" not in line:
+            malformed += 1
+            continue
+        key, value = line.split("=", 1)
+        if key not in COLLECTION_FIELDS:
+            unexpected.add(key[:64])
+            continue
+        if len(value.encode("utf-8")) > MAX_COLLECTION_VALUE_BYTES:
+            malformed += 1
+            continue
+        counts[key] = counts.get(key, 0) + 1
+        values.setdefault(key, set()).add(value)
+
+    duplicate_conflict = any(count > 1 for count in counts.values())
+    missing = sorted(COLLECTION_REQUIRED - values.keys())
+    invalid: list[str] = []
+
+    def one(name: str) -> str | None:
+        items = values.get(name, set())
+        return next(iter(items)) if len(items) == 1 else None
+
+    exact_values = {
+        "evidence_schema": {"neurogenic-b1-p3.2c-v1"},
+        "collection_phase": {"pre-restart", "constructor", "post-restart"},
+        "collection_status": {"complete", "partial", "failed"},
+        "restart_observed": {"true", "false"},
+        "run_read_write": {"true", "false", "unknown"},
+        "usb_link_up": {"true", "false", "unknown"},
+        "process_executable": {"stock-exact", "other", "unknown"},
+    }
+    decimal_fields = {
+        "systemd_version",
+        "service_main_pid",
+        "process_pid",
+        "process_parent_pid",
+        "process_start_ticks",
+        "process_uid",
+        "process_gid",
+    }
+    safe_token_fields = {
+        "service_type",
+        "service_kill_mode",
+        "service_restart",
+        "run_filesystem",
+        "run_mode",
+        "usb_interface",
+        "usb_route_interface",
+    }
+    for name, allowed in exact_values.items():
+        value = one(name)
+        if value is not None and value not in allowed:
+            invalid.append(name)
+    for name in decimal_fields:
+        value = one(name)
+        if value is not None and not value.isdecimal():
+            invalid.append(name)
+    for name in safe_token_fields:
+        value = one(name)
+        if value is not None and not re.fullmatch(r"[A-Za-z0-9_.@:-]{1,64}", value):
+            invalid.append(name)
+    for name in ("service_cgroup", "process_cgroup"):
+        value = one(name)
+        if value is not None and not re.fullmatch(r"/[A-Za-z0-9_./@:-]{1,127}", value):
+            invalid.append(name)
+    if (value := one("usb_ipv4")) is not None and value != f"{EXPECTED_ADDRESS}/28":
+        invalid.append("usb_ipv4")
+    if (value := one("usb_route")) is not None and value != EXPECTED_SUBNET:
+        invalid.append("usb_route")
+    for name in ("listener_exact_ports", "listener_wildcard_ports"):
+        value = one(name)
+        if value is not None and not re.fullmatch(r"none|unknown|\d{1,5}(?:,\d{1,5})*", value):
+            invalid.append(name)
+        elif value not in {None, "none", "unknown"} and any(
+            int(port) > 65535 for port in value.split(",")
+        ):
+            invalid.append(name)
+
+    contradictions: list[str] = []
+    if one("collection_phase") == "pre-restart" and one("restart_observed") == "true":
+        contradictions.append("pre-restart phase reports a restart")
+    service_pid, process_pid = one("service_main_pid"), one("process_pid")
+    if service_pid is not None and process_pid is not None and service_pid != process_pid:
+        contradictions.append("service and process PID differ")
+    service_group, process_group = one("service_cgroup"), one("process_cgroup")
+    if service_group is not None and process_group is not None and service_group != process_group:
+        contradictions.append("service and process cgroup differ")
+    usb_interface, route_interface = one("usb_interface"), one("usb_route_interface")
+    if usb_interface is not None and route_interface is not None and usb_interface != route_interface:
+        contradictions.append("USB address and route interfaces differ")
+
+    conflicting = duplicate_conflict or bool(contradictions)
+    invalid_report = (
+        oversized
+        or len(lines) > MAX_COLLECTION_FIELDS
+        or malformed > 0
+        or bool(invalid)
+        or bool(unexpected)
+    )
+    if conflicting or invalid_report:
+        classification = "conflicting"
+    elif missing:
+        classification = "unknown"
+    else:
+        classification = "confirmed"
+
+    safe_values = {
+        key: next(iter(items))
+        for key, items in sorted(values.items())
+        if len(items) == 1 and key not in invalid
+    }
+    return {
+        "facts": {
+            "schema_validity": _fact(
+                classification,
+                classification == "confirmed",
+                "bounded selected-fact P3.2c evidence contract",
+            )
+        },
+        "selected_facts": safe_values,
+        "missing_fields": missing,
+        "unexpected_fields": sorted(unexpected),
+        "invalid_fields": sorted(set(invalid)),
+        "contradictions": sorted(contradictions),
+        "malformed_lines": malformed,
+        "bounds": {
+            "bytes_ok": not oversized,
+            "field_count_ok": len(lines) <= MAX_COLLECTION_FIELDS,
+        },
+    }
+
+
 ANALYZERS: dict[str, Callable[[str], dict[str, object]]] = {
     "systemd": analyze_systemd,
     "process": analyze_process,
@@ -413,6 +622,7 @@ ANALYZERS: dict[str, Callable[[str], dict[str, object]]] = {
     "sockets": analyze_sockets,
     "firewall": analyze_firewall,
     "stock": analyze_stock,
+    "collection": analyze_collection,
 }
 
 

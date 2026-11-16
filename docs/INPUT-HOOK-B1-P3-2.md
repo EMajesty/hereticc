@@ -4,6 +4,12 @@ Status: host-only procedure, evidence schema, and offline analyzer. No command
 was run on an MPC, and no service, payload, hook, listener, or device file was
 created. P3.2a and P3.2b both require new physical authorization.
 
+P3.2c supersedes the missing-command-channel next step with a designed, but not
+implemented or authorized, one-shot pre-restart SD autorun collector. It also
+hardens parent and USB evidence handling and adds a bounded selected-fact report
+schema. See [P3.2c](INPUT-HOOK-B1-P3-2C.md). This does not alter the P3.2b or B1
+physical no-go decisions.
+
 ## Executive conclusion and evidence baseline
 
 The repository does **not** establish a supported command-access mechanism to
@@ -144,6 +150,7 @@ python3 tools/b1_p3_2_inspect.py \
   --sockets /path/to/listeners.txt \
   --firewall /path/to/reviewed-firewall.txt \
   --stock /path/to/stock-observations.txt \
+  --collection /path/to/p3-2c-selected-facts.txt \
   > /tmp/mpc-b1-p3-2-analysis.json
 ```
 
@@ -168,6 +175,12 @@ START_AFTER=<same decimal ticks>
 ```
 
 This is operator-authored bounded observation metadata, not command output.
+
+The optional P3.2c collection file uses the versioned, 4096-byte selected-fact
+contract specified in P3.2c. Duplicate or contradictory parent rows now conflict
+instead of being accepted. USB confirmation requires the exact `/28`, one
+matching address/route interface, and separately supplied link-state evidence;
+an address line alone leaves link state unknown.
 
 ## Evidence and decision matrix
 
@@ -237,9 +250,10 @@ network listener, B0 reader, preload, or DATA hook.
 
 ## Recommendation and go/no-go
 
-Review this procedure first. The next action is to identify whether a supported
-or separately approvable read-only command-access mechanism exists. If none
-exists, P3.2a device collection remains blocked and P3.2b must not proceed.
+Review P3.2c's safer pre-restart autorun design next. It avoids inventing a
+general command channel and collects the baseline before any service change,
+but implementation, packaging, and a single physical run remain separate
+authorization gates. P3.2b must not proceed from design evidence alone.
 
 **No-go for P3.2 device execution, P3.2b, relay implementation/deployment, and
 B1 physical hook testing.**

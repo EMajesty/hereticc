@@ -186,6 +186,14 @@ decision matrix, and a separately authorized zero-hook transient-unit proposal.
 No service, restart, listener, payload, or hook is created; see
 [P3.2](INPUT-HOOK-B1-P3-2.md).
 
+B1-P3.2c designs a narrower alternative for the baseline: a future one-shot SD
+autorun collector that publishes selected pre-restart facts and exits without a
+drop-in, daemon-reload, service restart, helper, or listener. The host analyzer
+now rejects contradictory parent rows, requires exact `/28` address/route/link
+evidence, and validates a bounded versioned report. No collector or package is
+implemented, and independent-unit survival remains unproved; see
+[P3.2c](INPUT-HOOK-B1-P3-2C.md).
+
 ### M0.3b-C–E Device feasibility experiments — planned and blocked
 
 This requires a separate, explicitly reviewed task because it creates device-facing executable code.
@@ -312,9 +320,9 @@ Acceptance criteria:
 
 ## Practical next engineering task
 
-The next decision is whether to authorize P3.2a's exact passive allowlist after
-first establishing a supported or separately reviewed read-only command-access
-mechanism. Without that access path P3.2a remains blocked. P3.2b transient-unit
-testing, cross-building, deployment, and physical DATA-hook execution remain
-later separate authorization gates. Rendering, stock voice, and timing remain
-separate later approvals.
+The next engineering milestone is host-only implementation and static review of
+P3.2c's bounded pre-restart collector and inert package generator. That work,
+package production, a single zero-hook physical run, and later P3.2b
+transient-unit testing each require separate authorization. Cross-building,
+relay deployment, and physical DATA-hook execution remain later gates.
+Rendering, stock voice, and timing remain separate later approvals.

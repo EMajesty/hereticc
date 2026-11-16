@@ -40,7 +40,8 @@ class InspectionTests(unittest.TestCase):
             "4242 1 1000 1000 /usr/bin/MPC Sample\n" + proc_stat()
         )
         network = INSPECT.analyze_network(
-            "3: usb0 state UP inet 192.168.155.1/28\n"
+            "3: usb0: <BROADCAST,UP> mtu 1500 state UP\n"
+            "3: usb0 inet 192.168.155.1/28\n"
             "192.168.155.0/28 dev usb0 scope link\n"
         )
         self.assertEqual(systemd["facts"]["Type"]["value"], "notify")
@@ -87,10 +88,37 @@ class InspectionTests(unittest.TestCase):
         self.assertEqual(result["facts"]["pid"]["classification"], "unknown")
         self.assertEqual(result["facts"]["start_ticks"]["classification"], "unknown")
 
+    def test_parent_row_must_match_stock_ppid_exactly(self):
+        matching = INSPECT.analyze_process(
+            "4242 77 1000 1000 /usr/bin/MPC Sample\n77 1 0 0 parent\n"
+        )
+        contradictory = INSPECT.analyze_process(
+            "4242 77 1000 1000 /usr/bin/MPC Sample\n88 1 0 0 parent\n"
+        )
+        multiple = INSPECT.analyze_process(
+            "4242 77 1000 1000 /usr/bin/MPC Sample\n77 1 0 0 parent\n88 1 0 0 other\n"
+        )
+        missing = INSPECT.analyze_process("4242 77 1000 1000 /usr/bin/MPC Sample\n")
+        self.assertEqual(
+            matching["facts"]["parent_row_matches_ppid"]["classification"], "confirmed"
+        )
+        self.assertTrue(matching["facts"]["parent_row_matches_ppid"]["value"])
+        for result in (contradictory, multiple):
+            self.assertEqual(
+                result["facts"]["parent_row_matches_ppid"]["classification"],
+                "conflicting",
+            )
+            self.assertFalse(result["facts"]["parent_row_matches_ppid"]["value"])
+        self.assertEqual(
+            missing["facts"]["parent_row_matches_ppid"]["classification"], "unknown"
+        )
+
     def test_unrelated_network_interfaces_and_addresses_are_redacted(self):
         result = INSPECT.analyze_network(
-            "2: wlan-secret state UP inet 10.44.55.66/24\n"
-            "3: usb0 state UP inet 192.168.155.1/28\n"
+            "2: wlan-secret: <BROADCAST,UP> mtu 1500 state UP\n"
+            "2: wlan-secret inet 10.44.55.66/24\n"
+            "3: usb0: <BROADCAST,UP> mtu 1500 state UP\n"
+            "3: usb0 inet 192.168.155.1/28\n"
             "192.168.155.0/28 dev usb0 scope link\n"
         )
         encoded = json.dumps(result, sort_keys=True)
@@ -100,13 +128,107 @@ class InspectionTests(unittest.TestCase):
 
     def test_unexpected_usb_address_does_not_satisfy_mapping_gate(self):
         result = INSPECT.analyze_network(
-            "3: usb0 state UP inet 192.168.155.2/28\n"
+            "3: usb0 inet 192.168.155.2/28\n"
             "192.168.155.0/28 dev usb0 scope link\n"
         )
         self.assertEqual(
             result["facts"]["expected_address_interface"]["classification"], "unknown"
         )
         self.assertEqual(result["facts"]["address_route_relation"]["classification"], "unknown")
+
+    def test_usb_mapping_requires_prefix_same_interface_and_explicit_link_state(self):
+        missing_link = INSPECT.analyze_network(
+            "3: usb0 inet 192.168.155.1/28\n192.168.155.0/28 dev usb0\n"
+        )
+        wrong_prefix = INSPECT.analyze_network(
+            "3: usb0 inet 192.168.155.1/24\n192.168.155.0/28 dev usb0\n"
+        )
+        wrong_route = INSPECT.analyze_network(
+            "3: usb0 inet 192.168.155.1/28\n192.168.155.0/28 dev eth0\n"
+        )
+        down = INSPECT.analyze_network(
+            "3: usb0: <BROADCAST> mtu 1500 state DOWN\n"
+            "3: usb0 inet 192.168.155.1/28\n192.168.155.0/28 dev usb0\n"
+        )
+        self.assertEqual(
+            missing_link["facts"]["expected_interface_up"]["classification"], "unknown"
+        )
+        self.assertEqual(
+            wrong_prefix["facts"]["expected_address_interface"]["classification"],
+            "conflicting",
+        )
+        self.assertEqual(
+            wrong_prefix["facts"]["address_route_relation"]["classification"],
+            "conflicting",
+        )
+        self.assertEqual(
+            wrong_route["facts"]["address_route_relation"]["classification"],
+            "conflicting",
+        )
+        self.assertEqual(down["facts"]["expected_interface_up"]["classification"], "confirmed")
+        self.assertFalse(down["facts"]["expected_interface_up"]["value"])
+
+    def test_multiple_usb_observations_and_link_states_conflict(self):
+        result = INSPECT.analyze_network(
+            "3: usb0: <BROADCAST,UP> mtu 1500 state UP\n"
+            "3: usb0: <BROADCAST> mtu 1500 state DOWN\n"
+            "3: usb0 inet 192.168.155.1/28\n"
+            "4: eth0 inet 192.168.155.1/28\n"
+            "192.168.155.0/28 dev usb0\n"
+        )
+        self.assertEqual(
+            result["facts"]["expected_address_interface"]["classification"], "conflicting"
+        )
+        self.assertEqual(result["facts"]["expected_interface_up"]["classification"], "unknown")
+
+    def test_collection_schema_validates_selected_facts_and_cross_checks(self):
+        valid = INSPECT.analyze_collection(
+            "evidence_schema=neurogenic-b1-p3.2c-v1\n"
+            "collection_phase=pre-restart\ncollection_status=complete\n"
+            "restart_observed=false\nservice_main_pid=4242\nprocess_pid=4242\n"
+            "service_cgroup=/system.slice/ac50.service\n"
+            "process_cgroup=/system.slice/ac50.service\n"
+            "usb_interface=usb0\nusb_ipv4=192.168.155.1/28\n"
+            "usb_route=192.168.155.0/28\nusb_route_interface=usb0\n"
+        )
+        conflict = INSPECT.analyze_collection(
+            "evidence_schema=neurogenic-b1-p3.2c-v1\n"
+            "collection_phase=pre-restart\ncollection_status=complete\n"
+            "restart_observed=true\nservice_main_pid=1\nprocess_pid=2\n"
+        )
+        self.assertEqual(valid["facts"]["schema_validity"]["classification"], "confirmed")
+        self.assertEqual(
+            conflict["facts"]["schema_validity"]["classification"], "conflicting"
+        )
+        self.assertEqual(len(conflict["contradictions"]), 2)
+
+    def test_collection_schema_bounds_missing_duplicate_and_redaction(self):
+        missing = INSPECT.analyze_collection("evidence_schema=neurogenic-b1-p3.2c-v1\n")
+        duplicate = INSPECT.analyze_collection(
+            "evidence_schema=neurogenic-b1-p3.2c-v1\n"
+            "collection_phase=pre-restart\ncollection_phase=constructor\n"
+            "collection_status=partial\nrestart_observed=false\n"
+            "secret=do-not-emit\n"
+        )
+        unexpected = INSPECT.analyze_collection(
+            "evidence_schema=neurogenic-b1-p3.2c-v1\n"
+            "collection_phase=pre-restart\ncollection_status=partial\n"
+            "restart_observed=false\nsecret=do-not-emit\n"
+        )
+        with mock.patch.object(INSPECT, "MAX_COLLECTION_BYTES", 8):
+            oversized = INSPECT.analyze_collection(
+                "evidence_schema=neurogenic-b1-p3.2c-v1\n"
+            )
+        self.assertEqual(missing["facts"]["schema_validity"]["classification"], "unknown")
+        self.assertEqual(
+            duplicate["facts"]["schema_validity"]["classification"], "conflicting"
+        )
+        self.assertNotIn("do-not-emit", json.dumps(duplicate))
+        self.assertEqual(
+            unexpected["facts"]["schema_validity"]["classification"], "conflicting"
+        )
+        self.assertNotIn("do-not-emit", json.dumps(unexpected))
+        self.assertFalse(oversized["bounds"]["bytes_ok"])
 
     def test_oversized_and_invalid_encoding_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
