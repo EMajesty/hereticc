@@ -179,6 +179,13 @@ post-stability identity order, rejects counter-total overflow with a stricter
 checked relay gate, and requires canonical single-Host HTTP framing. It changes
 no B0 code, listener, device payload, or physical-test authorization.
 
+B1-P3.2 prepares, but does not execute, lifecycle discovery. It provides a
+bounded offline evidence analyzer, an explicit passive command allowlist that
+remains blocked because no device command channel is established, a nine-gate
+decision matrix, and a separately authorized zero-hook transient-unit proposal.
+No service, restart, listener, payload, or hook is created; see
+[P3.2](INPUT-HOOK-B1-P3-2.md).
+
 ### M0.3b-C–E Device feasibility experiments — planned and blocked
 
 This requires a separate, explicitly reviewed task because it creates device-facing executable code.
@@ -305,9 +312,9 @@ Acceptance criteria:
 
 ## Practical next engineering task
 
-The next milestone is separately authorized B1-P3.2 read-only lifecycle
-discovery without the DATA hook or relay. It must establish the actual service
-cgroup/kill policy, independent-unit survival, least readable UID, CDC-NCM bind
-scope, firewall exposure, and stock identity continuity. Cross-building,
-deployment, and physical DATA-hook execution remain later separate authorization
-gates. Rendering, stock voice, and timing remain separate later approvals.
+The next decision is whether to authorize P3.2a's exact passive allowlist after
+first establishing a supported or separately reviewed read-only command-access
+mechanism. Without that access path P3.2a remains blocked. P3.2b transient-unit
+testing, cross-building, deployment, and physical DATA-hook execution remain
+later separate authorization gates. Rendering, stock voice, and timing remain
+separate later approvals.
