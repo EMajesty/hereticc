@@ -88,7 +88,8 @@ def inspect(repo: Path, package: Path) -> dict[str, object]:
             violations.append(f"prohibited wrapper operation: {token}")
     required = (
         '[ "$#" -eq 0 ]', 'STOCK="/usr/bin/MPC Sample"', f'FW="{FIRMWARE_SHA256}"',
-        'exec "$COLLECTOR"', '[ ! -L "$COLLECTOR" ]',
+        'READ_STATUS=%s', 'BYTES=4096', 'COUNT_STATUS=0', 'HASH_STATUS=0',
+        'HASH_OUTPUT=$FW  -', 'exec "$COLLECTOR"', '[ ! -L "$COLLECTOR" ]',
     )
     if not all(token in text for token in required) or text.count('\nexec "$COLLECTOR"\n') != 1:
         violations.append("wrapper control-flow structure mismatch")

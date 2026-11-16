@@ -93,7 +93,10 @@ class PackageTests(unittest.TestCase):
 
 
 class WrapperSimulationTests(unittest.TestCase):
-    def run_wrapper(self, firmware, collector_body, arguments=(), interrupt=False, repeats=1, match=True):
+    def run_wrapper(
+        self, firmware, collector_body, arguments=(), interrupt=False,
+        repeats=1, match=True, utility_overrides=None,
+    ):
         with tempfile.TemporaryDirectory() as directory:
             autorun = Path(directory) / "autorun"
             autorun.mkdir()
@@ -104,9 +107,18 @@ class WrapperSimulationTests(unittest.TestCase):
             if collector_body is not None:
                 collector.write_text(collector_body)
                 collector.chmod(0o755)
+            path = os.environ["PATH"]
+            if utility_overrides:
+                utilities = Path(directory) / "utilities"
+                utilities.mkdir()
+                for name, body in utility_overrides.items():
+                    utility = utilities / name
+                    utility.write_text(body)
+                    utility.chmod(0o755)
+                path = f"{utilities}:{path}"
             source = (ROOT / "device/m03b-b1-p3-2g/autorun.sh").read_text()
             source = source.replace('/media/*/autorun)', '*/autorun)')
-            source = source.replace('PATH=/usr/bin:/bin', f'PATH={os.environ["PATH"]}')
+            source = source.replace('PATH=/usr/bin:/bin', f'PATH={path}')
             source = source.replace('STOCK="/usr/bin/MPC Sample"', f'STOCK="{stock}"')
             if firmware is not None:
                 expected = hashlib.sha256(firmware[:4096]).hexdigest() if match else "0" * 64
@@ -136,6 +148,49 @@ class WrapperSimulationTests(unittest.TestCase):
         firmware = b"f" * 4096
         body = "#!/bin/sh\n[ ! -e \"$0.used\" ] || exit 9\n: > \"$0.used\"\nexit 0\n"
         self.assertEqual(self.run_wrapper(firmware, body, repeats=2), [0, 9])
+
+    def test_guard_rejects_short_failed_and_malformed_prefix_reads(self):
+        collector = "#!/bin/sh\nexit 0\n"
+        self.assertNotEqual(self.run_wrapper(b"short", collector), 0)
+        with tempfile.TemporaryDirectory() as directory:
+            prefix = Path(directory) / "prefix"
+            prefix.write_bytes(b"f" * 4096)
+            failed_dd = f'#!/bin/sh\ncat "{prefix}"\nexit 7\n'
+            self.assertNotEqual(
+                self.run_wrapper(
+                    b"f" * 4096, collector, utility_overrides={"dd": failed_dd}
+                ),
+                0,
+            )
+            malformed = Path(directory) / "malformed"
+            malformed.write_bytes(b"g" * 4096)
+            malformed_dd = f'#!/bin/sh\ncat "{malformed}"\nexit 0\n'
+            self.assertNotEqual(
+                self.run_wrapper(
+                    b"f" * 4096,
+                    collector,
+                    utility_overrides={"dd": malformed_dd},
+                ),
+                0,
+            )
+        malformed_hash = "#!/bin/sh\nprintf 'not-a-sha256  -\\n'\nexit 0\n"
+        self.assertNotEqual(
+            self.run_wrapper(
+                b"f" * 4096,
+                collector,
+                utility_overrides={"sha256sum": malformed_hash},
+            ),
+            0,
+        )
+        failed_hash = "#!/bin/sh\nexit 127\n"
+        self.assertNotEqual(
+            self.run_wrapper(
+                b"f" * 4096,
+                collector,
+                utility_overrides={"sha256sum": failed_hash},
+            ),
+            0,
+        )
 
     def test_unmodified_wrapper_rejects_non_media_package_directory(self):
         with tempfile.TemporaryDirectory() as directory:

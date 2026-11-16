@@ -35,24 +35,28 @@ all six files. The generated `repro-a` package had:
 
 | File | SHA-256 |
 |---|---|
-| `autorun.check` | `d84f508ba29b97b1451b0bd885bc3af6e9832dde845d14285039eba74e87f09a` |
+| `autorun.check` | `eec78fc186c4ea6c219bf43fcdd4804f413a478b694fbf42b0e2b1515de7d8a9` |
 | `autorun.json` | `591725af84e1606de0c459d610bd650a8ebf178c3c0a3a8d3521b92df48deaf4` |
-| `autorun.sh` | `5ffb63e85e80cb322f1987caf546a0c293e6a1311a14e9b8d09d464b40843dc7` |
+| `autorun.sh` | `c246de35286fa324d328bd618ef14613329b98079b7809616811aa7301bc6d1e` |
 | `p3_2f_collector` | `58c0caa61a543203e4d34568b1011339a06e6fc6ea06d52d191828dc6dadc49c` |
-| `PACKAGE-MANIFEST.json` | `fe8661047bf6bc7963157fd3ef82bf2992de92b5bab777f7be5dd797a670ff75` |
-| `SHA256SUMS` | `d0fbfa1f6f53948727145ef69bf9035478a3c4f29e86a91b028b0c0df65abc69` |
+| `PACKAGE-MANIFEST.json` | `0dbb9d5bafbee44292f6bc494f56109a5c206d75014dc004971ab1f00d88f33e` |
+| `SHA256SUMS` | `af76e05fb0e321f318f96128a529ff5faf5c0aeeaaf92ee07bff6b18ace12914` |
 
 The inspector's ordered-content package digest was
-`c1370435fe07f50f7f1e4cef756a742a627f6253c3d35bc285b0620c8e8ead17`.
+`1c232a1d52890c219996f5163b9c881a920a6169e63f3945ca32e6eea7fede0a`.
 Generated directories remain ignored under `target/b1-p3-2g/`.
 
 ## Wrapper behavior
 
-The wrapper uses the same shell constructs and `dd | sha256sum | cut` guard as
-the established A4 generator. It rejects arguments, fixes `PATH`, clears shell
-startup and dynamic-loader environment variables, resolves its directory, and
-requires `/media/<component>/autorun`. It requires regular, non-symlink stock
-and collector files. The firmware digest is exactly
+The wrapper stays within the established POSIX shell environment but hardens
+A4's original pipeline. A first prefix pass reports the `dd` and `wc` statuses
+through a separate inherited descriptor and requires exactly 4096 bytes. A
+second pass independently reports the `dd` and `sha256sum` statuses and requires
+the exact canonical hash output. It needs no `pipefail`, temporary file, or
+background job. It rejects arguments, fixes `PATH`, clears shell startup and
+dynamic-loader environment variables, resolves its directory, and requires
+`/media/<component>/autorun`. It requires regular, non-symlink stock and
+collector files. The firmware digest is exactly
 `44507c7a7d3029c411b2e3780ea286ca3e08b7e3ffd7b5047d52f73bf5299d1f`.
 There is one foreground `exec`, so the wrapper leaves no child and the collector
 status becomes the autorun status. There is no loop, retry, copy, signal, or
@@ -160,7 +164,8 @@ This procedure is proposed only; it has not been authorized or executed.
 ## Host validation results
 
 - `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v`:
-  43 passed, including 7 package/wrapper tests.
+  44 passed, including 8 package/wrapper tests and failed/short/malformed
+  firmware-prefix coverage.
 - `cargo fmt --all -- --check`: passed with pinned Rust 1.97.0.
 - `cargo clippy --locked --offline --workspace --all-targets -- -D warnings`:
   passed.
