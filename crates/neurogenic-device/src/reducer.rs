@@ -120,6 +120,12 @@ impl UiState {
         core::mem::take(&mut self.pending_repaint)
     }
 
+    /// Whether the UI has a repaint pending, without acknowledging it.
+    #[must_use]
+    pub const fn pending_repaint(&self) -> bool {
+        self.pending_repaint
+    }
+
     /// Apply one decoded button event.
     pub fn button(&mut self, button: Button, pressed: bool, shift: bool) -> Outcome {
         let owner = match button {

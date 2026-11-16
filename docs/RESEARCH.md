@@ -2,6 +2,14 @@
 
 Research date: **2026-11-15**. Repositories were inspected at the commits linked below. Upstream projects can change after this snapshot.
 
+HIL-0 rechecked the requested upstream heads on 2026-11-16. The SDK and
+MINIMOD revisions remain `9487cbb` and `18d41fd`. The temporary root-SSH
+reference remains `8334ca0` and still has no license, so NEUROGENIC does not
+copy or redistribute it. `virtual-mpc-sample` at `15f732c` is MIT-licensed and
+already provides scripted control-surface frames, autorun/preload testing, QEMU
+screen capture, and an audio bridge; it is the preferred future Level C/D
+backend rather than a new emulator. See [HIL-0](HIL-0.md).
+
 ## Confidence labels
 
 - **Verified:** directly supported by linked source/documentation or an explicit upstream hardware result.

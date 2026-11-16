@@ -1,5 +1,7 @@
 //! Stable NEUROGENIC editor page implemented through `mpc-sample-sdk`.
 
+#[cfg(feature = "hil-test-interface")]
+pub mod hil;
 pub mod reducer;
 
 use mpc_sample_sdk::event::button;

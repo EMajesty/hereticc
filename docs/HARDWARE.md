@@ -41,6 +41,12 @@ upstream physical evidence, not a NEUROGENIC test. The kit has no license file,
 and a root shell is a materially broader security boundary than the planned SDK
 mod, so SSH is not part of the normal integration path.
 
+HIL-0 adds a host-tested controller for this externally installed SSH path. It
+requires a pre-enrolled dedicated host key, exact USB endpoint, firmware
+prefix, AArch64 architecture, `ac50.service` state, MainPID, and executable
+identity before staging or restart. No HIL command has yet run on hardware;
+upstream SSH validation is not NEUROGENIC deployment validation.
+
 These facts are research inputs, not permission to depend directly on raw protocols. An in-process extension should prefer a guarded adapter such as the SDK and retain stock ownership wherever possible.
 
 ## Controls relevant to NEUROGENIC

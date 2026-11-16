@@ -6,6 +6,10 @@ license = "MIT"
 rust-version = "1.97"
 description = "MPC Sample SDK UI/input prototype for NEUROGENIC"
 
+[features]
+default = []
+hil-test-interface = []
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 

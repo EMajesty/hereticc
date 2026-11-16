@@ -461,6 +461,21 @@ Acceptance criteria:
 
 ## Practical next engineering task
 
+HIL-0 is now a host-tested foundation: a strict standard-library CLI covers the
+pinned build, read-only identity/status, bounded volatile deployment, one
+requested stock-app restart, evidence collection, and exact stock restoration.
+Device-changing commands require an owner-installed temporary SSH prerequisite,
+the exact firmware identity, and an explicit confirmation token. No hardware
+operation has been performed.
+
+The feature-gated fixed-capacity command protocol exercises the actual device
+UI reducer in host tests. Level B delivery into the live mod remains
+deliberately unimplemented; Level C physical input and Level D visual/audio
+capture remain planned. Prefer the MIT-licensed `virtual-mpc-sample` backend for
+those later capabilities. See [HIL-0](HIL-0.md). The next HIL action is owner
+review and, only under separate authorization, the documented read-only
+`status` gate—not automatic deployment.
+
 The immediate decision is owner review and, if separately authorized, one
 M0.3e regression run of the restored M0.3c editor behavior. The next engineering
 milestone should implement a bounded, firmware-guarded SDK stock-sequence

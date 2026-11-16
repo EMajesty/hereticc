@@ -56,6 +56,15 @@ The only acceptable initial deployment model is SD-card based and reversible:
 
 An SD autorun may execute as root and can still damage the device if wrong. “Runs from SD” is not itself a safety guarantee.
 
+HIL-0 permits a future, separately authorized USB development session only
+through a dedicated, strictly pinned host key and the fixed
+`root@192.168.155.1:2222` endpoint. Its host CLI exposes no arbitrary remote
+command, stages only under `/run/neurogenic-hil`, refuses unrelated service
+drop-ins, and requires an explicit confirmation token for deployment, restart,
+or restoration. Temporary root SSH remains a broad privileged attack surface
+and an unlicensed external prerequisite; it must not be redistributed by this
+repository. No HIL hardware session is authorized by the implementation.
+
 The M0.3b-A package's `autorun.json` sets `askQuestion` to false. Treat copying
 its `autorun` directory to a card and inserting/booting that card as physical
 execution, not package inspection. The script performs one guarded transient
