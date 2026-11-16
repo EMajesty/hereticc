@@ -4,7 +4,7 @@ pub mod reducer;
 
 use mpc_sample_sdk::event::button;
 use mpc_sample_sdk::{ButtonEvent, EncoderEvent, Flow, Mod, PadAction, PadEvent, PaintEvent};
-use reducer::{Button, PadStatus, Playback, UiState};
+use reducer::{Button, PadStatus, UiState};
 
 /// Device mod state. It contains no retained firmware pointer.
 #[derive(Default)]
@@ -95,7 +95,7 @@ impl NeurogenicDevice {
             let pad_status = match self.ui.pad_status() {
                 PadStatus::NoCallback => "PAD CB: none",
                 PadStatus::DispatchUnavailable => "PAD CB: owned; native unavailable",
-                PadStatus::NativeAttempted => "PAD CB: native dispatch attempted",
+                PadStatus::NativeForwardRequested => "PAD CB: native forward requested",
             };
             let (hooks, input, properties) = self.ui.pad_capabilities();
             let capability = format!(
@@ -164,39 +164,12 @@ impl Mod for NeurogenicDevice {
             self.ui
                 .record_pad_callback(notes_ready, event.input != 0, event.properties != 0);
         }
-        // `notes_ready` means both displaced note sites exist. The press
-        // callback alone proves only note-on is installed; paired manual
-        // dispatch must not start unless note-off is available too.
-        let native_dispatch_available =
-            event.input != 0 && (!pressed || event.properties != 0) && notes_ready;
+        // The SDK's supported physical-pad path forwards these exact callback
+        // arguments after this method returns. Properties may legitimately be
+        // zero; paired hooks and a live input are sufficient to own a matched
+        // physical press/release without fabricating an object.
+        let native_dispatch_available = event.input != 0 && notes_ready;
         let outcome = self.ui.pad(event.pad, pressed, native_dispatch_available);
-        match outcome.playback {
-            Playback::None => {}
-            Playback::NoteOn(pad) => {
-                // SAFETY: all firmware objects come from this live pad
-                // callback, on its owning UI path. Only the numeric pad is
-                // retained by the reducer.
-                let sent = unsafe {
-                    mpc_sample_sdk::midi::send_note_on(
-                        event.input,
-                        event.source,
-                        i32::from(pad),
-                        event.properties,
-                        event.velocity,
-                    )
-                };
-                if !sent {
-                    self.ui.note_on_failed(pad);
-                }
-            }
-            Playback::NoteOff(pad) => {
-                // SAFETY: `input` is callback-local and pad/source match the
-                // consumed note-on pair.
-                unsafe {
-                    mpc_sample_sdk::midi::send_note_off(event.input, event.source, i32::from(pad));
-                }
-            }
-        }
         if outcome.repaint {
             Self::repaint_live_sample_page();
         }

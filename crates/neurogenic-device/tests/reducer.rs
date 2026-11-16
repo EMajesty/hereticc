@@ -1,4 +1,4 @@
-use neurogenic_device::reducer::{Button, Flow, PadStatus, Playback, UiState};
+use neurogenic_device::reducer::{Button, Flow, PadStatus, UiState};
 
 fn open(ui: &mut UiState) {
     let result = ui.button(Button::Data, true, true);
@@ -39,10 +39,9 @@ fn encoder_wraps_in_both_directions_and_uses_full_delta() {
 fn pads_select_tracks_and_preserve_consumed_pairs() {
     let mut ui = UiState::default();
     open(&mut ui);
-    assert_eq!(ui.pad(7, true, true).playback, Playback::NoteOn(7));
+    assert_eq!(ui.pad(7, true, true).flow, Flow::Forward);
     assert_eq!(ui.selected_track(), 7);
-    assert_eq!(ui.pad(7, true, true).playback, Playback::None);
-    assert_eq!(ui.pad(7, false, true).playback, Playback::NoteOff(7));
+    assert_eq!(ui.pad(7, true, true).flow, Flow::Consume);
     assert_eq!(ui.pad(7, false, true).flow, Flow::Forward);
 }
 
@@ -78,7 +77,7 @@ fn page_loss_closes_and_drains_owned_releases() {
     let lost = ui.lose_page();
     assert!(lost.restore);
     assert!(!ui.is_open());
-    assert_eq!(ui.pad(3, false, true).playback, Playback::NoteOff(3));
+    assert_eq!(ui.pad(3, false, true).flow, Flow::Forward);
     assert_eq!(ui.button(Button::Plus, false, false).flow, Flow::Consume);
     assert_eq!(ui.pad(4, true, true).flow, Flow::Forward);
     assert_eq!(ui.encoder(1).flow, Flow::Forward);
@@ -88,13 +87,13 @@ fn page_loss_closes_and_drains_owned_releases() {
 fn audition_is_one_voice_and_retriggers_only_after_release() {
     let mut ui = UiState::default();
     open(&mut ui);
-    assert_eq!(ui.pad(2, true, true).playback, Playback::NoteOn(2));
-    assert_eq!(ui.pad(2, true, true).playback, Playback::None);
+    assert_eq!(ui.pad(2, true, true).flow, Flow::Forward);
+    assert_eq!(ui.pad(2, true, true).flow, Flow::Consume);
     assert_eq!(ui.pad(5, true, true).flow, Flow::Consume);
     assert_eq!(ui.pad(5, false, true).flow, Flow::Consume);
     assert_eq!(ui.selected_track(), 2);
-    assert_eq!(ui.pad(2, false, true).playback, Playback::NoteOff(2));
-    assert_eq!(ui.pad(5, true, true).playback, Playback::NoteOn(5));
+    assert_eq!(ui.pad(2, false, true).flow, Flow::Forward);
+    assert_eq!(ui.pad(5, true, true).flow, Flow::Forward);
 }
 
 #[test]
@@ -108,7 +107,7 @@ fn close_waits_for_note_off_and_then_restores_stock_page() {
     assert!(!deferred.restore);
     ui.button(Button::Data, false, false);
     let released = ui.pad(4, false, true);
-    assert_eq!(released.playback, Playback::NoteOff(4));
+    assert_eq!(released.flow, Flow::Forward);
     assert!(released.restore);
     assert!(!ui.is_open());
 }
@@ -135,26 +134,25 @@ fn pad_capability_display_state_is_bounded_and_explicit() {
 }
 
 #[test]
-fn unsupported_release_forwards_matching_stock_note_off() {
+fn release_forwards_matching_stock_note_off_even_if_capability_changes() {
     let mut ui = UiState::default();
     open(&mut ui);
     ui.pad(6, true, true);
     let release = ui.pad(6, false, false);
     assert_eq!(release.flow, Flow::Forward);
-    assert_eq!(release.playback, Playback::None);
     assert_eq!(ui.active_audition(), None);
 }
 
 #[test]
-fn failed_native_call_drops_audition_without_claiming_success() {
+fn null_properties_do_not_block_supported_native_forwarding() {
     let mut ui = UiState::default();
     open(&mut ui);
     assert_eq!(ui.pad_status(), PadStatus::NoCallback);
-    assert_eq!(ui.pad(6, true, true).playback, Playback::NoteOn(6));
-    ui.note_on_failed(6);
-    assert_eq!(ui.active_audition(), None);
-    assert_eq!(ui.pad_status(), PadStatus::DispatchUnavailable);
-    assert_eq!(ui.pad(6, false, false).flow, Flow::Consume);
+    ui.record_pad_callback(true, true, false);
+    assert_eq!(ui.pad(6, true, true).flow, Flow::Forward);
+    assert_eq!(ui.active_audition(), Some(6));
+    assert_eq!(ui.pad_status(), PadStatus::NativeForwardRequested);
+    assert_eq!(ui.pad(6, false, true).flow, Flow::Forward);
 }
 
 #[test]

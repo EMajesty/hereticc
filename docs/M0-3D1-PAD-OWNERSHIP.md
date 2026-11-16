@@ -1,7 +1,8 @@
 # M0.3d.1 pad ownership and native playback diagnosis
 
-Status: implemented, host-tested, cross-built, and package-inspected. Physical
-execution requires separate owner authorization.
+Status: physically tested. It restored pad ownership and established `H1 I1 P0`;
+owned pads were silent and stock-only recovery was normal. M0.3d.2 supersedes
+it with the SDK-supported native forwarding solution.
 
 ## Physical M0.3d result
 

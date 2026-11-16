@@ -33,19 +33,6 @@ pub struct Outcome {
     pub repaint: bool,
     /// The overlay closed and stock presentation must be restored.
     pub restore: bool,
-    /// A stock-engine action to perform while callback-local objects are live.
-    pub playback: Playback,
-}
-
-/// Bounded playback request emitted by the platform-independent reducer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Playback {
-    /// No stock-engine call.
-    None,
-    /// Trigger this zero-based stock pad.
-    NoteOn(u8),
-    /// Release this zero-based stock pad.
-    NoteOff(u8),
 }
 
 /// Latest bounded pad-path observation shown by the overlay.
@@ -56,8 +43,8 @@ pub enum PadStatus {
     NoCallback,
     /// The callback was owned, but a paired native dispatch was unavailable.
     DispatchUnavailable,
-    /// The callback was owned and explicit native note-on was requested.
-    NativeAttempted,
+    /// The callback was owned and SDK-native forwarding was requested.
+    NativeForwardRequested,
 }
 
 impl Outcome {
@@ -65,7 +52,6 @@ impl Outcome {
         flow: Flow::Forward,
         repaint: false,
         restore: false,
-        playback: Playback::None,
     };
 
     const fn consumed(repaint: bool, restore: bool) -> Self {
@@ -73,16 +59,6 @@ impl Outcome {
             flow: Flow::Consume,
             repaint,
             restore,
-            playback: Playback::None,
-        }
-    }
-
-    const fn playback(flow: Flow, repaint: bool, restore: bool, playback: Playback) -> Self {
-        Self {
-            flow,
-            repaint,
-            restore,
-            playback,
         }
     }
 }
@@ -183,16 +159,6 @@ impl UiState {
         )
     }
 
-    /// Record the unlikely case where readiness changed before dispatch.
-    pub fn note_on_failed(&mut self, pad: u8) {
-        if self.active_audition == Some(pad) {
-            self.active_audition = None;
-            self.close_pending = false;
-            self.pad_status = PadStatus::DispatchUnavailable;
-            self.pending_repaint = true;
-        }
-    }
-
     /// Whether a step is active on a track.
     #[must_use]
     pub fn step_active(&self, track: usize, step: usize) -> bool {
@@ -279,23 +245,13 @@ impl UiState {
                     self.open = false;
                     self.pending_repaint = true;
                 }
-                // If a release lacks the live SDK objects required for the
-                // explicit note-off, forwarding the matching physical release
-                // is the only safe fallback. The target is always that pad.
-                return Outcome::playback(
-                    if native_dispatch_available {
-                        Flow::Consume
-                    } else {
-                        Flow::Forward
-                    },
-                    close,
-                    close,
-                    if native_dispatch_available {
-                        Playback::NoteOff(pad)
-                    } else {
-                        Playback::None
-                    },
-                );
+                // The physical release follows the same SDK-native path as
+                // its forwarded press. No callback-local object is retained.
+                return Outcome {
+                    flow: Flow::Forward,
+                    repaint: close,
+                    restore: close,
+                };
             }
             return Outcome::consumed(false, false);
         }
@@ -316,8 +272,15 @@ impl UiState {
                     return Outcome::consumed(true, false);
                 }
                 self.active_audition = Some(pad);
-                self.pad_status = PadStatus::NativeAttempted;
-                return Outcome::playback(Flow::Consume, true, false, Playback::NoteOn(pad));
+                self.pad_status = PadStatus::NativeForwardRequested;
+                // The SDK calls the displaced stock handler after this
+                // callback returns, preserving its exact arguments. This is
+                // the supported path for the physical pad, including P0.
+                return Outcome {
+                    flow: Flow::Forward,
+                    repaint: true,
+                    restore: false,
+                };
             }
             return Outcome::consumed(true, false);
         }
@@ -341,7 +304,6 @@ impl UiState {
             flow: Flow::Forward,
             repaint: true,
             restore: true,
-            playback: Playback::None,
         }
     }
 }

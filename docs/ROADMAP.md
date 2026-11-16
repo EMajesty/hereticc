@@ -310,6 +310,13 @@ and adds bounded on-screen `H/I/P` presence bits. See
 [M0.3d.1 pad ownership](M0-3D1-PAD-OWNERSHIP.md). Sequencer playback waits on
 that corrected stock-engine gate.
 
+M0.3d.1 physically established `H1 I1 P0`. M0.3d.2 resolves the null-properties
+blocker by using the SDK's supported `Flow::Forward` path for the owned first
+physical pad pair, preserving the firmware's exact arguments; overlap remains
+consumed and close remains deferred. It does not call `send_note_on` with null
+or claim synthetic scheduler playback. See
+[M0.3d.2 native properties](M0-3D2-NATIVE-PROPERTIES.md).
+
 ### M0.3b-C–E Device feasibility experiments — planned and blocked
 
 This requires a separate, explicitly reviewed task because it creates device-facing executable code.
@@ -436,9 +443,9 @@ Acceptance criteria:
 
 ## Practical next engineering task
 
-The next decision is owner review of the host-built M0.3d.1 SDK pad-ownership
+The next decision is owner review of the host-built M0.3d.2 native-forwarding
 package and, only if explicitly authorized, one controlled physical audition
-test following [M0.3d.1](M0-3D1-PAD-OWNERSHIP.md). Do not begin
+test following [M0.3d.2](M0-3D2-NATIVE-PROPERTIES.md). Do not begin
 background sequencing until native trigger/release and restoration pass. This
 does not authorize B1 DATA-hook testing, a relay, SSH, or another diagnostic
 milestone.

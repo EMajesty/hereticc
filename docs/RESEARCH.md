@@ -288,6 +288,14 @@ explains the audio. Source inspection confirms `notes_ready()` means both
 displaced note sites are installed, while press callback entry itself proves
 only the note-on site. M0.3d.1 decouples ownership and records only the three
 presence bits needed to distinguish the failed term.
+
+M0.3d.1 physically resolved the term as properties (`H1 I1 P0`). The SDK does
+not synthesize that value: it forwards the firmware's original argument to the
+displaced handler. M0.3d had already demonstrated that ordinary forwarding with
+this null value sounds the stock pad. MINIMOD's current Rust implementation also
+uses SDK-native forwarding/ownership rather than `send_note_on(null)`. M0.3d.2
+therefore uses `Flow::Forward` for the first owned physical pair and consumes
+overlap; it does not weaken the unsafe helper's contract.
 - release matching and repeated/overlapping triggers of one sound are not specified;
 - calls are UI-thread/lifetime constrained and accept no target audio frame;
 - there is no documented contract for transport, stock-sequence coexistence, voice stealing, choke/mono behavior, or project changes.
