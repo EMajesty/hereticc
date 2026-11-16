@@ -396,6 +396,15 @@ publication uses a synced hidden partial, `RENAME_NOREPLACE`, and directory
 sync. No thread, helper, service, hook, executable-memory path, or autorun
 continuation is added.
 
+The owner-run A2 test created four reports during one boot, all before any
+fingerprint read because SDK image discovery returned `None`. Stock UI, pads,
+audio, and card-free reboot remained normal. Patch
+`0002-add-a3-discovery-diagnostics.patch` adds bounded reason codes and process
+classifications only to `probe-only`; it does not alter the production finder,
+the compatibility table, base publication, hook exclusions, autorun restart,
+or SD writer. PID/parent PID distinguish repeated constructor process contexts
+without reporting addresses or arbitrary paths.
+
 The inspected AArch64 ELF is ET_DYN and requires `libc.so.6`,
 `libpthread.so.0`, and `libdl.so.2`, with highest imported glibc version 2.30.
 It has no defined dynamic export; no ALSA, `mprotect`, `pwrite`, hook, note, or

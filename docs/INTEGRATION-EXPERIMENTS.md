@@ -2,7 +2,13 @@
 
 ## Status and rules
 
-These are separately authorized device experiments. M0.3b-A is implemented as a zero-hook probe and inspectable package, awaiting source/package review and physical validation; it has not run on hardware. B–E remain unimplemented and unauthorized. Firmware 1.3.0.12 and SDK `e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39` remain guarded research inputs, not generally supported targets. See [SDK hook safety](SDK-HOOK-SAFETY.md) and [device testing](DEVICE-TESTING.md).
+These are separately authorized device experiments. The owner ran A2 once:
+direct reports and stock recovery worked, but image discovery failed before
+fingerprinting. A3 is an unexecuted zero-hook diagnostic prepared to classify
+that failure. B–E remain unimplemented and unauthorized. Firmware 1.3.0.12 and
+SDK `e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39` remain guarded research inputs,
+not generally supported targets. See [SDK hook safety](SDK-HOOK-SAFETY.md) and
+[device testing](DEVICE-TESTING.md).
 
 Common prerequisites: owner authorization for that experiment; exact source/build hashes; spare backed-up SD card; saved projects/samples; stable power; stock boot verified without the card; no unique identifiers in logs; bounded run time; and the recovery rules in `SAFETY.md`. No experiment flashes firmware, modifies partitions, saves a project, or installs persistent device state.
 
@@ -10,8 +16,10 @@ Common prerequisites: owner authorization for that experiment; exact source/buil
 
 **Implementation status:** source, host tests, AArch64 build, ELF inspection,
 deterministic SD package, and constructor-owned direct SD reporting complete.
-M0.3b-A2 avoids the M0.3b-A1 autorun-lifetime blocker. Physical validation is
-still separately authorized and has not occurred.
+M0.3b-A2 avoided the M0.3b-A1 autorun-lifetime blocker and was observed once on
+hardware. Four reports showed the SDK could not discover the image. A3 adds
+bounded process and loader classifications; its physical execution remains
+separately unauthorized.
 
 **Purpose:** prove fail-closed recognition before any feature hook is trusted.
 

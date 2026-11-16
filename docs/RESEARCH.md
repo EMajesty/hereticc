@@ -271,3 +271,20 @@ launchers independently require the same source/path/filesystem/writeability
 shape. HERETICC additionally verifies exFAT filesystem magic and rejects every
 ambiguous record. This is source-grounded comparative evidence, not a HERETICC
 physical result.
+
+### M0.3b-A2 physical observation and A3 discovery analysis
+
+The owner-run A2 test on firmware 1.3.0.12 produced four same-boot SD reports,
+all with `image_discovery=missing` and zero fingerprint reads. Stock UI, pads,
+and audio stayed operational, and card-free recovery was normal. This verifies
+the preload constructor and guarded SD writer on that unit, not the firmware
+base or compatibility gate.
+
+At pinned SDK commit `e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39`,
+`Firmware::find()` walks `dl_iterate_phdr`, ignores every entry whose
+`dlpi_name` is nonempty, rejects a null or empty program-header table, and
+accepts only a `PT_LOAD` relative range covering `APP_PROBE_OFFSET`. No matching
+entry, no qualifying segment, and malformed header metadata all collapse to
+`None`; the function does not compare `/proc/self/exe` or inspect
+`/proc/self/maps`. A3's second patch instruments these branches only under
+`probe-only`, retaining the original production finder and the 63-word gate.

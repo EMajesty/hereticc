@@ -74,7 +74,7 @@ Acceptance criteria:
 - selective and hardened-full alternatives have reviewable failure-state requirements;
 - M0.3b-A implementation remains a separate review gate.
 
-### M0.3b-A Zero-hook compatibility probe — implemented; awaiting physical validation
+### M0.3b-A Zero-hook compatibility probe — A2 observed; A3 awaiting review
 
 Acceptance criteria achieved in source/build evidence:
 
@@ -88,15 +88,19 @@ Acceptance criteria achieved in source/build evidence:
   section;
 - the transient autorun package and all constituent files are inspectable and
   checksummed, and two package generations are byte-identical;
-- no package has been installed or executed on hardware.
+- the owner-run A2 package left stock UI, pads, and audio operational and
+  recovered normally without the card, but image discovery failed before the
+  fingerprint check in all four reports.
 
 M0.3b-A1 found that post-restart autorun continuation was not supportable.
 M0.3b-A2 resolves retrieval without a continuation: the constructor retains the
 `/run` report and attempts one bounded, no-clobber report on the uniquely
 identified `rw` exFAT SD data partition. Host failure injection and package/ELF
 review are complete. Physical execution remains a separate owner approval and
-would validate mount identity, filesystem operations, loader behavior, and
-stock coexistence only.
+validated mount identity, filesystem publication, and stock coexistence on one
+unit, but not loader image discovery or firmware compatibility. M0.3b-A3 adds
+probe-only discovery reason and process-context classifications. It remains
+unexecuted and requires separate source/package review and owner approval.
 
 ### M0.3b-B–E Device feasibility experiments — planned and blocked
 

@@ -6,9 +6,10 @@
 - **Inferred** means supported by multiple observations or implementation structure but not directly demonstrated for HERETICC.
 - **Unknown** means no adequate evidence was found.
 
-HERETICC itself has performed **no hardware testing**. The owner reports that
-the intended test unit runs firmware 1.3.0.12; this is owner-provided inventory,
-not a compatibility result.
+HERETICC has one owner-run, zero-hook A2 diagnostic observation on firmware
+1.3.0.12. It verified constructor execution, four direct SD reports, normal
+stock UI/pads/audio during that boot, and normal card-free recovery. It did not
+discover the stock image or validate the firmware fingerprint.
 
 ## Known platform facts
 
@@ -26,7 +27,7 @@ The most detailed public hardware record reviewed is MPC Sample Lab at commit [`
 | Button/bank LEDs | Button LEDs via CC; some buttons have no LED; exact purpose of several extra LED controls remains open | partly verified |
 | Audio | I2S/AK4558 path and ALSA PCM; stock and replacement projects use signed 32-bit streams at 44.1 kHz | upstream hardware-verified for their paths |
 | Storage | SD is mounted `noexec`; `/data` is writable; root filesystem is protected by dm-verity | upstream hardware-verified |
-| Removable SD data partition | Comparative physical evidence identifies `/dev/mmcblk1p1` as exFAT at `/media/<safe-name>`; HERETICC M0.3b-A2 requires exactly that identity plus `rw` and exFAT magic | comparative hardware evidence; HERETICC untested |
+| Removable SD data partition | Comparative evidence identifies `/dev/mmcblk1p1` as exFAT at `/media/<safe-name>`; the A2 probe required that identity plus `rw` and exFAT magic and successfully published four reports | HERETICC owner-run A2 observation |
 
 Primary references: [Sample Lab README](https://github.com/gospodindilly-ops/mpc-sample-lab/blob/3d482b94c918b96d174f31c411686f2b18b74ce6/README.en.md), [control-surface protocol](https://github.com/gospodindilly-ops/mpc-sample-lab/blob/3d482b94c918b96d174f31c411686f2b18b74ce6/docs/control-surface-protocol.en.md), and [audio/display notes](https://github.com/gospodindilly-ops/mpc-sample-lab/blob/3d482b94c918b96d174f31c411686f2b18b74ce6/docs/audio-display.en.md).
 

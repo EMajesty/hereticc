@@ -2,10 +2,12 @@
 
 ## Status and authorization boundary
 
-The zero-hook probe with direct SD reporting is cross-built and packaged but has **not** run on an MPC
-Sample. Source review, package inspection, and physical execution are separate
-gates. Do not place the package on an SD card or insert it into the device until
-the owner explicitly approves physical execution.
+M0.3b-A2 ran once on the owner's firmware 1.3.0.12 MPC Sample. Four reports
+were created in one boot; every report contained `image_discovery=missing`,
+zero checked words, and status 10. Stock UI, pads, and audio remained normal,
+and a card-free reboot restored the normal temporary project. This verifies the
+constructor and direct exFAT writer on that unit; it does not verify firmware
+compatibility. A3 is locally prepared only and is not authorized for execution.
 
 The package is `device/m03b-a/build/hereticc-m03b-a-probe.zip`. The ignored
 build directory must be regenerated locally. The authoritative hash for a
@@ -30,7 +32,7 @@ The JSON has `askQuestion: false`; despite containing prompt text, it must be
 treated as automatic execution when the device's autorun loader accepts the
 card. There is no retry loop.
 
-During stock-process startup, the library constructor discovers the main image,
+During each process startup that inherits the preload, the library constructor discovers the main image,
 checks exactly 63 table-derived words through read-only `/proc/self/mem` access,
 publishes the SDK base only after a complete match, writes at most 768 bytes to
 `/run/hereticc-m03b-a.txt`, and returns. Report creation failure does not enable
@@ -38,6 +40,13 @@ another code path. No branch,
 vtable, audio, input, MIDI, lighting, or UI hook is compiled into the probe
 mode. The report is transient and contains no address, firmware bytes, device
 identifier, sample name, or project path.
+
+The pinned SDK's original `Firmware::find()` accepts only the
+`dl_iterate_phdr` entry with an empty `dlpi_name`, a non-null/nonempty program
+header table, and a `PT_LOAD` relative range containing the fixed firmware probe
+offset. It returns only `None` for every rejection and does not consult
+`/proc/self/exe` or `/proc/self/maps`. A3 preserves those criteria but reports
+the terminal reason from its probe-only path.
 
 ## Prerequisites before separately approved execution
 
@@ -99,20 +108,42 @@ autorun/hereticc-m03b-a-probe.so
    inspect the first newly created slot through 03. No file means SD reporting
    failed; it does not mean compatibility passed.
 
-Expected success fields include:
+An A3 report includes these additional diagnostic fields:
 
 ```text
-hereticc_probe_version=0.1.0
+hereticc_probe_version=0.2.0
 upstream_sdk_commit=e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39
-patch_set=m03b-a-zero-hook-v1
+patch_set=m03b-a3-discovery-v2
 expected_firmware=1.3.0.12
 image_discovery=found
+discovery_reason=found
+process_id=<bounded decimal PID>
+parent_process_id=<bounded decimal PID>
+executable_identity=expected
+expected_executable_mapped=true
+process_mappings_readable=true
+expected_executable_mapping_count=<bounded count>
+loader_images_seen=<bounded count>
+rejected_named_candidates=0
+loader_timing_plausible=false
 fingerprint_words_expected=63
 fingerprint_words_checked=63
 fingerprint_status=match
 feature_hooks_compiled=false
 final_status=0
 ```
+
+Discovery reasons are `found`, `no-loader-images`, `no-unnamed-image`,
+`missing-program-headers`, `no-load-segment`,
+`probe-offset-outside-load-segments`, `address-overflow`, and
+`loader-iteration-error`. Compare PID/parent PID across all newly created files:
+different PIDs prove distinct preload process contexts; repeated identical PIDs
+would require another explanation. `executable_identity=unexpected` reports
+only the mismatch classification, never the unexpected path. A readable exact
+stock mapping combined with `no-unnamed-image` or a rejected named candidate
+isolates the SDK's empty-name assumption. `loader_timing_plausible=true` is a
+conservative classification for absent loader images/unnamed main image, not
+proof of a timing race.
 
 `final_status` values 10–13 indicate missing image, unreadable word, mismatch,
 or unexpected table size. `feature_hooks_compiled=false` describes the build;
@@ -152,6 +183,11 @@ skipped, never replaced. Write/sync/finalization failures remove the incomplete
 name where possible and return without blocking stock startup. A storage failure
 can still prevent cleanup physically; any `.partial` file or absent final file
 is failure and must not be treated as a result.
+
+Before any separately approved A3 run, remove all prior A2 result files on a
+computer. The fixed four-slot policy is unchanged; leaving the four A2 reports
+in place prevents A3 from publishing another result and does not trigger
+overwrite or unbounded scanning.
 
 ## Normal exit and recovery
 
