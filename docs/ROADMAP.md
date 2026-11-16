@@ -218,9 +218,17 @@ utilities run in a fully cleaned process group, the 1.3.0.12 prefix fingerprint
 is checked locally, and exFAT publication is descriptor-relative with live
 magic and identity revalidation. A reproducible 540528-byte AArch64 PIE is
 linked for GLIBC 2.17 and statically inspected. Standalone loader, fixed utility
-availability, autorun privileges, and final package invocation remain physical
-unknowns. Package construction/review and physical execution each require new
-authorization; see [P3.2f](INPUT-HOOK-B1-P3-2F.md).
+availability, autorun privilege, and physical mount behavior remain unproved.
+
+B1-P3.2g constructs and host-inspects one deterministic zero-hook A4-format
+autorun package. Its fixed wrapper independently checks the 1.3.0.12 firmware
+prefix, invokes the reviewed P3.2f AArch64 collector exactly once, preserves its
+status, and contains no preload, service control, hook, listener, or internal
+write. Generation is restricted to the ignored host build tree; strict package
+inspection, byte-for-byte reproduction, and wrapper simulations pass. Loader,
+utility, privilege, and physical mount behavior remain unverified, so physical
+execution requires separate authorization and B1 hook testing remains no-go;
+see [P3.2g](INPUT-HOOK-B1-P3-2G.md).
 
 ### M0.3b-C–E Device feasibility experiments — planned and blocked
 
@@ -348,9 +356,9 @@ Acceptance criteria:
 
 ## Practical next engineering task
 
-The next step is separately authorized construction and review of one fixed,
-zero-hook P3.2f SD autorun package without functional code expansion, followed
-by a distinct authorization for one controlled physical run. That run is the
-minimum way to resolve standalone loader, fixed command, autorun privilege, and
-actual exFAT behavior. P3.2b restart testing, relay deployment, and physical
-DATA-hook execution remain later, separately authorized gates.
+The next decision is owner review of the fixed, host-inspected P3.2g package
+followed, only if explicitly authorized, by one controlled zero-hook physical
+run. That run is the minimum way to resolve standalone loader, fixed command,
+autorun privilege, and actual exFAT behavior. P3.2b restart testing, relay
+deployment, and physical DATA-hook execution remain later, separately
+authorized gates.

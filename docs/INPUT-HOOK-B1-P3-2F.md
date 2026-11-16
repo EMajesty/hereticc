@@ -1,7 +1,8 @@
 # M0.3b-B1-P3.2f physical-readiness engineering
 
-Status: host-complete, linked and statically inspected. No autorun package was
-created and nothing was executed on an MPC. Physical execution remains
+Status: host-complete, linked and statically inspected. At P3.2f completion no
+autorun package existed. The later host-only P3.2g package is documented
+separately; nothing was executed on an MPC and physical execution remains
 unauthorized.
 
 ## Executive decision
@@ -216,7 +217,7 @@ authorization to construct and review one zero-hook autorun package**, followed
 by a distinct authorization for one physical run. It is not currently approved
 for execution because that package and authorization do not exist.
 
-The smallest next step is package construction/review with no functional code
+The smallest next step was package construction/review with no functional code
 expansion, then the single controlled zero-hook run above. A further generic
 host-only milestone would not resolve loader, command-path, privilege, or
 filesystem behavior.
