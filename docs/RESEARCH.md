@@ -264,8 +264,9 @@ Historical A/B experiments remain pinned to their reviewed v0.6.0 tree; M0.3c
 pins v0.7.1 as the device crate's first external dependency and preserves its
 MIT notice.
 
-M0.3c now pins v0.7.1 directly. Its host build and package inspection pass;
-physical hook, paint, input, and recovery behavior remain untested. The SDK
+M0.3c now pins v0.7.1 directly. Its host build and package inspection pass, and
+the owner physically validated normal hook load, paint/input behavior, close,
+and stock coexistence on firmware 1.3.0.12. The SDK
 still installs its full site table rather than a feature-selected subset, so
 using only UI/input APIs does not narrow the live patch transaction.
 

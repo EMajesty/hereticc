@@ -265,7 +265,7 @@ The diagnostic branch is now closed for feature planning. Do not add another
 collector milestone or repeat P3.2k. P3.2l may be run later only if its evidence
 is required by a concrete relay decision.
 
-### M0.3c SDK page and input prototype — host complete, physical test pending
+### M0.3c SDK page and input prototype — physically validated
 
 Reuse the current pinned MIT `mpc-sample-sdk` v0.7.1 directly. Add one
 device-only mod that renders a fixed NEUROGENIC step page, owns a minimal
@@ -273,8 +273,9 @@ button/DATA/pad set while that page is active, forwards everything else, and
 restores the stock screen and pad lighting on exit. Use the SDK's existing
 guarded build/autorun path;
 do not extend the B1 relay, create another diagnostic package, or require SSH.
-Host-test the page reducer and press/release ownership before a separately
-authorized hardware run. See [reuse-first integration](REUSE-FIRST-INTEGRATION.md).
+The owner physically validated SDK load, overlay drawing, SHIFT+DATA open/close,
+DATA cursor movement, pad selection, PLUS editing, and stock UI/control/audio
+restoration on firmware 1.3.0.12. See [M0.3c SDK UI](M0-3C-SDK-UI.md).
 
 Acceptance criteria:
 
@@ -289,10 +290,20 @@ Acceptance criteria:
 - host checks and package inspection pass before separate physical
   authorization.
 
-The following milestone is a narrowly measured stock pad-path trigger spike,
-not a generalized adapter: one sound, stopped transport first, then overlap and
-release checks. Scheduler playback, step editing beyond the prototype, and
-parameter locks proceed only after that stock-engine gate passes.
+### M0.3d stock sample trigger — host complete, physical test pending
+
+The M0.3c page now uses callback-local SDK pad objects to dispatch one bounded
+stock `send_note_on`/`send_note_off` pair. It retains no firmware pointers,
+allows one audition voice, defers close until release, and forwards safely when
+the SDK callback context is unavailable. Host reducer tests, AArch64 cross-build,
+and strict SDK package inspection pass. See
+[M0.3d stock trigger](M0-3D-STOCK-TRIGGER.md).
+
+Acceptance requires one controlled physical run covering stopped/running
+transport, repeated/rapid triggers, attempted overlap, pad switching, close
+while held, stock restoration, and stock-only recovery. A pass establishes only
+interactive pad-path audition—not scheduler timing, voice handles, or
+polyphony. Sequencer playback waits on that stock-engine gate.
 
 ### M0.3b-C–E Device feasibility experiments — planned and blocked
 
@@ -420,9 +431,9 @@ Acceptance criteria:
 
 ## Practical next engineering task
 
-The next decision is owner review of the host-built M0.3c SDK page/input package
-and, only if explicitly authorized, one controlled physical UI test. The test
-checks page rendering, the documented SHIFT+DATA/DATA/pad/PLUS ownership,
-complete stock restoration, and stock-only reboot. It does not authorize
-sequencer playback, B1 DATA-hook testing, a relay, SSH, or another diagnostic
-milestone. See [M0.3c SDK UI](M0-3C-SDK-UI.md).
+The next decision is owner review of the host-built M0.3d SDK stock-trigger
+package and, only if explicitly authorized, one controlled physical audition
+test following [M0.3d stock trigger](M0-3D-STOCK-TRIGGER.md). Do not begin
+background sequencing until native trigger/release and restoration pass. This
+does not authorize B1 DATA-hook testing, a relay, SSH, or another diagnostic
+milestone.

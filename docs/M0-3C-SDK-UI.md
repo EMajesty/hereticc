@@ -1,7 +1,7 @@
 # M0.3c SDK UI and input prototype
 
-Status: implemented, host-tested, cross-built, and package-inspected. It has not
-run on an MPC Sample. Physical execution requires separate owner authorization.
+Status: implemented, host-tested, cross-built, package-inspected, and physically
+validated by the owner on one MPC Sample running stock firmware 1.3.0.12.
 
 ## Implemented scope
 
@@ -34,8 +34,8 @@ currently visible Sample page to repaint.
 | Every other input | forwards | forwards |
 
 SHIFT + DATA is the SDK's documented example chord. PLUS is the SDK's named
-`event::button::PLUS` (`0x36`). Neither mapping is claimed hardware-validated
-for NEUROGENIC yet. Consuming pads while open intentionally prevents their stock
+`event::button::PLUS` (`0x36`). Both mappings, DATA movement, pad selection,
+drawing, close, and stock restoration were physically validated. Consuming pads while open intentionally prevents their stock
 sample triggers. The prototype does not change stock samples, patterns,
 projects, settings, or saved data.
 
@@ -164,8 +164,8 @@ stock-only recovery boot. Do not retry unchanged after a safety regression.
 
 ## Known limitations
 
-- Host tests do not validate physical hook installation, drawing, button codes,
-  repaint behavior, page-loss timing, or control coexistence.
+- The owner validated normal installation, drawing, named controls, close, and
+  stock coexistence; unusual page-loss timing remains unmeasured.
 - A page change that produces no SDK callback cannot be observed immediately;
   the next button, pad, encoder, or paint callback performs the visibility
   check and closes the overlay.

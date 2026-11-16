@@ -4,7 +4,7 @@ pub mod reducer;
 
 use mpc_sample_sdk::event::button;
 use mpc_sample_sdk::{ButtonEvent, EncoderEvent, Flow, Mod, PadAction, PadEvent, PaintEvent};
-use reducer::{Button, UiState};
+use reducer::{Button, Playback, UiState};
 
 /// Device mod state. It contains no retained firmware pointer.
 #[derive(Default)]
@@ -64,7 +64,7 @@ impl NeurogenicDevice {
             graphics.text("NEUROGENIC", 10, 10, 190, 22, 18.0);
 
             let status = format!(
-                "TRACK {:02}   STEP {:02}",
+                "TRACK/PAD {:02}   STEP {:02}",
                 self.ui.selected_track() + 1,
                 self.ui.selected_step() + 1
             );
@@ -86,10 +86,34 @@ impl NeurogenicDevice {
             }
 
             graphics.colour(MUTED);
-            graphics.text("DATA: cursor   PADS: track", 10, 146, 300, 18, 11.0);
+            let note = if let Some(pad) = self.ui.active_audition() {
+                format!("PAD {:02}: NOTE ON - RELEASE TO STOP", pad + 1)
+            } else {
+                format!("PAD {:02}: ready to audition", self.ui.selected_track() + 1)
+            };
+            graphics.text(&note, 10, 132, 300, 18, 11.0);
+            graphics.text(
+                "DATA: cursor   PADS: select + audition",
+                10,
+                154,
+                300,
+                18,
+                11.0,
+            );
             graphics.text("PLUS: toggle   SHIFT+DATA: close", 10, 169, 300, 18, 11.0);
             graphics.colour(TEXT);
-            graphics.text("Prototype: edits are memory-only", 10, 210, 300, 16, 10.0);
+            graphics.text(
+                if self.ui.close_pending() {
+                    "Release held pad to close safely"
+                } else {
+                    "One audition voice; edits are memory-only"
+                },
+                10,
+                210,
+                300,
+                16,
+                10.0,
+            );
         }
     }
 }
@@ -120,7 +144,36 @@ impl Mod for NeurogenicDevice {
 
     fn on_pad(&mut self, event: PadEvent) -> Flow {
         self.close_if_page_gone();
-        let outcome = self.ui.pad(event.pad, event.action == PadAction::Press);
+        let pressed = event.action == PadAction::Press;
+        let callback_supported = event.input != 0
+            && (!pressed || event.properties != 0)
+            && mpc_sample_sdk::midi::notes_ready();
+        let outcome = self.ui.pad(event.pad, pressed, callback_supported);
+        match outcome.playback {
+            Playback::None => {}
+            Playback::NoteOn(pad) => {
+                // SAFETY: all firmware objects come from this live pad
+                // callback, on its owning UI path. Only the numeric pad is
+                // retained by the reducer.
+                let sent = unsafe {
+                    mpc_sample_sdk::midi::send_note_on(
+                        event.input,
+                        event.source,
+                        i32::from(pad),
+                        event.properties,
+                        event.velocity,
+                    )
+                };
+                debug_assert!(sent, "notes_ready changed inside a pad callback");
+            }
+            Playback::NoteOff(pad) => {
+                // SAFETY: `input` is callback-local and pad/source match the
+                // consumed note-on pair.
+                unsafe {
+                    mpc_sample_sdk::midi::send_note_off(event.input, event.source, i32::from(pad));
+                }
+            }
+        }
         if outcome.repaint {
             Self::repaint_live_sample_page();
         }
