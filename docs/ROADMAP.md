@@ -165,6 +165,13 @@ CDC-NCM, return one bounded report, and exit. Device lifecycle, UID, bind, and
 hardening facts remain unverified, so implementation/deployment and B1 physical
 testing remain no-go. See [B1-P3](INPUT-HOOK-B1-P3.md).
 
+B1-P3.1 implements the relay's standard-library-only host model: strict actual
+constructor-report gates, a B0.2-equivalent fixture validator and unchanged-reader
+adapter boundary, deterministic deadlines and terminal state transitions, and a
+bounded two-operation request parser. It opens no listener and creates no device
+payload. The constructor report lacks a start token, so `ARMED` additionally
+requires an initially verified snapshot. See [P3.1](INPUT-HOOK-B1-P3-1.md).
+
 ### M0.3b-C–E Device feasibility experiments — planned and blocked
 
 This requires a separate, explicitly reviewed task because it creates device-facing executable code.
@@ -291,9 +298,9 @@ Acceptance criteria:
 
 ## Practical next engineering task
 
-The next implementation milestone is host-only B1-P3.1: model the bounded relay
-protocol, constructor-report gate, and deterministic one-shot state machine
-without producing a device package or opening a real listener. Device lifecycle
-discovery, cross-building, deployment, and physical DATA-hook execution each
-remain separate authorization gates. Rendering, stock voice, and timing remain
-separate later approvals.
+The next milestone is separately authorized B1-P3.2 read-only lifecycle
+discovery without the DATA hook or relay. It must establish the actual service
+cgroup/kill policy, independent-unit survival, least readable UID, CDC-NCM bind
+scope, firewall exposure, and stock identity continuity. Cross-building,
+deployment, and physical DATA-hook execution remain later separate authorization
+gates. Rendering, stock voice, and timing remain separate later approvals.

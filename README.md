@@ -8,7 +8,7 @@ NEUROGENIC is an open-source custom firmware extension for the Akai MPC Sample. 
 
 ## Status
 
-NEUROGENIC is in **M0: host core and guarded integration feasibility**. The M0.2/M0.2a host sequencer foundation is complete. M0.3b-A4 was physically validated on one MPC Sample running firmware 1.3.0.12: the expected executable was reached and all 63 firmware fingerprints matched without hooks. M0.3b-B0/B0.1/B0.2 are host-validated only. B1-P2 confirms USB CDC-NCM and the stock firmware-updater HTTP service, but finds no supported non-restarting diagnostic path to the live counter snapshot. No B1 physical hook test is authorized.
+NEUROGENIC is in **M0: host core and guarded integration feasibility**. The M0.2/M0.2a host sequencer foundation is complete. M0.3b-A4 was physically validated on one MPC Sample running firmware 1.3.0.12: the expected executable was reached and all 63 firmware fingerprints matched without hooks. M0.3b-B0/B0.1/B0.2 are host-validated only. B1-P3.1 provides a tested host-only model of a bounded one-shot diagnostic relay; it includes no listener or device payload. Device lifecycle evidence is still missing, and no B1 physical hook test is authorized.
 
 Project website: [neurogeni.cc](https://neurogeni.cc). Source repository: [EMajesty/neurogenic](https://github.com/EMajesty/neurogenic).
 
@@ -24,7 +24,7 @@ This is approach **C first**, with **A as the leading integration candidate**. T
 
 ## Host development
 
-The workspace contains [`neurogenic-core`](crates/neurogenic-core), a standard-library-only Rust crate, and [`neurogenic-host`](crates/neurogenic-host), a host-only event consumer and demonstration. A Nix development shell supplies Cargo, rustc, rustfmt, and Clippy:
+The workspace contains [`neurogenic-core`](crates/neurogenic-core), [`neurogenic-host`](crates/neurogenic-host), and the isolated standard-library-only [`neurogenic-b1-relay-model`](crates/neurogenic-b1-relay-model). The relay model performs deterministic parsing and state validation only; it has no network or device integration. A Nix development shell supplies Cargo, rustc, rustfmt, and Clippy:
 
 ```sh
 nix develop

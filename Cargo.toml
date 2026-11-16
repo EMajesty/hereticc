@@ -1,5 +1,9 @@
 [workspace]
-members = ["crates/neurogenic-core", "crates/neurogenic-host"]
+members = [
+    "crates/neurogenic-b1-relay-model",
+    "crates/neurogenic-core",
+    "crates/neurogenic-host",
+]
 resolver = "2"
 
 [workspace.package]
