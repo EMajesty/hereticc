@@ -151,6 +151,20 @@ returned 404. [P2](INPUT-HOOK-B1-P2.md) adds an offline evidence analyzer and a
 bounded operator procedure; no stock diagnostic or `/run` retrieval path was
 found, so B1 remains no-go.
 
+B1-P2.1 analyzes the captured updater bundle with a conservative improved
+offline inspector. The verified bundle contains active updater fetches and a
+generic object/WebSocket client, but the configured client instance is not
+retained and no updater consumer is evident. Further generic-API probing is not
+justified; see [P2.1](INPUT-HOOK-B1-P2-ANALYSIS.md).
+
+B1-P3 selects a future, separately reviewed one-shot USB diagnostic relay as the
+only concrete design that supplies both a pre-interaction arm gate and an
+operator-controlled post-interaction read. It must run in an independent,
+runtime-only unit, reuse the unchanged B0.2 validator, bind only to confirmed
+CDC-NCM, return one bounded report, and exit. Device lifecycle, UID, bind, and
+hardening facts remain unverified, so implementation/deployment and B1 physical
+testing remain no-go. See [B1-P3](INPUT-HOOK-B1-P3.md).
+
 ### M0.3b-C–E Device feasibility experiments — planned and blocked
 
 This requires a separate, explicitly reviewed task because it creates device-facing executable code.
@@ -277,9 +291,9 @@ Acceptance criteria:
 
 ## Practical next engineering task
 
-Complete only the passive evidence capture and allowlisted updater GET
-observations in [B1-P2](INPUT-HOOK-B1-P2.md), then analyze the saved frontend
-offline. Any operation that executes a device command, invokes generic RPC,
-exports diagnostics, packages B1, or runs a physical DATA hook still needs
-separate explicit authorization. Rendering, stock voice, and timing remain
+The next implementation milestone is host-only B1-P3.1: model the bounded relay
+protocol, constructor-report gate, and deterministic one-shot state machine
+without producing a device package or opening a real listener. Device lifecycle
+discovery, cross-building, deployment, and physical DATA-hook execution each
+remain separate authorization gates. Rendering, stock voice, and timing remain
 separate later approvals.
