@@ -21,8 +21,10 @@ single-installer assumptions, but does not prove the final RX `mprotect`
 succeeded. Rollback is not atomic and B0.1 does not claim otherwise.
 
 The callback records saturating invocation, successful-forward, and
-positive/negative/zero-delta counters in one fixed 64-byte `MAP_SHARED` file
-created exclusively as `/run/hereticc-m03b-b02-counters-<pid>.bin`. It retains
+positive/negative/zero-delta counters in one fixed 72-byte `MAP_SHARED` file
+created exclusively as `/run/hereticc-m03b-b1p0-counters-<pid>.bin`. B1-P0
+versions the layout to 72 bytes and records the process start token from
+`/proc/<pid>/stat` to reject stale files after PID reuse. It retains
 no firmware pointer or raw event data, and performs no I/O or locking.
 The constructor writes a bounded initial report to `/run` and to two isolated
 `m03b-b01-init-*` slots using A4's exact exFAT mount and no-clobber policy.
@@ -32,6 +34,8 @@ An opt-in `b02-snapshot` reader takes that file and an optional synthetic
 invariants, and prints a bounded address-free report. The reader is a host-side
 component only: it is not cross-packaged or installed. How it could be invoked
 after interaction on the device without restarting `ac50` remains unverified.
+The access assessment and non-executable B1 design are in
+[`docs/INPUT-HOOK-B1-P0.md`](../../docs/INPUT-HOOK-B1-P0.md).
 
 Run locally:
 

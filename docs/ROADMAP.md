@@ -131,6 +131,12 @@ the reader while the same stock process remains alive is unproven. B1 execution
 remains blocked on that lifecycle/privilege fact as well as
 the existing live-patching risk review.
 
+B1-P0 strengthens snapshot identity with a versioned process-start token and
+documents a reversible package design and unauthorized operator checklist. It
+finds no confirmed non-restarting USB, network, shell, or passive SD retrieval
+path. B1 hardware authorization remains no-go until such read-only access is
+established without enabling an undocumented service.
+
 ### M0.3b-C–E Device feasibility experiments — planned and blocked
 
 This requires a separate, explicitly reviewed task because it creates device-facing executable code.
@@ -257,7 +263,7 @@ Acceptance criteria:
 
 ## Practical next engineering task
 
-The next action is owner review of the B0 source, patch series, host evidence,
-and residual live-patching risks. Any B1 package or physical DATA-hook run needs
-a separate explicit authorization. Rendering, stock voice, and timing remain
-separate later approvals.
+The next action is a separately scoped, read-only device-access discovery that
+does not install a hook or enable an undocumented service. Any B1 package or
+physical DATA-hook run still needs separate explicit authorization. Rendering,
+stock voice, and timing remain separate later approvals.

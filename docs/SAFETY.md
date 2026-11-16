@@ -88,6 +88,12 @@ Device-side post-interaction invocation remains unimplemented because no reviewe
 safe lifecycle point exists; shutdown destructors, workers, signals, callback
 I/O, and another hook are not accepted as implicit fallbacks.
 
+B1-P0 also rejects PID-only snapshot identity. Its v2 format records the Linux
+process start token and requires PID, exact executable identity, and start token
+to match before reporting counters. This hardening does not establish a device
+command channel: no SSH, ADB, USB `/run` exposure, serial shell, or passive SD
+copier is confirmed or authorized.
+
 ## Data integrity
 
 - HERETICC project data should initially be an SD sidecar, not an undocumented modification of stock project files.

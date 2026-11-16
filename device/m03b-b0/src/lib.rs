@@ -20,7 +20,7 @@ pub mod snapshot;
 /// Exact upstream SDK revision.
 pub const SDK_COMMIT: &str = "e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39";
 /// HERETICC patch-set identifier.
-pub const PATCH_SET: &str = "m03b-b02-shared-snapshot-v3";
+pub const PATCH_SET: &str = "m03b-b1p0-snapshot-identity-v4";
 /// Only supported stock firmware.
 pub const EXPECTED_FIRMWARE: &str = "1.3.0.12";
 /// Transient report; B0 deliberately creates no SD package.
@@ -238,7 +238,7 @@ pub fn format_report(
 ) -> Result<String, ReportError> {
     let mut out = String::with_capacity(512);
     let compatible = probe.status == ProbeStatus::Compatible && probe.checked == 63;
-    writeln!(out, "hereticc_experiment=m03b-b02").expect("String writes cannot fail");
+    writeln!(out, "hereticc_experiment=m03b-b1p0").expect("String writes cannot fail");
     writeln!(out, "upstream_sdk_commit={SDK_COMMIT}").expect("String writes cannot fail");
     writeln!(out, "patch_set={PATCH_SET}").expect("String writes cannot fail");
     writeln!(out, "expected_firmware={EXPECTED_FIRMWARE}").expect("String writes cannot fail");

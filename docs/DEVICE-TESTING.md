@@ -1,5 +1,9 @@
 # M0.3b-A device testing
 
+The prospective DATA-hook checklist is separate and remains **not authorized
+for execution**: see [B1-P0 device access and test preparation](INPUT-HOOK-B1-P0.md).
+Nothing in that design changes the A4 procedure below.
+
 ## Status and authorization boundary
 
 M0.3b-A2 ran once on the owner's firmware 1.3.0.12 MPC Sample. Four reports

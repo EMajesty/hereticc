@@ -10,11 +10,11 @@ use std::path::{Path, PathBuf};
 
 use crate::EventCounters;
 
-const MAGIC: [u8; 8] = *b"HRTCB02\0";
-const VERSION: u32 = 1;
-const SNAPSHOT_BYTES: usize = 64;
-const SNAPSHOT_BYTES_U32: u32 = 64;
-const SNAPSHOT_BYTES_OFF_T: libc::off_t = 64;
+const MAGIC: [u8; 8] = *b"HRTCB1P0";
+const VERSION: u32 = 2;
+const SNAPSHOT_BYTES: usize = 72;
+const SNAPSHOT_BYTES_U32: u32 = 72;
+const SNAPSHOT_BYTES_OFF_T: libc::off_t = 72;
 const READ_ATTEMPTS: usize = 8;
 const EXPECTED_EXECUTABLE: &str = "/usr/bin/MPC Sample";
 const REPORT_BYTES: usize = 384;
@@ -27,6 +27,7 @@ pub(crate) struct CounterBlock {
     size: u32,
     pid: u32,
     reserved: u32,
+    process_start_ticks: u64,
     pub(crate) invocations: AtomicU64,
     pub(crate) successful_forwards: AtomicU64,
     pub(crate) positive_deltas: AtomicU64,
@@ -38,16 +39,17 @@ const _: () = assert!(core::mem::size_of::<CounterBlock>() == SNAPSHOT_BYTES);
 
 impl CounterBlock {
     pub(crate) const fn local() -> Self {
-        Self::new(0)
+        Self::new(0, 0)
     }
 
-    const fn new(pid: u32) -> Self {
+    const fn new(pid: u32, process_start_ticks: u64) -> Self {
         Self {
             magic: MAGIC,
             version: VERSION,
             size: SNAPSHOT_BYTES_U32,
             pid,
             reserved: 0,
+            process_start_ticks,
             invocations: AtomicU64::new(0),
             successful_forwards: AtomicU64::new(0),
             positive_deltas: AtomicU64::new(0),
@@ -95,11 +97,17 @@ pub(crate) struct SharedMapping {
 /// Create one exclusive, process-specific mapping under `/run`.
 #[cfg_attr(test, allow(dead_code))]
 pub(crate) fn create_shared(pid: u32) -> Result<SharedMapping, SnapshotError> {
-    create_shared_in(Path::new("/run"), pid)
+    let stat = std::fs::read_to_string("/proc/self/stat").map_err(|_| SnapshotError::Access)?;
+    let process_start_ticks = parse_process_start(&stat, pid)?;
+    create_shared_in(Path::new("/run"), pid, process_start_ticks)
 }
 
-fn create_shared_in(directory: &Path, pid: u32) -> Result<SharedMapping, SnapshotError> {
-    let path = directory.join(format!("hereticc-m03b-b02-counters-{pid}.bin"));
+fn create_shared_in(
+    directory: &Path,
+    pid: u32,
+    process_start_ticks: u64,
+) -> Result<SharedMapping, SnapshotError> {
+    let path = directory.join(format!("hereticc-m03b-b1p0-counters-{pid}.bin"));
     let path_c = std::ffi::CString::new(path.as_os_str().as_bytes())
         .map_err(|_| SnapshotError::InvalidPath)?;
     // SAFETY: the path is NUL terminated; exclusive/no-follow flags prevent replacement.
@@ -135,7 +143,7 @@ fn create_shared_in(directory: &Path, pid: u32) -> Result<SharedMapping, Snapsho
     }
     let block = mapped.cast::<CounterBlock>();
     // SAFETY: fresh exclusive file/mapping, correctly aligned and exactly sized.
-    unsafe { block.write(CounterBlock::new(pid)) };
+    unsafe { block.write(CounterBlock::new(pid, process_start_ticks)) };
     // Publish the immutable header before an external reader can accept it.
     // SAFETY: the mapped range is valid; synchronous flush occurs only in the constructor.
     if unsafe { libc::msync(mapped, SNAPSHOT_BYTES, libc::MS_SYNC) } != 0 {
@@ -153,6 +161,8 @@ fn create_shared_in(directory: &Path, pid: u32) -> Result<SharedMapping, Snapsho
 pub struct VerifiedSnapshot {
     /// PID recorded by the expected stock process.
     pub pid: u32,
+    /// Linux process start time in clock ticks since boot.
+    pub process_start_ticks: u64,
     /// Aggregate counters.
     pub counters: EventCounters,
 }
@@ -207,7 +217,7 @@ pub fn read_verified(path: &Path, proc_root: &Path) -> Result<VerifiedSnapshot, 
         read_exact_at_start(&mut file, &mut second)?;
         if first == second {
             let snapshot = decode(&first)?;
-            verify_process(proc_root, snapshot.pid)?;
+            verify_process(proc_root, snapshot.pid, snapshot.process_start_ticks)?;
             return Ok(snapshot);
         }
     }
@@ -235,11 +245,11 @@ fn decode(bytes: &[u8; SNAPSHOT_BYTES]) -> Result<VerifiedSnapshot, SnapshotErro
         return Err(SnapshotError::Malformed);
     }
     let counters = EventCounters {
-        invocations: u64_at(bytes, 24),
-        successful_forwards: u64_at(bytes, 32),
-        positive_deltas: u64_at(bytes, 40),
-        negative_deltas: u64_at(bytes, 48),
-        zero_deltas: u64_at(bytes, 56),
+        invocations: u64_at(bytes, 32),
+        successful_forwards: u64_at(bytes, 40),
+        positive_deltas: u64_at(bytes, 48),
+        negative_deltas: u64_at(bytes, 56),
+        zero_deltas: u64_at(bytes, 64),
     };
     if counters.successful_forwards > counters.invocations
         || counters
@@ -252,6 +262,7 @@ fn decode(bytes: &[u8; SNAPSHOT_BYTES]) -> Result<VerifiedSnapshot, SnapshotErro
     }
     Ok(VerifiedSnapshot {
         pid: u32_at(bytes, 16),
+        process_start_ticks: u64_at(bytes, 24),
         counters,
     })
 }
@@ -264,14 +275,45 @@ fn u64_at(bytes: &[u8], offset: usize) -> u64 {
     u64::from_le_bytes(bytes[offset..offset + 8].try_into().expect("fixed range"))
 }
 
-fn verify_process(proc_root: &Path, pid: u32) -> Result<(), SnapshotError> {
+fn verify_process(
+    proc_root: &Path,
+    pid: u32,
+    expected_start_ticks: u64,
+) -> Result<(), SnapshotError> {
     let executable = proc_root.join(pid.to_string()).join("exe");
     match std::fs::read_link(executable) {
         Ok(path) if path == Path::new(EXPECTED_EXECUTABLE) => Ok(()),
         Ok(_) => Err(SnapshotError::WrongProcess),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Err(SnapshotError::ProcessGone),
         Err(_) => Err(SnapshotError::Access),
+    }?;
+    let stat =
+        std::fs::read_to_string(proc_root.join(pid.to_string()).join("stat")).map_err(|error| {
+            if error.kind() == io::ErrorKind::NotFound {
+                SnapshotError::ProcessGone
+            } else {
+                SnapshotError::Access
+            }
+        })?;
+    if parse_process_start(&stat, pid)? == expected_start_ticks {
+        Ok(())
+    } else {
+        Err(SnapshotError::WrongProcess)
     }
+}
+
+fn parse_process_start(stat: &str, expected_pid: u32) -> Result<u64, SnapshotError> {
+    let (pid, rest) = stat.split_once(" (").ok_or(SnapshotError::Malformed)?;
+    if pid.parse::<u32>().map_err(|_| SnapshotError::Malformed)? != expected_pid {
+        return Err(SnapshotError::Malformed);
+    }
+    let close = rest.rfind(") ").ok_or(SnapshotError::Malformed)?;
+    rest[close + 2..]
+        .split_ascii_whitespace()
+        .nth(19)
+        .ok_or(SnapshotError::Malformed)?
+        .parse::<u64>()
+        .map_err(|_| SnapshotError::Malformed)
 }
 
 /// Format a bounded, address-free post-interaction report.
@@ -281,10 +323,16 @@ fn verify_process(proc_root: &Path, pid: u32) -> Result<(), SnapshotError> {
 /// Returns [`SnapshotError::ReportTooLarge`] if fixed fields exceed the bound.
 pub fn format_snapshot(snapshot: VerifiedSnapshot) -> Result<String, SnapshotError> {
     let mut report = String::with_capacity(256);
-    writeln!(report, "hereticc_experiment=m03b-b02").expect("String write");
+    writeln!(report, "hereticc_experiment=m03b-b1p0").expect("String write");
     writeln!(report, "snapshot_version={VERSION}").expect("String write");
     writeln!(report, "process_identity=expected").expect("String write");
     writeln!(report, "process_id={}", snapshot.pid).expect("String write");
+    writeln!(
+        report,
+        "process_start_ticks={}",
+        snapshot.process_start_ticks
+    )
+    .expect("String write");
     writeln!(
         report,
         "callback_invocations={}",
@@ -346,16 +394,24 @@ mod tests {
         }
     }
 
-    fn proc_identity(root: &Path, pid: u32, target: &str) {
+    fn proc_identity(root: &Path, pid: u32, target: &str, start_ticks: u64) {
         let directory = root.join(pid.to_string());
         fs::create_dir_all(&directory).unwrap();
         symlink(target, directory.join("exe")).unwrap();
+        let mut fields = vec!["0".to_owned(); 20];
+        fields[0] = "S".to_owned();
+        fields[19] = start_ticks.to_string();
+        fs::write(
+            directory.join("stat"),
+            format!("{pid} (MPC Sample helper name) {}\n", fields.join(" ")),
+        )
+        .unwrap();
     }
 
     #[test]
     fn shared_mapping_round_trips_after_concurrent_updates() {
         let fixture = Fixture::new();
-        let mapping = create_shared_in(&fixture.0, 42).unwrap();
+        let mapping = create_shared_in(&fixture.0, 42, 9001).unwrap();
         std::thread::scope(|scope| {
             for _ in 0..4 {
                 scope.spawn(|| {
@@ -369,7 +425,7 @@ mod tests {
                 });
             }
         });
-        proc_identity(&fixture.0, 42, EXPECTED_EXECUTABLE);
+        proc_identity(&fixture.0, 42, EXPECTED_EXECUTABLE, 9001);
         let snapshot = read_verified(&mapping.path, &fixture.0).unwrap();
         assert_eq!(snapshot.counters.invocations, 1_000);
         assert_eq!(snapshot.counters.positive_deltas, 1_000);
@@ -378,12 +434,12 @@ mod tests {
     #[test]
     fn rejects_wrong_missing_and_malformed_process_data() {
         let fixture = Fixture::new();
-        let mapping = create_shared_in(&fixture.0, 43).unwrap();
+        let mapping = create_shared_in(&fixture.0, 43, 1234).unwrap();
         assert_eq!(
             read_verified(&mapping.path, &fixture.0),
             Err(SnapshotError::ProcessGone)
         );
-        proc_identity(&fixture.0, 43, "/bin/not-stock");
+        proc_identity(&fixture.0, 43, "/bin/not-stock", 1234);
         assert_eq!(
             read_verified(&mapping.path, &fixture.0),
             Err(SnapshotError::WrongProcess)
@@ -419,7 +475,7 @@ mod tests {
             Err(SnapshotError::Access)
         );
 
-        let mapping = create_shared_in(&fixture.0, 44).unwrap();
+        let mapping = create_shared_in(&fixture.0, 44, 99).unwrap();
         let process = fixture.0.join("44");
         fs::create_dir(&process).unwrap();
         fs::write(process.join("exe"), b"not-a-link").unwrap();
@@ -433,6 +489,7 @@ mod tests {
     fn report_is_bounded_and_contains_no_addresses_or_payloads() {
         let snapshot = VerifiedSnapshot {
             pid: u32::MAX,
+            process_start_ticks: u64::MAX,
             counters: EventCounters {
                 invocations: u64::MAX,
                 successful_forwards: u64::MAX,
@@ -445,5 +502,28 @@ mod tests {
         assert!(report.len() <= REPORT_BYTES);
         assert!(!report.contains("0x"));
         assert!(!report.contains("delta="));
+    }
+
+    #[test]
+    fn process_start_parser_handles_names_spaces_and_rejects_stale_or_malformed_data() {
+        assert_eq!(
+            parse_process_start(
+                "7 (name with ) spaces) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 456\n",
+                7
+            ),
+            Ok(456)
+        );
+        assert_eq!(
+            parse_process_start("8 (name) S", 8),
+            Err(SnapshotError::Malformed)
+        );
+
+        let fixture = Fixture::new();
+        let mapping = create_shared_in(&fixture.0, 45, 111).unwrap();
+        proc_identity(&fixture.0, 45, EXPECTED_EXECUTABLE, 222);
+        assert_eq!(
+            read_verified(&mapping.path, &fixture.0),
+            Err(SnapshotError::WrongProcess)
+        );
     }
 }

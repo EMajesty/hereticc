@@ -110,8 +110,9 @@ The evaluated mechanisms are:
 | Shared `/run` mapping | Does not attach to or pause the process, adds no hook or callback I/O, and permits bounded atomic reads; selected for host implementation. |
 
 For an exact, compatible process, the constructor exclusively creates a
-process-specific, mode-0600, fixed 64-byte `MAP_SHARED` counter file under
-`/run`. The callback updates only its five atomics. Failure to create it leaves
+process-specific, mode-0600, fixed shared counter file under `/run`. B1-P0
+versions it to 72 bytes and includes a process-start token to reject PID reuse.
+The callback updates only its five atomics. Failure to create it leaves
 the existing local counters active and does not affect hook gating. The mapping
 is never unmapped while the branch may live.
 

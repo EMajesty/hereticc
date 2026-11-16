@@ -3,7 +3,7 @@ set -eu
 
 SDK_URL=https://github.com/ioma8/mpc-sample-sdk.git
 SDK_COMMIT=e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39
-PATCH_SET=m03b-b02-shared-snapshot-v3
+PATCH_SET=m03b-b1p0-snapshot-identity-v4
 
 script_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 experiment_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
