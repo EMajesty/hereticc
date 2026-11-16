@@ -74,7 +74,7 @@ Acceptance criteria:
 - selective and hardened-full alternatives have reviewable failure-state requirements;
 - M0.3b-A implementation remains a separate review gate.
 
-### M0.3b-A Zero-hook compatibility probe — A2 observed; A3 awaiting review
+### M0.3b-A Zero-hook compatibility probe — A3 observed; A4 awaiting review
 
 Acceptance criteria achieved in source/build evidence:
 
@@ -96,11 +96,15 @@ M0.3b-A1 found that post-restart autorun continuation was not supportable.
 M0.3b-A2 resolves retrieval without a continuation: the constructor retains the
 `/run` report and attempts one bounded, no-clobber report on the uniquely
 identified `rw` exFAT SD data partition. Host failure injection and package/ELF
-review are complete. Physical execution remains a separate owner approval and
-validated mount identity, filesystem publication, and stock coexistence on one
-unit, but not loader image discovery or firmware compatibility. M0.3b-A3 adds
-probe-only discovery reason and process-context classifications. It remains
-unexecuted and requires separate source/package review and owner approval.
+review are complete. A2 validated mount identity, filesystem publication, and
+stock coexistence on one unit, but not loader image discovery or firmware
+compatibility. M0.3b-A3 added probe-only discovery reasons and process-context
+classifications and was subsequently observed on the same unit.
+
+The owner-run A3 reports came only from unexpected executable identities and
+exhausted the four shared slots. A4 isolates four bounded unexpected slots from
+two expected-application slots while retaining all A3 observations and the
+unchanged fingerprint gate. A4 remains unexecuted and separately unauthorized.
 
 ### M0.3b-B–E Device feasibility experiments — planned and blocked
 

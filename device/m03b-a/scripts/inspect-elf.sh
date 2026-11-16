@@ -46,6 +46,8 @@ binary_strings=$(strings -a "$elf")
 printf '%s\n' "$binary_strings" | grep -F '/run/hereticc-m03b-a.txt' >/dev/null
 printf '%s\n' "$binary_strings" | grep -F '/proc/mounts' >/dev/null
 printf '%s\n' "$binary_strings" | grep -F 'hereticc-results' >/dev/null
+printf '%s\n' "$binary_strings" | grep -F 'm03b-a4-' >/dev/null
+printf '%s\n' "$binary_strings" | grep -F 'report_category=' >/dev/null
 if printf '%s\n' "$binary_strings" | grep -Ei 'snd_|alsa|install_paint|mpc_sample_sdk.*hook|sites::install' >/dev/null; then
     echo "forbidden feature-hook or interposition identifier found" >&2
     exit 1
@@ -65,4 +67,5 @@ writable_executable_sections=absent
 init_array=present
 report_path=present
 direct_sd_policy=present
+process_namespaces=present
 EOF

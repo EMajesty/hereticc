@@ -405,6 +405,14 @@ the compatibility table, base publication, hook exclusions, autorun restart,
 or SD writer. PID/parent PID distinguish repeated constructor process contexts
 without reporting addresses or arbitrary paths.
 
+A3 physically observed four unexpected executable contexts (PID chain 409,
+410, 411) and no expected executable mapping; all failed before fingerprinting.
+A4 changes only HERETICC's report classification and SD filename policy. Exact
+`/usr/bin/MPC Sample` identities receive two reserved slots; unexpected and
+unreadable identities share four distinct bounded slots. There is no cross-
+namespace fallback. The SDK patches, discovery rules, 63-word gate, autorun
+drop-in, and hook exclusions remain unchanged.
+
 The inspected AArch64 ELF is ET_DYN and requires `libc.so.6`,
 `libpthread.so.0`, and `libdl.so.2`, with highest imported glibc version 2.30.
 It has no defined dynamic export; no ALSA, `mprotect`, `pwrite`, hook, note, or

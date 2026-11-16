@@ -7,7 +7,21 @@ were created in one boot; every report contained `image_discovery=missing`,
 zero checked words, and status 10. Stock UI, pads, and audio remained normal,
 and a card-free reboot restored the normal temporary project. This verifies the
 constructor and direct exFAT writer on that unit; it does not verify firmware
-compatibility. A3 is locally prepared only and is not authorized for execution.
+compatibility. A3 subsequently produced four reports:
+
+| Slot | PID | PPID | Loader images |
+|---|---:|---:|---:|
+| 00 | 409 | 1 | 8 |
+| 01 | 410 | 409 | 8 |
+| 02 | 411 | 410 | 8 |
+| 03 | 411 | 410 | 7 |
+
+All four reported an unexpected executable, no expected executable mapping,
+`probe-offset-outside-load-segments`, and zero checked fingerprint words. Stock
+UI, pads, and audio remained normal. This is consistent with launcher/helper
+inheritance but does not prove that explanation or establish whether the stock
+application ever inherits the preload. A4 is locally prepared only and is not
+authorized for execution.
 
 The package is `device/m03b-a/build/hereticc-m03b-a-probe.zip`. The ignored
 build directory must be regenerated locally. The authoritative hash for a
@@ -23,7 +37,7 @@ The upstream autorun contract is visible in the extracted
    unless it matches the upstream 1.3.0.12 package guard;
 2. copies the probe library to `/run`;
 3. creates a transient systemd drop-in under `/run/systemd/system` with
-   `LD_PRELOAD`;
+   `LD_PRELOAD` for `ac50.service`;
 4. reloads systemd configuration and restarts `ac50` once; and
 5. performs no post-restart autorun work. The preload constructor writes `/run` first,
    then independently attempts the verified SD result before returning.
@@ -47,6 +61,12 @@ header table, and a `PT_LOAD` relative range containing the fixed firmware probe
 offset. It returns only `None` for every rejection and does not consult
 `/proc/self/exe` or `/proc/self/maps`. A3 preserves those criteria but reports
 the terminal reason from its probe-only path.
+
+The generated drop-in applies its environment to processes systemd starts for
+the service; descendants normally inherit it. The generated source does not
+contain the device's actual `ac50.service` command chain, so it cannot establish
+whether the expected application is an `ExecStart` process, a descendant, or
+launched through another environment boundary. A4 leaves the autorun unchanged.
 
 ## Prerequisites before separately approved execution
 
@@ -103,23 +123,26 @@ autorun/hereticc-m03b-a-probe.so
    not repeatedly restart the service.
 6. Confirm that the stock application reaches its normal screen and remains
    responsive. The probe deliberately has no custom screen or control action.
-7. Shut down normally. Remove the card only after shutdown and read
-   `hereticc-results/m03b-a-report-00.txt` on a computer. If slot 00 existed,
-   inspect the first newly created slot through 03. No file means SD reporting
-   failed; it does not mean compatibility passed.
+7. Shut down normally. Remove the card only after shutdown and inspect
+   `hereticc-results/m03b-a4-unexpected-00..03.txt` and
+   `m03b-a4-expected-00..01.txt` on a computer. No expected-category file means
+   the probe did not observe an exact expected executable identity; it does not
+   establish incompatibility or prove the application lacked the preload.
 
-An A3 report includes these additional diagnostic fields:
+An A4 report retains the A3 fields and adds its isolated report category:
 
 ```text
-hereticc_probe_version=0.2.0
+hereticc_probe_version=0.3.0
 upstream_sdk_commit=e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39
-patch_set=m03b-a3-discovery-v2
+patch_set=m03b-a4-process-aware-v3
 expected_firmware=1.3.0.12
 image_discovery=found
 discovery_reason=found
 process_id=<bounded decimal PID>
 parent_process_id=<bounded decimal PID>
 executable_identity=expected
+report_category=expected
+report_category_reason=exact-executable-match
 expected_executable_mapped=true
 process_mappings_readable=true
 expected_executable_mapping_count=<bounded count>
@@ -144,6 +167,12 @@ stock mapping combined with `no-unnamed-image` or a rejected named candidate
 isolates the SDK's empty-name assumption. `loader_timing_plausible=true` is a
 conservative classification for absent loader images/unnamed main image, not
 proof of a timing race.
+
+Category reasons are `exact-executable-match`, `executable-mismatch`, and
+`executable-identity-unreadable`. Only the first selects expected slots.
+Unreadable identity is fail-closed into the unexpected namespace. Full slots
+cause a local reporting failure only; there is no overwrite, rotation, scan, or
+fallback into the other namespace.
 
 `final_status` values 10–13 indicate missing image, unreadable word, mismatch,
 or unexpected table size. `feature_hooks_compiled=false` describes the build;
@@ -174,8 +203,9 @@ component. It rejects missing, duplicate, malformed, differently mounted, or
 read-only records. After opening the mount with `O_DIRECTORY|O_NOFOLLOW`, it
 also requires exFAT magic `0x2011bab0` from `fstatfs`. It never remounts.
 
-The only SD destination is `<verified-mount>/hereticc-results/`. Slots are
-`m03b-a-report-00.txt` through `m03b-a-report-03.txt`; corresponding hidden
+The only SD destination is `<verified-mount>/hereticc-results/`. A4 reserves
+four `m03b-a4-unexpected-00..03.txt` slots and two
+`m03b-a4-expected-00..01.txt` slots; corresponding namespace-specific hidden
 `.partial` names reserve each slot. Descriptor-relative creation uses
 `O_CREAT|O_EXCL|O_NOFOLLOW`. The complete report is capped at 768 bytes, synced,
 renamed with `RENAME_NOREPLACE`, and the directory is synced. Existing names are
@@ -184,10 +214,9 @@ name where possible and return without blocking stock startup. A storage failure
 can still prevent cleanup physically; any `.partial` file or absent final file
 is failure and must not be treated as a result.
 
-Before any separately approved A3 run, remove all prior A2 result files on a
-computer. The fixed four-slot policy is unchanged; leaving the four A2 reports
-in place prevents A3 from publishing another result and does not trigger
-overwrite or unbounded scanning.
+Before any separately approved A4 run, remove prior A4 files on a computer.
+A2/A3 names do not collide with A4 names, but clearing old results avoids review
+ambiguity. Unexpected processes cannot consume the two expected slots.
 
 ## Normal exit and recovery
 
@@ -205,7 +234,8 @@ After the one bounded observation:
    knobs, fader, buttons, transport, sample loading, and saved projects.
 
 The upstream SDK documents `/run` deployment and card-removal/reboot recovery.
-HERETICC has inspected that mechanism but has not verified it physically.
+The owner observed normal stock behavior and card-free recovery after A2 and
+A3; this remains evidence from one device, not a general recovery guarantee.
 
 ## Stop conditions
 

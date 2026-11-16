@@ -288,3 +288,21 @@ entry, no qualifying segment, and malformed header metadata all collapse to
 `None`; the function does not compare `/proc/self/exe` or inspect
 `/proc/self/maps`. A3's second patch instruments these branches only under
 `probe-only`, retaining the original production finder and the 63-word gate.
+
+### M0.3b-A3 process observation and A4 routing
+
+A3 produced four reports with PID/PPID chains 409/1, 410/409, 411/410, and a
+second 411/410 invocation. Loader-image counts were 8, 8, 8, and 7. Every
+report classified `/proc/self/exe` as unexpected, found no executable mapping
+for exact `/usr/bin/MPC Sample`, rejected the loader image because the probe
+offset was outside its load segments, and read zero fingerprint words. This
+proves the preload constructor ran in unexpected process contexts. It does not
+prove what those executables were or whether the expected application later
+inherits the preload.
+
+The SDK package generator writes `Environment=LD_PRELOAD=...` into a transient
+`ac50.service` drop-in and restarts the unit. That environment can apply to the
+unit's launched commands and descendants, but the reviewed source lacks the
+device's actual service definition and `ExecStart` chain. A4 therefore leaves
+autorun unchanged and partitions reporting capacity by exact `/proc/self/exe`
+identity: unexpected/unreadable contexts cannot consume expected slots.

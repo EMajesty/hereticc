@@ -4,8 +4,10 @@
 
 These are separately authorized device experiments. The owner ran A2 once:
 direct reports and stock recovery worked, but image discovery failed before
-fingerprinting. A3 is an unexecuted zero-hook diagnostic prepared to classify
-that failure. B–E remain unimplemented and unauthorized. Firmware 1.3.0.12 and
+fingerprinting. A3 then observed four unexpected executable contexts and no
+expected application context. A4 reserves independent capacity for the exact
+stock executable while retaining bounded unexpected-process evidence. B–E
+remain unimplemented and unauthorized. Firmware 1.3.0.12 and
 SDK `e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39` remain guarded research inputs,
 not generally supported targets. See [SDK hook safety](SDK-HOOK-SAFETY.md) and
 [device testing](DEVICE-TESTING.md).
@@ -17,9 +19,9 @@ Common prerequisites: owner authorization for that experiment; exact source/buil
 **Implementation status:** source, host tests, AArch64 build, ELF inspection,
 deterministic SD package, and constructor-owned direct SD reporting complete.
 M0.3b-A2 avoided the M0.3b-A1 autorun-lifetime blocker and was observed once on
-hardware. Four reports showed the SDK could not discover the image. A3 adds
-bounded process and loader classifications; its physical execution remains
-separately unauthorized.
+hardware. A3 showed four reports from unexpected executable identities and no
+expected executable mapping. A4 adds separate expected/unexpected namespaces;
+its physical execution remains separately unauthorized.
 
 **Purpose:** prove fail-closed recognition before any feature hook is trusted.
 
@@ -28,7 +30,8 @@ separately unauthorized.
 **Procedure and observations:** after separate approval, boot once with the
 reviewed exFAT card, allow the guarded restart, confirm stock startup, shut down
 normally, and inspect the first newly created
-`hereticc-results/m03b-a-report-00..03.txt` file on a computer. No background
+`hereticc-results/m03b-a4-unexpected-00..03.txt` and
+`m03b-a4-expected-00..01.txt` files on a computer. No background
 helper or post-restart autorun continuation participates. Do not infer hook
 atomicity from the zero-hook probe.
 

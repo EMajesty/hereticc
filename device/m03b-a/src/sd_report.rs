@@ -14,7 +14,30 @@ const SD_FS: &str = "exfat";
 const EXFAT_MAGIC: libc::c_long = 0x2011_bab0;
 const RESULT_DIRECTORY: &CStr = c"hereticc-results";
 const MAX_REPORT_BYTES: usize = 768;
-const SLOT_COUNT: usize = 4;
+const UNEXPECTED_SLOT_COUNT: usize = 4;
+const EXPECTED_SLOT_COUNT: usize = 2;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReportCategory {
+    Expected,
+    Unexpected,
+}
+
+impl ReportCategory {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Expected => "expected",
+            Self::Unexpected => "unexpected",
+        }
+    }
+
+    const fn slots(self) -> usize {
+        match self {
+            Self::Expected => EXPECTED_SLOT_COUNT,
+            Self::Unexpected => UNEXPECTED_SLOT_COUNT,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MountError {
@@ -41,17 +64,17 @@ enum FaultPoint {
     DirectorySync,
 }
 
-pub(crate) fn write_to_detected_sd(report: &str) -> Result<(), ()> {
-    write_to_detected_sd_inner(report).map_err(|_| ())
+pub(crate) fn write_to_detected_sd(report: &str, category: ReportCategory) -> Result<(), ()> {
+    write_to_detected_sd_inner(report, category).map_err(|_| ())
 }
 
-fn write_to_detected_sd_inner(report: &str) -> Result<(), SdError> {
+fn write_to_detected_sd_inner(report: &str, category: ReportCategory) -> Result<(), SdError> {
     if report.len() > MAX_REPORT_BYTES {
         return Err(SdError::ReportTooLarge);
     }
     let mounts = read_bounded(MOUNTS_PATH).map_err(SdError::Mount)?;
     let mount = select_mount(&mounts).map_err(SdError::Mount)?;
-    publish(&mount, report.as_bytes(), None, true)
+    publish(&mount, report.as_bytes(), category, None, true)
 }
 
 fn read_bounded(path: &str) -> Result<String, MountError> {
@@ -117,6 +140,7 @@ fn option_present(options: &str, wanted: &str) -> bool {
 fn publish(
     mount: &Path,
     report: &[u8],
+    category: ReportCategory,
     fault: Option<FaultPoint>,
     verify_fs: bool,
 ) -> Result<(), SdError> {
@@ -130,11 +154,11 @@ fn publish(
     make_results_directory(&mount_fd).map_err(|_| SdError::Io)?;
     let results_fd = open_directory_at(&mount_fd, RESULT_DIRECTORY).map_err(|_| SdError::Io)?;
 
-    for slot in 0..SLOT_COUNT {
-        let final_name =
-            CString::new(format!("m03b-a-report-{slot:02}.txt")).map_err(|_| SdError::Io)?;
-        let partial_name =
-            CString::new(format!(".m03b-a-report-{slot:02}.partial")).map_err(|_| SdError::Io)?;
+    for slot in 0..category.slots() {
+        let final_name = CString::new(format!("m03b-a4-{}-{slot:02}.txt", category.label()))
+            .map_err(|_| SdError::Io)?;
+        let partial_name = CString::new(format!(".m03b-a4-{}-{slot:02}.partial", category.label()))
+            .map_err(|_| SdError::Io)?;
         if exists_at(&results_fd, &final_name).map_err(|_| SdError::Io)?
             || exists_at(&results_fd, &partial_name).map_err(|_| SdError::Io)?
         {
@@ -314,7 +338,7 @@ fn unlink_at(parent: &OwnedFd, name: &CStr) {
 
 #[cfg(test)]
 mod tests {
-    use super::{FaultPoint, MountError, SdError, publish, select_mount};
+    use super::{FaultPoint, MountError, ReportCategory, SdError, publish, select_mount};
     use std::fs;
     use std::os::unix::fs::symlink;
     use std::path::{Path, PathBuf};
@@ -378,14 +402,28 @@ mod tests {
     #[test]
     fn writes_exclusively_and_repeated_invocation_uses_bounded_slots() {
         let fixture = Fixture::new();
-        publish(fixture.path(), b"first\n", None, false).unwrap();
-        publish(fixture.path(), b"second\n", None, false).unwrap();
+        publish(
+            fixture.path(),
+            b"first\n",
+            ReportCategory::Unexpected,
+            None,
+            false,
+        )
+        .unwrap();
+        publish(
+            fixture.path(),
+            b"second\n",
+            ReportCategory::Unexpected,
+            None,
+            false,
+        )
+        .unwrap();
         assert_eq!(
-            fs::read(fixture.results().join("m03b-a-report-00.txt")).unwrap(),
+            fs::read(fixture.results().join("m03b-a4-unexpected-00.txt")).unwrap(),
             b"first\n"
         );
         assert_eq!(
-            fs::read(fixture.results().join("m03b-a-report-01.txt")).unwrap(),
+            fs::read(fixture.results().join("m03b-a4-unexpected-01.txt")).unwrap(),
             b"second\n"
         );
         assert_eq!(fs::read_dir(fixture.path()).unwrap().count(), 1);
@@ -399,18 +437,152 @@ mod tests {
             fs::write(
                 fixture
                     .results()
-                    .join(format!("m03b-a-report-{slot:02}.txt")),
+                    .join(format!("m03b-a4-unexpected-{slot:02}.txt")),
                 b"existing",
             )
             .unwrap();
         }
         assert_eq!(
-            publish(fixture.path(), b"new", None, false).unwrap_err(),
+            publish(
+                fixture.path(),
+                b"new",
+                ReportCategory::Unexpected,
+                None,
+                false,
+            )
+            .unwrap_err(),
             SdError::NoFreeSlot
         );
         assert_eq!(
-            fs::read(fixture.results().join("m03b-a-report-00.txt")).unwrap(),
+            fs::read(fixture.results().join("m03b-a4-unexpected-00.txt")).unwrap(),
             b"existing"
+        );
+    }
+
+    #[test]
+    fn unexpected_slots_cannot_consume_or_fall_back_to_expected_slots() {
+        let fixture = Fixture::new();
+        for slot in 0..4 {
+            publish(
+                fixture.path(),
+                format!("unexpected-{slot}").as_bytes(),
+                ReportCategory::Unexpected,
+                None,
+                false,
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            publish(
+                fixture.path(),
+                b"overflow",
+                ReportCategory::Unexpected,
+                None,
+                false,
+            ),
+            Err(SdError::NoFreeSlot)
+        );
+        assert!(!fixture.results().join("m03b-a4-expected-00.txt").exists());
+        publish(
+            fixture.path(),
+            b"stock",
+            ReportCategory::Expected,
+            None,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read(fixture.results().join("m03b-a4-expected-00.txt")).unwrap(),
+            b"stock"
+        );
+    }
+
+    #[test]
+    fn expected_slots_do_not_overwrite_or_fall_back_to_unexpected_slots() {
+        let fixture = Fixture::new();
+        for slot in 0..2 {
+            publish(
+                fixture.path(),
+                format!("stock-{slot}").as_bytes(),
+                ReportCategory::Expected,
+                None,
+                false,
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            publish(
+                fixture.path(),
+                b"third",
+                ReportCategory::Expected,
+                None,
+                false,
+            ),
+            Err(SdError::NoFreeSlot)
+        );
+        assert!(!fixture.results().join("m03b-a4-unexpected-00.txt").exists());
+        assert_eq!(
+            fs::read(fixture.results().join("m03b-a4-expected-00.txt")).unwrap(),
+            b"stock-0"
+        );
+    }
+
+    #[test]
+    fn namespace_specific_existing_and_partial_names_are_protected() {
+        let fixture = Fixture::new();
+        fs::create_dir(fixture.results()).unwrap();
+        fs::write(
+            fixture.results().join("m03b-a4-expected-00.txt"),
+            b"existing",
+        )
+        .unwrap();
+        fs::write(
+            fixture.results().join(".m03b-a4-expected-01.partial"),
+            b"partial",
+        )
+        .unwrap();
+        assert_eq!(
+            publish(
+                fixture.path(),
+                b"new",
+                ReportCategory::Expected,
+                None,
+                false,
+            ),
+            Err(SdError::NoFreeSlot)
+        );
+        assert_eq!(
+            fs::read(fixture.results().join("m03b-a4-expected-00.txt")).unwrap(),
+            b"existing"
+        );
+        assert_eq!(
+            fs::read(fixture.results().join(".m03b-a4-expected-01.partial")).unwrap(),
+            b"partial"
+        );
+    }
+
+    #[test]
+    fn symlinked_slot_is_skipped_without_touching_its_target() {
+        let fixture = Fixture::new();
+        let outside = Fixture::new();
+        fs::create_dir(fixture.results()).unwrap();
+        let target = outside.path().join("target.txt");
+        fs::write(&target, b"outside").unwrap();
+        symlink(&target, fixture.results().join("m03b-a4-expected-00.txt")).unwrap();
+
+        publish(
+            fixture.path(),
+            b"stock",
+            ReportCategory::Expected,
+            None,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(fs::read(target).unwrap(), b"outside");
+        assert_eq!(
+            fs::read(fixture.results().join("m03b-a4-expected-01.txt")).unwrap(),
+            b"stock"
         );
     }
 
@@ -420,7 +592,13 @@ mod tests {
         let outside = Fixture::new();
         symlink(outside.path(), fixture.results()).unwrap();
         assert_eq!(
-            publish(fixture.path(), b"report", None, false),
+            publish(
+                fixture.path(),
+                b"report",
+                ReportCategory::Unexpected,
+                None,
+                false,
+            ),
             Err(SdError::Io)
         );
         assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 0);
@@ -436,7 +614,13 @@ mod tests {
         ] {
             let fixture = Fixture::new();
             assert_eq!(
-                publish(fixture.path(), b"report", Some(fault), false),
+                publish(
+                    fixture.path(),
+                    b"report",
+                    ReportCategory::Unexpected,
+                    Some(fault),
+                    false,
+                ),
                 Err(SdError::Io)
             );
             let entries: Vec<_> = fs::read_dir(fixture.results())
@@ -450,10 +634,23 @@ mod tests {
     #[test]
     fn enforces_maximum_report_size() {
         let fixture = Fixture::new();
-        publish(fixture.path(), &[b'x'; 768], None, false).unwrap();
+        publish(
+            fixture.path(),
+            &[b'x'; 768],
+            ReportCategory::Unexpected,
+            None,
+            false,
+        )
+        .unwrap();
         let other = Fixture::new();
         assert_eq!(
-            publish(other.path(), &[b'x'; 769], None, false),
+            publish(
+                other.path(),
+                &[b'x'; 769],
+                ReportCategory::Unexpected,
+                None,
+                false,
+            ),
             Err(SdError::ReportTooLarge)
         );
         assert_eq!(fs::read_dir(other.path()).unwrap().count(), 0);
