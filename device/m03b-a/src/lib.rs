@@ -47,7 +47,7 @@ pub fn format_report(result: ProbeResult) -> Result<String, ReportError> {
     writeln!(report, "fingerprint_words_checked={}", result.checked)
         .expect("String writes cannot fail");
     writeln!(report, "fingerprint_status={fingerprint}").expect("String writes cannot fail");
-    writeln!(report, "feature_hooks_active=false").expect("String writes cannot fail");
+    writeln!(report, "feature_hooks_compiled=false").expect("String writes cannot fail");
     writeln!(report, "final_status={status_code}").expect("String writes cannot fail");
     if report.len() > MAX_REPORT_BYTES {
         return Err(ReportError::TooLarge);
@@ -114,7 +114,7 @@ mod tests {
         .expect("bounded report");
         assert!(report.len() <= MAX_REPORT_BYTES);
         assert!(report.contains("fingerprint_words_checked=63\n"));
-        assert!(report.contains("feature_hooks_active=false\n"));
+        assert!(report.contains("feature_hooks_compiled=false\n"));
         assert!(!report.contains("0x"));
     }
 

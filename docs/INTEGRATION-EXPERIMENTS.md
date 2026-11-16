@@ -9,16 +9,27 @@ Common prerequisites: owner authorization for that experiment; exact source/buil
 ## A. Firmware and SDK compatibility
 
 **Implementation status:** source, host tests, AArch64 build, ELF inspection,
-and deterministic SD package complete; awaiting owner review and separately
-authorized physical validation.
+and deterministic SD package complete. M0.3b-A1 established the likely SD path
+and writable-mount checks but could not establish that the stock-app-owned
+autorun shell survives `ac50` restart. Report retrieval and physical validation
+remain blocked pending a revised, separately reviewed lifecycle design.
 
 **Purpose:** prove fail-closed recognition before any feature hook is trusted.
 
 **Prerequisites:** reviewed HERETICC-specific zero-hook probe; table-derived 63-word fingerprint set; no ALSA interposition, generated executable pages, feature hooks, or paint-vtable patch; test on the exact reported firmware only. Any later hook test requires its own authorization and hardened installation state machine.
 
-**Procedure and observations:** record firmware version; load the read-only probe on the supported image and test a host/emulator fixture with one altered fingerprint; record bounded image-recognition and dry-run site-validation results. Do not infer hook atomicity from the zero-hook probe. Process exit/service restart, not live detach, is the lifecycle boundary.
+**Procedure and observations:** blocked before physical execution. A future
+revision must first provide a bounded same-card retrieval process whose lifetime
+is independent of the restarted `ac50` cgroup, without a persistent service,
+network access, remount, or fallback write. Do not infer hook atomicity from the
+zero-hook probe. Process exit/service restart, not live detach, is the module
+lifecycle boundary.
 
-**Failure conditions:** any write before complete verification, partial installed hook, stock restart/boot loop, mismatch accepted, or stock behavior changed after rejection.
+**Failure conditions:** any executable-memory write, partial installed hook,
+stock restart/boot loop, mismatch accepted, stock behavior changed after
+rejection, absent/incomplete/oversized report, non-writable SD, attempted write
+outside a dedicated result directory, or reliance on an autorun shell killed by
+the service restart.
 
 **Recovery:** terminate the transient process if possible, reboot without the SD package, verify stock input/audio/UI, stop the milestone on any incomplete restoration.
 

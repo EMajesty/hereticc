@@ -380,6 +380,14 @@ The diagnostic supplies its own `.init_array` constructor instead of using
 writes a bounded transient report, and returns. It does not perform optional
 prologue or paint-vtable inspection in this revision.
 
+M0.3b-A1 adds no SDK or probe capability. The report field is renamed to
+`feature_hooks_compiled=false`: it describes the probe-only build and does not
+claim runtime observation of every possible hook. Investigation found that the
+stock application owns autorun while the SDK launcher restarts that
+application's service as its final action. Because post-restart shell survival
+is unproven, the proposed same-card retrieval wrapper was not retained. No
+retry, remount, alternative write, service, or new package payload was added.
+
 The inspected AArch64 ELF is ET_DYN and requires `libc.so.6`,
 `libpthread.so.0`, and `libdl.so.2`, with highest imported glibc version 2.30.
 It has no defined dynamic export; no ALSA, `mprotect`, `pwrite`, hook, note, or

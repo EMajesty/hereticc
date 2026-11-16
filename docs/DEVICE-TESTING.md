@@ -7,17 +7,10 @@ Sample. Source review, package inspection, and physical execution are separate
 gates. Do not place the package on an SD card or insert it into the device until
 the owner explicitly approves physical execution.
 
-The package is
-`device/m03b-a/build/hereticc-m03b-a-probe.zip`. The build directory is ignored
-by Git and must be regenerated locally. Its current reviewed SHA-256 is:
-
-```text
-4866ed0bc8373828fd5628e03a4e9022f89e4a18631c116b3e8d15113b0378d4  hereticc-m03b-a-probe.zip
-```
-
-This value applies only to the current patch series and build described in
-`device/m03b-a/build/SHA256SUMS`. Rebuilds must be reviewed against their own
-generated manifest.
+The package is `device/m03b-a/build/hereticc-m03b-a-probe.zip`. The ignored
+build directory must be regenerated locally. The authoritative hash for a
+particular build is in `device/m03b-a/build/SHA256SUMS`; never reuse a hash from
+an older document or package.
 
 ## What the package does
 
@@ -30,7 +23,8 @@ The upstream autorun contract is visible in the extracted
 3. creates a transient systemd drop-in under `/run/systemd/system` with
    `LD_PRELOAD`;
 4. reloads systemd configuration and restarts `ac50` once; and
-5. returns after the service restart.
+5. requests the service restart. There is no verified post-restart retrieval
+   step.
 
 The JSON has `askQuestion: false`; despite containing prompt text, it must be
 treated as automatic execution when the device's autorun loader accepts the
@@ -39,7 +33,8 @@ card. There is no retry loop.
 During stock-process startup, the library constructor discovers the main image,
 checks exactly 63 table-derived words through read-only `/proc/self/mem` access,
 publishes the SDK base only after a complete match, writes at most 768 bytes to
-`/run/hereticc-m03b-a.txt`, and returns. Report failure is ignored. No branch,
+`/run/hereticc-m03b-a.txt`, and returns. Report creation failure does not enable
+another code path. No branch,
 vtable, audio, input, MIDI, lighting, or UI hook is compiled into the probe
 mode. The report is transient and contains no address, firmware bytes, device
 identifier, sample name, or project path.
@@ -56,8 +51,8 @@ identifier, sample name, or project path.
   project loading/saving through normal stock behavior.
 - Owner review of the patch, generated SDK diff, ELF inspection, extracted
   autorun files, and `SHA256SUMS`.
-- An explicitly approved, non-destructive way to read the transient report from
-  `/run`. HERETICC does not assume SSH or add a report-copy mechanism.
+- A separately approved retrieval design. M0.3b-A1 did not establish one and
+  physical execution remains blocked.
 
 Do not use raw partition backups as a recovery claim and do not enable an
 undocumented shell merely to retrieve the report.
@@ -98,8 +93,8 @@ autorun/hereticc-m03b-a-probe.so
    not repeatedly restart the service.
 6. Confirm that the stock application reaches its normal screen and remains
    responsive. The probe deliberately has no custom screen or control action.
-7. Using only the separately approved read-only retrieval method, inspect
-   `/run/hereticc-m03b-a.txt`.
+7. No report-retrieval step is currently authorized. Stop here; do not use SSH,
+   a listener, an undocumented command, or a persistent service.
 
 Expected success fields include:
 
@@ -112,13 +107,38 @@ image_discovery=found
 fingerprint_words_expected=63
 fingerprint_words_checked=63
 fingerprint_status=match
-feature_hooks_active=false
+feature_hooks_compiled=false
 final_status=0
 ```
 
 `final_status` values 10–13 indicate missing image, unreadable word, mismatch,
-or unexpected table size. Any missing report is also a failed experiment; it is
-not permission to retry repeatedly.
+or unexpected table size. `feature_hooks_compiled=false` describes the build;
+it is not a runtime census of arbitrary process hooks. A missing result file,
+an unchanged pre-existing result, or a `.partial` file is a failed retrieval,
+not a successful compatibility check and not permission to retry repeatedly.
+
+## M0.3b-A1 retrieval investigation — blocked
+
+At pinned minimod commit `3770fb7edcfb432cd45ca4e8fa8bcbefe0435c25`,
+source analysis records that autorun is a feature of the stock application,
+which runs an accepted script via `sh`. The SDK-generated script performs
+`systemctl restart ac50` as its final command; it contains no evidence that its
+shell survives that restart. Because the shell is launched by the application
+being restarted, HERETICC cannot assume that commands after the restart run.
+The independently hardware-validated Am MOD loader at commit
+`6cdc67276f43cd39f64871cb7e36782481244c65` checks an exact
+`/media/<name>/autorun` path and an `rw` exFAT mount before writing a report to
+the card. These are comparative source/physical evidence, not HERETICC hardware
+validation: [autorun analysis](https://github.com/ioma8/mpc-minimod/blob/3770fb7edcfb432cd45ca4e8fa8bcbefe0435c25/docs/MODDING.md),
+[validated mount check](https://github.com/AlekseyMalykh/am-mod/blob/6cdc67276f43cd39f64871cb7e36782481244c65/sd-clone-trial/src/autorun.sh#L281-L292).
+
+The SD location and `rw` mount are therefore supportable, but the required
+post-restart process lifetime is not. A transient helper unit might solve that
+mechanically, but it would add a new lifecycle and background-process contract
+not established by the pinned SDK or authorized by this narrow follow-up. No
+runnable retrieval script, modified autorun, or new package content is retained.
+The existing package remains awaiting a revised, separately reviewed retrieval
+plan and physical execution is not ready.
 
 ## Normal exit and recovery
 

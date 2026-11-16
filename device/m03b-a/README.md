@@ -33,4 +33,7 @@ cat target/m03b-a/sdk/.hereticc-patchset
 The build script does not package, install, or execute anything on a device.
 `package.sh` first enforces the ELF zero-hook gate, uses the reviewed upstream
 transient autorun generator, extracts the result for inspection, and writes
-`build/SHA256SUMS`. It never accesses a device or SD card.
+`build/SHA256SUMS`. It never accesses a device or SD card. M0.3b-A1 confirmed
+that a post-restart autorun continuation cannot yet be justified: autorun is a
+child of the stock application whose service is restarted. No SD retrieval
+wrapper is packaged until a separately reviewed process-lifetime design exists.

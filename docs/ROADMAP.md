@@ -74,7 +74,7 @@ Acceptance criteria:
 - selective and hardened-full alternatives have reviewable failure-state requirements;
 - M0.3b-A implementation remains a separate review gate.
 
-### M0.3b-A Zero-hook compatibility probe — implemented, awaiting review and physical validation
+### M0.3b-A Zero-hook compatibility probe — implemented; retrieval and physical validation blocked
 
 Acceptance criteria achieved in source/build evidence:
 
@@ -90,8 +90,12 @@ Acceptance criteria achieved in source/build evidence:
   checksummed, and two package generations are byte-identical;
 - no package has been installed or executed on hardware.
 
-Physical execution remains a separate owner approval. Passing it would validate
-only firmware recognition and transient loader behavior.
+M0.3b-A1 found a blocking retrieval-lifecycle gap: the stock application owns
+the autorun handler and the SDK script restarts that application's service as
+its final command. Post-restart continuation has not been established, so no
+retrieval wrapper was packaged. Physical execution remains blocked until a
+separately reviewed bounded process-lifetime design exists; approval would then
+remain a separate owner action.
 
 ### M0.3b-B–E Device feasibility experiments — planned and blocked
 
