@@ -27,6 +27,8 @@ fi
 binary_strings=$(strings -a "$elf")
 printf '%s\n' "$binary_strings" | grep -F 'selected_hook=DATA_HOOK' >/dev/null
 printf '%s\n' "$binary_strings" | grep -F '/run/hereticc-m03b-b0.txt' >/dev/null
+printf '%s\n' "$binary_strings" | grep -F 'm03b-b01-' >/dev/null
+printf '%s\n' "$binary_strings" | grep -F 'callback_invocations=' >/dev/null
 if printf '%s\n' "$binary_strings" | grep -Ei 'SAMPLE_PAGE_VTABLE|NOTE_ON|NOTE_OFF|SURFACE|BUTTONS|install_paint|snd_|alsa' >/dev/null; then
     echo "unrelated hook/interposition identifier found" >&2; exit 1
 fi
@@ -41,5 +43,7 @@ unrelated_hook_identifiers=absent
 writable_executable_sections=absent
 init_array=present
 selected_hook=DATA_HOOK
+initial_sd_reporting=present
+bounded_atomic_counters=present
 mutation_imports=expected-for-one-branch-hook
 EOF

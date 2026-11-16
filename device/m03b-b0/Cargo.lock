@@ -6,6 +6,7 @@ version = 4
 name = "hereticc-m03b-b0-input-probe"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "mpc-sample-sdk",
 ]
 

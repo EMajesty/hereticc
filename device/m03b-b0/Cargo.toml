@@ -10,6 +10,7 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+libc = "=0.2.191"
 mpc-sample-sdk = { path = "../../target/m03b-b0/sdk", default-features = false, features = ["selective-input-probe"] }
 
 [workspace]

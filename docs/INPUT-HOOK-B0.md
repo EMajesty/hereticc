@@ -1,4 +1,4 @@
-# M0.3b-B0 selective input-hook feasibility
+# M0.3b-B0.1 selective input-hook hardening
 
 Status: source and host validation implemented; no physical execution or SD
 package is authorized. Upstream is `mpc-sample-sdk` v0.6.0 at commit
@@ -39,14 +39,14 @@ arbitrary firmware offset through this API.
 3. Allocate relay/trampoline pages and prepare only DATA. Preparation reads the
    prologue and writes private non-executable pages; stock text is untouched.
 4. Publish the original trampoline pointer with release ordering.
-5. Seal/flush relay and trampoline pages, then call commit. Commit is the first
+5. Seal/flush relay and trampoline pages, then publish. Publish is the first
    phase that changes stock behavior: it changes text-page permissions and
    attempts the one branch-word write.
-6. On clean failure, clear the trampoline pointer. If rollback is not proven,
+6. When the original branch word is read back, clear the trampoline pointer. If rollback is not proven,
    retain it and report `CommitFailedIndeterminate` so any live branch still has
    a valid forwarding target for process lifetime.
 
-The handler loads one atomic pointer, increments one atomic counter, and calls
+The handler loads one atomic pointer, increments fixed saturating atomic counters, and calls
 the original once with unchanged arguments. It allocates no memory, performs no
 I/O, takes no lock, and invokes no sequencer code. DATA's return is unit, so
 direct trampoline invocation preserves the return contract. Successful
@@ -60,6 +60,53 @@ stock-text write. Commit can still fail after a write or read-back failure. The
 SDK attempts restoration and keeps trampoline pages mapped if restoration is
 not proven, but this is not atomic rollback. B0 reports that state as
 indeterminate and never calls it success.
+
+### Hook-engine state transitions
+
+- `new`: maps separate RW relay and trampoline pages near the verified image.
+  A second-map failure unmaps the first; stock text is untouched.
+- `prepare`: reads up to four prologue words, rejects unreadable/PC-relative or
+  out-of-range sites, writes only the private RW pages, and records the original
+  first word. Failure does not publish a branch.
+- `seal`: changes both owned pages to RX and flushes their data/instruction
+  caches. Any `mprotect` failure discards both pages before publication.
+- `publish`: for each pending site, temporarily requests RWX, writes one branch
+  word through `/proc/self/mem`, reads it back, attempts RX restoration, and
+  flushes the site cache. This is the first stock behavior change.
+- publish failure: the current site is considered landed whenever it cannot be
+  read back as the original. The engine restores it and every earlier site in
+  reverse order. Only a write plus original-word readback counts as restoration.
+- restored failure: pages are unmapped and `touched()` stays false. Under the
+  engine's one-installer/no-external-writer assumptions, this establishes that
+  no SDK branch word remains live. It does **not** establish RX restoration,
+  because the final `mprotect` result is ignored.
+- indeterminate failure: `used` becomes true, pages remain mapped, and
+  `touched()` is true. B0.1 retains the original pointer and classifies failure
+  as indeterminate.
+- success: pending state is cleared, `used` is true, and pages remain for
+  process lifetime. `abort` is inert after `used`; there is no live unpatch.
+
+Cache maintenance on AArch64 performs data-cache clean, barriers,
+instruction-cache invalidation, and `isb`. This is appropriate architecture
+machinery but has not been physically validated during concurrent execution.
+
+### Diagnostic retrieval boundary
+
+The constructor publishes an initial bounded report to `/run` and two isolated
+`m03b-b01-init-00..01.txt` SD slots using the A4-validated mount selection,
+descriptor-relative no-follow operations, exclusive partial creation, synced
+rename-without-replace, and directory sync. Reserved
+`m03b-b01-events-00..01.txt` names are host-tested as a separate namespace but
+are not written by device code.
+
+Counters change only after initialization. No reviewed post-interaction
+lifecycle callback exists. A destructor could race callbacks and depends on
+unproven unload/shutdown ordering; a worker or polling loop adds concurrency; a
+signal handler cannot safely format or perform filesystem operations; callback
+I/O violates the real-time boundary; and another firmware hook expands scope.
+Therefore B0.1 implements counter collection and snapshot formatting but stops
+short of post-interaction publication. Reliable retrieval remains a B1 design
+blocker, not a hidden background mechanism.
 
 Remaining physical risks are material: temporary RWX text permissions,
 instruction-cache coherence on the production kernel/CPU, another core entering

@@ -439,3 +439,16 @@ still leave an indeterminate live branch if restoration fails, so B0 retains
 the trampoline for process lifetime and reports failure rather than claiming
 rollback atomicity. Full analysis and rejected sites are in
 [B0 input-hook feasibility](INPUT-HOOK-B0.md).
+
+B0.1 audits the failure predicate more narrowly. For one DATA site,
+`touched() == false` after failed publication is reached only when the current
+word was already read as original or every possibly landed word was rewritten
+and read back as original; only then does the engine unmap its owned pages.
+Subject to the startup-only, single-installer, no-external-writer assumptions,
+this proves that the SDK branch word is not live. It does not prove full
+restoration: `patch_site` ignores the return from its final
+`mprotect(PROT_READ|PROT_EXEC)`, so text permissions can remain RWX even when
+the original word is restored. B0.1 therefore names this state
+`PublishFailedBranchRestored`, reports text permissions as unknown, and reserves
+“indeterminate” for `touched() == true`, where the trampoline and forwarding
+pointer remain process-lifetime state.

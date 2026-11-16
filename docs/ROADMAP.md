@@ -121,6 +121,13 @@ that authorization, review temporary text-page permissions, cache maintenance,
 concurrent execution, rollback uncertainty, report retrieval, and service
 restart/recovery boundaries.
 
+B0.1 hardens branch-restoration classification, adds bounded saturating input
+counters, isolates constructor reports in no-clobber SD slots, and removes
+generated artifacts from version control. It intentionally does not publish
+post-interaction counters: a safe trigger after user interaction remains
+unproven. B1 is blocked on an explicit retrieval/lifecycle decision as well as
+the existing live-patching risk review.
+
 ### M0.3b-C–E Device feasibility experiments — planned and blocked
 
 This requires a separate, explicitly reviewed task because it creates device-facing executable code.

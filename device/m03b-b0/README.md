@@ -1,4 +1,4 @@
-# M0.3b-B0 selective DATA-hook experiment
+# M0.3b-B0.1 selective DATA-hook hardening
 
 This isolated, non-deployable stage evaluates one transparent encoder-dispatch
 hook. It is not part of the host workspace and does not alter the A4 probe.
@@ -13,10 +13,20 @@ raw-payload assumptions.
 The pinned A4 probe patches are applied first, followed by the B0 patch that
 exposes only the SDK-owned DATA offset through a selective API. Preparation
 allocates and fills relay/trampoline pages but does not modify stock text. The
-original trampoline is published before `commit`; `commit` is the first phase
-that attempts a stock instruction write. A failed commit is reported as clean
-only when the SDK says no branch remains live. Rollback is not atomic and B0
-does not claim otherwise.
+original trampoline is published before `publish`; `publish` is the first phase
+that attempts a stock instruction write. If `touched()` remains false after a
+failed publication, the engine has read back the original word before releasing
+its private pages. This proves no SDK branch word remains under the engine's
+single-installer assumptions, but does not prove the final RX `mprotect`
+succeeded. Rollback is not atomic and B0.1 does not claim otherwise.
+
+The callback records saturating invocation, successful-forward, and
+positive/negative/zero-delta counters. It retains no pointer or raw event data.
+The constructor writes a bounded initial report to `/run` and to two isolated
+`m03b-b01-init-*` slots using A4's exact exFAT mount and no-clobber policy.
+Post-interaction publication is deliberately not implemented: no reviewed
+lifecycle point exists after user interaction, and adding a worker, signal,
+callback I/O, destructor assumption, or extra hook would violate this stage.
 
 Run locally:
 
