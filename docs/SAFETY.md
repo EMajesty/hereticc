@@ -69,6 +69,14 @@ filesystem magic. It uses exclusive partial creation, no-replace finalization,
 and file/directory sync. Missing or partial output is failure. This is host-tested
 source behavior, not physical-device evidence.
 
+The owner-run A4 test subsequently verified the exact stock executable and all
+63 firmware words on one firmware 1.3.0.12 unit; controls, audio, and stock-only
+reboot remained normal. This validates the zero-hook probe only. B0 introduces
+the first stock-text mutation path but is host-only: it emits no SD package and
+must not be deployed. Any later B1 authorization must explicitly accept the
+temporary RWX text-page interval, instruction-cache and cross-core uncertainty,
+non-atomic rollback, inferred DATA ABI, and process-lifetime trampoline policy.
+
 ## Data integrity
 
 - HERETICC project data should initially be an SD sidecar, not an undocumented modification of stock project files.

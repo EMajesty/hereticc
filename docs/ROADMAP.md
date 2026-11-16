@@ -74,7 +74,7 @@ Acceptance criteria:
 - selective and hardened-full alternatives have reviewable failure-state requirements;
 - M0.3b-A implementation remains a separate review gate.
 
-### M0.3b-A Zero-hook compatibility probe — A3 observed; A4 awaiting review
+### M0.3b-A Zero-hook compatibility probe — A4 physically validated
 
 Acceptance criteria achieved in source/build evidence:
 
@@ -102,11 +102,26 @@ compatibility. M0.3b-A3 added probe-only discovery reasons and process-context
 classifications and was subsequently observed on the same unit.
 
 The owner-run A3 reports came only from unexpected executable identities and
-exhausted the four shared slots. A4 isolates four bounded unexpected slots from
+exhausted the four shared slots. A4 isolated four bounded unexpected slots from
 two expected-application slots while retaining all A3 observations and the
-unchanged fingerprint gate. A4 remains unexecuted and separately unauthorized.
+unchanged fingerprint gate. The owner subsequently ran A4 on firmware 1.3.0.12:
+the expected stock executable was reached, all 63 words matched, zero-hook
+reporting completed, controls and audio remained normal, and stock-only reboot
+succeeded. This validates that one device/run, not other firmware or hooks.
 
-### M0.3b-B–E Device feasibility experiments — planned and blocked
+### M0.3b-B0 selective input-hook feasibility — host validated, not deployable
+
+B0 selects the SDK DATA encoder-dispatch site and adds an isolated, patched-SDK
+build with a one-site prepare/commit API, transparent forwarding handler,
+failure-state model, host tests, and AArch64 static inspection. It produces no
+SD package and has not executed on hardware. See [B0 input-hook analysis](INPUT-HOOK-B0.md).
+
+A separately authorized B1 remains required for any physical hook test. Before
+that authorization, review temporary text-page permissions, cache maintenance,
+concurrent execution, rollback uncertainty, report retrieval, and service
+restart/recovery boundaries.
+
+### M0.3b-C–E Device feasibility experiments — planned and blocked
 
 This requires a separate, explicitly reviewed task because it creates device-facing executable code.
 
@@ -232,4 +247,7 @@ Acceptance criteria:
 
 ## Practical next engineering task
 
-The next action is owner source/package review followed, only with explicit approval, by the bounded M0.3b-A procedure in [Device testing](DEVICE-TESTING.md). Input, rendering, stock voice, hook installation, and timing work remain separate approvals. Do not begin M0.3b-B automatically.
+The next action is owner review of the B0 source, patch series, host evidence,
+and residual live-patching risks. Any B1 package or physical DATA-hook run needs
+a separate explicit authorization. Rendering, stock voice, and timing remain
+separate later approvals.

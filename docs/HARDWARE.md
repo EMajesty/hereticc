@@ -111,6 +111,12 @@ Policy:
 - Unsupported versions must fail closed and leave the stock application running.
 - Do not infer compatibility from a similar version number or a successful load.
 
+Physical A4 evidence confirms that one MPC Sample running 1.3.0.12 reaches exact
+`/usr/bin/MPC Sample` and matches the complete 63-word table. The zero-hook
+constructor left controls and audio normal and stock-only reboot succeeded. No
+input hook has been hardware-tested. B0's DATA encoder ABI and thread/lifetime
+behavior remain source-derived assumptions; see [B0 analysis](INPUT-HOOK-B0.md).
+
 ## Unknown hardware questions
 
 - Exact end-to-end pad-to-sound and schedule-to-sound latency under stock-engine integration.

@@ -420,3 +420,22 @@ paint-install symbol; no writable/executable section; and one probe entry among
 the `.init_array` constructors. `mmap64`/`munmap` remain general Rust standard
 library allocator imports; no `mprotect` or executable trampoline machinery is
 linked. This is static binary evidence, not physical validation.
+
+## B0 selective DATA experiment
+
+The owner-run A4 probe later reached the expected executable and matched all 63
+words on one 1.3.0.12 unit, while controls/audio and stock-only reboot remained
+normal. B0 does not alter that zero-hook build. Its additional patch enables a
+separate feature containing the probe, hook engine, and an API that can prepare
+only the SDK's symbolic `DATA_HOOK`; full `sites`, paint, loader, audio, MIDI,
+drawing, and platform modules remain excluded.
+
+B0 splits the hook engine's former combined commit wrapper into `seal` and
+`publish` while retaining the combined API for existing callers. This makes the
+report boundary precise: prepare writes private RW pages; seal changes only
+those owned pages to RX and flushes them; publish is the first operation that
+attempts `mprotect` and a branch write on stock text. A publish failure can
+still leave an indeterminate live branch if restoration fails, so B0 retains
+the trampoline for process lifetime and reports failure rather than claiming
+rollback atomicity. Full analysis and rejected sites are in
+[B0 input-hook feasibility](INPUT-HOOK-B0.md).

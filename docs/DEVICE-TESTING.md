@@ -19,9 +19,15 @@ compatibility. A3 subsequently produced four reports:
 All four reported an unexpected executable, no expected executable mapping,
 `probe-offset-outside-load-segments`, and zero checked fingerprint words. Stock
 UI, pads, and audio remained normal. This is consistent with launcher/helper
-inheritance but does not prove that explanation or establish whether the stock
-application ever inherits the preload. A4 is locally prepared only and is not
-authorized for execution.
+inheritance but did not prove that explanation. The owner then ran A4: its
+reserved expected-process report reached exact `/usr/bin/MPC Sample`, discovered
+the firmware image, and matched all 63 words. Stock UI, pads, controls, and audio
+remained normal, and stock-only reboot succeeded. This physically validates the
+A4 zero-hook probe on one firmware 1.3.0.12 unit/run only.
+
+M0.3b-B0 is a separate source/host-only DATA-hook feasibility build. It has no
+SD package and is not authorized for physical execution. Nothing in this A4
+procedure authorizes B0/B1.
 
 The package is `device/m03b-a/build/hereticc-m03b-a-probe.zip`. The ignored
 build directory must be regenerated locally. The authoritative hash for a

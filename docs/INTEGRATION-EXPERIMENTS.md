@@ -47,6 +47,12 @@ file, or missing final report.
 
 ## B. Input interception and forwarding
 
+**Current stage:** B0 source/host validation selects only `DATA_HOOK` and is
+documented in [Selective input-hook feasibility](INPUT-HOOK-B0.md). It produces
+no deployable package and does not count as experiment B physical evidence.
+Exact executable identity and the complete 63-word A4 gate precede preparation;
+full SDK sites, paint, ALSA, and unrelated hooks are excluded from its build.
+
 **Purpose:** validate page-scoped ownership and paired release behavior without triggering synthetic notes.
 
 **Prerequisites:** A passed; one diagnostic mode limited to the verified Sample page; fixed-size counters only; button/pad light overrides disabled initially.

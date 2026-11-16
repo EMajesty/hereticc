@@ -306,3 +306,18 @@ unit's launched commands and descendants, but the reviewed source lacks the
 device's actual service definition and `ExecStart` chain. A4 therefore leaves
 autorun unchanged and partitions reporting capacity by exact `/proc/self/exe`
 identity: unexpected/unreadable contexts cannot consume expected slots.
+
+### M0.3b-A4 physical result and B0 input-site selection
+
+The owner-run A4 test reached the exact expected stock executable, discovered
+the image, and matched all 63 words on firmware 1.3.0.12. Stock controls/audio
+remained normal and card-free reboot succeeded. This closes the zero-hook
+compatibility gate for that unit/run only.
+
+Review of pinned `sites.rs`, `firmware.rs`, and `hook.rs` selects `DATA_HOOK` for
+B0. Its SDK ABI is a single `unsafe extern "C" fn(usize, i32)` returning unit,
+with no paired-site dependency. NOTE_ON/OFF require a pair; CC and BUTTONS use
+firmware event layouts; SURFACE accepts a raw payload pointer. The B0 SDK patch
+exposes only DATA preparation while excluding full sites, paint, ALSA, MIDI,
+drawing, and platform features. This is source/host evidence, not proof that
+the inferred encoder ABI or concurrent patching is safe on hardware.
