@@ -1,6 +1,6 @@
 # M0.3b-A4 process-aware zero-hook probe
 
-This isolated crate is the first device-facing HERETICC diagnostic. It is not a
+This isolated crate is the first device-facing NEUROGENIC diagnostic. It is not a
 workspace member and has no relationship to the sequencer core or host adapter.
 It discovers the stock process, reads the pinned SDK's complete 63-word
 fingerprint table, writes one bounded report to `/run/hereticc-m03b-a.txt`, and
@@ -53,7 +53,7 @@ Inspect the generated source and patch identity with:
 ```sh
 git -C target/m03b-a/sdk diff --check
 git -C target/m03b-a/sdk diff
-cat target/m03b-a/sdk/.hereticc-patchset
+cat target/m03b-a/sdk/.neurogenic-patchset
 ```
 
 The build script does not package, install, or execute anything on a device.
@@ -69,7 +69,7 @@ Patch `0002-add-a3-discovery-diagnostics.patch` changes only code compiled by
 the SDK's `probe-only` feature. The normal SDK `Firmware::find()` and installer
 remain unchanged. Probe version `0.2.0` and patch-set identifier
 `m03b-a3-discovery-v2` distinguish A3 artifacts and reports from A2. A4 changes
-only the HERETICC-owned report categorization/writer, uses probe version
+only the NEUROGENIC-owned report categorization/writer, uses probe version
 `0.3.0`, and identifies the complete build as `m03b-a4-process-aware-v3`.
 
 The generated autorun installs `LD_PRELOAD` as an environment variable on

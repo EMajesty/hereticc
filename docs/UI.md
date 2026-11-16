@@ -9,7 +9,7 @@ The pinned SDK verifies post-stock drawing on the firmware's Sample-page class u
 ## Page hierarchy
 
 ```text
-HERETICC mode
+NEUROGENIC mode
 ├── Perform
 │   ├── scene launch
 │   └── performance FX/macros
@@ -60,7 +60,7 @@ Shows track gain/pan/sends/mute, two logical inserts, two shared returns, and ma
 - Use a small neutral palette: near-black background, two neutral text levels, one selection accent, warning amber, error red, and per-track colors only where identity matters.
 - Use size/spacing/contrast before color. Selected, playing, muted, pending, and unavailable states must remain distinguishable on the physical panel.
 - The first renderer uses the stock font face and measured sizes. Custom fonts require either a new reviewed stock-typeface interface or a bounded bitmap-glyph renderer. The current SDK exposes neither font loading nor image blitting.
-- Text layout must tolerate the SDK's 95-byte per-call truncation and unknown glyph coverage. Pre-layout and clipping happen in HERETICC-owned host logic.
+- Text layout must tolerate the SDK's 95-byte per-call truncation and unknown glyph coverage. Pre-layout and clipping happen in NEUROGENIC-owned host logic.
 
 ## Future renderer abstraction
 
@@ -77,11 +77,11 @@ M0.3a does not add this API yet. The paint hook is currently Sample-page-specifi
 
 ## Screen ownership and restoration
 
-HERETICC requests a page-scoped display lease only when the current component class and surface generation are supported. During a paint callback it lets stock paint first, then covers/draws the complete HERETICC frame. It never retains the graphics handle.
+NEUROGENIC requests a page-scoped display lease only when the current component class and surface generation are supported. During a paint callback it lets stock paint first, then covers/draws the complete NEUROGENIC frame. It never retains the graphics handle.
 
 Lease release is mandatory on normal exit, page change, firmware-object generation change, panic/error boundary, or unsupported state:
 
-1. stop requesting HERETICC repaints;
+1. stop requesting NEUROGENIC repaints;
 2. clear transient input ownership while preserving paired releases;
 3. restore all SDK pad-light overrides;
 4. clear performance/macro overrides;
@@ -94,9 +94,9 @@ Button LEDs are not part of the verified SDK restoration API and must remain sto
 
 Focus consists of page, region/widget, edit mode, and captured surface generation. Each input is classified as observe, consume, or forward. A consumed press owns its release even if the page changes. Duplicate surface and high-level pad paths must be deduplicated.
 
-K1–K3 and the fader use pickup: after focus/parameter changes, movement is observed but forwarded or ignored by HERETICC until the physical value crosses the logical value within a defined tolerance. Pickup completion is visible. MAIN VOLUME remains stock-owned.
+K1–K3 and the fader use pickup: after focus/parameter changes, movement is observed but forwarded or ignored by NEUROGENIC until the physical value crosses the logical value within a defined tolerance. Pickup completion is visible. MAIN VOLUME remains stock-owned.
 
-SHIFT is a modifier, not a permanent mode key. A lone SHIFT press should continue to stock unless a validated chord-claim/replay mechanism preserves the complete native gesture. ERASE is owned only by a focused editor. Transport remains forwarded until an approved transport-owner experiment passes. No permanent HERETICC activation shortcut is selected by this document.
+SHIFT is a modifier, not a permanent mode key. A lone SHIFT press should continue to stock unless a validated chord-claim/replay mechanism preserves the complete native gesture. ERASE is owned only by a focused editor. Transport remains forwarded until an approved transport-owner experiment passes. No permanent NEUROGENIC activation shortcut is selected by this document.
 
 ## Physical-test questions
 
@@ -108,6 +108,6 @@ SHIFT is a modifier, not a permanent mode key. A lone SHIFT press should continu
 - Can leaving the mode always force a clean stock repaint without stale pixels?
 - Are all raw codes for B1–B3, fader, transport, and mode buttons stable on hardware and page-independent?
 - Can input press/release ownership survive modal changes, project loads, and overlapping callbacks?
-- Does pad-light restore reproduce the latest native state after stock changes while HERETICC owns the lights?
+- Does pad-light restore reproduce the latest native state after stock changes while NEUROGENIC owns the lights?
 
 The experiments and pass criteria are specified in [Integration experiments](INTEGRATION-EXPERIMENTS.md).

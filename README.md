@@ -1,14 +1,18 @@
-# HERETICC
+# NEUROGENIC
 
 <p align="center">
   <img src="assets/images/vibeslop.png" alt="Absolute vibeslop" width="512">
 </p>
 
-HERETICC is an open-source custom firmware extension for the Akai MPC Sample. It aims to add a 16-track polyphonic sequencer, independent track patterns, scenes, song arrangements, parameter locks, tracker-style commands, non-destructive slicing, performance controls, and MIDI integration while preserving the stock sampling workflow and hardware experience wherever practical.
+NEUROGENIC is an open-source custom firmware extension for the Akai MPC Sample. It aims to add a 16-track polyphonic sequencer, independent track patterns, scenes, song arrangements, parameter locks, tracker-style commands, non-destructive slicing, performance controls, and MIDI integration while preserving the stock sampling workflow and hardware experience wherever practical.
 
 ## Status
 
-HERETICC is in **M0: host core and guarded integration feasibility**. M0.3b-A now contains an isolated, zero-hook AArch64 firmware-compatibility probe and an inspectable transient SD package. The probe has passed host fixtures, cross-build, ELF inspection, and package reproducibility checks, but it has not been executed on MPC Sample hardware. It installs no feature hooks and is not a sequencer adapter, audio engine, UI, or product installer.
+NEUROGENIC is in **M0: host core and guarded integration feasibility**. The M0.2/M0.2a host sequencer foundation is complete. M0.3b-A4 was physically validated on one MPC Sample running firmware 1.3.0.12: the expected executable was reached and all 63 firmware fingerprints matched without hooks. M0.3b-B0/B0.1/B0.2 are host-validated only, and B1-P0 device-access investigation and test preparation are complete in source. No B1 physical hook test is authorized, and non-restarting post-interaction diagnostic retrieval remains unproven.
+
+Project website: [neurogeni.cc](https://neurogeni.cc). Source repository: [EMajesty/neurogenic](https://github.com/EMajesty/neurogenic).
+
+NEUROGENIC was previously developed under the name HERETICC. Historical experiment artifacts retain their original identifiers for traceability.
 
 The initial technical direction is:
 
@@ -20,14 +24,14 @@ This is approach **C first**, with **A as the leading integration candidate**. T
 
 ## Host development
 
-The workspace contains [`hereticc-core`](crates/hereticc-core), a standard-library-only Rust crate, and [`hereticc-host`](crates/hereticc-host), a host-only event consumer and demonstration. A Nix development shell supplies Cargo, rustc, rustfmt, and Clippy:
+The workspace contains [`neurogenic-core`](crates/neurogenic-core), a standard-library-only Rust crate, and [`neurogenic-host`](crates/neurogenic-host), a host-only event consumer and demonstration. A Nix development shell supplies Cargo, rustc, rustfmt, and Clippy:
 
 ```sh
 nix develop
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo run -p hereticc-host --bin demo
+cargo run -p neurogenic-host --bin demo
 ```
 
 The core currently implements integer musical time, validated sixteen-track projects, independent patterns, scenes, basic note/parameter scheduling, overlapping runtime voices, phase-reset scene transitions, transactional capacity/arithmetic errors, and a bounded versioned host-side codec. The host adapter verifies event order and voice lifecycle and produces deterministic text traces. Neither crate is real-time safe or processes audio.
@@ -62,10 +66,10 @@ The core currently implements integer musical time, validated sixteen-track proj
 
 ## License
 
-HERETICC's original code and documentation are available under the [MIT License](LICENSE), copyright 2026 Lassi Laitinen. This license does not cover Akai/inMusic firmware, SDK components, trademarks, or third-party projects. Any future dependency or imported third-party material requires a separate provenance and license review, with upstream notices preserved.
+NEUROGENIC's original code and documentation are available under the [MIT License](LICENSE), copyright 2026 Lassi Laitinen. This license does not cover Akai/inMusic firmware, SDK components, trademarks, or third-party projects. Any future dependency or imported third-party material requires a separate provenance and license review, with upstream notices preserved.
 
 ## Scope and legal notice
 
-HERETICC is not affiliated with Akai Professional or inMusic Brands. Akai and MPC are trademarks of their respective owners.
+NEUROGENIC is not affiliated with Akai Professional or inMusic Brands. Akai and MPC are trademarks of their respective owners.
 
 Do not commit proprietary firmware binaries, extracted firmware code, keys, identifiers, or copyrighted firmware assets. External code may be reused only after its license and provenance are recorded. Research notes describe third-party behavior; they do not import third-party code.

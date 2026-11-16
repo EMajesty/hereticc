@@ -28,8 +28,8 @@ cargo test --manifest-path "$experiment_dir/Cargo.toml"
 
 "$sdk_dir/build-mod.sh" \
     --manifest-path "$experiment_dir/Cargo.toml" \
-    --package hereticc-m03b-a-probe \
-    --name hereticc-m03b-a-probe \
+    --package neurogenic-m03b-a-probe \
+    --name neurogenic-m03b-a-probe \
     --output-dir "$output_dir"
 
 printf 'built artifacts in %s\n' "$output_dir"

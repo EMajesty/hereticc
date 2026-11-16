@@ -31,8 +31,8 @@ for patch in "$a_patches"/*.patch "$b_patches"/*.patch; do
 done
 
 patch_hash=$(sha256sum "$a_patches"/*.patch "$b_patches"/*.patch | sha256sum | cut -d' ' -f1)
-printf '%s\n' "upstream=$SDK_COMMIT" "patch_set=$PATCH_SET" "patch_series_sha256=$patch_hash" > "$stage/.hereticc-patchset"
+printf '%s\n' "upstream=$SDK_COMMIT" "patch_set=$PATCH_SET" "patch_series_sha256=$patch_hash" > "$stage/.neurogenic-patchset"
 rm -rf "$destination"
 mv "$stage" "$destination"
 trap - EXIT HUP INT TERM
-cat "$destination/.hereticc-patchset"
+cat "$destination/.neurogenic-patchset"

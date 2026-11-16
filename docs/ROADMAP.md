@@ -26,7 +26,7 @@ Acceptance criteria:
 
 ### M0.2 Core specification and test harness — complete
 
-Implemented as the standard-library-only `crates/hereticc-core` workspace member.
+Implemented as the standard-library-only `crates/neurogenic-core` workspace member.
 
 Acceptance criteria:
 
@@ -45,7 +45,7 @@ Acceptance criteria:
 - version-1 decoding rejects truncated, malformed, oversized, and invalid-reference data under centralized allocation/count/string limits;
 - a separate host-only adapter validates voice lifecycle, parameter/scene records, order, and deterministic trace output;
 - a two-track polymeter/scene-transition demonstration runs without device, audio, MIDI, or wall-clock integration;
-- original HERETICC code is explicitly MIT-licensed while upstream/proprietary material remains outside that grant;
+- original NEUROGENIC code is explicitly MIT-licensed while upstream/proprietary material remains outside that grant;
 - format, Clippy, workspace tests, Nix flake checks, and whitespace checks pass.
 
 ### M0.3a Stock engine and custom UI feasibility research — complete
@@ -58,7 +58,7 @@ Acceptance criteria:
 - stock pad-path note calls are distinguished from token-addressable/sample-accurate voice scheduling;
 - Sample-page post-paint drawing, public primitives, repaint behavior, font/bitmap limits, and pad-light restoration are evidence-classified;
 - page-scoped input ownership forwards unowned controls and retains consumed press/release pairs;
-- minimum adapter responsibilities remain outside `hereticc-core` and no speculative public hardware traits are frozen;
+- minimum adapter responsibilities remain outside `neurogenic-core` and no speculative public hardware traits are frozen;
 - UI architecture and separately reviewable experiments A–E are documented.
 
 ### M0.3b-A0 SDK hook safety investigation — complete
@@ -188,7 +188,7 @@ Pass condition: a safe final stereo insert point with deterministic timing and c
 
 Minimum experiment:
 
-- prove that a logical HERETICC track can be associated with an isolated stereo PCM path before summing, including overlapping voices and alternate samples;
+- prove that a logical NEUROGENIC track can be associated with an isolated stereo PCM path before summing, including overlapping voices and alternate samples;
 - identify buffer ownership, capacity, callback order, gain/pan location, stock effects, and all fallback paths;
 - route two tracks independently through unity insert chains and two bounded send accumulators, then sum returns exactly once;
 - test mute, bypass, tails, latency compensation, project/page changes, live input, preview, stock playback, and unsupported paths;
@@ -218,7 +218,7 @@ Acceptance criteria:
 
 - unsupported firmware remains stock;
 - no blocking/allocation in real-time callbacks;
-- stock controls not owned by HERETICC still work;
+- stock controls not owned by NEUROGENIC still work;
 - UI and pad lights restore on every exit/error path;
 - measured timing and physical test matrix are published.
 

@@ -1,9 +1,9 @@
-use hereticc_core::{
+use neurogenic_core::{
     EventId, EventKind, MusicalTime, ParameterAddress, ParameterChange, ParameterId,
     ParameterIntent, ParameterOwner, ParameterScope, SceneId, SceneTransition, SceneVoicePolicy,
     ScheduledEvent, SoundSource, TrackId, VoiceToken,
 };
-use hereticc_host::{HostAdapter, HostAdapterError};
+use neurogenic_host::{HostAdapter, HostAdapterError};
 
 fn track() -> TrackId {
     TrackId::new(0).expect("track")

@@ -24,7 +24,7 @@ id_type!(SampleId);
 id_type!(SliceId);
 id_type!(VoiceToken);
 
-/// One of the sixteen logical HERETICC tracks.
+/// One of the sixteen logical NEUROGENIC tracks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TrackId(u8);
 

@@ -2,7 +2,7 @@
 
 ## Status and recommendation
 
-The device architecture remains proposed. M0.2a implements the hardware-independent `hereticc-core` model, validator, scheduler, typed parameter representation, and bounded versioned codec, plus a separate host-only `hereticc-host` semantic event consumer. M0.3a adds only stock-engine/UI research and interface/experiment documentation. There is no device adapter, voice adapter, effects engine, audio processing, UI renderer, MIDI backend, or deployment code.
+The device architecture remains proposed. M0.2a implements the hardware-independent `neurogenic-core` model, validator, scheduler, typed parameter representation, and bounded versioned codec, plus a separate host-only `neurogenic-host` semantic event consumer. M0.3a adds only stock-engine/UI research and interface/experiment documentation. There is no device adapter, voice adapter, effects engine, audio processing, UI renderer, MIDI backend, or deployment code.
 
 Start with **C: a separate host-testable sequencer core**, then integrate through **A: `mpc-sample-sdk`** if a focused device spike validates the required contracts. Do not fork or adapt a complete existing mod at this stage.
 
@@ -33,7 +33,7 @@ sequencer core -----> scheduled semantic events -----> voice adapter
                                       audio routing/DSP adapter
 ```
 
-### `hereticc-core`
+### `neurogenic-core`
 
 Pure Rust domain logic with no firmware addresses, UI objects, ALSA handles, filesystem access, or wall-clock calls.
 
@@ -70,17 +70,17 @@ The M0.2a scheduler is intentionally host-oriented:
 
 Therefore no current public scheduling operation is claimed real-time safe. A future boundary should compile a validated project into an immutable, canonically ordered snapshot and schedule into caller-owned preallocated storage. That work must preserve the M0.2 half-open interval and ordering semantics; it does not require changing the persistent model.
 
-### `hereticc-host`
+### `neurogenic-host`
 
 The host adapter is a test oracle and integration-shape prototype, not a device implementation. It consumes already ordered `ScheduledEvent` batches, transactionally tracks active voices by runtime token, records parameter addresses and scene commits, rejects duplicate tokens/unmatched releases/order violations, and emits a deterministic human-readable trace. The included demonstration uses two audible polymetric tracks and an explicit scene boundary without audio, MIDI, clocks, sleeping, or firmware access.
 
 ### Device adapter
 
-Potentially backed by `mpc-sample-sdk`, behind HERETICC-owned traits. Responsibilities include:
+Potentially backed by `mpc-sample-sdk`, behind NEUROGENIC-owned traits. Responsibilities include:
 
 - intercepting or forwarding controls;
 - obtaining a monotonic transport position;
-- mapping stable HERETICC sample references to live firmware objects;
+- mapping stable NEUROGENIC sample references to live firmware objects;
 - applying scheduled triggers and parameter changes;
 - drawing screens and restoring native pad lights;
 - detecting supported firmware and failing closed.
@@ -109,13 +109,13 @@ An output callback that can add samples to the final mix does not by itself prov
 
 ### UI adapter
 
-Grid and tracker views are projections of the same event model. UI state such as cursor, selection, and temporary audition is separate from saved musical state. Input ownership must be page-scoped; events not owned by HERETICC are forwarded to the stock application.
+Grid and tracker views are projections of the same event model. UI state such as cursor, selection, and temporary audition is separate from saved musical state. Input ownership must be page-scoped; events not owned by NEUROGENIC are forwarded to the stock application.
 
 The proposed renderer consumes immutable view frames and emits bounded rectangles/text; it never receives firmware pointers or owns sequencer state. The initial device backend may target only the verified Sample-page post-paint scope. Full-screen coverage, repaint budget, child/dialog ordering, typography, and restoration must pass M0.3b before a complete UI is authorized. See [UI architecture](UI.md).
 
 ### Persistence adapter
 
-HERETICC data should use a versioned sidecar on the SD card until safe round-trip storage inside stock projects is demonstrated. Store logical references and metadata, never raw firmware addresses. Writes use a temporary file, flush, and atomic rename where the filesystem permits. Unknown future fields must survive load/save where practical.
+NEUROGENIC data should use a versioned sidecar on the SD card until safe round-trip storage inside stock projects is demonstrated. Store logical references and metadata, never raw firmware addresses. Writes use a temporary file, flush, and atomic rename where the filesystem permits. Unknown future fields must survive load/save where practical.
 
 ## Integration proof required before device architecture is frozen
 

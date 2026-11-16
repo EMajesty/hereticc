@@ -1,8 +1,8 @@
-use hereticc_core::{
+use neurogenic_core::{
     EventId, MusicalTime, Pattern, PatternId, PatternLength, PatternTick, Project, Scene, SceneId,
     SceneVoicePolicy, Scheduler, SoundSource, StepEvent, TickInterval, TrackId,
 };
-use hereticc_host::HostAdapter;
+use neurogenic_host::HostAdapter;
 
 const STEP: u64 = 240;
 

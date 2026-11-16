@@ -1,5 +1,9 @@
 # M0.3b-A device testing
 
+The completed A2–A4 physical observations occurred under the former HERETICC
+name. Their stored reports, filenames, namespaces, and hashes retain that name
+for traceability; active rebuilt binaries use the NEUROGENIC package name.
+
 The prospective DATA-hook checklist is separate and remains **not authorized
 for execution**: see [B1-P0 device access and test preparation](INPUT-HOOK-B1-P0.md).
 Nothing in that design changes the A4 procedure below.
@@ -33,7 +37,7 @@ M0.3b-B0 is a separate source/host-only DATA-hook feasibility build. It has no
 SD package and is not authorized for physical execution. Nothing in this A4
 procedure authorizes B0/B1.
 
-The package is `device/m03b-a/build/hereticc-m03b-a-probe.zip`. The ignored
+The package is `device/m03b-a/build/neurogenic-m03b-a-probe.zip`. The ignored
 build directory must be regenerated locally. The authoritative hash for a
 particular build is in `device/m03b-a/build/SHA256SUMS`; never reuse a hash from
 an older document or package.
@@ -107,7 +111,7 @@ device/m03b-a/scripts/build.sh
 device/m03b-a/scripts/package.sh
 cat device/m03b-a/build/SHA256SUMS
 (cd device/m03b-a/build && sha256sum -c SHA256SUMS)
-unzip -l device/m03b-a/build/hereticc-m03b-a-probe.zip
+unzip -l device/m03b-a/build/neurogenic-m03b-a-probe.zip
 sed -n '1,200p' device/m03b-a/build/inspect/autorun/autorun.sh
 sed -n '1,200p' device/m03b-a/build/inspect/autorun/autorun.json
 ```
@@ -119,7 +123,7 @@ are relative to that directory. Verify that the archive contains only:
 autorun/autorun.check
 autorun/autorun.json
 autorun/autorun.sh
-autorun/hereticc-m03b-a-probe.so
+autorun/neurogenic-m03b-a-probe.so
 ```
 
 ## Physical procedure after separate approval
@@ -197,11 +201,11 @@ source analysis records that autorun is a feature of the stock application,
 which runs an accepted script via `sh`. The SDK-generated script performs
 `systemctl restart ac50` as its final command; it contains no evidence that its
 shell survives that restart. Because the shell is launched by the application
-being restarted, HERETICC cannot assume that commands after the restart run.
+being restarted, NEUROGENIC cannot assume that commands after the restart run.
 The independently hardware-validated Am MOD loader at commit
 `6cdc67276f43cd39f64871cb7e36782481244c65` checks an exact
 `/media/<name>/autorun` path and an `rw` exFAT mount before writing a report to
-the card. These are comparative source/physical evidence, not HERETICC hardware
+the card. These are comparative source/physical evidence, not NEUROGENIC hardware
 validation: [autorun analysis](https://github.com/ioma8/mpc-minimod/blob/3770fb7edcfb432cd45ca4e8fa8bcbefe0435c25/docs/MODDING.md),
 [validated mount check](https://github.com/AlekseyMalykh/am-mod/blob/6cdc67276f43cd39f64871cb7e36782481244c65/sd-clone-trial/src/autorun.sh#L281-L292).
 

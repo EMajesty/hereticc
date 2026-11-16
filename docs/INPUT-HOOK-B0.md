@@ -30,7 +30,7 @@ thread context of DATA arguments remain reverse-engineered assumptions.
 
 The B0 feature compiles the read-only A4 probe, hook engine, and a new SDK patch
 module exposing only `prepare_data`; it does not compile full `sites`, loader,
-audio, MIDI, drawing, platform, or paint code. HERETICC cannot request an
+audio, MIDI, drawing, platform, or paint code. NEUROGENIC cannot request an
 arbitrary firmware offset through this API.
 
 1. Classify `/proc/self/exe`; only exact `/usr/bin/MPC Sample` continues.

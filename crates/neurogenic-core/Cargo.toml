@@ -1,13 +1,12 @@
 [package]
-name = "hereticc-core"
+name = "neurogenic-core"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Hardware-independent sequencer core for HERETICC"
+description = "Hardware-independent sequencer core for NEUROGENIC"
 
 [dependencies]
 
 [lints]
 workspace = true
-

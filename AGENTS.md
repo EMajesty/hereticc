@@ -4,7 +4,7 @@ These instructions apply to the entire repository.
 
 ## Project state
 
-HERETICC currently has a host-only sequencer core and validation adapter; device integration remains research and architecture. Read `README.md` and the relevant files in `docs/` before changing scope. Keep planned, implemented, emulator-tested, and hardware-tested behavior explicitly distinct.
+NEUROGENIC currently has a host-only sequencer core and validation adapter; device integration remains research and architecture. Read `README.md` and the relevant files in `docs/` before changing scope. Keep planned, implemented, emulator-tested, and hardware-tested behavior explicitly distinct.
 
 ## Engineering conventions
 
@@ -12,12 +12,12 @@ HERETICC currently has a host-only sequencer core and validation adapter; device
 - Keep the sequencing engine independent of device-specific interfaces, firmware objects, operating-system APIs, UI, and audio backends.
 - Use host-side automated tests for timing, pattern handling, transitions, persistence, and event scheduling.
 - Use integer musical time and deterministic event ordering. Do not use wall-clock sleeps as sequencer tests.
-- Put firmware-specific behavior behind small HERETICC-owned adapter traits so it can be replaced and faked.
+- Put firmware-specific behavior behind small NEUROGENIC-owned adapter traits so it can be replaced and faked.
 - Never assume undocumented firmware interfaces are stable or safe. Record firmware version, evidence, thread/lifetime contract, and failure behavior for each use.
 - Avoid blocking operations, memory allocation, file I/O, drawing, and contended locks in real-time audio callbacks. Preallocate bounded storage and define overload behavior.
 - Validate unsupported firmware before installing hooks and fail closed.
 - Document external dependencies, exact revisions where relevant, and their licenses. Do not add or copy external code without a separate reviewed task.
-- HERETICC's original contributions are MIT-licensed. Preserve the root license and all upstream copyright/license notices; do not imply that the MIT license covers proprietary firmware, SDK components, or third-party material.
+- NEUROGENIC's original contributions are MIT-licensed. Preserve the root license and all upstream copyright/license notices; do not imply that the MIT license covers proprietary firmware, SDK components, or third-party material.
 - Do not claim hardware functionality is tested unless it has actually been tested on physical hardware. Identify host and emulator results as such.
 - Keep documentation concise, technical, linked to primary sources, and maintainable. Pin research links to commits when practical.
 

@@ -1,5 +1,5 @@
 {
-  description = "HERETICC host-side Rust development environment";
+  description = "NEUROGENIC host-side Rust development environment";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 

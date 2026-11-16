@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-use hereticc_core::{
+use neurogenic_core::{
     EventId, EventKind, MusicalTime, ParameterIntent, ParameterOwner, SceneId, ScheduledEvent,
     SoundSource, TrackId, VoiceToken,
 };

@@ -2,7 +2,7 @@
 set -eu
 script_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 experiment_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
-elf=${1:-"$experiment_dir/build/hereticc-m03b-b0-input-probe.elf"}
+elf=${1:-"$experiment_dir/build/neurogenic-m03b-b0-input-probe.elf"}
 [ -f "$elf" ] || { echo "missing ELF: $elf" >&2; exit 1; }
 
 header=$(llvm-readelf -h "$elf")

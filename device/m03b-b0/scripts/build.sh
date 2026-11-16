@@ -23,5 +23,5 @@ cargo fmt --manifest-path "$experiment_dir/Cargo.toml" -- --check
 cargo clippy --manifest-path "$experiment_dir/Cargo.toml" --all-targets -- -D warnings
 cargo test --manifest-path "$experiment_dir/Cargo.toml"
 
-"$sdk_dir/build-mod.sh" --manifest-path "$experiment_dir/Cargo.toml" --package hereticc-m03b-b0-input-probe --name hereticc-m03b-b0-input-probe --output-dir "$output_dir"
-"$script_dir/inspect-elf.sh" "$output_dir/hereticc-m03b-b0-input-probe.elf"
+"$sdk_dir/build-mod.sh" --manifest-path "$experiment_dir/Cargo.toml" --package neurogenic-m03b-b0-input-probe --name neurogenic-m03b-b0-input-probe --output-dir "$output_dir"
+"$script_dir/inspect-elf.sh" "$output_dir/neurogenic-m03b-b0-input-probe.elf"

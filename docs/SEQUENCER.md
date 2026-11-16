@@ -100,7 +100,7 @@ M0.2 supports one pending launch at an explicit absolute boundary. All sixteen p
 
 The binary format is an internal M0.2 format and is not yet promised as a permanent compatibility contract. M0.2a retains format version 1 and adds decoder policy rather than changing the wire schema. Default limits cover encoded project bytes, patterns, scenes, per-track references, per-pattern and total events, per-note parameter changes, parameter identifier bytes, and an estimated decoded-allocation budget. Declared sizes are checked before allocation; malformed tags, UTF-8, truncation, trailing data, and limit violations have structured errors. The allocation budget is a conservative accounting guard, not a precise heap measurement. The codec does not read stock MPC projects or perform filesystem/SD operations.
 
-The `hereticc-host` consumer preserves scheduler order, maintains voices by `VoiceToken`, and rejects malformed lifecycle events. It is useful for deterministic integration traces but does not convert ticks to time, render audio, send MIDI, or establish real-time safety.
+The `neurogenic-host` consumer preserves scheduler order, maintains voices by `VoiceToken`, and rejects malformed lifecycle events. It is useful for deterministic integration traces but does not convert ticks to time, render audio, send MIDI, or establish real-time safety.
 
 ## Explicitly deferred
 

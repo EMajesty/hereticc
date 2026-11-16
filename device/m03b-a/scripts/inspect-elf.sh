@@ -3,7 +3,7 @@ set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 experiment_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
-elf=${1:-"$experiment_dir/build/hereticc-m03b-a-probe.elf"}
+elf=${1:-"$experiment_dir/build/neurogenic-m03b-a-probe.elf"}
 
 [ -f "$elf" ] || { echo "missing ELF: $elf" >&2; exit 1; }
 

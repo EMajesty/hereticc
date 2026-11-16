@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/hereticc-core", "crates/hereticc-host"]
+members = ["crates/neurogenic-core", "crates/neurogenic-host"]
 resolver = "2"
 
 [workspace.package]

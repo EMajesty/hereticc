@@ -17,7 +17,7 @@ mod sd_report;
 
 use sd_report::ReportCategory;
 
-/// HERETICC diagnostic version.
+/// NEUROGENIC diagnostic version.
 pub const PROBE_VERSION: &str = "0.3.0";
 /// Exact upstream SDK revision patched by this experiment.
 pub const SDK_COMMIT: &str = "e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39";
@@ -181,7 +181,7 @@ extern "C" fn start_probe() {
 
 #[used]
 #[cfg_attr(target_os = "linux", unsafe(link_section = ".init_array"))]
-static HERETICC_PROBE_ENTRY: extern "C" fn() = start_probe;
+static NEUROGENIC_PROBE_ENTRY: extern "C" fn() = start_probe;
 
 #[cfg(test)]
 mod tests {

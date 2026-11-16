@@ -1,4 +1,4 @@
-//! Hardware-independent, deterministic sequencing foundations for HERETICC.
+//! Hardware-independent, deterministic sequencing foundations for NEUROGENIC.
 //!
 //! The crate has no device, operating-system, audio, MIDI, UI, or Akai SDK
 //! dependency. M0.2 APIs allocate and are not claimed to be real-time safe.

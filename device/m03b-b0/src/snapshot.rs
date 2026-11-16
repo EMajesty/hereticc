@@ -383,7 +383,7 @@ mod tests {
         fn new() -> Self {
             let id = NEXT.fetch_add(1, Ordering::Relaxed);
             let path =
-                std::env::temp_dir().join(format!("hereticc-b02-{}-{id}", std::process::id()));
+                std::env::temp_dir().join(format!("neurogenic-b02-{}-{id}", std::process::id()));
             fs::create_dir(&path).unwrap();
             Self(path)
         }

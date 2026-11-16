@@ -2,7 +2,7 @@
 
 ## Status
 
-This is a design contract prepared by M0.3a for separately authorized M0.3b experiments. No Akai adapter, SDK dependency, audio callback, MIDI backend, or device executable exists. `hereticc-host` validates semantic event consumption only; it does not verify any MPC Sample capability.
+This is a design contract prepared by M0.3a for separately authorized M0.3b experiments. No Akai adapter, SDK dependency, audio callback, MIDI backend, or device executable exists. `neurogenic-host` validates semantic event consumption only; it does not verify any MPC Sample capability.
 
 ## Boundary
 
@@ -12,7 +12,7 @@ The adapter reports a capability snapshot before playback. Unsupported trigger, 
 
 ## Clock and lookahead
 
-- Convert 960-PPQN musical ticks to absolute audio frames using the active tempo and sample rate with checked rational or fixed-point arithmetic. 960 PPQN is a HERETICC design choice, not a verified stock clock.
+- Convert 960-PPQN musical ticks to absolute audio frames using the active tempo and sample rate with checked rational or fixed-point arithmetic. 960 PPQN is a NEUROGENIC design choice, not a verified stock clock.
 - Carry fractional conversion remainder between adjacent windows so chunking cannot introduce drift. Tempo changes split conversion segments at exact musical boundaries.
 - Define which audio-frame clock is authoritative, its epoch relative to stock transport, its behavior on seek/stop/loop, and whether callbacks expose absolute or block-relative frames.
 - Request enough lookahead to deliver every event before its target frame, but bound both lookahead and output capacity. A UI timer is not assumed sufficiently accurate.
@@ -35,7 +35,7 @@ The pinned SDK does expose unsafe `midi::send_note_on` and `send_note_off` wrapp
 ## Parameters and capabilities
 
 - Dispatch logical `ParameterAddress` and absolute/relative intent through a versioned capability table. The table names supported scopes, owners, slots, ranges, update rates, timing precision, and reset behavior.
-- Keep symbolic HERETICC IDs separate from numeric firmware IDs. Firmware-specific mappings remain private to the guarded adapter revision.
+- Keep symbolic NEUROGENIC IDs separate from numeric firmware IDs. Firmware-specific mappings remain private to the guarded adapter revision.
 - Resolve voice-scoped changes to the event's runtime token before note-on; continuously running track/effect parameters must not restart processors.
 - Return unsupported, temporarily unavailable, and failed parameter application as distinct diagnostics. DSP smoothing/composition remains outside the sequencer.
 
@@ -43,7 +43,7 @@ No reviewed evidence currently proves comprehensive stock-effect parameter contr
 
 ## Minimum host-owned interfaces
 
-Do not add these traits to `hereticc-core`. A future integration-support crate should introduce them only after M0.3b fixes the missing contracts:
+Do not add these traits to `neurogenic-core`. A future integration-support crate should introduce them only after M0.3b fixes the missing contracts:
 
 - `SoundResolver`: resolve a stable logical sound plus project generation into an opaque, adapter-owned target; report default-pad, sample, and slice capabilities separately.
 - `VoiceSink`: accept frame-stamped note-on/note-off commands keyed by `VoiceToken`; return applied/rejected/partially-applied status without exposing firmware pointers.
@@ -66,7 +66,7 @@ The existing `HostAdapter` remains the semantic event oracle. M0.3a deliberately
 
 ## Stock transport interaction
 
-M0.3 must choose and test one explicit relationship: follow stock transport, run HERETICC transport while stock sequencing is suppressed, or coexist with both engines. It must document start/stop/seek/loop semantics, tempo source, count-in, stock preview voices, duplicate triggering, and project/page changes. No mode is currently verified safe, and the host adapter does not choose one.
+M0.3 must choose and test one explicit relationship: follow stock transport, run NEUROGENIC transport while stock sequencing is suppressed, or coexist with both engines. It must document start/stop/seek/loop semantics, tempo source, count-in, stock preview voices, duplicate triggering, and project/page changes. No mode is currently verified safe, and the host adapter does not choose one.
 
 ## Minimum M0.3 evidence
 

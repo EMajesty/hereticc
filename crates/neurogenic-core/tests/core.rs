@@ -1,5 +1,5 @@
-use hereticc_core::codec;
-use hereticc_core::{
+use neurogenic_core::codec;
+use neurogenic_core::{
     CoreError, DecodeError, DecodeLimit, EventId, EventKind, MacroId, MusicalTime, PPQN,
     ParameterAddress, ParameterChange, ParameterEvent, ParameterId, ParameterIntent,
     ParameterOwner, ParameterScope, Pattern, PatternId, PatternLength, PatternTick, ProcessorSlot,
@@ -56,7 +56,7 @@ fn interval(start: u64, end: u64) -> TickInterval {
     TickInterval::new(MusicalTime::new(start), MusicalTime::new(end)).expect("interval")
 }
 
-fn note_ons(events: &[hereticc_core::ScheduledEvent]) -> Vec<(u64, u8, u64, VoiceToken)> {
+fn note_ons(events: &[neurogenic_core::ScheduledEvent]) -> Vec<(u64, u8, u64, VoiceToken)> {
     events
         .iter()
         .filter_map(|event| match event.kind {
@@ -428,8 +428,8 @@ fn invalid_data_and_arithmetic_overflow_are_rejected() {
 fn project_codec_round_trips_and_revalidates() {
     let mut project = project();
     project.tracks[0].default_sound = SoundSource::Sample {
-        sample: hereticc_core::SampleId::new(88),
-        slice: Some(hereticc_core::SliceId::new(3)),
+        sample: neurogenic_core::SampleId::new(88),
+        slice: Some(neurogenic_core::SliceId::new(3)),
     };
     project.patterns[0].notes.push(note(1, STEP, STEP * 2));
     let encoded = codec::encode(&project).expect("encode");

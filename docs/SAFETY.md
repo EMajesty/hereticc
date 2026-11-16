@@ -1,6 +1,6 @@
 # Safety
 
-HERETICC is unofficial research. No reviewed public project establishes a verified recovery path for every device boot failure. Reversible deployment reduces risk; it does not make device modification risk-free.
+NEUROGENIC is unofficial research. No reviewed public project establishes a verified recovery path for every device boot failure. Reversible deployment reduces risk; it does not make device modification risk-free.
 
 ## Repository safety
 
@@ -96,7 +96,7 @@ copier is confirmed or authorized.
 
 ## Data integrity
 
-- HERETICC project data should initially be an SD sidecar, not an undocumented modification of stock project files.
+- NEUROGENIC project data should initially be an SD sidecar, not an undocumented modification of stock project files.
 - Write to a new temporary file, validate it, flush it, then rename over the destination where supported.
 - Keep a previous known-good generation and include format version/checksum information.
 - Never overwrite source audio for slicing, offsets, reverse, or rendering without an explicit export action.

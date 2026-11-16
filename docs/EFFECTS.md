@@ -2,7 +2,7 @@
 
 ## Status
 
-This document specifies a hardware-independent target. No effects engine, routing hook, DSP, benchmark, or physical-device capability is implemented or confirmed by HERETICC. The logical model must remain valid if a backend supports only a subset.
+This document specifies a hardware-independent target. No effects engine, routing hook, DSP, benchmark, or physical-device capability is implemented or confirmed by NEUROGENIC. The logical model must remain valid if a backend supports only a subset.
 
 ## Logical audio graph
 

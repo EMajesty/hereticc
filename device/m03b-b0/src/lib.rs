@@ -19,7 +19,7 @@ pub mod snapshot;
 
 /// Exact upstream SDK revision.
 pub const SDK_COMMIT: &str = "e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39";
-/// HERETICC patch-set identifier.
+/// NEUROGENIC patch-set identifier.
 pub const PATCH_SET: &str = "m03b-b1p0-snapshot-identity-v4";
 /// Only supported stock firmware.
 pub const EXPECTED_FIRMWARE: &str = "1.3.0.12";
@@ -330,7 +330,7 @@ extern "C" fn start_probe() {
 #[used]
 #[cfg(not(test))]
 #[cfg_attr(target_os = "linux", unsafe(link_section = ".init_array"))]
-static HERETICC_B0_ENTRY: extern "C" fn() = start_probe;
+static NEUROGENIC_B0_ENTRY: extern "C" fn() = start_probe;
 
 #[cfg(test)]
 mod tests {

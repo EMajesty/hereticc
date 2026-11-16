@@ -15,5 +15,5 @@ second_diff=$(git -C "$second/sdk" diff --binary | sha256sum | cut -d' ' -f1)
     echo "patched trees differ" >&2
     exit 1
 }
-cmp "$first/sdk/.hereticc-patchset" "$second/sdk/.hereticc-patchset"
+cmp "$first/sdk/.neurogenic-patchset" "$second/sdk/.neurogenic-patchset"
 printf 'reproducible_patch_diff_sha256=%s\n' "$first_diff"

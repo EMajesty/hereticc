@@ -263,7 +263,7 @@ wait. This is useful for callback responsiveness, not an unload barrier.
 
 The upstream SD loader uses `LD_PRELOAD` in a transient systemd drop-in under
 `/run` and restarts `ac50`. Removing the SD `autorun` package and rebooting
-removes that transient setup according to upstream documentation. HERETICC has
+removes that transient setup according to upstream documentation. NEUROGENIC has
 not physically verified this recovery. For future experiments, do not call
 `dlclose` or attempt live unpatching. Treat the extension and every published
 handler as process-lifetime. Recovery is a controlled service restart where
@@ -274,7 +274,7 @@ phase is indeterminate.
 
 ### A. Minimal compatibility probe — recommended first
 
-Create a small HERETICC-specific fork/API mode that performs only:
+Create a small NEUROGENIC-specific fork/API mode that performs only:
 
 1. main-image discovery;
 2. complete table-derived fingerprint verification;
@@ -324,7 +324,7 @@ and seal failures, partial preparation, each patch index failing, rollback at
 each index, permission-restoration failure, paint-patch failure, and repeated
 initialization. A model must assert both the externally visible state and which
 pages/mappings remain owned. These tests belong in the future fork, where they
-exercise the real state machine; duplicating a simplified model in HERETICC now
+exercise the real state machine; duplicating a simplified model in NEUROGENIC now
 would provide weak evidence and was intentionally avoided.
 
 Option C improves determinism but cannot make 22 independent live instruction
@@ -341,7 +341,7 @@ upstream full installer for M0.3b-A.
 
 Before device-facing implementation, the owner must approve:
 
-- a HERETICC-specific SDK fork pinned to this upstream commit and how fork
+- a NEUROGENIC-specific SDK fork pinned to this upstream commit and how fork
   patches/rebases will be reviewed and licensed;
 - the exact bounded diagnostic output and transient destination;
 - whether merely loading an `LD_PRELOAD` library with no interposed audio
@@ -407,7 +407,7 @@ without reporting addresses or arbitrary paths.
 
 A3 physically observed four unexpected executable contexts (PID chain 409,
 410, 411) and no expected executable mapping; all failed before fingerprinting.
-A4 changes only HERETICC's report classification and SD filename policy. Exact
+A4 changes only NEUROGENIC's report classification and SD filename policy. Exact
 `/usr/bin/MPC Sample` identities receive two reserved slots; unexpected and
 unreadable identities share four distinct bounded slots. There is no cross-
 namespace fallback. The SDK patches, discovery rules, 63-word gate, autorun
@@ -454,7 +454,7 @@ the original word is restored. B0.1 therefore names this state
 pointer remain process-lifetime state.
 
 B0.2 does not change the SDK patch or hook engine. For an exact compatible
-process, HERETICC creates one exclusive fixed-size shared counter mapping under
+process, NEUROGENIC creates one exclusive fixed-size shared counter mapping under
 `/run` before publication and retains it for process lifetime. The DATA callback
 updates only atomics in that mapping. A separate opt-in host reader uses bounded
 fixed reads and exact `/proc/<pid>/exe` validation; it does not use `ptrace`,

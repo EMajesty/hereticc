@@ -25,7 +25,7 @@ its physical execution remains separately unauthorized.
 
 **Purpose:** prove fail-closed recognition before any feature hook is trusted.
 
-**Prerequisites:** reviewed HERETICC-specific zero-hook probe; table-derived 63-word fingerprint set; no ALSA interposition, generated executable pages, feature hooks, or paint-vtable patch; test on the exact reported firmware only. Any later hook test requires its own authorization and hardened installation state machine.
+**Prerequisites:** reviewed NEUROGENIC-specific zero-hook probe; table-derived 63-word fingerprint set; no ALSA interposition, generated executable pages, feature hooks, or paint-vtable patch; test on the exact reported firmware only. Any later hook test requires its own authorization and hardened installation state machine.
 
 **Procedure and observations:** after separate approval, boot once with the
 reviewed exFAT card, allow the guarded restart, confirm stock startup, shut down
@@ -71,13 +71,13 @@ so it does not make B deployable.
 
 ## C. Full-screen rendering and restoration
 
-**Purpose:** determine whether the Sample-page post-paint hook can support a reliable HERETICC screen.
+**Purpose:** determine whether the Sample-page post-paint hook can support a reliable NEUROGENIC screen.
 
 **Prerequisites:** A and B passed; static bounded frame using only color, rectangles, and stock-font text; pad lights initially untouched.
 
 **Procedure and observations:** draw a full 320×240 diagnostic frame after stock paint; exercise stock dialogs, toasts, page changes, sample loading, and idle repaint. Measure paint-call duration, repaint interval, dropped/coalesced requests, visible flicker/overdraw, and audio stability at several bounded primitive counts. Then exit through every normal/error path, restore pad lights in a separate subtest, and request stock repaint.
 
-**Failure conditions:** stock elements unpredictably overdraw the frame, stale HERETICC pixels after exit, unreadable font/glyph behavior, audio disruption, unbounded paint time, stale component access, or pad lights not restored to the newest stock state.
+**Failure conditions:** stock elements unpredictably overdraw the frame, stale NEUROGENIC pixels after exit, unreadable font/glyph behavior, audio disruption, unbounded paint time, stale component access, or pad lights not restored to the newest stock state.
 
 **Recovery:** stop repaint pump/ownership, clear overrides, request stock paint, exit transient module, reboot without card if restoration is incomplete.
 
@@ -101,7 +101,7 @@ so it does not make B deployable.
 - D2: overlapping identical sounds have independently matchable lifecycles suitable for `VoiceToken` mapping.
 - D3: logical sample/slice selection can be resolved without mutating shared pad state.
 
-D1 alone is insufficient for HERETICC's sequencer; failure of D2 or D3 triggers an architecture decision rather than an undocumented workaround.
+D1 alone is insufficient for NEUROGENIC's sequencer; failure of D2 or D3 triggers an architecture decision rather than an undocumented workaround.
 
 ## E. Clock correlation and scheduling jitter
 
@@ -119,4 +119,4 @@ D1 alone is insufficient for HERETICC's sequencer; failure of D2 or D3 triggers 
 
 ## Decision sequence
 
-A must pass before B–E. B and C may proceed without D. D1 gates E; D2 and D3 gate a stock-engine HERETICC voice adapter. If C fails, retain stock UI or request a different UI architecture. If D/E fail, keep the host sequencer and request an explicit choice between deeper reverse engineering, a replacement engine, or stopping device integration. No failure silently authorizes custom DSP or stock-app replacement.
+A must pass before B–E. B and C may proceed without D. D1 gates E; D2 and D3 gate a stock-engine NEUROGENIC voice adapter. If C fails, retain stock UI or request a different UI architecture. If D/E fail, keep the host sequencer and request an explicit choice between deeper reverse engineering, a replacement engine, or stopping device integration. No failure silently authorizes custom DSP or stock-app replacement.

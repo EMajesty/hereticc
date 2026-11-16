@@ -352,8 +352,8 @@ mod tests {
     impl Fixture {
         fn new() -> Self {
             let id = NEXT.fetch_add(1, Ordering::Relaxed);
-            let path =
-                std::env::temp_dir().join(format!("hereticc-m03b-a2-{}-{id}", std::process::id()));
+            let path = std::env::temp_dir()
+                .join(format!("neurogenic-m03b-a2-{}-{id}", std::process::id()));
             fs::create_dir(&path).expect("create fixture");
             Self(path)
         }

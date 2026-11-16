@@ -39,11 +39,11 @@ printf '%s\n' \
     "upstream=$SDK_COMMIT" \
     "patch_set=$PATCH_SET" \
     "patch_series_sha256=$patch_hash" \
-    > "$stage/.hereticc-patchset"
+    > "$stage/.neurogenic-patchset"
 
 rm -rf "$destination"
 mv "$stage" "$destination"
 trap - EXIT HUP INT TERM
 
 printf 'prepared %s\n' "$destination"
-cat "$destination/.hereticc-patchset"
+cat "$destination/.neurogenic-patchset"

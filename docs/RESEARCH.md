@@ -5,10 +5,10 @@ Research date: **2026-11-15**. Repositories were inspected at the commits linked
 ## Confidence labels
 
 - **Verified:** directly supported by linked source/documentation or an explicit upstream hardware result.
-- **Inferred:** a reasonable architectural conclusion, not a demonstrated HERETICC capability.
+- **Inferred:** a reasonable architectural conclusion, not a demonstrated NEUROGENIC capability.
 - **Unknown:** evidence was absent or insufficient.
 
-“Hardware-verified” below means the upstream author reports a device test. HERETICC has not reproduced it.
+“Hardware-verified” below means the upstream author reports a device test. NEUROGENIC has not reproduced it.
 
 ## Summary
 
@@ -20,7 +20,7 @@ Research date: **2026-11-15**. Repositories were inspected at the commits linked
 | [`mpc-sample-lab`](https://github.com/gospodindilly-ops/mpc-sample-lab/tree/3d482b94c918b96d174f31c411686f2b18b74ce6) | Hardware research and replacement sampler | Primary hardware/protocol reference | **No license file found:** public source is not permission to reuse code; facts may be independently documented |
 | [`mpc-sample-tracker`](https://github.com/jeffwebb-to/mpc-sample-tracker/tree/4a13c1792ac9a4200567950ac9eb5c0b505348ce) | Standalone tracker replacing stock app while active | Useful sequencer/timing/UI reference, contrary to stock-preservation goal | MIT; attribution/license preservation required |
 
-No external code or dependency has been copied into HERETICC.
+No external code or dependency has been copied into NEUROGENIC.
 
 ## `mpc-sample-sdk`
 
@@ -33,13 +33,13 @@ Inspected commit: [`e62ffd3`](https://github.com/ioma8/mpc-sample-sdk/commit/e62
 - Pad RGB overrides use the app's native callback and can restore saved native colors; button LEDs are explicitly unsupported: [lighting](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/25-lighting.md).
 - Typed helpers expose selected sample metadata/data, pad-to-sample lookup, slice count/markers, stock slice mutation calls, and Manual chop mode: [samples](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/09-samples.md), [slices](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/10-slices-and-trim.md).
 - ALSA hooks observe input and can mix S32 data into output. The documentation forbids allocation, locking, drawing, or blocking in audio callbacks: [audio](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/11-audio.md).
-- The loader targets 1.3.0.12. Upstream prose says 59 fingerprints, while the pinned implementation iterates 63 instruction words; HERETICC treats the table as authoritative. Hook rollback limitations are documented in [SDK hook safety](SDK-HOOK-SAFETY.md): [firmware](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/17-firmware.md), [loader](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/src/loader.rs).
+- The loader targets 1.3.0.12. Upstream prose says 59 fingerprints, while the pinned implementation iterates 63 instruction words; NEUROGENIC treats the table as authoritative. Hook rollback limitations are documented in [SDK hook safety](SDK-HOOK-SAFETY.md): [firmware](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/17-firmware.md), [loader](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/src/loader.rs).
 - Its generated SD package checks the firmware hash, copies the library to `/run`, installs a transient service drop-in, and restarts the app. Removing `autorun` and rebooting restores stock behavior; device disk is claimed unchanged: [build/install](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/22-build-and-install.md).
 - License is [MIT](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/LICENSE).
 
 ### Inferred relevance
 
-The SDK is the cleanest current bridge for a Rust extension that preserves the stock application. Its guarded firmware table and explicit unsafe boundaries are preferable to HERETICC owning raw offsets initially.
+The SDK is the cleanest current bridge for a Rust extension that preserves the stock application. Its guarded firmware table and explicit unsafe boundaries are preferable to NEUROGENIC owning raw offsets initially.
 
 ### Unknown or unverified
 
@@ -102,7 +102,7 @@ Inspected commit: [`3d482b9`](https://github.com/gospodindilly-ops/mpc-sample-la
 
 - The project documents pad, pressure, button, knob, fader, encoder, button LED, and pad RGB protocols, carefully separating disassembly findings, hypotheses, and hardware checks: [protocol](https://github.com/gospodindilly-ops/mpc-sample-lab/blob/3d482b94c918b96d174f31c411686f2b18b74ce6/docs/control-surface-protocol.en.md).
 - It directly owns DRM display, raw-MIDI control surface, and ALSA audio after stopping the stock app. Its replacement Sample Mode loads WAVs and implements its own voices; it does not trigger through the stock audio engine: [README](https://github.com/gospodindilly-ops/mpc-sample-lab/blob/3d482b94c918b96d174f31c411686f2b18b74ce6/README.en.md), [firmware source](https://github.com/gospodindilly-ops/mpc-sample-lab/tree/3d482b94c918b96d174f31c411686f2b18b74ce6/firmware).
-- The replacement runs from RAM, restarts the stock service on exit, and reports no flash writes. The repository also contains a read-only eMMC backup script, which is outside HERETICC's scope.
+- The replacement runs from RAM, restarts the stock service on exit, and reports no flash writes. The repository also contains a read-only eMMC backup script, which is outside NEUROGENIC's scope.
 - Research and hardware checks target firmware 1.3.0.12.
 
 ### Inferred relevance
@@ -130,12 +130,12 @@ Inspected commit: [`4a13c17`](https://github.com/jeffwebb-to/mpc-sample-tracker/
 
 ### Inferred relevance
 
-Its frame-driven scheduler, tracker effects, input-thread audition, and host renderer are useful comparative designs for HERETICC's core tests.
+Its frame-driven scheduler, tracker effects, input-thread audition, and host renderer are useful comparative designs for NEUROGENIC's core tests.
 
 ### Unknown or unsuitable as a base
 
 - It uses its own WAV loader/mixer and cannot demonstrate stock-engine sample/slice/effects access.
-- It currently has eight tracker tracks, not HERETICC's sixteen independent polyphonic tracks.
+- It currently has eight tracker tracks, not NEUROGENIC's sixteen independent polyphonic tracks.
 - Because the stock app is stopped, extending it would abandon the primary preservation goal.
 - Full physical timing, UI, MIDI, and recovery behavior remain unverified upstream.
 
@@ -174,13 +174,13 @@ Research date: **2026-11-15**, using the same pinned snapshots above.
 
 **Verified in source/documentation:** the SDK wraps firmware factories for exactly three named processors—reverb, vinyl, and decimator—and renders a complete mono/stereo buffer in 512-frame blocks. It can write raw values to six parameter-array positions and allocates the rendered output. Reverb rendering appends and trims a tail. The module describes itself as applying firmware effects to a whole sample offline: [effect documentation](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/21-effects.md), [effect source](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/src/platform/effect.rs).
 
-**Not established:** live insert attachment, automation safety, parameter names/ranges, processor latency, arbitrary catalog access, send/return routing, per-track buses, master replacement, or preservation of an existing processor's state. Parameter-array access is firmware-specific and should not become HERETICC's public parameter model.
+**Not established:** live insert attachment, automation safety, parameter names/ranges, processor latency, arbitrary catalog access, send/return routing, per-track buses, master replacement, or preservation of an existing processor's state. Parameter-array access is firmware-specific and should not become NEUROGENIC's public parameter model.
 
 ### SDK audio taps and output mixing
 
 **Verified in source/documentation:** the SDK interposes on ALSA input/output calls. The output hook receives mutable signed-32-bit interleaved frames immediately before the app writes them and is documented for adding/mixing audio. It reports channel/rate/block geometry and ring-derived latency. Input hooks observe capture. Reentrant taps forward untouched, and the callback rules prohibit allocation, locks, UI work, and blocking: [audio documentation](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/11-audio.md), [audio source](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/src/audio.rs).
 
-**Inference:** because the slice is mutable, replacement may be technically possible, but the supported documentation only promises additive mixing. HERETICC must not claim a master insert until unity replacement, dry-path behavior, channel geometry, and restoration are tested.
+**Inference:** because the slice is mutable, replacement may be technically possible, but the supported documentation only promises additive mixing. NEUROGENIC must not claim a master insert until unity replacement, dry-path behavior, channel geometry, and restoration are tested.
 
 **Not established:** the final tap's relationship to every stock effect/output route, isolated track buffers, callback deadline, format/rate stability, or a way to compensate different per-path effect latencies.
 
@@ -190,7 +190,7 @@ Am MOD's inspected tree contains a substantially broader experimental mixer arch
 
 **Verified at repository evidence level:** native object layouts and callbacks have been investigated; test adapters exercise stereo buffers, native processors, gain/pan/routing concepts, and a catalog broader than the SDK's three offline effects.
 
-**Not verified for HERETICC or as a general hardware API:** sixteen complete live track buses, every voice/source/output path, two shared feedback-safe sends, master replacement, persistence, latency compensation, CPU capacity, and physical-device behavior. Some Am MOD documents state that live voices, non-empty native insert chains, physical/multi-output, preview/live input, and other renderers remain incomplete or outside a scoped adapter. These findings justify experiments, not code reuse or capability claims.
+**Not verified for NEUROGENIC or as a general hardware API:** sixteen complete live track buses, every voice/source/output path, two shared feedback-safe sends, master replacement, persistence, latency compensation, CPU capacity, and physical-device behavior. Some Am MOD documents state that live voices, non-empty native insert chains, physical/multi-output, preview/live input, and other renderers remain incomplete or outside a scoped adapter. These findings justify experiments, not code reuse or capability claims.
 
 ### Consequences
 
@@ -198,15 +198,15 @@ Am MOD's inspected tree contains a substantially broader experimental mixer arch
 - Option B, custom master DSP, may fit the SDK output location only if replacement rather than additive mixing is validated.
 - Option C, true track inserts/sends, requires pre-sum isolated audio that the current SDK does not expose. It needs deeper reverse engineering or a custom voice/mixer architecture.
 - Offline stock rendering is useful for destructive/export workflows but does not satisfy live performance FX.
-- No reviewed source supports assuming that sixteen HERETICC tracks equal sixteen stock audio buses.
+- No reviewed source supports assuming that sixteen NEUROGENIC tracks equal sixteen stock audio buses.
 
 ## Stock trigger and UI feasibility addendum (M0.3a)
 
-Research date: **2026-11-15**. Exact branch heads were queried and cloned for source inspection; no upstream code was copied into HERETICC.
+Research date: **2026-11-15**. Exact branch heads were queried and cloned for source inspection; no upstream code was copied into NEUROGENIC.
 
 ### Zero-hook compatibility implementation addendum (M0.3b-A)
 
-HERETICC now carries a patch, not generated upstream source, against SDK commit
+NEUROGENIC now carries a patch, not generated upstream source, against SDK commit
 `e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39`. The patch adds a compile-time
 read-only probe mode using the SDK's actual fingerprint iterator. It does not
 compile the normal loader, hook sites, patch engine, audio interposition, MIDI,
@@ -228,7 +228,7 @@ does not establish device loader behavior or physical compatibility.
 | MINIMOD | [`3770fb7edcfb432cd45ca4e8fa8bcbefe0435c25`](https://github.com/ioma8/mpc-minimod/tree/3770fb7edcfb432cd45ca4e8fa8bcbefe0435c25), dated 2026-11-14 | Rust workspace/crates declare MIT; no repository-root license file was found | Useful current SDK consumer; whole-repository reuse remains ambiguous. |
 | Am MOD | [`6cdc67276f43cd39f64871cb7e36782481244c65`](https://github.com/AlekseyMalykh/am-mod/tree/6cdc67276f43cd39f64871cb7e36782481244c65), dated 2026-11-15 | [MIT](https://github.com/AlekseyMalykh/am-mod/blob/6cdc67276f43cd39f64871cb7e36782481244c65/LICENSE), AM Mod contributors | Comparative reverse-engineering evidence only; no code reuse. |
 
-The SDK is Rust 2024, version 0.6.0, MSRV 1.97, and depends on `libc`. HERETICC has not added it as a dependency.
+The SDK is Rust 2024, version 0.6.0, MSRV 1.97, and depends on `libc`. NEUROGENIC has not added it as a dependency.
 
 ### Stock voice path
 
@@ -245,7 +245,7 @@ This proves a callable stock pad-input path, not a complete voice API:
 
 The SDK's [`NoteEvent::replay_as_pad`](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/src/midi.rs) rewrites an already-arriving MIDI event as a selected pad/16-Levels row, forwards it, and restores the bytes. MINIMOD pairs overlapping external MIDI presses/releases with a fixed-capacity ledger before using this path: [policy](https://github.com/ioma8/mpc-minimod/blob/3770fb7edcfb432cd45ca4e8fa8bcbefe0435c25/rust/crates/minimod/src/midi.rs). This supports safe interception/rewrite of incoming events; it does not create arbitrary frame-stamped scheduler events.
 
-Am MOD constructs native step events and calls deeper engine play/release entries for Poly/Chords: [implementation](https://github.com/AlekseyMalykh/am-mod/blob/6cdc67276f43cd39f64871cb7e36782481244c65/sd-mod-session/src/poly_record.c). Its comments and tests explicitly manage held-note maps, release choice, track/engine pointers, record queues, and native object generations. This is evidence that deeper stock playback control is possible with substantial reverse engineering, not a stable SDK contract and not proof of per-voice HERETICC token mapping.
+Am MOD constructs native step events and calls deeper engine play/release entries for Poly/Chords: [implementation](https://github.com/AlekseyMalykh/am-mod/blob/6cdc67276f43cd39f64871cb7e36782481244c65/sd-mod-session/src/poly_record.c). Its comments and tests explicitly manage held-note maps, release choice, track/engine pointers, record queues, and native object generations. This is evidence that deeper stock playback control is possible with substantial reverse engineering, not a stable SDK contract and not proof of per-voice NEUROGENIC token mapping.
 
 ### Clock correlation
 
@@ -255,9 +255,9 @@ The SDK exposes a millisecond monotonic clock used by the app and an output call
 
 **Verified in source:** the SDK changes the Sample-page vtable paint slot. Its handler calls the stock paint first, records the component, then invokes the mod with the live graphics handle: [paint site](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/src/sites.rs). Public drawing wraps ARGB color, filled rectangle, and stock-font text with a size: [drawing source](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/src/draw.rs). Text is truncated to a 95-byte UTF-8 boundary; the font constructor uses the stock face index `0`. Repaint helpers target the observed component, and the optional pump retries every 60 ms because busy native work may coalesce/drop a request.
 
-**Inferred:** a final full-screen rectangle can visually replace the completed Sample-page paint during that callback. This makes a distinctive 320×240 HERETICC surface plausible.
+**Inferred:** a final full-screen rectangle can visually replace the completed Sample-page paint during that callback. This makes a distinctive 320×240 NEUROGENIC surface plausible.
 
-**Unknown:** whether child/dialog/toast components paint afterward, whether every desired stock page uses the hooked class, sustained refresh cost, partial redraw behavior, font glyph coverage, and clean restoration under every page/error transition. There is no exposed bitmap/image primitive or custom-font loader. Leaving HERETICC must clear pad-light overrides and request an unoverlaid stock repaint; the SDK's [lighting API](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/src/platform/lighting.rs) retains observed native pad colors and provides per-pad/all-pad restore, but button-light restoration is outside that API.
+**Unknown:** whether child/dialog/toast components paint afterward, whether every desired stock page uses the hooked class, sustained refresh cost, partial redraw behavior, font glyph coverage, and clean restoration under every page/error transition. There is no exposed bitmap/image primitive or custom-font loader. Leaving NEUROGENIC must clear pad-light overrides and request an unoverlaid stock repaint; the SDK's [lighting API](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/src/platform/lighting.rs) retains observed native pad colors and provides per-pad/all-pad restore, but button-light restoration is outside that API.
 
 ### Smallest discriminating stock-trigger experiment
 
@@ -268,8 +268,8 @@ M0.3b-A2 uses the comparative removable-media identity rather than an autorun
 directory heuristic: Am MOD hardware observations identify the user SD data
 partition as `/dev/mmcblk1p1`, exFAT, mounted below `/media`; its guarded
 launchers independently require the same source/path/filesystem/writeability
-shape. HERETICC additionally verifies exFAT filesystem magic and rejects every
-ambiguous record. This is source-grounded comparative evidence, not a HERETICC
+shape. NEUROGENIC additionally verifies exFAT filesystem magic and rejects every
+ambiguous record. This is source-grounded comparative evidence, not a NEUROGENIC
 physical result.
 
 ### M0.3b-A2 physical observation and A3 discovery analysis
