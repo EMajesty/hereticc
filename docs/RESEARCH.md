@@ -307,6 +307,18 @@ documents a different firmware source ID on physical release and uses input
 identity as the stable fallback. M0.3d.3 adopts that source-supported behavior
 in a NEUROGENIC-owned fixed ledger without copying upstream code. Bank buttons
 remain forwarded and the prototype explicitly models only 16 physical pads.
+
+M0.3d.3 did not resolve the physical instability, so M0.3e removes that ledger
+and restores M0.3c input behavior. The playback investigation instead targets
+the stock sequencer. SDK v0.7.1 has no sequence/event-list insertion API, and
+MINIMOD shows that note replay enters below the stock pad-grid recording
+observer. Am MOD revision `6cdc67276f43cd39f64871cb7e36782481244c65`
+(MIT) provides the strongest reuse evidence: firmware 1.3.0.12 tag-3 notes are
+56-byte inline events with 960-PPQ timing, and its Step implementation uses the
+live Seq controller/event list plus native add/change/remove command results and
+Undo. The recommended reuse is a narrow upstream-compatible SDK wrapper around
+that UI-thread command boundary—not copied offsets or direct project-memory
+writes in NEUROGENIC.
 - release matching and repeated/overlapping triggers of one sound are not specified;
 - calls are UI-thread/lifetime constrained and accept no target audio frame;
 - there is no documented contract for transport, stock-sequence coexistence, voice stealing, choke/mono behavior, or project changes.

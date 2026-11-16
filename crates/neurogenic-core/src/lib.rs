@@ -5,6 +5,7 @@
 
 pub mod codec;
 pub mod error;
+pub mod grid;
 pub mod id;
 pub mod model;
 pub mod parameter;
@@ -12,6 +13,7 @@ pub mod scheduler;
 pub mod time;
 
 pub use error::{CoreError, DecodeError, DecodeLimit, ValidationError};
+pub use grid::{GRID_PATTERN_TICKS, GRID_STEP_TICKS, pattern_from_step_bits};
 pub use id::{EventId, PatternId, SampleId, SceneId, SliceId, TrackId, VoiceToken};
 pub use model::{PROJECT_FORMAT_VERSION, Pattern, Project, Scene, SoundSource, StepEvent, Track};
 pub use parameter::{

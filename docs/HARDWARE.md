@@ -80,6 +80,14 @@ not a third `PadAction`. M0.3d.3 uses a bounded pad/input edge ledger, tolerates
 press/release source-ID differences, leaves bank controls stock-owned, and
 labels the UI as physical pads 01-16. These corrections are host-tested only.
 
+M0.3d.3 then failed physical acceptance on firmware 1.3.0.12: ownership could
+remain stale, deferred close was unreliable, pads could temporarily stop
+responding, bank A differed from B-D, and flicker persisted. Stock-only recovery
+was normal. M0.3e removes the complete M0.3d audition path and returns to the
+physically validated M0.3c behavior: the open page consumes physical pad pairs
+for 16-track selection and does not trigger samples. This restored package is
+host-tested only. One-shot audio tails remain unrelated to input ownership.
+
 ## Display and lighting
 
 The SDK provides stock-app paint interception and wrappers for color, rectangle, font, text, toasts, and repaint requests. Graphics handles are valid only during the paint callback. Its pad-lighting layer remembers native colors and can restore them, but overrides are last-writer-wins and restoration is the feature's responsibility. See [drawing](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/08-drawing.md) and [lighting](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/25-lighting.md).

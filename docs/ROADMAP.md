@@ -325,6 +325,16 @@ mismatch. It also removes redundant pre-forward repaint and explicitly scopes
 bank behavior to the 16 physical pads because SDK v0.7.1 exposes no A-D bank
 identity. See [M0.3d.3 input stability](M0-3D3-INPUT-STABILITY.md).
 
+M0.3d.3 subsequently failed physical acceptance: release ownership and
+deferred close remained unreliable, pads could become temporarily unresponsive,
+bank A differed from B-D, and flicker persisted. M0.3e abandons audition
+ownership and restores the physically proven M0.3c editor model. Pads select
+one of 16 tracks and are consumed while the overlay is open. A small core bridge
+translates the grid into existing deterministic scheduler events. Playback is
+redirected toward a bounded stock sequence-command SDK extension informed by
+Am MOD's native event-list/Undo implementation. See
+[M0.3e sequencer integration](M0-3E-SEQUENCER-INTEGRATION.md).
+
 ### M0.3b-C–E Device feasibility experiments — planned and blocked
 
 This requires a separate, explicitly reviewed task because it creates device-facing executable code.
@@ -451,10 +461,11 @@ Acceptance criteria:
 
 ## Practical next engineering task
 
-The next decision is owner review of the host-built M0.3d.3 input-stability
-package and, only if explicitly authorized, one controlled physical ownership,
-bank-switching, deferred-close, and restoration test following
-[M0.3d.3](M0-3D3-INPUT-STABILITY.md). Do not begin background sequencing until
-input ownership and restoration pass. This
+The immediate decision is owner review and, if separately authorized, one
+M0.3e regression run of the restored M0.3c editor behavior. The next engineering
+milestone should implement a bounded, firmware-guarded SDK stock-sequence
+command adapter and test one event in a fresh unsaved sequence; it should not
+extend physical-pad audition interception. See
+[M0.3e](M0-3E-SEQUENCER-INTEGRATION.md). This
 does not authorize B1 DATA-hook testing, a relay, SSH, or another diagnostic
 milestone.

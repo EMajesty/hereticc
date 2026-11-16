@@ -12,6 +12,9 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 mpc-sample-sdk = { git = "https://github.com/ioma8/mpc-sample-sdk", rev = "9487cbba3648afb29d8e3107e31a7ac930985220" }
 
+[dev-dependencies]
+neurogenic-core = { path = "../neurogenic-core" }
+
 [lints.rust]
 unsafe_code = "allow"
 unsafe_op_in_unsafe_fn = "deny"

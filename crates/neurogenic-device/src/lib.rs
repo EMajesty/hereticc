@@ -1,10 +1,10 @@
-//! First NEUROGENIC page implemented through `mpc-sample-sdk`.
+//! Stable NEUROGENIC editor page implemented through `mpc-sample-sdk`.
 
 pub mod reducer;
 
 use mpc_sample_sdk::event::button;
 use mpc_sample_sdk::{ButtonEvent, EncoderEvent, Flow, Mod, PadAction, PadEvent, PaintEvent};
-use reducer::{Button, PadStatus, UiState};
+use reducer::{Button, UiState};
 
 /// Device mod state. It contains no retained firmware pointer.
 #[derive(Default)]
@@ -38,8 +38,8 @@ impl NeurogenicDevice {
             return;
         }
         let screen = mpc_sample_sdk::platform::page::screen();
-        // SAFETY: button callbacks run on the UI path; the SDK recorded this
-        // page and checks its vtable before reading visibility.
+        // SAFETY: callbacks run on the UI path; the SDK recorded this page and
+        // checks its vtable before reading visibility.
         if screen == 0 || !unsafe { mpc_sample_sdk::platform::page::visible(screen) } {
             let _ = self.ui.lose_page();
         }
@@ -64,7 +64,7 @@ impl NeurogenicDevice {
             graphics.text("NEUROGENIC", 10, 10, 190, 22, 18.0);
 
             let status = format!(
-                "TRACK/PHYS PAD {:02}   STEP {:02}",
+                "TRACK {:02}   STEP {:02}",
                 self.ui.selected_track() + 1,
                 self.ui.selected_step() + 1
             );
@@ -86,66 +86,25 @@ impl NeurogenicDevice {
             }
 
             graphics.colour(MUTED);
-            let note = if let Some(pad) = self.ui.active_audition() {
-                format!("PAD {:02}: INPUT HELD", pad + 1)
-            } else {
-                format!("PAD {:02}: ready to audition", self.ui.selected_track() + 1)
-            };
-            graphics.text(&note, 10, 132, 300, 18, 11.0);
-            let pad_status = match self.ui.pad_status() {
-                PadStatus::NoCallback => "PAD CB: none",
-                PadStatus::DispatchUnavailable => "PAD CB: owned; native unavailable",
-                PadStatus::NativeForwardRequested => "PAD CB: native forward requested",
-            };
-            let (hooks, input, properties) = self.ui.pad_capabilities();
-            let capability = format!(
-                "{}  H{} I{} P{}",
-                pad_status,
-                u8::from(hooks),
-                u8::from(input),
-                u8::from(properties)
-            );
-            graphics.text(&capability, 10, 190, 300, 16, 10.0);
-            graphics.text(
-                "BANK: stock-managed; physical pads 01-16",
-                10,
-                112,
-                300,
-                16,
-                9.0,
-            );
-            graphics.text(
-                "DATA: cursor   PADS: select + audition",
-                10,
-                154,
-                300,
-                18,
-                11.0,
-            );
+            graphics.text("DATA: cursor   PADS: track", 10, 146, 300, 18, 11.0);
             graphics.text("PLUS: toggle   SHIFT+DATA: close", 10, 169, 300, 18, 11.0);
-            graphics.colour(TEXT);
             graphics.text(
-                if self.ui.close_pending() {
-                    "Release held pad to close safely"
-                } else {
-                    "One audition voice; edits are memory-only"
-                },
+                "16 physical pads; banks remain stock-owned",
                 10,
-                210,
+                190,
                 300,
                 16,
                 10.0,
             );
+            graphics.colour(TEXT);
+            graphics.text("Prototype: edits are memory-only", 10, 210, 300, 16, 10.0);
         }
     }
 }
 
 impl Mod for NeurogenicDevice {
     fn on_button(&mut self, event: ButtonEvent) -> Flow {
-        let explicit_toggle = event.code == button::DATA && event.pressed && event.shift;
-        if !explicit_toggle {
-            self.close_if_page_gone();
-        }
+        self.close_if_page_gone();
         let mapped = match event.code {
             button::DATA => Button::Data,
             button::PLUS => Button::Plus,
@@ -168,24 +127,8 @@ impl Mod for NeurogenicDevice {
     }
 
     fn on_pad(&mut self, event: PadEvent) -> Flow {
-        let pressed = event.action == PadAction::Press;
-        let notes_ready = mpc_sample_sdk::midi::notes_ready();
-        if self.ui.is_open() {
-            self.ui
-                .record_pad_callback(notes_ready, event.input != 0, event.properties != 0);
-        }
-        // The SDK's supported physical-pad path forwards these exact callback
-        // arguments after this method returns. Properties may legitimately be
-        // zero; paired hooks and a live input are sufficient to own a matched
-        // physical press/release without fabricating an object.
-        let native_dispatch_available = event.input != 0 && notes_ready;
-        let outcome = self.ui.pad(
-            event.pad,
-            pressed,
-            native_dispatch_available,
-            event.input,
-            event.source,
-        );
+        self.close_if_page_gone();
+        let outcome = self.ui.pad(event.pad, event.action == PadAction::Press);
         if outcome.repaint {
             Self::repaint_live_sample_page();
         }
