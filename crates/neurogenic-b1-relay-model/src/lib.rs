@@ -98,6 +98,12 @@ pub struct VerifiedSnapshot {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SnapshotRead {
+    pub snapshot: VerifiedSnapshot,
+    pub completed_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProcessObservation<'a> {
     pub pid: u32,
     pub start_ticks: u64,
@@ -135,8 +141,9 @@ pub trait SnapshotReader {
     fn read_verified(
         &mut self,
         expected: ExpectedIdentity,
+        started_ms: u64,
         deadline_ms: u64,
-    ) -> Result<VerifiedSnapshot, SnapshotError>;
+    ) -> Result<SnapshotRead, SnapshotError>;
 }
 
 /// Validate repeated in-memory reads using the B0.2 byte and identity contract.
@@ -148,15 +155,20 @@ pub fn validate_snapshot_reads(
     reads: &[&[u8]],
     process: ProcessObservation<'_>,
 ) -> Result<VerifiedSnapshot, SnapshotError> {
+    let mut stable = None;
+    for pair in reads.chunks_exact(2).take(STABLE_READ_ATTEMPTS) {
+        if pair[0].len() != SNAPSHOT_BYTES || pair[1].len() != SNAPSHOT_BYTES {
+            return Err(SnapshotError::WrongLength);
+        }
+        if pair[0] == pair[1] {
+            stable = Some(pair[0]);
+            break;
+        }
+    }
+    let snapshot = decode_snapshot(stable.ok_or(SnapshotError::Unstable)?)?;
     if process.executable != EXPECTED_EXECUTABLE {
         return Err(SnapshotError::WrongExecutable);
     }
-    let stable = reads
-        .windows(2)
-        .take(STABLE_READ_ATTEMPTS)
-        .find_map(|pair| (pair[0] == pair[1]).then_some(pair[0]))
-        .ok_or(SnapshotError::Unstable)?;
-    let snapshot = decode_snapshot(stable)?;
     if snapshot.identity.pid != process.pid {
         return Err(SnapshotError::WrongPid);
     }
@@ -186,13 +198,7 @@ fn decode_snapshot(bytes: &[u8]) -> Result<VerifiedSnapshot, SnapshotError> {
         negative_deltas: u64_at(bytes, 56),
         zero_deltas: u64_at(bytes, 64),
     };
-    if counters.successful_forwards > counters.invocations
-        || counters
-            .positive_deltas
-            .saturating_add(counters.negative_deltas)
-            .saturating_add(counters.zero_deltas)
-            != counters.invocations
-    {
+    if !counter_invariants(counters) {
         return Err(SnapshotError::Malformed);
     }
     Ok(VerifiedSnapshot {
@@ -202,6 +208,15 @@ fn decode_snapshot(bytes: &[u8]) -> Result<VerifiedSnapshot, SnapshotError> {
         },
         counters,
     })
+}
+
+fn counter_invariants(counters: Counters) -> bool {
+    counters.successful_forwards <= counters.invocations
+        && counters
+            .positive_deltas
+            .checked_add(counters.negative_deltas)
+            .and_then(|total| total.checked_add(counters.zero_deltas))
+            == Some(counters.invocations)
 }
 
 fn u32_at(bytes: &[u8], offset: usize) -> u32 {
@@ -358,6 +373,11 @@ pub enum ProtocolError {
     TransferEncoding,
     BodyForbidden,
     Pipelined,
+    MissingHost,
+    DuplicateHost,
+    InvalidHost,
+    ControlCharacter,
+    NonCanonicalLength,
 }
 
 /// Parse one complete, fixed-scope HTTP/1.1 request without performing I/O.
@@ -383,6 +403,12 @@ pub fn parse_request(
     let head = core::str::from_utf8(&bytes[..end]).map_err(|_| ProtocolError::Malformed)?;
     let mut lines = head.split("\r\n");
     let request_line = lines.next().ok_or(ProtocolError::Malformed)?;
+    if request_line
+        .bytes()
+        .any(|byte| byte.is_ascii_control() || !byte.is_ascii())
+    {
+        return Err(ProtocolError::Malformed);
+    }
     let mut parts = request_line.split(' ');
     let method = parts.next().ok_or(ProtocolError::Malformed)?;
     let path = parts.next().ok_or(ProtocolError::Malformed)?;
@@ -399,43 +425,102 @@ pub fn parse_request(
         ("GET" | "POST", _) => return Err(ProtocolError::UnknownPath),
         _ => return Err(ProtocolError::UnsupportedMethod),
     };
-    let mut content_length = None;
-    let mut header_count = 0;
-    for line in lines {
-        header_count += 1;
-        if header_count > HEADER_LIMIT {
-            return Err(ProtocolError::TooManyHeaders);
-        }
-        if line.starts_with(' ') || line.starts_with('\t') {
-            return Err(ProtocolError::Malformed);
-        }
-        let (name, value) = line.split_once(':').ok_or(ProtocolError::Malformed)?;
-        if name.is_empty() || (!value.starts_with(' ') && !value.starts_with('\t')) {
-            return Err(ProtocolError::Malformed);
-        }
-        let value = value.trim_ascii();
-        if name.eq_ignore_ascii_case("transfer-encoding") {
-            return Err(ProtocolError::TransferEncoding);
-        }
-        if name.eq_ignore_ascii_case("content-length") {
-            let parsed = value
-                .parse::<usize>()
-                .map_err(|_| ProtocolError::Malformed)?;
-            if content_length.replace(parsed).is_some() {
-                return Err(ProtocolError::ConflictingLength);
-            }
-        } else if !name.eq_ignore_ascii_case("host") {
-            return Err(ProtocolError::UnexpectedHeader);
-        }
+    if lines.clone().count() > HEADER_LIMIT {
+        return Err(ProtocolError::TooManyHeaders);
     }
-    let body_length = content_length.unwrap_or(0);
-    if body_length != 0 {
-        return Err(ProtocolError::BodyForbidden);
-    }
+    parse_headers(lines)?;
     if bytes.len() != header_end {
         return Err(ProtocolError::Pipelined);
     }
     Ok(operation)
+}
+
+fn parse_headers<'a>(lines: impl Iterator<Item = &'a str>) -> Result<(), ProtocolError> {
+    let mut content_length_seen = false;
+    let mut host_seen = false;
+    for line in lines {
+        if line.starts_with(' ') || line.starts_with('\t') {
+            return Err(ProtocolError::Malformed);
+        }
+        let (name, value) = line.split_once(':').ok_or(ProtocolError::Malformed)?;
+        if name.is_empty() || !value.starts_with(' ') {
+            return Err(ProtocolError::Malformed);
+        }
+        let value = &value[1..];
+        validate_header_value(value)?;
+        if name.eq_ignore_ascii_case("transfer-encoding") {
+            return Err(ProtocolError::TransferEncoding);
+        }
+        if name.eq_ignore_ascii_case("content-length") {
+            validate_content_length(value, &mut content_length_seen)?;
+        } else if name.eq_ignore_ascii_case("host") {
+            if host_seen {
+                return Err(ProtocolError::DuplicateHost);
+            }
+            if !valid_host(value) {
+                return Err(ProtocolError::InvalidHost);
+            }
+            host_seen = true;
+        } else {
+            return Err(ProtocolError::UnexpectedHeader);
+        }
+    }
+    host_seen.then_some(()).ok_or(ProtocolError::MissingHost)
+}
+
+fn validate_header_value(value: &str) -> Result<(), ProtocolError> {
+    if value.bytes().any(|byte| byte.is_ascii_control()) {
+        return Err(ProtocolError::ControlCharacter);
+    }
+    if value.is_empty()
+        || value.starts_with(' ')
+        || value.starts_with('\t')
+        || value.ends_with(' ')
+        || value.ends_with('\t')
+    {
+        return Err(ProtocolError::Malformed);
+    }
+    Ok(())
+}
+
+fn validate_content_length(value: &str, seen: &mut bool) -> Result<(), ProtocolError> {
+    if value != "0" {
+        return Err(
+            if value.bytes().all(|byte| byte.is_ascii_digit()) && !value.starts_with('0') {
+                ProtocolError::BodyForbidden
+            } else {
+                ProtocolError::NonCanonicalLength
+            },
+        );
+    }
+    if core::mem::replace(seen, true) {
+        return Err(ProtocolError::ConflictingLength);
+    }
+    Ok(())
+}
+
+fn valid_host(value: &str) -> bool {
+    let (host, port) = value
+        .split_once(':')
+        .map_or((value, None), |(host, port)| (host, Some(port)));
+    !host.is_empty()
+        && host
+            .bytes()
+            .next()
+            .is_some_and(|byte| byte.is_ascii_alphanumeric())
+        && host
+            .bytes()
+            .next_back()
+            .is_some_and(|byte| byte.is_ascii_alphanumeric())
+        && host
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
+        && !host.contains("..")
+        && port.is_none_or(|port| {
+            !port.is_empty()
+                && port.bytes().all(|byte| byte.is_ascii_digit())
+                && port.parse::<u16>().is_ok_and(|value| value != 0)
+        })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -462,7 +547,7 @@ pub struct RelayModel {
     process_seen_ms: Option<u64>,
     observed_pid: Option<u32>,
     identity: Option<ProcessIdentity>,
-    requests: u16,
+    requests: u32,
 }
 
 impl RelayModel {
@@ -545,13 +630,26 @@ impl RelayModel {
             pid: constructor.pid,
             start_ticks: None,
         };
-        let snapshot =
-            match reader.read_verified(expected, now_ms.saturating_add(self.limits.snapshot_ms)) {
-                Ok(value) => value,
-                Err(error) => return self.fail(RelayError::Snapshot(error)),
-            };
+        let deadline = self
+            .arming_deadline()
+            .min(self.overall_deadline())
+            .min(now_ms.saturating_add(self.limits.snapshot_ms));
+        let read = match reader.read_verified(expected, now_ms, deadline) {
+            Ok(value) => value,
+            Err(error) => return self.fail(RelayError::Snapshot(error)),
+        };
+        if read.completed_ms < now_ms {
+            return self.fail(RelayError::Snapshot(SnapshotError::Source));
+        }
+        if read.completed_ms > deadline {
+            return self.expire();
+        }
+        let snapshot = read.snapshot;
         if snapshot.identity.pid != constructor.pid || snapshot.identity.start_ticks == 0 {
             return self.fail(RelayError::WrongProcess);
+        }
+        if !counter_invariants(snapshot.counters) {
+            return self.fail(RelayError::Snapshot(SnapshotError::Malformed));
         }
         self.identity = Some(snapshot.identity);
         self.state = State::Armed;
@@ -573,8 +671,11 @@ impl RelayModel {
         if self.state.terminal() {
             return Err(RelayError::Terminal);
         }
-        self.requests = self.requests.saturating_add(1);
-        if self.requests > self.limits.max_requests {
+        self.requests = match self.requests.checked_add(1) {
+            Some(value) => value,
+            None => return self.fail(RelayError::RequestLimit),
+        };
+        if self.requests > u32::from(self.limits.max_requests) {
             return self.fail(RelayError::RequestLimit);
         }
         match operation {
@@ -584,18 +685,32 @@ impl RelayModel {
                 let Some(expected) = self.identity else {
                     return self.fail(RelayError::WrongProcess);
                 };
-                let snapshot = match reader.read_verified(
+                let deadline = self
+                    .overall_deadline()
+                    .min(now_ms.saturating_add(self.limits.snapshot_ms));
+                let read = match reader.read_verified(
                     ExpectedIdentity {
                         pid: expected.pid,
                         start_ticks: Some(expected.start_ticks),
                     },
-                    now_ms.saturating_add(self.limits.snapshot_ms),
+                    now_ms,
+                    deadline,
                 ) {
                     Ok(value) => value,
                     Err(error) => return self.fail(RelayError::Snapshot(error)),
                 };
+                if read.completed_ms < now_ms {
+                    return self.fail(RelayError::Snapshot(SnapshotError::Source));
+                }
+                if read.completed_ms > deadline {
+                    return self.expire();
+                }
+                let snapshot = read.snapshot;
                 if snapshot.identity != expected {
                     return self.fail(RelayError::WrongProcess);
+                }
+                if !counter_invariants(snapshot.counters) {
+                    return self.fail(RelayError::Snapshot(SnapshotError::Malformed));
                 }
                 if snapshot.counters.invocations == 0 {
                     return self.fail(RelayError::Snapshot(SnapshotError::NoCallbacks));
@@ -608,6 +723,8 @@ impl RelayModel {
                     Err(error) => return self.fail(RelayError::Snapshot(error)),
                 };
                 self.state = State::Reported;
+                self.observed_pid = None;
+                self.process_seen_ms = None;
                 self.identity = None;
                 Ok(Response::Snapshot(report))
             }
@@ -627,26 +744,46 @@ impl RelayModel {
         if self.state.terminal() {
             return Err(RelayError::Terminal);
         }
-        if now_ms.saturating_sub(self.started_ms) > self.limits.overall_ms {
+        if now_ms > self.overall_deadline() {
             return self.expire();
         }
         if self.state == State::Waiting
-            && self.process_seen_ms.is_none()
-            && now_ms.saturating_sub(self.started_ms) > self.limits.process_wait_ms
+            && match self.process_seen_ms {
+                Some(_) => now_ms > self.arming_deadline(),
+                None => now_ms > self.process_deadline(),
+            }
         {
             return self.expire();
         }
         Ok(())
     }
 
+    fn process_deadline(&self) -> u64 {
+        self.started_ms.saturating_add(self.limits.process_wait_ms)
+    }
+
+    fn arming_deadline(&self) -> u64 {
+        self.process_seen_ms
+            .unwrap_or(self.started_ms)
+            .saturating_add(self.limits.arming_ms)
+    }
+
+    fn overall_deadline(&self) -> u64 {
+        self.started_ms.saturating_add(self.limits.overall_ms)
+    }
+
     fn fail<T>(&mut self, error: RelayError) -> Result<T, RelayError> {
         self.state = State::Failed;
+        self.observed_pid = None;
+        self.process_seen_ms = None;
         self.identity = None;
         Err(error)
     }
 
     fn expire<T>(&mut self) -> Result<T, RelayError> {
         self.state = State::Expired;
+        self.observed_pid = None;
+        self.process_seen_ms = None;
         self.identity = None;
         Err(RelayError::Timeout)
     }

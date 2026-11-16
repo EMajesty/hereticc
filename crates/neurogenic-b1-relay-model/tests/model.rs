@@ -3,8 +3,8 @@ use std::collections::VecDeque;
 use neurogenic_b1_relay_model::{
     ConstructorError, Counters, ExpectedIdentity, Limits, Operation, ProcessIdentity,
     ProcessObservation, ProtocolError, RelayError, RelayModel, Response, SNAPSHOT_BYTES,
-    SNAPSHOT_REPORT_LIMIT, SnapshotError, SnapshotReader, State, VerifiedSnapshot, format_snapshot,
-    parse_request, validate_constructor_report, validate_snapshot_reads,
+    SNAPSHOT_REPORT_LIMIT, SnapshotError, SnapshotRead, SnapshotReader, State, VerifiedSnapshot,
+    format_snapshot, parse_request, validate_constructor_report, validate_snapshot_reads,
 };
 
 const PID: u32 = 4242;
@@ -91,6 +91,7 @@ fn forwarded() -> VerifiedSnapshot {
 struct Reader {
     results: VecDeque<Result<VerifiedSnapshot, SnapshotError>>,
     deadlines: Vec<u64>,
+    late_by_ms: u64,
 }
 
 impl Reader {
@@ -98,6 +99,18 @@ impl Reader {
         Self {
             results: results.into_iter().collect(),
             deadlines: Vec::new(),
+            late_by_ms: 0,
+        }
+    }
+
+    fn late(
+        results: impl IntoIterator<Item = Result<VerifiedSnapshot, SnapshotError>>,
+        late_by_ms: u64,
+    ) -> Self {
+        Self {
+            results: results.into_iter().collect(),
+            deadlines: Vec::new(),
+            late_by_ms,
         }
     }
 }
@@ -106,8 +119,9 @@ impl SnapshotReader for Reader {
     fn read_verified(
         &mut self,
         expected: ExpectedIdentity,
+        started_ms: u64,
         deadline_ms: u64,
-    ) -> Result<VerifiedSnapshot, SnapshotError> {
+    ) -> Result<SnapshotRead, SnapshotError> {
         self.deadlines.push(deadline_ms);
         let value = self.results.pop_front().ok_or(SnapshotError::Source)??;
         if value.identity.pid != expected.pid {
@@ -119,7 +133,14 @@ impl SnapshotReader for Reader {
         {
             return Err(SnapshotError::WrongStartToken);
         }
-        Ok(value)
+        Ok(SnapshotRead {
+            snapshot: value,
+            completed_ms: if self.late_by_ms == 0 {
+                started_ms
+            } else {
+                deadline_ms.saturating_add(self.late_by_ms)
+            },
+        })
     }
 }
 
@@ -271,6 +292,123 @@ fn snapshot_rejects_counter_inconsistency_and_unstable_reads() {
 }
 
 #[test]
+fn snapshot_uses_eight_non_overlapping_read_pairs() {
+    let a = snapshot_bytes(PID, START, Counters::default());
+    let b = snapshot_bytes(PID, START, forwarded().counters);
+    let process = ProcessObservation {
+        pid: PID,
+        start_ticks: START,
+        executable: "/usr/bin/MPC Sample",
+    };
+
+    let mut last_pair_stable = Vec::new();
+    for _ in 0..7 {
+        last_pair_stable.extend([a.as_slice(), b.as_slice()]);
+    }
+    last_pair_stable.extend([b.as_slice(), b.as_slice()]);
+    assert_eq!(
+        validate_snapshot_reads(&last_pair_stable, process),
+        Ok(forwarded())
+    );
+
+    let mut sixteen_unstable = Vec::new();
+    for _ in 0..8 {
+        sixteen_unstable.extend([a.as_slice(), b.as_slice()]);
+    }
+    assert_eq!(
+        validate_snapshot_reads(&sixteen_unstable, process),
+        Err(SnapshotError::Unstable)
+    );
+    let mut seventeen = sixteen_unstable.clone();
+    seventeen.push(a.as_slice());
+    assert_eq!(
+        validate_snapshot_reads(&seventeen, process),
+        Err(SnapshotError::Unstable)
+    );
+    let mut stable_only_beyond_limit = sixteen_unstable;
+    stable_only_beyond_limit.extend([b.as_slice(), b.as_slice()]);
+    assert_eq!(
+        validate_snapshot_reads(&stable_only_beyond_limit, process),
+        Err(SnapshotError::Unstable)
+    );
+}
+
+#[test]
+fn malformed_reads_abort_at_the_read_where_they_occur() {
+    let valid = snapshot_bytes(PID, START, Counters::default());
+    let short = &valid[..71];
+    let process = ProcessObservation {
+        pid: PID,
+        start_ticks: START,
+        executable: "/usr/bin/MPC Sample",
+    };
+    assert_eq!(
+        validate_snapshot_reads(&[short, &valid], process),
+        Err(SnapshotError::WrongLength)
+    );
+    assert_eq!(
+        validate_snapshot_reads(&[&valid, short], process),
+        Err(SnapshotError::WrongLength)
+    );
+}
+
+#[test]
+fn malformed_content_is_decoded_only_after_a_pair_stabilizes() {
+    let valid = snapshot_bytes(PID, START, Counters::default());
+    let mut malformed = valid;
+    malformed[0] = b'X';
+    let process = ProcessObservation {
+        pid: PID,
+        start_ticks: START,
+        executable: "/usr/bin/MPC Sample",
+    };
+    assert_eq!(
+        validate_snapshot_reads(&[&malformed, &valid, &valid, &valid], process),
+        Ok(initial())
+    );
+    assert_eq!(
+        validate_snapshot_reads(&[&malformed, &malformed, &valid, &valid], process),
+        Err(SnapshotError::WrongMagic)
+    );
+}
+
+#[test]
+fn counter_totals_use_checked_arithmetic() {
+    let valid_near_max = snapshot_bytes(
+        PID,
+        START,
+        Counters {
+            invocations: u64::MAX,
+            successful_forwards: u64::MAX,
+            positive_deltas: u64::MAX - 1,
+            negative_deltas: 1,
+            zero_deltas: 0,
+        },
+    );
+    let overflowing = snapshot_bytes(
+        PID,
+        START,
+        Counters {
+            invocations: u64::MAX,
+            successful_forwards: u64::MAX,
+            positive_deltas: u64::MAX,
+            negative_deltas: 1,
+            zero_deltas: 0,
+        },
+    );
+    let process = ProcessObservation {
+        pid: PID,
+        start_ticks: START,
+        executable: "/usr/bin/MPC Sample",
+    };
+    assert!(validate_snapshot_reads(&[&valid_near_max, &valid_near_max], process).is_ok());
+    assert_eq!(
+        validate_snapshot_reads(&[&overflowing, &overflowing], process),
+        Err(SnapshotError::Malformed)
+    );
+}
+
+#[test]
 fn snapshot_rejects_wrong_executable_pid_and_start_token() {
     let bytes = snapshot_bytes(PID, START, Counters::default());
     for (process, expected) in [
@@ -304,6 +442,23 @@ fn snapshot_rejects_wrong_executable_pid_and_start_token() {
             Err(expected)
         );
     }
+}
+
+#[test]
+fn process_identity_is_checked_only_after_a_stable_decode() {
+    let one = snapshot_bytes(PID, START, Counters::default());
+    let two = snapshot_bytes(PID, START, forwarded().counters);
+    assert_eq!(
+        validate_snapshot_reads(
+            &[&one, &two],
+            ProcessObservation {
+                pid: PID,
+                start_ticks: START,
+                executable: "/bin/not-stock",
+            },
+        ),
+        Err(SnapshotError::Unstable)
+    );
 }
 
 #[test]
@@ -378,6 +533,105 @@ fn process_arming_and_overall_timeouts_expire() {
         armed.handle(Operation::Status, &mut reader, 120_002),
         Err(RelayError::Terminal)
     );
+}
+
+#[test]
+fn deadlines_are_inclusive_and_earliest_deadline_wins() {
+    let limits = Limits {
+        process_wait_ms: 10,
+        arming_ms: 5,
+        overall_ms: 100,
+        ..Limits::default()
+    };
+    let mut before = RelayModel::new(0, limits);
+    before.tick(9).unwrap();
+    let mut at = RelayModel::new(0, limits);
+    at.tick(10).unwrap();
+    at.observe_process(PID, 10).unwrap();
+    at.tick(15).unwrap();
+    assert_eq!(at.tick(16), Err(RelayError::Timeout));
+    assert_eq!(at.state(), State::Expired);
+    assert_eq!(at.observe_process(PID, 16), Err(RelayError::Terminal));
+
+    let mut after = RelayModel::new(0, limits);
+    assert_eq!(after.tick(11), Err(RelayError::Timeout));
+
+    let overall_first = Limits {
+        process_wait_ms: 100,
+        arming_ms: 100,
+        overall_ms: 12,
+        ..Limits::default()
+    };
+    let mut model = RelayModel::new(0, overall_first);
+    model.observe_process(PID, 10).unwrap();
+    model.tick(12).unwrap();
+    assert_eq!(model.tick(13), Err(RelayError::Timeout));
+}
+
+#[test]
+fn waiting_expires_after_arming_deadline_without_arm_call() {
+    let limits = Limits {
+        process_wait_ms: 100,
+        arming_ms: 5,
+        overall_ms: 100,
+        ..Limits::default()
+    };
+    let mut model = RelayModel::new(0, limits);
+    model.observe_process(PID, 20).unwrap();
+    let mut reader = Reader::new([Ok(initial())]);
+    assert_eq!(
+        model.handle(Operation::Status, &mut reader, 26),
+        Err(RelayError::Timeout)
+    );
+    assert_eq!(model.state(), State::Expired);
+    assert_eq!(
+        model.arm(report().as_bytes(), &mut reader, 27),
+        Err(RelayError::Terminal)
+    );
+}
+
+#[test]
+fn late_reader_results_cannot_arm_report_or_revive() {
+    let mut model = RelayModel::new(0, Limits::default());
+    model.observe_process(PID, 10).unwrap();
+    let mut late = Reader::late([Ok(initial())], 1);
+    assert_eq!(
+        model.arm(report().as_bytes(), &mut late, 20),
+        Err(RelayError::Timeout)
+    );
+    assert_eq!(model.state(), State::Expired);
+    assert_eq!(
+        model.arm(report().as_bytes(), &mut late, 21),
+        Err(RelayError::Terminal)
+    );
+
+    let (mut model, _) = armed([Ok(initial())]);
+    let mut late = Reader::late([Ok(forwarded())], 1);
+    assert_eq!(
+        model.handle(Operation::Snapshot, &mut late, 30),
+        Err(RelayError::Timeout)
+    );
+    assert_eq!(model.state(), State::Expired);
+    assert_eq!(
+        model.handle(Operation::Snapshot, &mut late, 31),
+        Err(RelayError::Terminal)
+    );
+}
+
+#[test]
+fn reader_deadline_is_capped_by_arming_and_overall_lifetime() {
+    let limits = Limits {
+        process_wait_ms: 100,
+        arming_ms: 5,
+        overall_ms: 6,
+        snapshot_ms: 50,
+        ..Limits::default()
+    };
+    let mut model = RelayModel::new(0, limits);
+    model.observe_process(PID, 2).unwrap();
+    let mut reader = Reader::new([Ok(initial())]);
+    model.arm(report().as_bytes(), &mut reader, 3).unwrap();
+    assert_eq!(reader.deadlines, vec![6]);
 }
 
 #[test]
@@ -465,6 +719,26 @@ fn zero_callbacks_or_forwards_are_b1_failures() {
 }
 
 #[test]
+fn relay_rechecks_overflowing_adapter_counters() {
+    let overflow = VerifiedSnapshot {
+        identity: initial().identity,
+        counters: Counters {
+            invocations: u64::MAX,
+            successful_forwards: u64::MAX,
+            positive_deltas: u64::MAX,
+            negative_deltas: 1,
+            zero_deltas: 0,
+        },
+    };
+    let (mut model, mut reader) = armed([Ok(initial()), Ok(overflow)]);
+    assert_eq!(
+        model.handle(Operation::Snapshot, &mut reader, 30),
+        Err(RelayError::Snapshot(SnapshotError::Malformed))
+    );
+    assert_eq!(model.state(), State::Failed);
+}
+
+#[test]
 fn changed_identity_returned_by_adapter_fails_closed() {
     let changed = VerifiedSnapshot {
         identity: ProcessIdentity {
@@ -501,6 +775,24 @@ fn request_count_is_bounded() {
 }
 
 #[test]
+fn status_requests_do_not_extend_lifetime() {
+    let limits = Limits {
+        overall_ms: 10,
+        ..Limits::default()
+    };
+    let mut model = RelayModel::new(0, limits);
+    model.observe_process(PID, 1).unwrap();
+    let mut reader = Reader::new([Ok(initial())]);
+    model.arm(report().as_bytes(), &mut reader, 2).unwrap();
+    assert!(model.handle(Operation::Status, &mut reader, 9).is_ok());
+    assert!(model.handle(Operation::Status, &mut reader, 10).is_ok());
+    assert_eq!(
+        model.handle(Operation::Status, &mut reader, 11),
+        Err(RelayError::Timeout)
+    );
+}
+
+#[test]
 fn valid_protocol_requests_are_narrow() {
     assert_eq!(
         parse_request(
@@ -512,7 +804,7 @@ fn valid_protocol_requests_are_narrow() {
     );
     assert_eq!(
         parse_request(
-            b"POST /v1/snapshot HTTP/1.1\r\nContent-Length: 0\r\n\r\n",
+            b"POST /v1/snapshot HTTP/1.1\r\nHost: 192.168.155.1\r\nContent-Length: 0\r\n\r\n",
             1,
             2_000
         ),
@@ -548,7 +840,7 @@ fn protocol_rejects_methods_paths_and_traversal() {
 fn protocol_rejects_bodies_conflicting_lengths_and_chunking() {
     assert_eq!(
         parse_request(
-            b"POST /v1/snapshot HTTP/1.1\r\nContent-Length: 1\r\n\r\nx",
+            b"POST /v1/snapshot HTTP/1.1\r\nHost: x\r\nContent-Length: 1\r\n\r\nx",
             0,
             1
         ),
@@ -576,7 +868,7 @@ fn protocol_rejects_bodies_conflicting_lengths_and_chunking() {
 fn protocol_rejects_pipelining_malformed_incomplete_and_timeout() {
     assert_eq!(
         parse_request(
-            b"GET /v1/status HTTP/1.1\r\n\r\nGET /v1/status HTTP/1.1\r\n\r\n",
+            b"GET /v1/status HTTP/1.1\r\nHost: x\r\n\r\nGET /v1/status HTTP/1.1\r\n\r\n",
             0,
             1
         ),
@@ -617,6 +909,99 @@ fn protocol_enforces_request_header_and_version_bounds() {
     assert_eq!(
         parse_request(b"GET /v1/status HTTP/1.1\r\nUser-Agent: x\r\n\r\n", 0, 1),
         Err(ProtocolError::UnexpectedHeader)
+    );
+}
+
+#[test]
+fn protocol_requires_one_canonical_host() {
+    assert_eq!(
+        parse_request(b"GET /v1/status HTTP/1.1\r\n\r\n", 0, 1),
+        Err(ProtocolError::MissingHost)
+    );
+    assert_eq!(
+        parse_request(
+            b"GET /v1/status HTTP/1.1\r\nHost: x\r\nhOsT: y\r\n\r\n",
+            0,
+            1
+        ),
+        Err(ProtocolError::DuplicateHost)
+    );
+    for host in [
+        "",
+        "bad host",
+        "user@host",
+        "host/path",
+        "[]",
+        ":",
+        ".host",
+        "host.",
+        "host:0",
+        "host:99999",
+        "host:80:90",
+    ] {
+        let request = format!("GET /v1/status HTTP/1.1\r\nHost: {host}\r\n\r\n");
+        assert!(matches!(
+            parse_request(request.as_bytes(), 0, 1),
+            Err(ProtocolError::Malformed | ProtocolError::InvalidHost)
+        ));
+    }
+    assert_eq!(
+        parse_request(
+            b"GET /v1/status HTTP/1.1\r\nhOsT: 192.168.155.1\r\n\r\n",
+            0,
+            1
+        ),
+        Ok(Operation::Status)
+    );
+    assert_eq!(
+        parse_request(
+            b"GET /v1/status HTTP/1.1\r\nHost: 192.168.155.1:8080\r\n\r\n",
+            0,
+            1
+        ),
+        Ok(Operation::Status)
+    );
+}
+
+#[test]
+fn protocol_rejects_controls_whitespace_and_noncanonical_lengths() {
+    assert_eq!(
+        parse_request(b"GET\x01 /v1/status HTTP/1.1\r\nHost: x\r\n\r\n", 0, 1),
+        Err(ProtocolError::Malformed)
+    );
+    assert_eq!(
+        parse_request(
+            b"GET /v1/status HTTP/1.1\r\nHost: good\x01bad\r\n\r\n",
+            0,
+            1
+        ),
+        Err(ProtocolError::ControlCharacter)
+    );
+    for request in [
+        "GET /v1/status HTTP/1.1\r\nHost:\tx\r\n\r\n",
+        "GET /v1/status HTTP/1.1\r\nHost:  x\r\n\r\n",
+        "GET /v1/status HTTP/1.1\r\nHost: x \r\n\r\n",
+    ] {
+        assert_eq!(
+            parse_request(request.as_bytes(), 0, 1),
+            Err(ProtocolError::Malformed)
+        );
+    }
+    for length in ["00", "+0", "-0", " 0", "0 "] {
+        let request =
+            format!("POST /v1/snapshot HTTP/1.1\r\nHost: x\r\nContent-Length: {length}\r\n\r\n");
+        assert!(matches!(
+            parse_request(request.as_bytes(), 0, 1),
+            Err(ProtocolError::Malformed | ProtocolError::NonCanonicalLength)
+        ));
+    }
+    assert_eq!(
+        parse_request(
+            b"POST /v1/snapshot HTTP/1.1\r\nHOST: x\r\ncOnTeNt-LeNgTh: 0\r\n\r\n",
+            0,
+            1
+        ),
+        Ok(Operation::Snapshot)
     );
 }
 

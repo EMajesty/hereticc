@@ -172,6 +172,13 @@ bounded two-operation request parser. It opens no listener and creates no device
 payload. The constructor report lacks a start token, so `ARMED` additionally
 requires an initially verified snapshot. See [P3.1](INPUT-HOOK-B1-P3-1.md).
 
+B1-P3.1a hardens that model before lifecycle discovery. It enforces the arming
+deadline on every operation, models reader completion time against the earliest
+inclusive deadline, matches B0.2's eight non-overlapping read pairs and
+post-stability identity order, rejects counter-total overflow with a stricter
+checked relay gate, and requires canonical single-Host HTTP framing. It changes
+no B0 code, listener, device payload, or physical-test authorization.
+
 ### M0.3b-C–E Device feasibility experiments — planned and blocked
 
 This requires a separate, explicitly reviewed task because it creates device-facing executable code.
