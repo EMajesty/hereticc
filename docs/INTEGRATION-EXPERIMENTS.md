@@ -52,6 +52,10 @@ documented in [Selective input-hook feasibility](INPUT-HOOK-B0.md). It produces
 no deployable package and does not count as experiment B physical evidence.
 Exact executable identity and the complete 63-word A4 gate precede preparation;
 full SDK sites, paint, ALSA, and unrelated hooks are excluded from its build.
+B0.2 additionally host-validates a fixed shared `/run` counter snapshot and an
+exact-process reader. It adds no hook and no callback I/O. A device-side way to
+invoke that reader while the same stock process remains alive is not yet known,
+so it does not make B deployable.
 
 **Purpose:** validate page-scoped ownership and paired release behavior without triggering synthetic notes.
 

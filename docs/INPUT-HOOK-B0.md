@@ -1,4 +1,4 @@
-# M0.3b-B0.1 selective input-hook hardening
+# M0.3b-B0.2 selective input-hook diagnostics
 
 Status: source and host validation implemented; no physical execution or SD
 package is authorized. Upstream is `mpc-sample-sdk` v0.6.0 at commit
@@ -90,7 +90,7 @@ Cache maintenance on AArch64 performs data-cache clean, barriers,
 instruction-cache invalidation, and `isb`. This is appropriate architecture
 machinery but has not been physically validated during concurrent execution.
 
-### Diagnostic retrieval boundary
+### Post-interaction retrieval investigation
 
 The constructor publishes an initial bounded report to `/run` and two isolated
 `m03b-b01-init-00..01.txt` SD slots using the A4-validated mount selection,
@@ -99,14 +99,34 @@ rename-without-replace, and directory sync. Reserved
 `m03b-b01-events-00..01.txt` names are host-tested as a separate namespace but
 are not written by device code.
 
-Counters change only after initialization. No reviewed post-interaction
-lifecycle callback exists. A destructor could race callbacks and depends on
-unproven unload/shutdown ordering; a worker or polling loop adds concurrency; a
-signal handler cannot safely format or perform filesystem operations; callback
-I/O violates the real-time boundary; and another firmware hook expands scope.
-Therefore B0.1 implements counter collection and snapshot formatting but stops
-short of post-interaction publication. Reliable retrieval remains a B1 design
-blocker, not a hidden background mechanism.
+The evaluated mechanisms are:
+
+| Mechanism | Assessment |
+|---|---|
+| `/proc/<pid>/mem` or `ptrace` | Requires unverified privileges and kernel policy, exposes address discovery, may pause or race the process, and is rejected. |
+| Socket, signal, or controlled request | Requires a resident listener/thread or unsafe signal work and a protocol attack surface; rejected for B0.2. |
+| Destructor/shutdown snapshot | No verified stock shutdown callback or unload ordering; it could race the live branch and trampoline; rejected. |
+| Existing SDK lifecycle | The reviewed SDK provides initialization callbacks but no safe post-interaction snapshot point; unavailable. |
+| Shared `/run` mapping | Does not attach to or pause the process, adds no hook or callback I/O, and permits bounded atomic reads; selected for host implementation. |
+
+For an exact, compatible process, the constructor exclusively creates a
+process-specific, mode-0600, fixed 64-byte `MAP_SHARED` counter file under
+`/run`. The callback updates only its five atomics. Failure to create it leaves
+the existing local counters active and does not affect hook gating. The mapping
+is never unmapped while the branch may live.
+
+The opt-in reader performs two identical fixed-size reads, retrying at most
+eight times, validates the magic/version/size and aggregate invariants, and
+then requires `/proc/<pid>/exe` to resolve exactly to `/usr/bin/MPC Sample`.
+Missing, denied, malformed, unstable, wrong-process, and disappeared-process
+conditions are explicit errors. Output is at most 384 bytes and includes only
+the PID and aggregate counters. It does not expose an address or event payload.
+
+This is not yet a device retrieval path. It is unknown whether the device has a
+safe way to launch an opt-in helper after interaction, under a UID able to read
+the mode-0600 file, without restarting `ac50`. A restart destroys the process
+whose counters are needed. The helper is therefore neither cross-packaged nor
+added to autorun, and no SD export is implemented.
 
 Remaining physical risks are material: temporary RWX text permissions,
 instruction-cache coherence on the production kernel/CPU, another core entering
@@ -130,8 +150,10 @@ zero-hook profile.
 
 ## Recommendation
 
-B0 establishes a reviewable one-site design and host-tested state machine, but
-does not resolve concurrent text-patch safety. A B1 physical test is only
-justified after owner review accepts that residual risk and separately approves
-a retrieval/package design and controlled stock-service restart boundary. B0
-itself must not be deployed.
+B0.2 is ready for B1 planning, not execution. A minimal **not-authorized** B1
+plan would first establish a read-only, non-restarting way to invoke the helper
+with sufficient `/run` and `/proc` access; only then would a separately reviewed
+package install the existing DATA experiment, allow bounded encoder interaction,
+snapshot while the same stock PID remains live, and copy only the formatted
+report through the proven SD policy. Concurrent text patching, ABI correctness,
+cache synchronization, rollback, and helper privileges remain physical risks.

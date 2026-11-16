@@ -452,3 +452,11 @@ the original word is restored. B0.1 therefore names this state
 `PublishFailedBranchRestored`, reports text permissions as unknown, and reserves
 “indeterminate” for `touched() == true`, where the trampoline and forwarding
 pointer remain process-lifetime state.
+
+B0.2 does not change the SDK patch or hook engine. For an exact compatible
+process, HERETICC creates one exclusive fixed-size shared counter mapping under
+`/run` before publication and retains it for process lifetime. The DATA callback
+updates only atomics in that mapping. A separate opt-in host reader uses bounded
+fixed reads and exact `/proc/<pid>/exe` validation; it does not use `ptrace`,
+`/proc/<pid>/mem`, a signal, a listener, or another firmware hook. Device-side
+helper privileges and invocation without an `ac50` restart remain unverified.

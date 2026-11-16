@@ -77,10 +77,14 @@ must not be deployed. Any later B1 authorization must explicitly accept the
 temporary RWX text-page interval, instruction-cache and cross-core uncertainty,
 non-atomic rollback, inferred DATA ABI, and process-lifetime trampoline policy.
 
-B0.1 adds only saturating aggregate counters and constructor-time reporting.
+B0.2 adds only saturating aggregate counters, constructor-time reporting, and a
+fixed shared counter page under `/run`. The callback still performs no I/O,
+allocation, formatting, locks, or raw-event retention. An opt-in host reader
+validates exact live-process identity and bounded counter invariants; it is not
+packaged or deployed.
 The callback performs no I/O. The guarded SD writer has isolated
 `m03b-b01-init-*` slots and runs only for exact expected-process identity.
-Post-interaction counter retrieval remains unimplemented because no reviewed
+Device-side post-interaction invocation remains unimplemented because no reviewed
 safe lifecycle point exists; shutdown destructors, workers, signals, callback
 I/O, and another hook are not accepted as implicit fallbacks.
 

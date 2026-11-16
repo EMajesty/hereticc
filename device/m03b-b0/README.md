@@ -1,4 +1,4 @@
-# M0.3b-B0.1 selective DATA-hook hardening
+# M0.3b-B0.2 post-interaction counter snapshot
 
 This isolated, non-deployable stage evaluates one transparent encoder-dispatch
 hook. It is not part of the host workspace and does not alter the A4 probe.
@@ -21,12 +21,17 @@ single-installer assumptions, but does not prove the final RX `mprotect`
 succeeded. Rollback is not atomic and B0.1 does not claim otherwise.
 
 The callback records saturating invocation, successful-forward, and
-positive/negative/zero-delta counters. It retains no pointer or raw event data.
+positive/negative/zero-delta counters in one fixed 64-byte `MAP_SHARED` file
+created exclusively as `/run/hereticc-m03b-b02-counters-<pid>.bin`. It retains
+no firmware pointer or raw event data, and performs no I/O or locking.
 The constructor writes a bounded initial report to `/run` and to two isolated
 `m03b-b01-init-*` slots using A4's exact exFAT mount and no-clobber policy.
-Post-interaction publication is deliberately not implemented: no reviewed
-lifecycle point exists after user interaction, and adding a worker, signal,
-callback I/O, destructor assumption, or extra hook would violate this stage.
+An opt-in `b02-snapshot` reader takes that file and an optional synthetic
+`/proc` root, requires its recorded PID to resolve exactly to
+`/usr/bin/MPC Sample`, takes bounded repeated fixed-size reads, validates counter
+invariants, and prints a bounded address-free report. The reader is a host-side
+component only: it is not cross-packaged or installed. How it could be invoked
+after interaction on the device without restarting `ac50` remains unverified.
 
 Run locally:
 

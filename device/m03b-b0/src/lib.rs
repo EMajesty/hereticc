@@ -5,7 +5,7 @@
 //! an MPC without a separately authorized B1 task.
 
 use core::fmt::Write as _;
-use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicU64, AtomicUsize, Ordering};
 #[cfg(not(test))]
 use std::fs::OpenOptions;
 #[cfg(not(test))]
@@ -15,11 +15,12 @@ use mpc_sample_sdk::probe::{ExecutableIdentity, ProbeResult, ProbeStatus};
 
 #[cfg_attr(test, allow(dead_code))]
 mod sd_report;
+pub mod snapshot;
 
 /// Exact upstream SDK revision.
 pub const SDK_COMMIT: &str = "e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39";
 /// HERETICC patch-set identifier.
-pub const PATCH_SET: &str = "m03b-b01-input-hardening-v2";
+pub const PATCH_SET: &str = "m03b-b02-shared-snapshot-v3";
 /// Only supported stock firmware.
 pub const EXPECTED_FIRMWARE: &str = "1.3.0.12";
 /// Transient report; B0 deliberately creates no SD package.
@@ -30,11 +31,18 @@ pub const MAX_REPORT_BYTES: usize = 768;
 type DataHandler = unsafe extern "C" fn(usize, i32);
 
 static ORIGINAL_DATA: AtomicUsize = AtomicUsize::new(0);
-static CALLBACK_INVOCATIONS: AtomicU64 = AtomicU64::new(0);
-static FORWARDED_CALLS: AtomicU64 = AtomicU64::new(0);
-static POSITIVE_DELTAS: AtomicU64 = AtomicU64::new(0);
-static NEGATIVE_DELTAS: AtomicU64 = AtomicU64::new(0);
-static ZERO_DELTAS: AtomicU64 = AtomicU64::new(0);
+static LOCAL_COUNTERS: snapshot::CounterBlock = snapshot::CounterBlock::local();
+static ACTIVE_COUNTERS: AtomicPtr<snapshot::CounterBlock> = AtomicPtr::new(core::ptr::null_mut());
+
+fn active_counters() -> &'static snapshot::CounterBlock {
+    let pointer = ACTIVE_COUNTERS.load(Ordering::Acquire);
+    if pointer.is_null() {
+        &LOCAL_COUNTERS
+    } else {
+        // SAFETY: only a process-lifetime shared mapping is published here.
+        unsafe { &*pointer }
+    }
+}
 
 /// Selective installation outcome used by reporting and host tests.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -146,11 +154,12 @@ fn install_with(result: ProbeResult, backend: &mut impl Backend) -> InstallResul
 /// complete return contract. A missing trampoline fails closed; production
 /// publication stores it before the handler can become reachable.
 unsafe extern "C" fn data_forward(surface: usize, delta: i32) {
-    saturating_increment(&CALLBACK_INVOCATIONS);
+    let counters = active_counters();
+    saturating_increment(&counters.invocations);
     saturating_increment(match delta.cmp(&0) {
-        core::cmp::Ordering::Greater => &POSITIVE_DELTAS,
-        core::cmp::Ordering::Less => &NEGATIVE_DELTAS,
-        core::cmp::Ordering::Equal => &ZERO_DELTAS,
+        core::cmp::Ordering::Greater => &counters.positive_deltas,
+        core::cmp::Ordering::Less => &counters.negative_deltas,
+        core::cmp::Ordering::Equal => &counters.zero_deltas,
     });
     let address = ORIGINAL_DATA.load(Ordering::Acquire);
     if address == 0 {
@@ -160,7 +169,7 @@ unsafe extern "C" fn data_forward(surface: usize, delta: i32) {
     let original: DataHandler = unsafe { core::mem::transmute(address) };
     // SAFETY: the stock arguments are forwarded byte-for-byte and exactly once.
     unsafe { original(surface, delta) };
-    saturating_increment(&FORWARDED_CALLS);
+    saturating_increment(&counters.successful_forwards);
 }
 
 fn saturating_increment(counter: &AtomicU64) {
@@ -187,13 +196,7 @@ pub struct EventCounters {
 /// Take a lock-free diagnostic snapshot.
 #[must_use]
 pub fn event_counters() -> EventCounters {
-    EventCounters {
-        invocations: CALLBACK_INVOCATIONS.load(Ordering::Relaxed),
-        successful_forwards: FORWARDED_CALLS.load(Ordering::Relaxed),
-        positive_deltas: POSITIVE_DELTAS.load(Ordering::Relaxed),
-        negative_deltas: NEGATIVE_DELTAS.load(Ordering::Relaxed),
-        zero_deltas: ZERO_DELTAS.load(Ordering::Relaxed),
-    }
+    active_counters().snapshot()
 }
 
 #[cfg(not(test))]
@@ -228,10 +231,14 @@ impl Backend for DeviceBackend {
 /// # Errors
 ///
 /// Returns [`ReportError::TooLarge`] if fixed fields exceed the declared bound.
-pub fn format_report(probe: ProbeResult, install: InstallResult) -> Result<String, ReportError> {
+pub fn format_report(
+    probe: ProbeResult,
+    install: InstallResult,
+    snapshot_ready: bool,
+) -> Result<String, ReportError> {
     let mut out = String::with_capacity(512);
     let compatible = probe.status == ProbeStatus::Compatible && probe.checked == 63;
-    writeln!(out, "hereticc_experiment=m03b-b01").expect("String writes cannot fail");
+    writeln!(out, "hereticc_experiment=m03b-b02").expect("String writes cannot fail");
     writeln!(out, "upstream_sdk_commit={SDK_COMMIT}").expect("String writes cannot fail");
     writeln!(out, "patch_set={PATCH_SET}").expect("String writes cannot fail");
     writeln!(out, "expected_firmware={EXPECTED_FIRMWARE}").expect("String writes cannot fail");
@@ -264,18 +271,14 @@ pub fn format_report(probe: ProbeResult, install: InstallResult) -> Result<Strin
     writeln!(out, "forwarding_ready={}", install.forwarding_ready)
         .expect("String writes cannot fail");
     writeln!(out, "forwarding_observed=false").expect("String writes cannot fail");
-    writeln!(out, "post_interaction_retrieval=not-implemented").expect("String writes cannot fail");
+    writeln!(out, "post_interaction_retrieval=shared-run-snapshot")
+        .expect("String writes cannot fail");
+    writeln!(out, "counter_snapshot_ready={snapshot_ready}").expect("String writes cannot fail");
+    if snapshot_ready {
+        writeln!(out, "counter_snapshot_pid={}", probe.process.pid)
+            .expect("String writes cannot fail");
+    }
     writeln!(out, "text_permissions_restored=unknown").expect("String writes cannot fail");
-    let counters = event_counters();
-    writeln!(out, "callback_invocations={}", counters.invocations)
-        .expect("String writes cannot fail");
-    writeln!(out, "successful_forwards={}", counters.successful_forwards)
-        .expect("String writes cannot fail");
-    writeln!(out, "positive_delta_events={}", counters.positive_deltas)
-        .expect("String writes cannot fail");
-    writeln!(out, "negative_delta_events={}", counters.negative_deltas)
-        .expect("String writes cannot fail");
-    writeln!(out, "zero_delta_events={}", counters.zero_deltas).expect("String writes cannot fail");
     writeln!(out, "final_status={:?}", install.status).expect("String writes cannot fail");
     if out.len() > MAX_REPORT_BYTES {
         return Err(ReportError::TooLarge);
@@ -293,8 +296,23 @@ pub enum ReportError {
 #[cfg(not(test))]
 extern "C" fn start_probe() {
     let probe = mpc_sample_sdk::probe::inspect_process();
+    let compatible = probe.process.executable_identity == ExecutableIdentity::Expected
+        && probe.status == ProbeStatus::Compatible
+        && probe.checked == 63
+        && probe.expected == 63;
+    let mapping = compatible
+        .then(|| snapshot::create_shared(probe.process.pid))
+        .transpose()
+        .ok()
+        .flatten();
+    if let Some(shared) = mapping.as_ref() {
+        ACTIVE_COUNTERS.store(
+            core::ptr::from_ref(shared.counters).cast_mut(),
+            Ordering::Release,
+        );
+    }
     let install = install_with(probe, &mut DeviceBackend);
-    if let Ok(report) = format_report(probe, install) {
+    if let Ok(report) = format_report(probe, install, mapping.is_some()) {
         if let Ok(mut file) = OpenOptions::new()
             .write(true)
             .create(true)
@@ -486,11 +504,8 @@ mod tests {
     fn handler_forwards_all_delta_classes_exactly_once() {
         let _guard = TEST_LOCK.lock().unwrap();
         CALLS.store(0, Ordering::Relaxed);
-        CALLBACK_INVOCATIONS.store(0, Ordering::Relaxed);
-        FORWARDED_CALLS.store(0, Ordering::Relaxed);
-        POSITIVE_DELTAS.store(0, Ordering::Relaxed);
-        NEGATIVE_DELTAS.store(0, Ordering::Relaxed);
-        ZERO_DELTAS.store(0, Ordering::Relaxed);
+        ACTIVE_COUNTERS.store(core::ptr::null_mut(), Ordering::Release);
+        LOCAL_COUNTERS.reset();
         ORIGINAL_DATA.store(original as *const () as usize, Ordering::Release);
         // SAFETY: test original has the exact handler ABI.
         unsafe { data_forward(0x1234, -7) };
@@ -516,43 +531,42 @@ mod tests {
     #[test]
     fn counters_saturate_and_are_safe_under_concurrency() {
         let _guard = TEST_LOCK.lock().unwrap();
-        CALLBACK_INVOCATIONS.store(u64::MAX - 1, Ordering::Relaxed);
-        saturating_increment(&CALLBACK_INVOCATIONS);
-        saturating_increment(&CALLBACK_INVOCATIONS);
-        assert_eq!(CALLBACK_INVOCATIONS.load(Ordering::Relaxed), u64::MAX);
+        ACTIVE_COUNTERS.store(core::ptr::null_mut(), Ordering::Release);
+        LOCAL_COUNTERS.reset();
+        LOCAL_COUNTERS
+            .invocations
+            .store(u64::MAX - 1, Ordering::Relaxed);
+        saturating_increment(&LOCAL_COUNTERS.invocations);
+        saturating_increment(&LOCAL_COUNTERS.invocations);
+        assert_eq!(LOCAL_COUNTERS.invocations.load(Ordering::Relaxed), u64::MAX);
 
-        CALLBACK_INVOCATIONS.store(0, Ordering::Relaxed);
+        LOCAL_COUNTERS.invocations.store(0, Ordering::Relaxed);
         std::thread::scope(|scope| {
             for _ in 0..8 {
                 scope.spawn(|| {
                     for _ in 0..1_000 {
-                        saturating_increment(&CALLBACK_INVOCATIONS);
+                        saturating_increment(&LOCAL_COUNTERS.invocations);
                     }
                 });
             }
         });
-        assert_eq!(CALLBACK_INVOCATIONS.load(Ordering::Relaxed), 8_000);
+        assert_eq!(LOCAL_COUNTERS.invocations.load(Ordering::Relaxed), 8_000);
     }
 
     #[test]
     fn report_is_bounded_and_does_not_claim_observed_forwarding() {
         let _guard = TEST_LOCK.lock().unwrap();
-        for counter in [
-            &CALLBACK_INVOCATIONS,
-            &FORWARDED_CALLS,
-            &POSITIVE_DELTAS,
-            &NEGATIVE_DELTAS,
-            &ZERO_DELTAS,
-        ] {
+        ACTIVE_COUNTERS.store(core::ptr::null_mut(), Ordering::Release);
+        for counter in LOCAL_COUNTERS.all() {
             counter.store(u64::MAX, Ordering::Relaxed);
         }
         let value = probe(ExecutableIdentity::Expected, ProbeStatus::Compatible);
-        let report =
-            format_report(value, rejected(InstallStatus::PreparationFailed)).expect("bounded");
+        let report = format_report(value, rejected(InstallStatus::PreparationFailed), true)
+            .expect("bounded");
         assert!(report.len() <= MAX_REPORT_BYTES);
         assert!(report.contains("selected_hook=DATA_HOOK\n"));
         assert!(report.contains("forwarding_observed=false\n"));
-        assert!(report.contains("callback_invocations=18446744073709551615\n"));
+        assert!(report.contains("counter_snapshot_ready=true\n"));
         assert!(!report.contains("0x"));
     }
 }
