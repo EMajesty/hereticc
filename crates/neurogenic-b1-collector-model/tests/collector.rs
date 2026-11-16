@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use neurogenic_b1_collector_model::{
     CollectionError, CollectionStatus, MAX_REPORT_BYTES, MonotonicClock, MountEvidence,
     ObservationInputs, RESULT_NAME, ValidatedDestination, collect, format_failure_report,
-    format_report, publish_once,
+    format_report, publish_once, write_report,
 };
 
 #[derive(Clone, Debug)]
@@ -79,6 +79,7 @@ fn mount(path: &std::path::Path) -> MountEvidence<'_> {
         filesystem: "exfat",
         read_write: true,
         mount_path: path,
+        exclusive_create_supported: true,
     }
 }
 
@@ -198,15 +199,77 @@ fn network_prefix_route_and_absence_are_distinct() {
     prefix.network = Some(b"usb0 192.168.155.1/24\n".to_vec());
     assert_eq!(
         collect(&prefix, &mut Clock::fixed(0), 100),
-        Err(CollectionError::InvalidProcess("incorrect USB prefix"))
+        Err(CollectionError::InvalidNetwork("incorrect USB prefix"))
     );
     let mut route = complete_inputs();
     route.network =
         Some(b"usb0 192.168.155.1/28\n192.168.155.0/28 dev eth0\nLINK usb0 UP\n".to_vec());
     assert_eq!(
         collect(&route, &mut Clock::fixed(0), 100),
-        Err(CollectionError::InvalidProcess("USB route mismatch"))
+        Err(CollectionError::InvalidNetwork("USB route mismatch"))
     );
+}
+
+#[test]
+fn network_observation_order_and_identical_duplicates_do_not_matter() {
+    let lines = [
+        "usb0 192.168.155.1/28",
+        "192.168.155.0/28 dev usb0",
+        "LINK usb0 UP",
+    ];
+    let permutations = [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ];
+    let expected = collect(&complete_inputs(), &mut Clock::fixed(0), 100)
+        .expect("baseline")
+        .report;
+    for permutation in permutations {
+        let mut inputs = complete_inputs();
+        let network = permutation
+            .iter()
+            .map(|index| lines[*index])
+            .chain([lines[0], lines[1], lines[2]])
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        inputs.network = Some(network.into_bytes());
+        assert_eq!(
+            collect(&inputs, &mut Clock::fixed(0), 100)
+                .expect("permutation")
+                .report,
+            expected
+        );
+    }
+}
+
+#[test]
+fn network_contradictions_and_malformed_lines_fail_closed() {
+    for (network, expected) in [
+        (
+            "usb0 192.168.155.1/28\neth0 192.168.155.1/28\n192.168.155.0/28 dev usb0\nLINK usb0 UP\n",
+            "contradictory USB interfaces",
+        ),
+        (
+            "usb0 192.168.155.1/28\n192.168.155.0/28 dev usb0\nLINK usb0 UP\nLINK usb0 DOWN\n",
+            "contradictory link states",
+        ),
+        (
+            "usb0 192.168.155.1/28\n192.168.155.0/28 dev usb0\nLINK usb0 MAYBE\n",
+            "malformed link state",
+        ),
+    ] {
+        let mut inputs = complete_inputs();
+        inputs.network = Some(network.as_bytes().to_vec());
+        assert_eq!(
+            collect(&inputs, &mut Clock::fixed(0), 100),
+            Err(CollectionError::InvalidNetwork(expected))
+        );
+    }
 }
 
 #[test]
@@ -311,16 +374,80 @@ fn publication_rejects_sd_mount_identity_mismatch() {
 }
 
 #[test]
-fn preexisting_partial_blocks_publication_without_final_file() {
+fn publication_rejects_changed_destination_and_unsupported_exclusive_create() {
+    let root = temp_dir("changed");
+    let destination = ValidatedDestination::inspect_exact(&root, &mount(&root)).expect("validate");
+    let moved = root.with_extension("moved");
+    fs::rename(&root, &moved).expect("move original");
+    fs::create_dir(&root).expect("replacement directory");
+    assert_eq!(
+        publish_once(&destination, b"new\n")
+            .expect_err("identity change must fail")
+            .kind(),
+        std::io::ErrorKind::InvalidInput
+    );
+    let unsupported = MountEvidence {
+        exclusive_create_supported: false,
+        ..mount(&root)
+    };
+    assert!(ValidatedDestination::inspect_exact(&root, &unsupported).is_err());
+    fs::remove_dir_all(root).expect("cleanup replacement");
+    fs::remove_dir_all(moved).expect("cleanup original");
+}
+
+#[test]
+fn preexisting_reserved_partial_marker_blocks_publication() {
     let root = temp_dir("partial");
     fs::write(root.join(".b1-p3-2c-report.partial"), b"old").expect("partial fixture");
     let destination = ValidatedDestination::inspect_exact(&root, &mount(&root)).expect("validate");
     assert_eq!(
         publish_once(&destination, b"new\n")
-            .expect_err("partial must block")
+            .expect_err("partial marker must block")
             .kind(),
         std::io::ErrorKind::AlreadyExists
     );
     assert!(!root.join(RESULT_NAME).exists());
     fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn bounded_writer_handles_short_writes_and_reports_full_or_zero_progress() {
+    struct ShortWriter(Vec<u8>);
+    impl std::io::Write for ShortWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            let count = bytes.len().min(2);
+            self.0.extend_from_slice(&bytes[..count]);
+            Ok(count)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    struct FailingWriter(std::io::ErrorKind);
+    impl std::io::Write for FailingWriter {
+        fn write(&mut self, _bytes: &[u8]) -> std::io::Result<usize> {
+            if self.0 == std::io::ErrorKind::WriteZero {
+                Ok(0)
+            } else {
+                Err(std::io::Error::new(self.0, "injected"))
+            }
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut short = ShortWriter(Vec::new());
+    write_report(&mut short, b"abcdef").expect("short writes complete");
+    assert_eq!(short.0, b"abcdef");
+    for kind in [
+        std::io::ErrorKind::WriteZero,
+        std::io::ErrorKind::StorageFull,
+    ] {
+        assert_eq!(
+            write_report(&mut FailingWriter(kind), b"report")
+                .expect_err("injected failure")
+                .kind(),
+            kind
+        );
+    }
 }

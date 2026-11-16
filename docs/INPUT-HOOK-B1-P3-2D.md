@@ -1,8 +1,9 @@
 # M0.3b-B1-P3.2d pre-restart collector implementation
 
-Status: host-tested library model and inert review tooling. No executable target,
-AArch64 binary, autorun tree, device command adapter, service change, hook,
-listener, or deployable package exists. No MPC was contacted.
+Status: host-tested library model and inert review tooling. P3.2e subsequently
+adds the Linux acquisition boundary and replaces the hard-link publication
+model; see [P3.2e](INPUT-HOOK-B1-P3-2E.md). No deployable package exists and no
+MPC was contacted.
 
 ## Outcome and language choice
 
@@ -34,7 +35,7 @@ PID + executable + start-token + cgroup consistency
 ordered ASCII selected-fact report (<=4096 bytes)
                          |
                          v
-validated exact mount -> create-new partial -> sync -> no-clobber link
+validated exact mount -> create-new fixed final -> sync
 ```
 
 The library contains no `main`, process spawning, shell, filesystem traversal,
@@ -99,12 +100,11 @@ supplied mount evidence says:
 - the evidence path exactly matches the requested directory.
 
 The final path is fixed as `b1-p3-2c-report.txt`; callers cannot supply a file
-name. Final symlinks and non-directories are rejected. Publication creates one
-fixed `.partial` file with create-new/no-follow-by-name semantics, mode 0600 on
-Unix, writes and synchronizes the bounded report, creates the final name with a
-no-clobber hard link, synchronizes the directory, and removes the partial name.
-Existing partial or final files fail; there is no overwrite, append, alternate
-slot, traversal, or retry.
+name. P3.2e removes the original partial-file/hard-link model because exFAT does
+not support hard links. The revised model exclusively creates the fixed final
+name, synchronizes it and the directory, never overwrites, and leaves any
+interrupted incomplete final non-retryable. It does not claim atomic visibility;
+see P3.2e for the remaining descriptor-relative path gate.
 
 This host abstraction does not yet reproduce A4's `/proc/mounts` record count,
 safe `/media/<name>` syntax, descriptor-relative traversal, or exFAT magic
@@ -171,10 +171,11 @@ service operations.
 
 Permission denial and missing utilities are represented at the current adapter
 boundary as explicit source-unavailable outcomes: critical process/service
-sources fail, while optional sources make the report partial. An injected
-post-write failure verifies that neither the partial nor final report remains.
-Actual OS error mapping and individual write-versus-sync failures still require
-the future device-I/O adapter and are not physically verified.
+sources fail, while optional sources make the report partial. P3.2e replaces
+the original cleanup expectation: injected pre-sync failures leave a fixed,
+non-retryable incomplete final file so the implementation never relies on
+unsupported exFAT hard-link or rename-no-replace behavior. Actual device
+write/sync behavior remains physically unverified.
 
 ## Future integration and authorization boundary
 

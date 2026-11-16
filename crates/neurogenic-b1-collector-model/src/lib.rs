@@ -9,7 +9,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 #[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 
 pub const SCHEMA: &str = "neurogenic-b1-p3.2c-v1";
 pub const MAX_REPORT_BYTES: usize = 4096;
@@ -45,6 +45,7 @@ pub enum CollectionError {
     InvalidUtf8(&'static str),
     InvalidService(&'static str),
     InvalidProcess(&'static str),
+    InvalidNetwork(&'static str),
     ReportBounds,
 }
 
@@ -334,6 +335,7 @@ fn parse_run(
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)] // Keeping collection and cross-field validation together is safer.
 fn parse_network(
     input: Option<&[u8]>,
     fields: &mut BTreeMap<&'static str, String>,
@@ -344,52 +346,100 @@ fn parse_network(
         return Ok(());
     };
     let text = bounded_text("network", input)?;
-    let mut address_interface = None;
-    let mut route_interface = None;
-    let mut link_up = None;
+    let mut address_interfaces = BTreeSet::new();
+    let mut route_interfaces = BTreeSet::new();
+    let mut link_states: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
     for line in text.lines() {
         let words: Vec<_> = line.split_whitespace().collect();
         if let Some(position) = words.iter().position(|word| *word == "192.168.155.1/28") {
-            address_interface = position
+            let interface = position
                 .checked_sub(1)
                 .and_then(|index| words.get(index))
                 .copied();
+            if let Some(interface) = interface.filter(|value| safe_token(value)) {
+                address_interfaces.insert(interface);
+            } else {
+                return Err(CollectionError::InvalidNetwork(
+                    "malformed address interface",
+                ));
+            }
         } else if line.contains("192.168.155.1/") {
-            return Err(CollectionError::InvalidProcess("incorrect USB prefix"));
+            return Err(CollectionError::InvalidNetwork("incorrect USB prefix"));
         }
         if words.first() == Some(&"192.168.155.0/28") {
-            route_interface = words
+            let interface = words
                 .iter()
                 .position(|word| *word == "dev")
                 .and_then(|index| words.get(index + 1))
                 .copied();
+            if let Some(interface) = interface.filter(|value| safe_token(value)) {
+                route_interfaces.insert(interface);
+            } else {
+                return Err(CollectionError::InvalidNetwork("malformed route interface"));
+            }
         }
         if line.starts_with("LINK ") {
-            let interface = words.get(1).copied();
-            let state = words.get(2).copied();
-            if interface == address_interface {
-                link_up = state.map(|value| value == "UP");
+            match (words.get(1).copied(), words.get(2).copied(), words.len()) {
+                (Some(interface), Some(state @ ("UP" | "DOWN" | "UNKNOWN")), 3)
+                    if safe_token(interface) =>
+                {
+                    link_states.entry(interface).or_default().insert(state);
+                }
+                _ => return Err(CollectionError::InvalidNetwork("malformed link state")),
             }
         }
     }
-    match (address_interface, route_interface) {
-        (Some(address), Some(route)) if address == route && safe_token(address) => {
+    match (address_interfaces.len(), route_interfaces.len()) {
+        (0, _) | (_, 0) => {
+            unavailable.insert("network");
+        }
+        (1, 1) => {
+            let address = address_interfaces
+                .first()
+                .copied()
+                .ok_or(CollectionError::InvalidNetwork("missing address"))?;
+            let route = route_interfaces
+                .first()
+                .copied()
+                .ok_or(CollectionError::InvalidNetwork("missing route"))?;
+            if address != route {
+                return Err(CollectionError::InvalidNetwork("USB route mismatch"));
+            }
             insert(fields, "usb_interface", address);
             insert(fields, "usb_ipv4", "192.168.155.1/28");
             insert(fields, "usb_route", "192.168.155.0/28");
             insert(fields, "usb_route_interface", route);
-            insert(
-                fields,
-                "usb_link_up",
-                link_up.map_or("unknown", |up| if up { "true" } else { "false" }),
-            );
-            if link_up.is_none() {
-                unavailable.insert("link_state");
+            match link_states.get(address) {
+                None => {
+                    insert(fields, "usb_link_up", "unknown");
+                    unavailable.insert("link_state");
+                }
+                Some(states) if states.len() == 1 => {
+                    let state = states.first().copied().unwrap_or("UNKNOWN");
+                    insert(
+                        fields,
+                        "usb_link_up",
+                        if state == "UP" {
+                            "true"
+                        } else if state == "DOWN" {
+                            "false"
+                        } else {
+                            "unknown"
+                        },
+                    );
+                    if state == "UNKNOWN" {
+                        unavailable.insert("link_state");
+                    }
+                }
+                Some(_) => {
+                    return Err(CollectionError::InvalidNetwork("contradictory link states"));
+                }
             }
         }
-        (Some(_), Some(_)) => return Err(CollectionError::InvalidProcess("USB route mismatch")),
         _ => {
-            unavailable.insert("network");
+            return Err(CollectionError::InvalidNetwork(
+                "contradictory USB interfaces",
+            ));
         }
     }
     Ok(())
@@ -489,7 +539,13 @@ pub fn format_failure_report() -> Result<Vec<u8>, CollectionError> {
 }
 
 #[derive(Clone, Debug)]
-pub struct ValidatedDestination(PathBuf);
+pub struct ValidatedDestination {
+    path: PathBuf,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MountEvidence<'a> {
@@ -497,6 +553,7 @@ pub struct MountEvidence<'a> {
     pub filesystem: &'a str,
     pub read_write: bool,
     pub mount_path: &'a Path,
+    pub exclusive_create_supported: bool,
 }
 
 impl ValidatedDestination {
@@ -511,6 +568,7 @@ impl ValidatedDestination {
             || evidence.filesystem != "exfat"
             || !evidence.read_write
             || evidence.mount_path != path
+            || !evidence.exclusive_create_supported
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -524,24 +582,46 @@ impl ValidatedDestination {
                 "destination is not an exact directory",
             ));
         }
-        Ok(Self(path.to_path_buf()))
+        Ok(Self {
+            path: path.to_path_buf(),
+            #[cfg(unix)]
+            device: metadata.dev(),
+            #[cfg(unix)]
+            inode: metadata.ino(),
+        })
     }
 }
 
-/// Publish one fixed-name report through a no-clobber partial file and hard link.
+/// Publish one fixed-name report directly with exclusive creation.
 ///
 /// # Errors
 ///
-/// Returns an I/O error for oversize output, existing partial/final files,
-/// write/sync/link failures, or an inaccessible destination.
+/// Returns an I/O error for oversize output, changed destination identity,
+/// existing final files, write/sync failures, or an inaccessible destination.
 pub fn publish_once(destination: &ValidatedDestination, report: &[u8]) -> io::Result<PathBuf> {
-    publish_once_with(destination, report, || Ok(()))
+    publish_once_with(destination, report, |_| Ok(()))
+}
+
+/// Write the complete bounded report, correctly handling short writes.
+///
+/// # Errors
+///
+/// Returns an error for oversized reports, zero-progress writes, or backend
+/// failures such as a full filesystem.
+pub fn write_report(writer: &mut impl Write, report: &[u8]) -> io::Result<()> {
+    if report.len() > MAX_REPORT_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "report exceeds bound",
+        ));
+    }
+    writer.write_all(report)
 }
 
 fn publish_once_with(
     destination: &ValidatedDestination,
     report: &[u8],
-    after_write: impl FnOnce() -> io::Result<()>,
+    mut inject: impl FnMut(PublicationStage) -> io::Result<()>,
 ) -> io::Result<PathBuf> {
     if report.len() > MAX_REPORT_BYTES {
         return Err(io::Error::new(
@@ -549,25 +629,49 @@ fn publish_once_with(
             "report exceeds bound",
         ));
     }
-    let partial = destination.0.join(PARTIAL_NAME);
-    let final_path = destination.0.join(RESULT_NAME);
+    let metadata = fs::symlink_metadata(&destination.path)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "destination changed after validation",
+        ));
+    }
+    #[cfg(unix)]
+    if metadata.dev() != destination.device || metadata.ino() != destination.inode {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "destination identity changed after validation",
+        ));
+    }
+    let final_path = destination.path.join(RESULT_NAME);
+    if destination.path.join(PARTIAL_NAME).try_exists()? {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "reserved partial marker already exists",
+        ));
+    }
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
     options.mode(0o600);
-    let mut file = options.open(&partial)?;
+    let mut file = options.open(&final_path)?;
     let write_result = (|| {
-        file.write_all(report)?;
-        after_write()?;
+        write_report(&mut file, report)?;
+        inject(PublicationStage::BeforeFileSync)?;
         file.sync_all()?;
-        fs::hard_link(&partial, &final_path)?;
-        let directory = fs::File::open(&destination.0)?;
+        inject(PublicationStage::BeforeDirectorySync)?;
+        let directory = fs::File::open(&destination.path)?;
         directory.sync_all()?;
         Ok(())
     })();
     drop(file);
-    let _ = fs::remove_file(&partial);
     write_result.map(|()| final_path)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PublicationStage {
+    BeforeFileSync,
+    BeforeDirectorySync,
 }
 
 #[cfg(test)]
@@ -576,7 +680,7 @@ mod publication_failure_tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
-    fn failure_after_write_removes_partial_and_never_publishes_final() {
+    fn failures_before_sync_completion_leave_non_retryable_final() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock after epoch")
@@ -588,15 +692,26 @@ mod publication_failure_tests {
             filesystem: "exfat",
             read_write: true,
             mount_path: &root,
+            exclusive_create_supported: true,
         };
-        let destination = ValidatedDestination::inspect_exact(&root, &evidence).expect("validate");
-        let error = publish_once_with(&destination, b"report\n", || {
-            Err(io::Error::new(io::ErrorKind::StorageFull, "injected"))
-        })
-        .expect_err("injected write-stage failure");
-        assert_eq!(error.kind(), io::ErrorKind::StorageFull);
-        assert!(!root.join(PARTIAL_NAME).exists());
-        assert!(!root.join(RESULT_NAME).exists());
-        fs::remove_dir(root).expect("cleanup fixture");
+        for stage in [
+            PublicationStage::BeforeFileSync,
+            PublicationStage::BeforeDirectorySync,
+        ] {
+            let destination =
+                ValidatedDestination::inspect_exact(&root, &evidence).expect("validate");
+            let error = publish_once_with(&destination, b"report\n", |current| {
+                if current == stage {
+                    Err(io::Error::new(io::ErrorKind::StorageFull, "injected"))
+                } else {
+                    Ok(())
+                }
+            })
+            .expect_err("injected sync-stage failure");
+            assert_eq!(error.kind(), io::ErrorKind::StorageFull);
+            assert!(root.join(RESULT_NAME).exists());
+            fs::remove_file(root.join(RESULT_NAME)).expect("reset fixture");
+        }
+        fs::remove_dir_all(root).expect("cleanup fixture");
     }
 }

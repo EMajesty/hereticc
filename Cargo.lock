@@ -3,6 +3,13 @@
 version = 4
 
 [[package]]
+name = "neurogenic-b1-collector-linux"
+version = "0.1.0"
+dependencies = [
+ "neurogenic-b1-collector-model",
+]
+
+[[package]]
 name = "neurogenic-b1-collector-model"
 version = "0.1.0"
 

@@ -26,10 +26,11 @@ class SafetyTests(unittest.TestCase):
         return crate
 
     def test_real_collector_is_library_only_and_structurally_safe(self):
-        report = SAFETY.inspect(ROOT / "crates" / "neurogenic-b1-collector-model")
-        self.assertEqual(report["classification"], "pass")
-        self.assertTrue(all(report["verified"].values()))
-        self.assertTrue(report["unverified"])
+        for name in ("neurogenic-b1-collector-model", "neurogenic-b1-collector-linux"):
+            report = SAFETY.inspect(ROOT / "crates" / name)
+            self.assertEqual(report["classification"], "pass")
+            self.assertTrue(all(report["verified"].values()))
+            self.assertTrue(report["unverified"])
 
     def test_rejects_process_network_unsafe_traversal_and_service_operations(self):
         source = """
@@ -41,7 +42,7 @@ fn broad() { let _ = std::fs::read_dir(\"/\"); }
         with tempfile.TemporaryDirectory() as directory:
             report = SAFETY.inspect(self.fixture(directory, source))
             self.assertEqual(report["classification"], "reject")
-            self.assertIn("background/process spawning", report["violations"])
+            self.assertIn("unbounded or arbitrary process execution", report["violations"])
             self.assertIn("network API/listener", report["violations"])
             self.assertIn("process memory or unsafe code", report["violations"])
             self.assertIn("filesystem traversal", report["violations"])
