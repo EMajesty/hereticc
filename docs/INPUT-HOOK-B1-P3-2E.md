@@ -4,6 +4,11 @@ Status: host-tested source libraries and AArch64 relocatable objects only. No
 executable collector, autorun entry point, SD package, device interaction,
 service change, preload, hook, or listener was produced.
 
+P3.2f subsequently adds the fixed integration executable, descriptor-relative
+publication, firmware guard, process-group containment, and linked ELF review;
+see [P3.2f](INPUT-HOOK-B1-P3-2F.md). This P3.2e text remains the historical
+record of the earlier blockers.
+
 ## Outcome
 
 P3.2e adds a separate `neurogenic-b1-collector-linux` acquisition boundary,

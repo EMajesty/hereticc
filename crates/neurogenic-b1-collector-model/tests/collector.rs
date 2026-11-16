@@ -117,6 +117,18 @@ fn unavailable_optional_sources_produce_valid_partial_report() {
 }
 
 #[test]
+fn omitted_first_run_socket_inventory_does_not_make_baseline_partial() {
+    let mut inputs = complete_inputs();
+    inputs.sockets = None;
+    inputs.unavailable_sources.insert("sockets");
+    let outcome = collect(&inputs, &mut Clock::fixed(0), 100).expect("reduced baseline");
+    assert_eq!(outcome.status, CollectionStatus::Complete);
+    let report = String::from_utf8(outcome.report).expect("ASCII report");
+    assert!(!report.contains("listener_exact_ports="));
+    assert!(!report.contains("listener_wildcard_ports="));
+}
+
+#[test]
 fn service_and_process_identity_fail_closed() {
     let cases = [
         (

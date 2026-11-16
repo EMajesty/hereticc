@@ -177,7 +177,7 @@ pub fn collect(
     let sockets = (!inputs.unavailable_sources.contains("sockets"))
         .then_some(inputs.sockets.as_deref())
         .flatten();
-    parse_sockets(sockets, &mut fields, &mut unavailable)?;
+    parse_sockets(sockets, &mut fields)?;
     checkpoint(clock, deadline_ms)?;
 
     let status = if unavailable.is_empty() {
@@ -448,10 +448,8 @@ fn parse_network(
 fn parse_sockets(
     input: Option<&[u8]>,
     fields: &mut BTreeMap<&'static str, String>,
-    unavailable: &mut BTreeSet<&'static str>,
 ) -> Result<(), CollectionError> {
     let Some(input) = input else {
-        unavailable.insert("sockets");
         return Ok(());
     };
     let text = bounded_text("sockets", input)?;

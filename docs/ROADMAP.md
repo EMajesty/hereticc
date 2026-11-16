@@ -212,6 +212,16 @@ descendant cleanup, fixed-command availability, executable ABI, and physical
 mount behavior remain unproved; physical execution is therefore no-go. See
 [P3.2e](INPUT-HOOK-B1-P3-2E.md).
 
+B1-P3.2f completes the host-side physical-readiness candidate: socket
+enumeration is removed, deadline/containment failures are terminal, fixed
+utilities run in a fully cleaned process group, the 1.3.0.12 prefix fingerprint
+is checked locally, and exFAT publication is descriptor-relative with live
+magic and identity revalidation. A reproducible 540528-byte AArch64 PIE is
+linked for GLIBC 2.17 and statically inspected. Standalone loader, fixed utility
+availability, autorun privileges, and final package invocation remain physical
+unknowns. Package construction/review and physical execution each require new
+authorization; see [P3.2f](INPUT-HOOK-B1-P3-2F.md).
+
 ### M0.3b-C–E Device feasibility experiments — planned and blocked
 
 This requires a separate, explicitly reviewed task because it creates device-facing executable code.
@@ -338,11 +348,9 @@ Acceptance criteria:
 
 ## Practical next engineering task
 
-The next engineering milestone is a host-only P3.2f review that closes P3.2e's
-descriptor-relative SD publication race and either enforces complete bounded
-child/direct-read behavior or removes the affected sources. Only after those
-gates pass should a non-autorun executable target be linked and inspected for
-loader, ABI, imports, segments, size, and reproducibility. Package production,
-a zero-hook physical run, and later P3.2b testing each require separate
-authorization. Relay deployment and physical DATA-hook execution remain later
-gates.
+The next step is separately authorized construction and review of one fixed,
+zero-hook P3.2f SD autorun package without functional code expansion, followed
+by a distinct authorization for one controlled physical run. That run is the
+minimum way to resolve standalone loader, fixed command, autorun privilege, and
+actual exFAT behavior. P3.2b restart testing, relay deployment, and physical
+DATA-hook execution remain later, separately authorized gates.

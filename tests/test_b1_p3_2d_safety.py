@@ -44,7 +44,10 @@ fn broad() { let _ = std::fs::read_dir(\"/\"); }
             self.assertEqual(report["classification"], "reject")
             self.assertIn("unbounded or arbitrary process execution", report["violations"])
             self.assertIn("network API/listener", report["violations"])
-            self.assertIn("process memory or unsafe code", report["violations"])
+            self.assertIn(
+                "unsafe code outside isolated SD/containment boundary",
+                report["violations"],
+            )
             self.assertIn("filesystem traversal", report["violations"])
             self.assertIn(
                 "prohibited operation text: systemctl restart", report["violations"]

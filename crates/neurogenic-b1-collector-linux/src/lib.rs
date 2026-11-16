@@ -10,10 +10,14 @@ use std::os::unix::fs::MetadataExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use neurogenic_b1_collector_model::ObservationInputs;
+
+pub mod firmware;
+pub mod sd;
 
 pub const MAX_COMMAND_STREAM_BYTES: usize = 16 * 1024;
 pub const MAX_DIRECT_READ_BYTES: usize = 16 * 1024;
@@ -24,6 +28,7 @@ pub enum AcquireError {
     Deadline,
     MissingCommand(&'static str),
     CommandFailed(&'static str),
+    Containment(&'static str),
     OutputTooLarge(&'static str),
     InvalidUtf8(&'static str),
     InvalidMainPid,
@@ -124,6 +129,17 @@ impl ExactFileReader for SystemFileReader {
 
 pub struct BoundedCommandRunner;
 
+fn terminate_group(
+    child: &mut std::process::Child,
+    process_group: u32,
+) -> Result<(), AcquireError> {
+    let termination = sd::kill_process_group(process_group);
+    let reaped = child
+        .wait()
+        .map_err(|_| AcquireError::Containment("child-reap"));
+    termination.and(reaped.map(|_| ()))
+}
+
 impl CommandRunner for BoundedCommandRunner {
     fn run(
         &mut self,
@@ -147,38 +163,50 @@ impl CommandRunner for BoundedCommandRunner {
                     AcquireError::CommandFailed(command.label)
                 }
             })?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or(AcquireError::CommandFailed(command.label))?;
-        let stderr = child
-            .stderr
-            .take()
-            .ok_or(AcquireError::CommandFailed(command.label))?;
-        let stdout_thread = thread::spawn(move || bounded_drain(stdout, MAX_COMMAND_STREAM_BYTES));
-        let stderr_thread = thread::spawn(move || bounded_drain(stderr, MAX_COMMAND_STREAM_BYTES));
+        let process_group = child.id();
+        let Some(stdout) = child.stdout.take() else {
+            terminate_group(&mut child, process_group)?;
+            return Err(AcquireError::Containment("stdout-pipe"));
+        };
+        let Some(stderr) = child.stderr.take() else {
+            terminate_group(&mut child, process_group)?;
+            return Err(AcquireError::Containment("stderr-pipe"));
+        };
+        let (limit_tx, limit_rx) = mpsc::channel();
+        let stdout_tx = limit_tx.clone();
+        let stdout_thread =
+            thread::spawn(move || bounded_drain(stdout, MAX_COMMAND_STREAM_BYTES, &stdout_tx));
+        let stderr_thread =
+            thread::spawn(move || bounded_drain(stderr, MAX_COMMAND_STREAM_BYTES, &limit_tx));
         let status = loop {
-            if let Some(status) = child
-                .try_wait()
-                .map_err(|_| AcquireError::CommandFailed(command.label))?
-            {
+            let Ok(status) = child.try_wait() else {
+                terminate_group(&mut child, process_group)?;
+                let _ = stdout_thread.join();
+                let _ = stderr_thread.join();
+                return Err(AcquireError::Containment("child-wait"));
+            };
+            if let Some(status) = status {
+                // Fixed utilities must not leave descendants holding inherited pipes.
+                // Kill the now-childless group before joining the drain workers.
+                sd::kill_process_group(process_group)?;
                 break status;
             }
+            if limit_rx.try_recv().is_ok() {
+                terminate_group(&mut child, process_group)?;
+                let _ = stdout_thread.join();
+                let _ = stderr_thread.join();
+                return Err(AcquireError::OutputTooLarge(command.label));
+            }
             if Instant::now() >= deadline {
-                let _ = child.kill();
-                let _ = child.wait();
+                terminate_group(&mut child, process_group)?;
                 let _ = stdout_thread.join();
                 let _ = stderr_thread.join();
                 return Err(AcquireError::Deadline);
             }
             thread::sleep(Duration::from_millis(2));
         };
-        let stdout = stdout_thread
-            .join()
-            .map_err(|_| AcquireError::CommandFailed(command.label))??;
-        let stderr = stderr_thread
-            .join()
-            .map_err(|_| AcquireError::CommandFailed(command.label))??;
+        let stdout = join_stream(stdout_thread, command.label)?;
+        let stderr = join_stream(stderr_thread, command.label)?;
         if !status.success() {
             return Err(AcquireError::CommandFailed(command.label));
         }
@@ -186,7 +214,24 @@ impl CommandRunner for BoundedCommandRunner {
     }
 }
 
-fn bounded_drain(mut reader: impl Read, limit: usize) -> Result<Vec<u8>, AcquireError> {
+fn join_stream(
+    thread: thread::JoinHandle<Result<Vec<u8>, AcquireError>>,
+    label: &'static str,
+) -> Result<Vec<u8>, AcquireError> {
+    match thread
+        .join()
+        .map_err(|_| AcquireError::CommandFailed(label))?
+    {
+        Err(AcquireError::OutputTooLarge(_)) => Err(AcquireError::OutputTooLarge(label)),
+        result => result,
+    }
+}
+
+fn bounded_drain(
+    mut reader: impl Read,
+    limit: usize,
+    limit_tx: &mpsc::Sender<()>,
+) -> Result<Vec<u8>, AcquireError> {
     let mut kept = Vec::with_capacity(limit.min(4096));
     let mut buffer = [0_u8; 1024];
     let mut total = 0_usize;
@@ -198,6 +243,9 @@ fn bounded_drain(mut reader: impl Read, limit: usize) -> Result<Vec<u8>, Acquire
             break;
         }
         total = total.saturating_add(read);
+        if total > limit {
+            let _ = limit_tx.send(());
+        }
         if kept.len() < limit {
             let take = read.min(limit - kept.len());
             kept.extend_from_slice(&buffer[..take]);
@@ -248,12 +296,6 @@ const IP_LINK: FixedCommand = FixedCommand {
     args: &["-o", "link", "show"],
     label: "ip-link",
 };
-const SS_LISTEN: FixedCommand = FixedCommand {
-    program: "/usr/bin/ss",
-    args: &["-H", "-ltn"],
-    label: "ss-listen",
-};
-
 /// Acquire only selected service, exact-process, runtime, and USB evidence.
 ///
 /// # Errors
@@ -278,16 +320,12 @@ pub fn acquire(
     let status = files.read(&proc_root.join("status"), MAX_DIRECT_READ_BYTES, deadline)?;
     let cgroup = files.read(&proc_root.join("cgroup"), MAX_DIRECT_READ_BYTES, deadline)?;
 
-    let run_mount = optional_file(files, Path::new("/proc/mounts"), deadline);
-    let run_mode = files.mode(Path::new("/run"), deadline).ok();
-    let runtime_mode = files.mode(Path::new("/run/systemd/system"), deadline).ok();
+    let run_mount = optional_file(files, Path::new("/proc/mounts"), deadline)?;
+    let run_mode = optional_mode(files, Path::new("/run"), deadline)?;
+    let runtime_mode = optional_mode(files, Path::new("/run/systemd/system"), deadline)?;
     let run_mount = normalize_run(run_mount, run_mode, runtime_mode);
 
-    let network = acquire_network(runner, deadline).ok();
-    let sockets = runner
-        .run(SS_LISTEN, deadline)
-        .ok()
-        .map(|output| output.stdout);
+    let network = optional_network(runner, deadline)?;
     let stat_after = files.read(&proc_root.join("stat"), MAX_DIRECT_READ_BYTES, deadline)?;
 
     let mut unavailable_sources = BTreeSet::new();
@@ -296,9 +334,6 @@ pub fn acquire(
     }
     if network.is_none() {
         unavailable_sources.insert("network");
-    }
-    if sockets.is_none() {
-        unavailable_sources.insert("sockets");
     }
     Ok(ObservationInputs {
         unavailable_sources,
@@ -310,8 +345,19 @@ pub fn acquire(
         stat_after,
         run_mount,
         network,
-        sockets,
+        sockets: None,
     })
+}
+
+fn optional_network(
+    runner: &mut impl CommandRunner,
+    deadline: Instant,
+) -> Result<Option<Vec<u8>>, AcquireError> {
+    match acquire_network(runner, deadline) {
+        Ok(value) => Ok(Some(value)),
+        Err(AcquireError::MissingCommand(_) | AcquireError::CommandFailed(_)) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 fn first_systemd_version(bytes: &[u8]) -> Result<u32, AcquireError> {
@@ -342,8 +388,24 @@ fn optional_file(
     files: &mut impl ExactFileReader,
     path: &Path,
     deadline: Instant,
-) -> Option<Vec<u8>> {
-    files.read(path, MAX_DIRECT_READ_BYTES, deadline).ok()
+) -> Result<Option<Vec<u8>>, AcquireError> {
+    optional_source(files.read(path, MAX_DIRECT_READ_BYTES, deadline))
+}
+
+fn optional_mode(
+    files: &mut impl ExactFileReader,
+    path: &Path,
+    deadline: Instant,
+) -> Result<Option<u32>, AcquireError> {
+    optional_source(files.mode(path, deadline))
+}
+
+fn optional_source<T>(result: Result<T, AcquireError>) -> Result<Option<T>, AcquireError> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(AcquireError::File(_)) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 fn normalize_run(
@@ -557,7 +619,6 @@ mod tests {
                 ("ip-address", output(b"3: usb0    inet 192.168.155.1/28 scope global usb0\n")),
                 ("ip-route", output(b"192.168.155.0/28 dev usb0 scope link\n")),
                 ("ip-link", output(b"3: usb0: <BROADCAST,UP> mtu 1500 state UP\n")),
-                ("ss-listen", output(b"LISTEN 0 10 192.168.155.1:80\n")),
             ]),
             seen: Vec::new(),
         };
@@ -604,7 +665,6 @@ mod tests {
                 "ip-address",
                 "ip-route",
                 "ip-link",
-                "ss-listen",
             ]
         );
         assert!(files.seen.iter().all(|path| {
@@ -643,15 +703,73 @@ mod tests {
     }
 
     #[test]
+    fn critical_command_format_deadline_and_permission_failures_are_terminal() {
+        let (mut runner, mut files) = complete_mocks();
+        runner.outputs.insert(
+            "systemctl-show",
+            Err(AcquireError::MissingCommand("systemctl-show")),
+        );
+        assert_eq!(
+            acquire(
+                &mut runner,
+                &mut files,
+                Instant::now() + Duration::from_secs(1)
+            )
+            .expect_err("missing critical utility"),
+            AcquireError::MissingCommand("systemctl-show")
+        );
+
+        let (mut runner, mut files) = complete_mocks();
+        runner
+            .outputs
+            .insert("systemd-version", output(b"not-systemd\n"));
+        assert_eq!(
+            acquire(
+                &mut runner,
+                &mut files,
+                Instant::now() + Duration::from_secs(1)
+            )
+            .expect_err("unsupported systemd output"),
+            AcquireError::CommandFailed("systemd-version")
+        );
+
+        let (mut runner, mut files) = complete_mocks();
+        runner
+            .outputs
+            .insert("systemd-version", Err(AcquireError::Deadline));
+        assert_eq!(
+            acquire(
+                &mut runner,
+                &mut files,
+                Instant::now() + Duration::from_secs(1)
+            )
+            .expect_err("critical deadline"),
+            AcquireError::Deadline
+        );
+
+        let (mut runner, mut files) = complete_mocks();
+        files.files.insert(
+            PathBuf::from("/proc/42/status"),
+            Err(AcquireError::File("permission")),
+        );
+        assert_eq!(
+            acquire(
+                &mut runner,
+                &mut files,
+                Instant::now() + Duration::from_secs(1)
+            )
+            .expect_err("critical permission failure"),
+            AcquireError::File("permission")
+        );
+    }
+
+    #[test]
     fn unavailable_optional_commands_produce_partial_inputs() {
         let (mut runner, mut files) = complete_mocks();
         runner.outputs.insert(
             "ip-address",
             Err(AcquireError::MissingCommand("ip-address")),
         );
-        runner
-            .outputs
-            .insert("ss-listen", Err(AcquireError::MissingCommand("ss-listen")));
         let observations = acquire(
             &mut runner,
             &mut files,
@@ -659,7 +777,48 @@ mod tests {
         )
         .expect("partial acquisition");
         assert!(observations.unavailable_sources.contains("network"));
-        assert!(observations.unavailable_sources.contains("sockets"));
+    }
+
+    #[test]
+    fn optional_network_deadline_and_malformed_results_are_terminal() {
+        for label in ["ip-address", "ip-route", "ip-link"] {
+            let (mut runner, mut files) = complete_mocks();
+            runner.outputs.insert(label, Err(AcquireError::Deadline));
+            assert_eq!(
+                acquire(
+                    &mut runner,
+                    &mut files,
+                    Instant::now() + Duration::from_secs(1)
+                )
+                .expect_err("deadline must remain terminal"),
+                AcquireError::Deadline
+            );
+        }
+        let (mut runner, mut files) = complete_mocks();
+        runner.outputs.insert("ip-address", output(&[0xff]));
+        assert_eq!(
+            acquire(
+                &mut runner,
+                &mut files,
+                Instant::now() + Duration::from_secs(1)
+            )
+            .expect_err("malformed optional source is terminal"),
+            AcquireError::InvalidUtf8("address")
+        );
+
+        let (mut runner, mut files) = complete_mocks();
+        files
+            .files
+            .insert(PathBuf::from("/proc/mounts"), Err(AcquireError::Deadline));
+        assert_eq!(
+            acquire(
+                &mut runner,
+                &mut files,
+                Instant::now() + Duration::from_secs(1)
+            )
+            .expect_err("optional run deadline must remain terminal"),
+            AcquireError::Deadline
+        );
     }
 
     #[test]
@@ -726,6 +885,28 @@ mod tests {
     }
 
     #[test]
+    fn command_runner_kills_group_descendant_retaining_output_pipe() {
+        let started = Instant::now();
+        let mut runner = BoundedCommandRunner;
+        let result = runner.run(
+            FixedCommand {
+                program: "/bin/sh",
+                args: &["-c", "while :; do :; done & exit 0"],
+                label: "descendant-test",
+            },
+            Instant::now() + Duration::from_millis(500),
+        );
+        assert_eq!(
+            result,
+            Ok(CommandOutput {
+                stdout: vec![],
+                stderr: vec![]
+            })
+        );
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
     fn command_runner_rejects_missing_and_oversized_output() {
         let mut runner = BoundedCommandRunner;
         assert_eq!(
@@ -760,7 +941,31 @@ mod tests {
                 },
                 Instant::now() + Duration::from_secs(2),
             ),
-            Err(AcquireError::OutputTooLarge("command"))
+            Err(AcquireError::OutputTooLarge("oversize-test"))
+        );
+
+        let false_program: &'static str = Box::leak(
+            std::env::var("PATH")
+                .expect("PATH")
+                .split(':')
+                .map(Path::new)
+                .map(|path| path.join("false"))
+                .find(|path| path.is_file())
+                .expect("false")
+                .to_string_lossy()
+                .into_owned()
+                .into_boxed_str(),
+        );
+        assert_eq!(
+            runner.run(
+                FixedCommand {
+                    program: false_program,
+                    args: &[],
+                    label: "exit-failure-test",
+                },
+                Instant::now() + Duration::from_secs(1),
+            ),
+            Err(AcquireError::CommandFailed("exit-failure-test"))
         );
     }
 
