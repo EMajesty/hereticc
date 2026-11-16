@@ -50,6 +50,24 @@ Inspected commit: [`e62ffd3`](https://github.com/ioma8/mpc-sample-sdk/commit/e62
 - Its generated SD package checks the firmware hash, copies the library to `/run`, installs a transient service drop-in, and restarts the app. Removing `autorun` and rebooting restores stock behavior; device disk is claimed unchanged: [build/install](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/22-build-and-install.md).
 - License is [MIT](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/LICENSE).
 
+The reuse decision is recorded in
+[Reuse-first MPC Sample integration](REUSE-FIRST-INTEGRATION.md): the SDK is the
+direct device dependency; MINIMOD is the primary SDK-consumer reference pending
+license clarification; Am MOD is a native stock-engine research reference;
+Sample Lab and Tracker are not product integration bases.
+
+### Temporary USB SSH reference
+
+Sample Lab references `orrpunk-art/mpc-sample-root-ssh` at
+`8334ca085b3cff327f62a23cf0aad489dc8d578d`. Source inspection confirms a
+runtime-only transient unit running the stock `sshd`, bound to
+`192.168.155.1:2222`, with root public-key-only login and forwarding disabled.
+Its author reports two successful 1.3.0.12 cold boots with stock UI/audio/pads
+normal and no `ac50.service` restart. It retains a full root-shell attack
+surface, does not stop merely when the SD is removed, and has no license file.
+It is therefore a separately authorized external debugging reference, not a
+dependency or prerequisite for the SDK page/input prototype.
+
 ### Inferred relevance
 
 The SDK is the cleanest current bridge for a Rust extension that preserves the stock application. Its guarded firmware table and explicit unsafe boundaries are preferable to NEUROGENIC owning raw offsets initially.
@@ -237,11 +255,14 @@ does not establish device loader behavior or physical compatibility.
 
 | Project | Revision inspected | License evidence | Result |
 |---|---|---|---|
-| `mpc-sample-sdk` | [`e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39`](https://github.com/ioma8/mpc-sample-sdk/tree/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39), tag `v0.6.0`, dated 2026-11-14 | [MIT](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/LICENSE), Jakub Kolcar; manifest declares MIT | `main` still equals the previously reviewed commit; there is no newer SDK revision to compare. |
-| MINIMOD | [`3770fb7edcfb432cd45ca4e8fa8bcbefe0435c25`](https://github.com/ioma8/mpc-minimod/tree/3770fb7edcfb432cd45ca4e8fa8bcbefe0435c25), dated 2026-11-14 | Rust workspace/crates declare MIT; no repository-root license file was found | Useful current SDK consumer; whole-repository reuse remains ambiguous. |
+| `mpc-sample-sdk` | [`9487cbba3648afb29d8e3107e31a7ac930985220`](https://github.com/ioma8/mpc-sample-sdk/tree/9487cbba3648afb29d8e3107e31a7ac930985220), tag `v0.7.1`, dated 2026-11-16 | [MIT](https://github.com/ioma8/mpc-sample-sdk/blob/9487cbba3648afb29d8e3107e31a7ac930985220/LICENSE), Jakub Kolcar; manifest declares MIT | Current direct-dependency candidate. Relative to the physically fingerprinted v0.6.0 source, it moves image-base publication after fingerprint success, tightens UI-thread repaint safety, fixes lighting retry behavior and external MIDI classification, and adds slice snapshot/restore APIs. These changes remain source/host evidence until the new revision is physically exercised. |
+| MINIMOD | [`18d41fd805beace4fed623653a250c46a4fa2243`](https://github.com/ioma8/mpc-minimod/tree/18d41fd805beace4fed623653a250c46a4fa2243), dated 2026-11-16 | Rust workspace/crates declare MIT; no repository-root license file was found | Current SDK consumer using SDK 0.7; whole-repository reuse remains ambiguous. |
 | Am MOD | [`6cdc67276f43cd39f64871cb7e36782481244c65`](https://github.com/AlekseyMalykh/am-mod/tree/6cdc67276f43cd39f64871cb7e36782481244c65), dated 2026-11-15 | [MIT](https://github.com/AlekseyMalykh/am-mod/blob/6cdc67276f43cd39f64871cb7e36782481244c65/LICENSE), AM Mod contributors | Comparative reverse-engineering evidence only; no code reuse. |
 
-The SDK is Rust 2024, version 0.6.0, MSRV 1.97, and depends on `libc`. NEUROGENIC has not added it as a dependency.
+The current SDK is Rust 2024, version 0.7.1, MSRV 1.97, and depends on `libc`.
+NEUROGENIC has not added it as a dependency. Historical A/B experiments remain
+pinned to their reviewed v0.6.0 tree; M0.3c should pin v0.7.1 and rerun host
+package/symbol inspection before physical authorization.
 
 ### Stock voice path
 

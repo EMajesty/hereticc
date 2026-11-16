@@ -8,7 +8,7 @@ NEUROGENIC is an open-source custom firmware extension for the Akai MPC Sample. 
 
 ## Status
 
-NEUROGENIC is in **M0: host core and guarded integration feasibility**. The M0.2/M0.2a host sequencer foundation is complete. M0.3b-A4 was physically validated on one MPC Sample running firmware 1.3.0.12: the expected executable was reached and all 63 firmware fingerprints matched without hooks. M0.3b-B0/B0.1/B0.2 are host-validated only. B1-P3.1 provides a tested host-only model of a bounded one-shot diagnostic relay; it includes no listener or device payload. Device lifecycle evidence is still missing, and no B1 physical hook test is authorized.
+NEUROGENIC is in **M0: host core and guarded integration feasibility**. The M0.2/M0.2a host sequencer foundation is complete. M0.3b-A4 was physically validated on one MPC Sample running firmware 1.3.0.12: the expected executable was reached and all 63 firmware fingerprints matched without hooks. The B1 diagnostic models remain host-only and B1 hook testing is unauthorized. Further diagnostic engineering is deferred; the next planned feature work is a minimal page/input prototype using the pinned MIT `mpc-sample-sdk` and its existing deployment path.
 
 Project website: [neurogeni.cc](https://neurogeni.cc). Source repository: [EMajesty/neurogenic](https://github.com/EMajesty/neurogenic).
 
@@ -62,6 +62,7 @@ The core currently implements integer musical time, validated sixteen-track proj
 - [Sequencer](docs/SEQUENCER.md) — musical model and behavior
 - [Effects](docs/EFFECTS.md) — logical routing, parameter model, performance controls, and feasibility gates
 - [Research](docs/RESEARCH.md) — source-based review of related projects
+- [Reuse-first integration](docs/REUSE-FIRST-INTEGRATION.md) — upstream disposition and next SDK prototype
 - [Roadmap](docs/ROADMAP.md) — milestones and acceptance criteria
 - [Safety](docs/SAFETY.md) — development, deployment, and recovery rules
 - [Device adapter contract](docs/ADAPTER.md) — future clock, voice, capacity, and recovery boundary

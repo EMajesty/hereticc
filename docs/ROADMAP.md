@@ -261,6 +261,39 @@ collection, and publication boundaries. The distinct deterministic package is
 host-complete; one owner-authorized zero-hook run is next. B1 hook testing
 remains no-go; see [P3.2l](INPUT-HOOK-B1-P3-2L.md).
 
+The diagnostic branch is now closed for feature planning. Do not add another
+collector milestone or repeat P3.2k. P3.2l may be run later only if its evidence
+is required by a concrete relay decision.
+
+### M0.3c SDK page and input prototype — planned
+
+Reuse the current pinned MIT `mpc-sample-sdk` v0.7.1 directly. Add one
+device-only mod that renders a fixed NEUROGENIC step page, owns a minimal
+button/DATA/pad set while that page is active, forwards everything else, and
+restores the stock screen and pad lighting on exit. Use the SDK's existing
+guarded build/autorun path;
+do not extend the B1 relay, create another diagnostic package, or require SSH.
+Host-test the page reducer and press/release ownership before a separately
+authorized hardware run. See [reuse-first integration](REUSE-FIRST-INTEGRATION.md).
+
+Acceptance criteria:
+
+- the SDK dependency is pinned to `9487cbba3648afb29d8e3107e31a7ac930985220`
+  with its MIT notice preserved;
+- a static 320x240 grid is drawn only on the intended stock page;
+- DATA moves a cursor, pads select tracks, and one button toggles an in-memory
+  step without project or sample writes;
+- unowned controls and all inactive-page input forward unchanged, with paired
+  press/release handling;
+- leaving the page restores stock paint and pad lights;
+- host checks and package inspection pass before separate physical
+  authorization.
+
+The following milestone is a narrowly measured stock pad-path trigger spike,
+not a generalized adapter: one sound, stopped transport first, then overlap and
+release checks. Scheduler playback, step editing beyond the prototype, and
+parameter locks proceed only after that stock-engine gate passes.
+
 ### M0.3b-C–E Device feasibility experiments — planned and blocked
 
 This requires a separate, explicitly reviewed task because it creates device-facing executable code.

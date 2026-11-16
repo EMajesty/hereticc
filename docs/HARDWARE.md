@@ -33,6 +33,14 @@ The most detailed public hardware record reviewed is MPC Sample Lab at commit [`
 
 Primary references: [Sample Lab README](https://github.com/gospodindilly-ops/mpc-sample-lab/blob/3d482b94c918b96d174f31c411686f2b18b74ce6/README.en.md), [control-surface protocol](https://github.com/gospodindilly-ops/mpc-sample-lab/blob/3d482b94c918b96d174f31c411686f2b18b74ce6/docs/control-surface-protocol.en.md), and [audio/display notes](https://github.com/gospodindilly-ops/mpc-sample-lab/blob/3d482b94c918b96d174f31c411686f2b18b74ce6/docs/audio-display.en.md).
 
+Sample Lab also reports hardware use of the separate
+`mpc-sample-root-ssh` kit at commit `8334ca0` on firmware 1.3.0.12. That kit
+starts the stock OpenSSH server in a transient `/run` unit beside `ac50`, bound
+to USB address `192.168.155.1` port 2222 with public-key-only root login. This is
+upstream physical evidence, not a NEUROGENIC test. The kit has no license file,
+and a root shell is a materially broader security boundary than the planned SDK
+mod, so SSH is not part of the normal integration path.
+
 These facts are research inputs, not permission to depend directly on raw protocols. An in-process extension should prefer a guarded adapter such as the SDK and retain stock ownership wherever possible.
 
 ## Controls relevant to NEUROGENIC
