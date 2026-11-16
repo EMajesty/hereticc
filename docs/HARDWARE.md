@@ -56,6 +56,13 @@ restoration on firmware 1.3.0.12. This does not validate M0.3d stock triggering
 or every unusual page-loss path; see
 [M0.3c SDK UI](M0-3C-SDK-UI.md).
 
+The owner physically tested M0.3d: the overlay, DATA, and PLUS worked, but pads
+did not update selection, a second pad played, and deferred close never armed.
+This matches M0.3d forwarding before reducer ownership, so the audible samples
+were ordinary stock input, not evidence of explicit SDK dispatch. Stock-only
+recovery was normal. M0.3d.1 restores independent pad ownership and exposes
+bounded paired-hook/input/properties presence bits for the next controlled run.
+
 ## Display and lighting
 
 The SDK provides stock-app paint interception and wrappers for color, rectangle, font, text, toasts, and repaint requests. Graphics handles are valid only during the paint callback. Its pad-lighting layer remembers native colors and can restore them, but overrides are last-writer-wins and restoration is the feature's responsibility. See [drawing](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/08-drawing.md) and [lighting](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/25-lighting.md).

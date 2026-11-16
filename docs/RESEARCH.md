@@ -279,6 +279,15 @@ This proves a callable stock pad-input path, not a complete voice API:
 - no stock voice handle/token or completion is returned;
 - the call addresses a pad/source, not a stable sample ID or independent slice;
 - properties are borrowed firmware state, not documented per-event parameters;
+
+M0.3d physical testing did not validate that call path. Its implementation
+required nonzero input/properties plus `midi::notes_ready()` before even handing
+the press to the UI reducer. The observed lack of track selection proves that
+combined gate failed and the event forwarded; normal stock playback therefore
+explains the audio. Source inspection confirms `notes_ready()` means both
+displaced note sites are installed, while press callback entry itself proves
+only the note-on site. M0.3d.1 decouples ownership and records only the three
+presence bits needed to distinguish the failed term.
 - release matching and repeated/overlapping triggers of one sound are not specified;
 - calls are UI-thread/lifetime constrained and accept no target audio frame;
 - there is no documented contract for transport, stock-sequence coexistence, voice stealing, choke/mono behavior, or project changes.

@@ -4,7 +4,7 @@ pub mod reducer;
 
 use mpc_sample_sdk::event::button;
 use mpc_sample_sdk::{ButtonEvent, EncoderEvent, Flow, Mod, PadAction, PadEvent, PaintEvent};
-use reducer::{Button, Playback, UiState};
+use reducer::{Button, PadStatus, Playback, UiState};
 
 /// Device mod state. It contains no retained firmware pointer.
 #[derive(Default)]
@@ -92,6 +92,20 @@ impl NeurogenicDevice {
                 format!("PAD {:02}: ready to audition", self.ui.selected_track() + 1)
             };
             graphics.text(&note, 10, 132, 300, 18, 11.0);
+            let pad_status = match self.ui.pad_status() {
+                PadStatus::NoCallback => "PAD CB: none",
+                PadStatus::DispatchUnavailable => "PAD CB: owned; native unavailable",
+                PadStatus::NativeAttempted => "PAD CB: native dispatch attempted",
+            };
+            let (hooks, input, properties) = self.ui.pad_capabilities();
+            let capability = format!(
+                "{}  H{} I{} P{}",
+                pad_status,
+                u8::from(hooks),
+                u8::from(input),
+                u8::from(properties)
+            );
+            graphics.text(&capability, 10, 190, 300, 16, 10.0);
             graphics.text(
                 "DATA: cursor   PADS: select + audition",
                 10,
@@ -145,10 +159,17 @@ impl Mod for NeurogenicDevice {
     fn on_pad(&mut self, event: PadEvent) -> Flow {
         self.close_if_page_gone();
         let pressed = event.action == PadAction::Press;
-        let callback_supported = event.input != 0
-            && (!pressed || event.properties != 0)
-            && mpc_sample_sdk::midi::notes_ready();
-        let outcome = self.ui.pad(event.pad, pressed, callback_supported);
+        let notes_ready = mpc_sample_sdk::midi::notes_ready();
+        if self.ui.is_open() {
+            self.ui
+                .record_pad_callback(notes_ready, event.input != 0, event.properties != 0);
+        }
+        // `notes_ready` means both displaced note sites exist. The press
+        // callback alone proves only note-on is installed; paired manual
+        // dispatch must not start unless note-off is available too.
+        let native_dispatch_available =
+            event.input != 0 && (!pressed || event.properties != 0) && notes_ready;
+        let outcome = self.ui.pad(event.pad, pressed, native_dispatch_available);
         match outcome.playback {
             Playback::None => {}
             Playback::NoteOn(pad) => {
@@ -164,7 +185,9 @@ impl Mod for NeurogenicDevice {
                         event.velocity,
                     )
                 };
-                debug_assert!(sent, "notes_ready changed inside a pad callback");
+                if !sent {
+                    self.ui.note_on_failed(pad);
+                }
             }
             Playback::NoteOff(pad) => {
                 // SAFETY: `input` is callback-local and pad/source match the

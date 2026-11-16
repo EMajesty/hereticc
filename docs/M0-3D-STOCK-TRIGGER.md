@@ -1,8 +1,9 @@
 # M0.3d stock sample triggering prototype
 
-Status: implemented, host-tested, cross-built, and package-inspected. M0.3c is
-physically validated on one MPC Sample running stock firmware 1.3.0.12; the new
-M0.3d playback path has not run on hardware.
+Status: physically tested and failed its native-playback acceptance criteria.
+The UI remained healthy, but the new combined capability gate forwarded pad
+events before selection; ordinary stock playback explains the sound. Native
+dispatch is not validated. See [M0.3d.1](M0-3D1-PAD-OWNERSHIP.md).
 
 ## Playback path
 
@@ -121,7 +122,9 @@ not retry unchanged after a safety regression.
 
 ## Decision gate
 
-M0.3d is host-complete but playback is not physically validated. A passing run
-would establish bounded interactive stock-pad trigger/release only. Background
-sequencing needs a later, separately reviewed callback/timing design because
-the current safe call requires live pad-callback objects.
+M0.3d's physical run did not validate playback and exposed the ownership
+regression described above. M0.3d.1 supersedes it for the next controlled run.
+Even a passing corrected run would establish bounded interactive stock-pad
+trigger/release only. Background sequencing needs a later, separately reviewed
+callback/timing design because the current safe call requires live pad-callback
+objects.

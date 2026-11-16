@@ -290,20 +290,25 @@ Acceptance criteria:
 - host checks and package inspection pass before separate physical
   authorization.
 
-### M0.3d stock sample trigger — host complete, physical test pending
+### M0.3d stock sample trigger — physical acceptance failed; corrected by M0.3d.1
 
 The M0.3c page now uses callback-local SDK pad objects to dispatch one bounded
 stock `send_note_on`/`send_note_off` pair. It retains no firmware pointers,
 allows one audition voice, defers close until release, and forwards safely when
 the SDK callback context is unavailable. Host reducer tests, AArch64 cross-build,
-and strict SDK package inspection pass. See
+and strict SDK package inspection passed. Physical testing showed the combined
+capability gate forwarded pads before selection; ordinary stock playback
+explains the sound, so native dispatch remains unvalidated. See
 [M0.3d stock trigger](M0-3D-STOCK-TRIGGER.md).
 
 Acceptance requires one controlled physical run covering stopped/running
 transport, repeated/rapid triggers, attempted overlap, pad switching, close
 while held, stock restoration, and stock-only recovery. A pass establishes only
 interactive pad-path audition—not scheduler timing, voice handles, or
-polyphony. Sequencer playback waits on that stock-engine gate.
+polyphony. M0.3d.1 restores M0.3c ownership independently of native capability
+and adds bounded on-screen `H/I/P` presence bits. See
+[M0.3d.1 pad ownership](M0-3D1-PAD-OWNERSHIP.md). Sequencer playback waits on
+that corrected stock-engine gate.
 
 ### M0.3b-C–E Device feasibility experiments — planned and blocked
 
@@ -431,9 +436,9 @@ Acceptance criteria:
 
 ## Practical next engineering task
 
-The next decision is owner review of the host-built M0.3d SDK stock-trigger
+The next decision is owner review of the host-built M0.3d.1 SDK pad-ownership
 package and, only if explicitly authorized, one controlled physical audition
-test following [M0.3d stock trigger](M0-3D-STOCK-TRIGGER.md). Do not begin
+test following [M0.3d.1](M0-3D1-PAD-OWNERSHIP.md). Do not begin
 background sequencing until native trigger/release and restoration pass. This
 does not authorize B1 DATA-hook testing, a relay, SSH, or another diagnostic
 milestone.

@@ -1,4 +1,4 @@
-use neurogenic_device::reducer::{Button, Flow, Playback, UiState};
+use neurogenic_device::reducer::{Button, Flow, PadStatus, Playback, UiState};
 
 fn open(ui: &mut UiState) {
     let result = ui.button(Button::Data, true, true);
@@ -114,12 +114,24 @@ fn close_waits_for_note_off_and_then_restores_stock_page() {
 }
 
 #[test]
-fn unsupported_callback_forwards_without_stale_ownership() {
+fn dispatch_unavailable_still_selects_and_owns_the_pad_pair() {
     let mut ui = UiState::default();
     open(&mut ui);
-    assert_eq!(ui.pad(1, true, false).flow, Flow::Forward);
+    assert_eq!(ui.pad(1, true, false).flow, Flow::Consume);
+    assert_eq!(ui.selected_track(), 1);
     assert_eq!(ui.active_audition(), None);
-    assert_eq!(ui.pad(1, false, false).flow, Flow::Forward);
+    assert_eq!(ui.pad_status(), PadStatus::DispatchUnavailable);
+    assert_eq!(ui.pad(1, false, false).flow, Flow::Consume);
+}
+
+#[test]
+fn pad_capability_display_state_is_bounded_and_explicit() {
+    let mut ui = UiState::default();
+    assert_eq!(ui.pad_capabilities(), (false, false, false));
+    ui.record_pad_callback(false, true, true);
+    assert_eq!(ui.pad_capabilities(), (false, true, true));
+    ui.record_pad_callback(true, true, false);
+    assert_eq!(ui.pad_capabilities(), (true, true, false));
 }
 
 #[test]
@@ -131,6 +143,26 @@ fn unsupported_release_forwards_matching_stock_note_off() {
     assert_eq!(release.flow, Flow::Forward);
     assert_eq!(release.playback, Playback::None);
     assert_eq!(ui.active_audition(), None);
+}
+
+#[test]
+fn failed_native_call_drops_audition_without_claiming_success() {
+    let mut ui = UiState::default();
+    open(&mut ui);
+    assert_eq!(ui.pad_status(), PadStatus::NoCallback);
+    assert_eq!(ui.pad(6, true, true).playback, Playback::NoteOn(6));
+    ui.note_on_failed(6);
+    assert_eq!(ui.active_audition(), None);
+    assert_eq!(ui.pad_status(), PadStatus::DispatchUnavailable);
+    assert_eq!(ui.pad(6, false, false).flow, Flow::Consume);
+}
+
+#[test]
+fn closed_overlay_forwards_even_when_native_dispatch_is_ready() {
+    let mut ui = UiState::default();
+    assert_eq!(ui.pad(3, true, true).flow, Flow::Forward);
+    assert_eq!(ui.pad(3, false, true).flow, Flow::Forward);
+    assert_eq!(ui.pad_status(), PadStatus::NoCallback);
 }
 
 #[test]

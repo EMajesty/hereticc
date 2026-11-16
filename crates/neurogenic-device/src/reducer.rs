@@ -48,6 +48,18 @@ pub enum Playback {
     NoteOff(u8),
 }
 
+/// Latest bounded pad-path observation shown by the overlay.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PadStatus {
+    /// No pad callback has reached the mod since construction.
+    #[default]
+    NoCallback,
+    /// The callback was owned, but a paired native dispatch was unavailable.
+    DispatchUnavailable,
+    /// The callback was owned and explicit native note-on was requested.
+    NativeAttempted,
+}
+
 impl Outcome {
     const FORWARD: Self = Self {
         flow: Flow::Forward,
@@ -90,6 +102,8 @@ pub struct UiState {
     pending_repaint: bool,
     active_audition: Option<u8>,
     close_pending: bool,
+    pad_status: PadStatus,
+    pad_capabilities: u8,
 }
 
 impl Default for UiState {
@@ -104,6 +118,8 @@ impl Default for UiState {
             pending_repaint: false,
             active_audition: None,
             close_pending: false,
+            pad_status: PadStatus::NoCallback,
+            pad_capabilities: 0,
         }
     }
 }
@@ -137,6 +153,44 @@ impl UiState {
     #[must_use]
     pub const fn close_pending(&self) -> bool {
         self.close_pending
+    }
+
+    /// Latest pad-path observation; it is not an audibility claim.
+    #[must_use]
+    pub const fn pad_status(&self) -> PadStatus {
+        self.pad_status
+    }
+
+    /// Record non-sensitive capability bits from the latest live pad callback.
+    pub fn record_pad_callback(
+        &mut self,
+        paired_note_sites: bool,
+        input_present: bool,
+        properties_present: bool,
+    ) {
+        self.pad_capabilities = u8::from(paired_note_sites)
+            | (u8::from(input_present) << 1)
+            | (u8::from(properties_present) << 2);
+    }
+
+    /// `(paired note hooks, input object, property object)` for diagnostics.
+    #[must_use]
+    pub const fn pad_capabilities(&self) -> (bool, bool, bool) {
+        (
+            self.pad_capabilities & 1 != 0,
+            self.pad_capabilities & 2 != 0,
+            self.pad_capabilities & 4 != 0,
+        )
+    }
+
+    /// Record the unlikely case where readiness changed before dispatch.
+    pub fn note_on_failed(&mut self, pad: u8) {
+        if self.active_audition == Some(pad) {
+            self.active_audition = None;
+            self.close_pending = false;
+            self.pad_status = PadStatus::DispatchUnavailable;
+            self.pending_repaint = true;
+        }
     }
 
     /// Whether a step is active on a track.
@@ -207,7 +261,7 @@ impl UiState {
     }
 
     /// Apply a zero-based pad event. Invalid pads always forward.
-    pub fn pad(&mut self, pad: i32, pressed: bool, callback_supported: bool) -> Outcome {
+    pub fn pad(&mut self, pad: i32, pressed: bool, native_dispatch_available: bool) -> Outcome {
         let Ok(pad) = u8::try_from(pad) else {
             return Outcome::FORWARD;
         };
@@ -229,14 +283,14 @@ impl UiState {
                 // explicit note-off, forwarding the matching physical release
                 // is the only safe fallback. The target is always that pad.
                 return Outcome::playback(
-                    if callback_supported {
+                    if native_dispatch_available {
                         Flow::Consume
                     } else {
                         Flow::Forward
                     },
                     close,
                     close,
-                    if callback_supported {
+                    if native_dispatch_available {
                         Playback::NoteOff(pad)
                     } else {
                         Playback::None
@@ -246,9 +300,6 @@ impl UiState {
             return Outcome::consumed(false, false);
         }
         if pressed && self.open {
-            if !callback_supported {
-                return Outcome::FORWARD;
-            }
             if self.owned_pads & owner == 0 {
                 // The first held pad is the prototype's sole audition voice.
                 // Further pad pairs are consumed but do not trigger or change
@@ -259,8 +310,13 @@ impl UiState {
                 }
                 self.owned_pads |= owner;
                 self.selected_track = pad;
-                self.active_audition = Some(pad);
                 self.pending_repaint = true;
+                if !native_dispatch_available {
+                    self.pad_status = PadStatus::DispatchUnavailable;
+                    return Outcome::consumed(true, false);
+                }
+                self.active_audition = Some(pad);
+                self.pad_status = PadStatus::NativeAttempted;
                 return Outcome::playback(Flow::Consume, true, false, Playback::NoteOn(pad));
             }
             return Outcome::consumed(true, false);

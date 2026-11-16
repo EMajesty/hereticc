@@ -8,7 +8,7 @@ NEUROGENIC is an open-source custom firmware extension for the Akai MPC Sample. 
 
 ## Status
 
-NEUROGENIC is in **M0: host core and guarded integration feasibility**. The M0.2/M0.2a host sequencer foundation is complete. M0.3b-A4 validated the firmware fingerprints, and M0.3c's SDK v0.7.1 page/input prototype was physically validated on one MPC Sample running firmware 1.3.0.12. M0.3d adds a host-tested stock-pad audition candidate; its playback path has not run on hardware. The B1 diagnostic models remain separate and B1 hook testing is unauthorized.
+NEUROGENIC is in **M0: host core and guarded integration feasibility**. The M0.2/M0.2a host sequencer foundation is complete. M0.3b-A4 validated the firmware fingerprints, and M0.3c's SDK v0.7.1 page/input prototype was physically validated on one MPC Sample running firmware 1.3.0.12. M0.3d's physical run exposed a pad-ownership regression and did not validate native playback; M0.3d.1 is the host-tested correction. The B1 diagnostic models remain separate and B1 hook testing is unauthorized.
 
 Project website: [neurogeni.cc](https://neurogeni.cc). Source repository: [EMajesty/neurogenic](https://github.com/EMajesty/neurogenic).
 
@@ -65,6 +65,7 @@ The core currently implements integer musical time, validated sixteen-track proj
 - [Reuse-first integration](docs/REUSE-FIRST-INTEGRATION.md) — upstream disposition and next SDK prototype
 - [M0.3c SDK UI](docs/M0-3C-SDK-UI.md) — first page/input implementation and physical-test procedure
 - [M0.3d stock trigger](docs/M0-3D-STOCK-TRIGGER.md) — bounded native pad audition candidate and test procedure
+- [M0.3d.1 pad ownership](docs/M0-3D1-PAD-OWNERSHIP.md) — ownership correction and bounded dispatch diagnosis
 - [Roadmap](docs/ROADMAP.md) — milestones and acceptance criteria
 - [Safety](docs/SAFETY.md) — development, deployment, and recovery rules
 - [Device adapter contract](docs/ADAPTER.md) — future clock, voice, capacity, and recovery boundary
