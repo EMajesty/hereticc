@@ -64,7 +64,7 @@ impl NeurogenicDevice {
             graphics.text("NEUROGENIC", 10, 10, 190, 22, 18.0);
 
             let status = format!(
-                "TRACK/PAD {:02}   STEP {:02}",
+                "TRACK/PHYS PAD {:02}   STEP {:02}",
                 self.ui.selected_track() + 1,
                 self.ui.selected_step() + 1
             );
@@ -87,7 +87,7 @@ impl NeurogenicDevice {
 
             graphics.colour(MUTED);
             let note = if let Some(pad) = self.ui.active_audition() {
-                format!("PAD {:02}: NOTE ON - RELEASE TO STOP", pad + 1)
+                format!("PAD {:02}: INPUT HELD", pad + 1)
             } else {
                 format!("PAD {:02}: ready to audition", self.ui.selected_track() + 1)
             };
@@ -106,6 +106,14 @@ impl NeurogenicDevice {
                 u8::from(properties)
             );
             graphics.text(&capability, 10, 190, 300, 16, 10.0);
+            graphics.text(
+                "BANK: stock-managed; physical pads 01-16",
+                10,
+                112,
+                300,
+                16,
+                9.0,
+            );
             graphics.text(
                 "DATA: cursor   PADS: select + audition",
                 10,
@@ -134,7 +142,10 @@ impl NeurogenicDevice {
 
 impl Mod for NeurogenicDevice {
     fn on_button(&mut self, event: ButtonEvent) -> Flow {
-        self.close_if_page_gone();
+        let explicit_toggle = event.code == button::DATA && event.pressed && event.shift;
+        if !explicit_toggle {
+            self.close_if_page_gone();
+        }
         let mapped = match event.code {
             button::DATA => Button::Data,
             button::PLUS => Button::Plus,
@@ -157,7 +168,6 @@ impl Mod for NeurogenicDevice {
     }
 
     fn on_pad(&mut self, event: PadEvent) -> Flow {
-        self.close_if_page_gone();
         let pressed = event.action == PadAction::Press;
         let notes_ready = mpc_sample_sdk::midi::notes_ready();
         if self.ui.is_open() {
@@ -169,7 +179,13 @@ impl Mod for NeurogenicDevice {
         // zero; paired hooks and a live input are sufficient to own a matched
         // physical press/release without fabricating an object.
         let native_dispatch_available = event.input != 0 && notes_ready;
-        let outcome = self.ui.pad(event.pad, pressed, native_dispatch_available);
+        let outcome = self.ui.pad(
+            event.pad,
+            pressed,
+            native_dispatch_available,
+            event.input,
+            event.source,
+        );
         if outcome.repaint {
             Self::repaint_live_sample_page();
         }

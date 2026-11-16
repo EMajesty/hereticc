@@ -317,6 +317,14 @@ consumed and close remains deferred. It does not call `send_note_on` with null
 or claim synthetic scheduler playback. See
 [M0.3d.2 native properties](M0-3D2-NATIVE-PROPERTIES.md).
 
+Physical M0.3d.2 testing confirmed the first forwarded pad and overlap
+suppression, but found unreliable release ownership/restoration under repeated
+input. M0.3d.3 replaces the per-pad bit mask with a bounded edge ledger that
+matches pad/input identity while tolerating the observed press/release source
+mismatch. It also removes redundant pre-forward repaint and explicitly scopes
+bank behavior to the 16 physical pads because SDK v0.7.1 exposes no A-D bank
+identity. See [M0.3d.3 input stability](M0-3D3-INPUT-STABILITY.md).
+
 ### M0.3b-C–E Device feasibility experiments — planned and blocked
 
 This requires a separate, explicitly reviewed task because it creates device-facing executable code.
@@ -443,9 +451,10 @@ Acceptance criteria:
 
 ## Practical next engineering task
 
-The next decision is owner review of the host-built M0.3d.2 native-forwarding
-package and, only if explicitly authorized, one controlled physical audition
-test following [M0.3d.2](M0-3D2-NATIVE-PROPERTIES.md). Do not begin
-background sequencing until native trigger/release and restoration pass. This
+The next decision is owner review of the host-built M0.3d.3 input-stability
+package and, only if explicitly authorized, one controlled physical ownership,
+bank-switching, deferred-close, and restoration test following
+[M0.3d.3](M0-3D3-INPUT-STABILITY.md). Do not begin background sequencing until
+input ownership and restoration pass. This
 does not authorize B1 DATA-hook testing, a relay, SSH, or another diagnostic
 milestone.

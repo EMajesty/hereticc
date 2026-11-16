@@ -65,6 +65,16 @@ impl Outcome {
 
 const DATA_OWNED: u8 = 1 << 0;
 const PLUS_OWNED: u8 = 1 << 1;
+const PAD_OWNERS: usize = 32;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct PadOwner {
+    sequence: u32,
+    input: usize,
+    source: i32,
+    pad: u8,
+    forwarded: bool,
+}
 
 /// Fixed-capacity UI and input-ownership state.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -73,10 +83,11 @@ pub struct UiState {
     selected_track: u8,
     selected_step: u8,
     patterns: [u16; CELLS],
-    owned_pads: u16,
+    pad_owners: [PadOwner; PAD_OWNERS],
+    next_pad_sequence: u32,
     owned_buttons: u8,
     pending_repaint: bool,
-    active_audition: Option<u8>,
+    active_audition: Option<u32>,
     close_pending: bool,
     pad_status: PadStatus,
     pad_capabilities: u8,
@@ -89,7 +100,8 @@ impl Default for UiState {
             selected_track: 0,
             selected_step: 0,
             patterns: [0; CELLS],
-            owned_pads: 0,
+            pad_owners: [PadOwner::default(); PAD_OWNERS],
+            next_pad_sequence: 0,
             owned_buttons: 0,
             pending_repaint: false,
             active_audition: None,
@@ -119,10 +131,21 @@ impl UiState {
         self.selected_step
     }
 
-    /// The pad with a manually dispatched note-on awaiting its release.
+    /// The physical pad whose forwarded press is awaiting its release.
     #[must_use]
     pub const fn active_audition(&self) -> Option<u8> {
-        self.active_audition
+        let Some(sequence) = self.active_audition else {
+            return None;
+        };
+        let mut index = 0;
+        while index < PAD_OWNERS {
+            let owner = self.pad_owners[index];
+            if owner.sequence == sequence {
+                return Some(owner.pad);
+            }
+            index += 1;
+        }
+        None
     }
 
     /// Whether close is deferred until the active audition is released.
@@ -226,18 +249,73 @@ impl UiState {
         Outcome::consumed(true, false)
     }
 
-    /// Apply a zero-based pad event. Invalid pads always forward.
-    pub fn pad(&mut self, pad: i32, pressed: bool, native_dispatch_available: bool) -> Outcome {
+    fn reserve_pad(&mut self, pad: u8, input: usize, source: i32, forwarded: bool) -> Option<u32> {
+        let slot = self
+            .pad_owners
+            .iter_mut()
+            .find(|owner| owner.sequence == 0)?;
+        self.next_pad_sequence = self.next_pad_sequence.checked_add(1)?;
+        if self.next_pad_sequence == 0 {
+            return None;
+        }
+        *slot = PadOwner {
+            sequence: self.next_pad_sequence,
+            input,
+            source,
+            pad,
+            forwarded,
+        };
+        Some(self.next_pad_sequence)
+    }
+
+    fn release_pad(&mut self, pad: u8, input: usize, source: i32) -> Option<PadOwner> {
+        let mut best: Option<(usize, PadOwner)> = None;
+        for prefer_source in [true, false] {
+            for (index, owner) in self.pad_owners.iter().copied().enumerate() {
+                if owner.sequence == 0
+                    || owner.pad != pad
+                    || owner.input != input
+                    || (prefer_source && owner.source != source)
+                {
+                    continue;
+                }
+                if best.is_none_or(|(_, found)| owner.sequence < found.sequence) {
+                    best = Some((index, owner));
+                }
+            }
+            if best.is_some() {
+                break;
+            }
+        }
+        let (index, owner) = best?;
+        self.pad_owners[index] = PadOwner::default();
+        Some(owner)
+    }
+
+    /// Apply a zero-based physical-pad edge. Invalid pads always forward.
+    pub fn pad(
+        &mut self,
+        pad: i32,
+        pressed: bool,
+        native_dispatch_available: bool,
+        input: usize,
+        source: i32,
+    ) -> Outcome {
         let Ok(pad) = u8::try_from(pad) else {
             return Outcome::FORWARD;
         };
         if usize::from(pad) >= CELLS {
             return Outcome::FORWARD;
         }
-        let owner = 1_u16 << pad;
-        if !pressed && self.owned_pads & owner != 0 {
-            self.owned_pads &= !owner;
-            if self.active_audition == Some(pad) {
+        if !pressed {
+            let Some(owner) = self.release_pad(pad, input, source) else {
+                return if self.open {
+                    Outcome::consumed(false, false)
+                } else {
+                    Outcome::FORWARD
+                };
+            };
+            if self.active_audition == Some(owner.sequence) {
                 self.active_audition = None;
                 let close = self.close_pending;
                 self.close_pending = false;
@@ -248,47 +326,50 @@ impl UiState {
                 // The physical release follows the same SDK-native path as
                 // its forwarded press. No callback-local object is retained.
                 return Outcome {
-                    flow: Flow::Forward,
+                    flow: if owner.forwarded {
+                        Flow::Forward
+                    } else {
+                        Flow::Consume
+                    },
                     repaint: close,
                     restore: close,
                 };
             }
-            return Outcome::consumed(false, false);
+            return Outcome {
+                flow: if owner.forwarded {
+                    Flow::Forward
+                } else {
+                    Flow::Consume
+                },
+                repaint: false,
+                restore: false,
+            };
         }
         if pressed && self.open {
-            if self.owned_pads & owner == 0 {
-                // The first held pad is the prototype's sole audition voice.
-                // Further pad pairs are consumed but do not trigger or change
-                // selection, avoiding an untracked stock voice.
-                if self.active_audition.is_some() {
-                    self.owned_pads |= owner;
-                    return Outcome::consumed(false, false);
-                }
-                self.owned_pads |= owner;
-                self.selected_track = pad;
-                self.pending_repaint = true;
-                if !native_dispatch_available {
-                    self.pad_status = PadStatus::DispatchUnavailable;
-                    return Outcome::consumed(true, false);
-                }
-                self.active_audition = Some(pad);
-                self.pad_status = PadStatus::NativeForwardRequested;
-                // The SDK calls the displaced stock handler after this
-                // callback returns, preserving its exact arguments. This is
-                // the supported path for the physical pad, including P0.
-                return Outcome {
-                    flow: Flow::Forward,
-                    repaint: true,
-                    restore: false,
-                };
+            let forwarded = self.active_audition.is_none() && native_dispatch_available;
+            let Some(sequence) = self.reserve_pad(pad, input, source, forwarded) else {
+                return Outcome::consumed(false, false);
+            };
+            if self.active_audition.is_some() {
+                return Outcome::consumed(false, false);
             }
-            return Outcome::consumed(true, false);
+            self.selected_track = pad;
+            if !native_dispatch_available {
+                self.pending_repaint = true;
+                self.pad_status = PadStatus::DispatchUnavailable;
+                return Outcome::consumed(true, false);
+            }
+            self.active_audition = Some(sequence);
+            self.pad_status = PadStatus::NativeForwardRequested;
+            // Stock forwarding itself repaints the Sample page. Avoid a
+            // redundant repaint before that native call.
+            return Outcome {
+                flow: Flow::Forward,
+                repaint: false,
+                restore: false,
+            };
         }
-        if self.owned_pads & owner != 0 {
-            Outcome::consumed(false, false)
-        } else {
-            Outcome::FORWARD
-        }
+        Outcome::FORWARD
     }
 
     /// Close after losing the Sample page. Owned presses remain draining so

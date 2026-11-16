@@ -8,7 +8,7 @@ NEUROGENIC is an open-source custom firmware extension for the Akai MPC Sample. 
 
 ## Status
 
-NEUROGENIC is in **M0: host core and guarded integration feasibility**. The M0.2/M0.2a host sequencer foundation is complete. M0.3b-A4 validated the firmware fingerprints, and M0.3c's SDK v0.7.1 page/input prototype was physically validated on one MPC Sample running firmware 1.3.0.12. M0.3d.1 physically established that pad callbacks carry `H1 I1 P0`; M0.3d.2 is the host-tested SDK-native forwarding solution for one owned physical audition. The B1 diagnostic models remain separate and B1 hook testing is unauthorized.
+NEUROGENIC is in **M0: host core and guarded integration feasibility**. The M0.2/M0.2a host sequencer foundation is complete. M0.3b-A4 validated the firmware fingerprints, and M0.3c's SDK v0.7.1 page/input prototype was physically validated on one MPC Sample running firmware 1.3.0.12. M0.3d.2 physically confirmed one controlled stock-forwarded pad and overlap suppression but exposed ownership/restoration instability; M0.3d.3 is the host-tested bounded-ledger correction. The B1 diagnostic models remain separate and B1 hook testing is unauthorized.
 
 Project website: [neurogeni.cc](https://neurogeni.cc). Source repository: [EMajesty/neurogenic](https://github.com/EMajesty/neurogenic).
 
@@ -67,6 +67,7 @@ The core currently implements integer musical time, validated sixteen-track proj
 - [M0.3d stock trigger](docs/M0-3D-STOCK-TRIGGER.md) — bounded native pad audition candidate and test procedure
 - [M0.3d.1 pad ownership](docs/M0-3D1-PAD-OWNERSHIP.md) — ownership correction and bounded dispatch diagnosis
 - [M0.3d.2 native properties](docs/M0-3D2-NATIVE-PROPERTIES.md) — null-properties contract and controlled native forwarding
+- [M0.3d.3 input stability](docs/M0-3D3-INPUT-STABILITY.md) — release ledger, bank scope, repaint, and restoration correction
 - [Roadmap](docs/ROADMAP.md) — milestones and acceptance criteria
 - [Safety](docs/SAFETY.md) — development, deployment, and recovery rules
 - [Device adapter contract](docs/ADAPTER.md) — future clock, voice, capacity, and recovery boundary

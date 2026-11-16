@@ -296,6 +296,17 @@ this null value sounds the stock pad. MINIMOD's current Rust implementation also
 uses SDK-native forwarding/ownership rather than `send_note_on(null)`. M0.3d.2
 therefore uses `Flow::Forward` for the first owned physical pair and consumes
 overlap; it does not weaken the unsafe helper's contract.
+
+M0.3d.2 physical testing confirmed first-pad forwarding and second-pad
+suppression, but exposed stale ownership under repeated/random presses and an
+unreliable deferred close. The pinned SDK has exactly `Press` and `Release` pad
+actions; pressure is delivered separately as `SurfaceEvent`. It exposes the
+physical pad index and callback-local input/source values, but no bank A-D
+state. MINIMOD revision `18d41fd805beace4fed623653a250c46a4fa2243`
+documents a different firmware source ID on physical release and uses input
+identity as the stable fallback. M0.3d.3 adopts that source-supported behavior
+in a NEUROGENIC-owned fixed ledger without copying upstream code. Bank buttons
+remain forwarded and the prototype explicitly models only 16 physical pads.
 - release matching and repeated/overlapping triggers of one sound are not specified;
 - calls are UI-thread/lifetime constrained and accept no target audio frame;
 - there is no documented contract for transport, stock-sequence coexistence, voice stealing, choke/mono behavior, or project changes.
