@@ -137,6 +137,12 @@ finds no confirmed non-restarting USB, network, shell, or passive SD retrieval
 path. B1 hardware authorization remains no-go until such read-only access is
 established without enabling an undocumented service.
 
+B1-P1 completes the host-only access-mechanism review. The pinned SDK, A4
+autorun, A2--A4 physical record, and B0.2 reader establish no supported USB,
+network, autorun, or stock-export path that can retrieve counters after
+interaction while preserving the live stock PID. Read-only computer and stock
+UI discovery is specified in [B1-P1](INPUT-HOOK-B1-P1.md); B1 remains no-go.
+
 ### M0.3b-C–E Device feasibility experiments — planned and blocked
 
 This requires a separate, explicitly reviewed task because it creates device-facing executable code.
@@ -263,7 +269,8 @@ Acceptance criteria:
 
 ## Practical next engineering task
 
-The next action is a separately scoped, read-only device-access discovery that
-does not install a hook or enable an undocumented service. Any B1 package or
-physical DATA-hook run still needs separate explicit authorization. Rendering,
-stock voice, and timing remain separate later approvals.
+Perform only the passive computer-side and stock-UI observations specified by
+[B1-P1](INPUT-HOOK-B1-P1.md). Any operation that executes a device command,
+exports diagnostics, packages B1, or runs a physical DATA hook still needs
+separate explicit authorization. Rendering, stock voice, and timing remain
+separate later approvals.

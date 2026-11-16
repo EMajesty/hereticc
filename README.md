@@ -8,7 +8,7 @@ NEUROGENIC is an open-source custom firmware extension for the Akai MPC Sample. 
 
 ## Status
 
-NEUROGENIC is in **M0: host core and guarded integration feasibility**. The M0.2/M0.2a host sequencer foundation is complete. M0.3b-A4 was physically validated on one MPC Sample running firmware 1.3.0.12: the expected executable was reached and all 63 firmware fingerprints matched without hooks. M0.3b-B0/B0.1/B0.2 are host-validated only, and B1-P0 device-access investigation and test preparation are complete in source. No B1 physical hook test is authorized, and non-restarting post-interaction diagnostic retrieval remains unproven.
+NEUROGENIC is in **M0: host core and guarded integration feasibility**. The M0.2/M0.2a host sequencer foundation is complete. M0.3b-A4 was physically validated on one MPC Sample running firmware 1.3.0.12: the expected executable was reached and all 63 firmware fingerprints matched without hooks. M0.3b-B0/B0.1/B0.2 are host-validated only. B1-P1's host-only access review found no supported non-restarting path for post-interaction counter retrieval. No B1 physical hook test is authorized.
 
 Project website: [neurogeni.cc](https://neurogeni.cc). Source repository: [EMajesty/neurogenic](https://github.com/EMajesty/neurogenic).
 
@@ -32,6 +32,13 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo run -p neurogenic-host --bin demo
+```
+
+To enter the same development shell automatically with
+[direnv](https://direnv.net/), allow the repository's checked-in `.envrc` once:
+
+```sh
+direnv allow
 ```
 
 The core currently implements integer musical time, validated sixteen-track projects, independent patterns, scenes, basic note/parameter scheduling, overlapping runtime voices, phase-reset scene transitions, transactional capacity/arithmetic errors, and a bounded versioned host-side codec. The host adapter verifies event order and voice lifecycle and produces deterministic text traces. Neither crate is real-time safe or processes audio.
