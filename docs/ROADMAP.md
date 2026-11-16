@@ -235,8 +235,11 @@ startup hitch while stock operation remained normal; this is inconclusive and
 the unchanged package must not be retried. B1-P3.2j prepares a separate
 marker-only automatic autorun that can establish shell entry, canonical package
 directory, firmware-prefix compatibility, and SD publication without invoking
-the collector. Direct execution from the `noexec` SD is the leading P3.2g
-failure hypothesis. P3.2j physical execution remains owner-authorized only; see
+the collector. The same physical SD and volume label successfully published
+A2--A4 reports, so generic SD identity, formatting, and basic writability are
+already demonstrated. Diagnosis prioritizes autorun recognition, wrapper and
+firmware-guard behavior, then standalone collector startup from the `noexec`
+SD. P3.2j physical execution remains owner-authorized only; see
 [P3.2j](INPUT-HOOK-B1-P3-2J.md).
 
 ### M0.3b-C–E Device feasibility experiments — planned and blocked

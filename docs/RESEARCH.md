@@ -346,3 +346,8 @@ stock app's `sh "%s"` autorun call, automatic `askQuestion:false` behavior, root
 is not established. The same evidence says SD is `noexec`; P3.2g directly
 executed its ELF there, unlike A4's copy-to-`/run` path. P3.2j therefore uses a
 separate shell-only, no-clobber SD marker before any collector attempt.
+The same physical SD card and volume label successfully published A2--A4
+reports. Generic SD identity, exFAT formatting, and basic writability are thus
+physical evidence, not leading P3.2g failure hypotheses. Recognition/check
+acceptance, wrapper gates, firmware validation, and standalone ELF startup are
+the ordered diagnostic boundaries.

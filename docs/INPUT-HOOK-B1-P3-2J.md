@@ -12,6 +12,12 @@ remained responsive, but after about one minute there was no
 **inconclusive**: report absence does not prove whether the stock loader entered
 the shell. The unchanged P3.2g package must not be retried.
 
+The same physical SD card and volume label previously published A2--A4 reports
+successfully. Its identity, exFAT formatting, mountability, and basic write path
+are therefore established physical evidence, not leading explanations for the
+silent P3.2g result. P3.2g-specific validation or publication behavior can still
+fail and remains distinguishable from generic SD writability.
+
 ## Actual autorun contract
 
 The pinned SDK generator and the pinned minimod reverse-engineering record
@@ -40,22 +46,24 @@ working directory remains unknown and the new script never depends on it.
 
 ## Ranked hypotheses
 
-1. **Collector execution from a `noexec` SD failed.** Recovered device evidence
-   says the SD is mounted `noexec`; working A4 copies loadable code to `/run`,
-   while P3.2g directly executed `p3_2f_collector` from SD. This best explains a
-   normal boot, no hitch, and no report.
-2. **The package was not accepted.** Correct names alone do not prove copied
+1. **The package was not accepted.** Correct names alone do not prove copied
    bytes, modes, JSON/check agreement, or loader recognition.
-3. **The shell entered but `$0`/directory or a fixed utility check failed.** The
+2. **The shell entered but `$0`/directory or an early wrapper check failed.** The
    P3.2g wrapper was silent and published nothing before those gates.
-4. **The collector started but rejected the SD mount.** Its `/proc/mounts`
-   parser requires a single safe `/media/<component>` record; encoded spaces or
-   unexpected physical mount identity fail closed before publication.
-5. **Firmware/hash utility failure.** Possible but weaker: the displayed
-   firmware and reviewed prefix are 1.3.0.12, while utility availability remains
-   unverified on this invocation.
-6. **Loader/ABI or later acquisition failure.** Possible only if direct SD
-   execution was permitted; the host-linked ABI remains unproved physically.
+3. **Firmware guard or hash-utility failure.** The displayed firmware and
+   reviewed prefix are 1.3.0.12, but the exact utility behavior in this autorun
+   invocation remains physically unverified.
+4. **Standalone collector execution failed.** Device evidence says the SD is
+   mounted `noexec`; working A4 copies loadable code to `/run`, while P3.2g
+   directly executed `p3_2f_collector` from SD. Loader/ABI incompatibility is an
+   additional startup boundary if execution reached the ELF.
+5. **The collector started but failed before publication.** Its service,
+   `/proc`, network, and mount parsers all fail closed. A P3.2g-specific mount
+   interpretation remains possible, but the same SD's successful A2--A4 writes
+   make generic identity, formatting, or writability a weak explanation.
+6. **Other later acquisition or publication failure.** Possible, but it requires
+   recognition, wrapper checks, firmware validation, and executable startup all
+   to have succeeded first.
 
 ## Marker-only design
 
