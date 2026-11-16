@@ -1,0 +1,21 @@
+[package]
+name = "neurogenic-device"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+rust-version = "1.97"
+description = "MPC Sample SDK UI/input prototype for NEUROGENIC"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+mpc-sample-sdk = { git = "https://github.com/ioma8/mpc-sample-sdk", rev = "9487cbba3648afb29d8e3107e31a7ac930985220" }
+
+[lints.rust]
+unsafe_code = "allow"
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"

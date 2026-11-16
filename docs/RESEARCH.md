@@ -260,9 +260,14 @@ does not establish device loader behavior or physical compatibility.
 | Am MOD | [`6cdc67276f43cd39f64871cb7e36782481244c65`](https://github.com/AlekseyMalykh/am-mod/tree/6cdc67276f43cd39f64871cb7e36782481244c65), dated 2026-11-15 | [MIT](https://github.com/AlekseyMalykh/am-mod/blob/6cdc67276f43cd39f64871cb7e36782481244c65/LICENSE), AM Mod contributors | Comparative reverse-engineering evidence only; no code reuse. |
 
 The current SDK is Rust 2024, version 0.7.1, MSRV 1.97, and depends on `libc`.
-NEUROGENIC has not added it as a dependency. Historical A/B experiments remain
-pinned to their reviewed v0.6.0 tree; M0.3c should pin v0.7.1 and rerun host
-package/symbol inspection before physical authorization.
+Historical A/B experiments remain pinned to their reviewed v0.6.0 tree; M0.3c
+pins v0.7.1 as the device crate's first external dependency and preserves its
+MIT notice.
+
+M0.3c now pins v0.7.1 directly. Its host build and package inspection pass;
+physical hook, paint, input, and recovery behavior remain untested. The SDK
+still installs its full site table rather than a feature-selected subset, so
+using only UI/input APIs does not narrow the live patch transaction.
 
 ### Stock voice path
 

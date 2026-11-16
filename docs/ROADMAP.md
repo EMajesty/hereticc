@@ -265,7 +265,7 @@ The diagnostic branch is now closed for feature planning. Do not add another
 collector milestone or repeat P3.2k. P3.2l may be run later only if its evidence
 is required by a concrete relay decision.
 
-### M0.3c SDK page and input prototype — planned
+### M0.3c SDK page and input prototype — host complete, physical test pending
 
 Reuse the current pinned MIT `mpc-sample-sdk` v0.7.1 directly. Add one
 device-only mod that renders a fixed NEUROGENIC step page, owns a minimal
@@ -420,9 +420,9 @@ Acceptance criteria:
 
 ## Practical next engineering task
 
-The next decision is owner review of the fixed, host-inspected P3.2g package
-followed, only if explicitly authorized, by one controlled zero-hook physical
-run. That run is the minimum way to resolve standalone loader, fixed command,
-autorun privilege, and actual exFAT behavior. P3.2b restart testing, relay
-deployment, and physical DATA-hook execution remain later, separately
-authorized gates.
+The next decision is owner review of the host-built M0.3c SDK page/input package
+and, only if explicitly authorized, one controlled physical UI test. The test
+checks page rendering, the documented SHIFT+DATA/DATA/pad/PLUS ownership,
+complete stock restoration, and stock-only reboot. It does not authorize
+sequencer playback, B1 DATA-hook testing, a relay, SSH, or another diagnostic
+milestone. See [M0.3c SDK UI](M0-3C-SDK-UI.md).

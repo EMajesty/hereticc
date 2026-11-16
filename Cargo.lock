@@ -9,6 +9,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
+name = "mpc-sample-sdk"
+version = "0.7.1"
+source = "git+https://github.com/ioma8/mpc-sample-sdk?rev=9487cbba3648afb29d8e3107e31a7ac930985220#9487cbba3648afb29d8e3107e31a7ac930985220"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "neurogenic-b1-collector-linux"
 version = "0.1.0"
 dependencies = [
@@ -27,6 +35,13 @@ version = "0.1.0"
 [[package]]
 name = "neurogenic-core"
 version = "0.1.0"
+
+[[package]]
+name = "neurogenic-device"
+version = "0.1.0"
+dependencies = [
+ "mpc-sample-sdk",
+]
 
 [[package]]
 name = "neurogenic-host"

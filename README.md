@@ -8,7 +8,7 @@ NEUROGENIC is an open-source custom firmware extension for the Akai MPC Sample. 
 
 ## Status
 
-NEUROGENIC is in **M0: host core and guarded integration feasibility**. The M0.2/M0.2a host sequencer foundation is complete. M0.3b-A4 was physically validated on one MPC Sample running firmware 1.3.0.12: the expected executable was reached and all 63 firmware fingerprints matched without hooks. The B1 diagnostic models remain host-only and B1 hook testing is unauthorized. Further diagnostic engineering is deferred; the next planned feature work is a minimal page/input prototype using the pinned MIT `mpc-sample-sdk` and its existing deployment path.
+NEUROGENIC is in **M0: host core and guarded integration feasibility**. The M0.2/M0.2a host sequencer foundation is complete. M0.3b-A4 was physically validated on one MPC Sample running firmware 1.3.0.12: the expected executable was reached and all 63 firmware fingerprints matched without hooks. M0.3c now provides a host-tested, cross-built SDK v0.7.1 page/input prototype; it has not run on hardware. The B1 diagnostic models remain host-only and B1 hook testing is unauthorized.
 
 Project website: [neurogeni.cc](https://neurogeni.cc). Source repository: [EMajesty/neurogenic](https://github.com/EMajesty/neurogenic).
 
@@ -63,6 +63,7 @@ The core currently implements integer musical time, validated sixteen-track proj
 - [Effects](docs/EFFECTS.md) — logical routing, parameter model, performance controls, and feasibility gates
 - [Research](docs/RESEARCH.md) — source-based review of related projects
 - [Reuse-first integration](docs/REUSE-FIRST-INTEGRATION.md) — upstream disposition and next SDK prototype
+- [M0.3c SDK UI](docs/M0-3C-SDK-UI.md) — first page/input implementation and physical-test procedure
 - [Roadmap](docs/ROADMAP.md) — milestones and acceptance criteria
 - [Safety](docs/SAFETY.md) — development, deployment, and recovery rules
 - [Device adapter contract](docs/ADAPTER.md) — future clock, voice, capacity, and recovery boundary

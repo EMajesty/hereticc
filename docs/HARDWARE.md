@@ -49,6 +49,13 @@ The SDK exposes decoded pad press/release and velocity; buttons with SHIFT/ERASE
 
 Known limitation: the SDK lighting API covers the sixteen pad RGB LEDs, not button LEDs. Raw button-LED control is documented by Sample Lab but is not adopted by NEUROGENIC.
 
+M0.3c is the first NEUROGENIC crate built against SDK v0.7.1. Host inspection
+confirms a 383,800-byte AArch64 shared object and the SDK-generated transient
+preload/drop-in package. It has not run on hardware. SHIFT+DATA page ownership,
+PLUS step toggling, pad selection, drawing, broad 22-site hook installation,
+and restoration are therefore host/source claims only; see
+[M0.3c SDK UI](M0-3C-SDK-UI.md).
+
 ## Display and lighting
 
 The SDK provides stock-app paint interception and wrappers for color, rectangle, font, text, toasts, and repaint requests. Graphics handles are valid only during the paint callback. Its pad-lighting layer remembers native colors and can restore them, but overrides are last-writer-wins and restoration is the feature's responsibility. See [drawing](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/08-drawing.md) and [lighting](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/docs/25-lighting.md).
