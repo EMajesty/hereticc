@@ -230,6 +230,15 @@ utility, privilege, and physical mount behavior remain unverified, so physical
 execution requires separate authorization and B1 hook testing remains no-go;
 see [P3.2g](INPUT-HOOK-B1-P3-2G.md).
 
+The first owner-run P3.2g physical diagnostic produced no report and no obvious
+startup hitch while stock operation remained normal; this is inconclusive and
+the unchanged package must not be retried. B1-P3.2j prepares a separate
+marker-only automatic autorun that can establish shell entry, canonical package
+directory, firmware-prefix compatibility, and SD publication without invoking
+the collector. Direct execution from the `noexec` SD is the leading P3.2g
+failure hypothesis. P3.2j physical execution remains owner-authorized only; see
+[P3.2j](INPUT-HOOK-B1-P3-2J.md).
+
 ### M0.3b-C–E Device feasibility experiments — planned and blocked
 
 This requires a separate, explicitly reviewed task because it creates device-facing executable code.

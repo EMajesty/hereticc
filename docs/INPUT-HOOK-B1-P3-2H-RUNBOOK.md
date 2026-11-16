@@ -62,12 +62,13 @@ Unmount through the host's normal safe-eject UI or its approved unmount method.
 
 1. Shut down the MPC normally, insert the dedicated SD, and use the one stock
    boot/insertion sequence approved by the owner.
-2. If the stock autorun prompt appears, accept it exactly once. Do not invoke it
-   again and do not remove the SD while the collector may be active.
+2. Allow the one automatic autorun invocation. With `askQuestion:false`, no
+   confirmation prompt is expected. Do not trigger it again or remove the SD
+   while the collector may be active.
 3. The collector has a ten-second monotonic deadline. Observe UI, audio, pads,
    DATA, and controls for a conservative 30-second window. The deadline does
    **not** forcibly interrupt every possible blocked Linux or SD syscall.
-4. Stop for a repeat prompt, restart indication, UI/audio/control regression,
+4. Stop for repeated autorun behavior, restart indication, UI/audio/control regression,
    unexpected file/message, collector activity beyond 30 seconds, or failure to
    regain normal control. Do not retry. If responsive, shut down normally; if
    not, follow the owner's separately approved recovery procedure.
@@ -106,9 +107,9 @@ unrelated addresses, user content, and identifying host paths from derivatives.
 
 ## 5. Evidence decision tree
 
-- **No autorun prompt:** stop; record an inconclusive recognition/invocation
-  result; stock-only recovery boot; no second attempt.
-- **Prompt, no report:** stop; result is inconclusive (guard, loader, utility,
+- **No autorun prompt:** expected for `askQuestion:false`; it provides no
+  recognition evidence. Use report presence and observed behavior instead.
+- **Automatic invocation expected but no report:** stop; result is inconclusive (guard, loader, utility,
   permissions, acquisition, or publication may have failed); no automatic
   second attempt.
 - **Malformed, truncated, empty, or oversized report:** preserve and reject it;

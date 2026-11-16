@@ -126,6 +126,13 @@ prohibited for diagnostic discovery. Generic object/WebSocket client code in
 the frontend and a 404 subtree response do not establish a diagnostic or command
 API. See [B1-P2](INPUT-HOOK-B1-P2.md).
 
+The first physical P3.2g zero-hook lifecycle diagnostic on firmware 1.3.0.12
+booted normally and left UI/audio responsive, but produced no SD report and no
+obvious A4-like startup hitch. The result is inconclusive about autorun entry.
+Recovered device evidence that SD is mounted `noexec`, combined with P3.2g's
+direct execution of its collector from SD, is the leading failure hypothesis;
+see [B1-P3.2j](INPUT-HOOK-B1-P3-2J.md). No hook was involved.
+
 ## Unknown hardware questions
 
 - Exact end-to-end pad-to-sound and schedule-to-sound latency under stock-engine integration.

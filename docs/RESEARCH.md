@@ -334,3 +334,15 @@ firmware event layouts; SURFACE accepts a raw payload pointer. The B0 SDK patch
 exposes only DATA preparation while excluding full sites, paint, ALSA, MIDI,
 drawing, and platform features. This is source/host evidence, not proof that
 the inferred encoder ABI or concurrent patching is safe on hardware.
+
+### B1-P3.2g silent result and P3.2j autorun clarification
+
+The first owner-run P3.2g package produced no report after about one minute;
+stock boot and responsiveness remained normal and there was no obvious A4-like
+hitch. This does not prove whether autorun was accepted. At pinned minimod
+commit `3770fb7edcfb432cd45ca4e8fa8bcbefe0435c25`, reverse-engineering records the
+stock app's `sh "%s"` autorun call, automatic `askQuestion:false` behavior, root
+`autorun/` placement, and the exact JSON+shell+salt check. The working directory
+is not established. The same evidence says SD is `noexec`; P3.2g directly
+executed its ELF there, unlike A4's copy-to-`/run` path. P3.2j therefore uses a
+separate shell-only, no-clobber SD marker before any collector attempt.

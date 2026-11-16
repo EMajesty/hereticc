@@ -54,12 +54,13 @@ regain control are immediate stop conditions.
    do not alter package files after hashing.
 2. Insert the SD and perform one normal stock boot/insertion sequence specified
    by the separately approved procedure.
-3. Accept the single stock autorun prompt once. Do not invoke it again.
+3. Allow the single automatic stock autorun invocation. With
+   `askQuestion:false`, no confirmation prompt is expected. Do not trigger it again.
 4. Observe the UI, audio, pads, and controls without removing the SD. The
    collector has a ten-second monotonic deadline. Use 30 seconds as a
    conservative operator observation window, not as a promise of forced
    termination.
-5. Stop the experiment for a repeat prompt, stock restart indication, UI/audio
+5. Stop the experiment for repeated autorun behavior, stock restart indication, UI/audio
    disruption, unexpected file or message, failure to regain normal control,
    or activity beyond the observation window. Do not retry. If the UI remains
    responsive, use normal shutdown; follow the separately approved recovery

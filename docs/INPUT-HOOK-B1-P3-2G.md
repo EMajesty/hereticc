@@ -149,9 +149,10 @@ loader or libc is bundled or installed; incompatibility fails inertly.
 2. On the host, rebuild and inspect the artifact; compare every hash above and
    verify the dedicated SD contains only the reviewed `autorun/` tree.
 3. Confirm the SD has no prior `b1-p3-2c-report.txt`. Insert it only under a
-   separately approved procedure and accept the one stock autorun prompt once.
+   separately approved procedure and allow the one automatic autorun invocation.
+   With `askQuestion:false`, no confirmation prompt is expected.
 4. Observe for no more than the reviewed window plus a conservative operator
-   margin. Stop for UI/audio disruption, repeat prompt, restart indication,
+   margin. Stop for UI/audio disruption, repeated autorun behavior, restart indication,
    unexpected file, hang, or any service interruption. Do not retry.
 5. Shut down normally, remove the SD, preserve it read-only, and validate the
    package and report offline. Redact identifiers and unrelated addresses.
