@@ -4,6 +4,12 @@ Status: host-only design and offline-analyzer hardening. No MPC was contacted;
 no autorun package, executable collector, service, hook, listener, or firmware
 artifact was created. Physical execution remains unauthorized.
 
+P3.2d implements the selected-fact normalization, identity checks, deterministic
+report, deadline model, host-only no-clobber publication boundary, inert
+manifest generator, and static safety inspection as a library-only Rust model.
+It does not implement device acquisition or an autorun entry point. See
+[P3.2d](INPUT-HOOK-B1-P3-2D.md).
+
 ## Executive conclusion
 
 The least invasive useful experiment is a **new, one-shot pre-restart autorun
@@ -113,6 +119,7 @@ process_cgroup=<bounded absolute cgroup path>
 run_filesystem=<safe token>
 run_read_write=true|false|unknown
 run_mode=<octal digits represented as a safe token>
+runtime_unit_dir_mode=<octal digits represented as a safe token>
 usb_interface=<safe token>
 usb_ipv4=192.168.155.1/28
 usb_link_up=true|false|unknown
@@ -210,12 +217,13 @@ establish independent-unit creation, survival across restart, post-restart
 publication, relay bind success, firewall isolation, snapshot ownership, or
 stock stability during an active lifecycle experiment.
 
-The next milestone should implement and host-test only the bounded pre-restart
-collector and inert package generator, then subject the artifacts to static
-inspection. That implementation, its packaging, and any single physical run
-each require separate authorization. Only after a successful baseline report
-should a new P3.2b design specify an independent zero-hook helper and exactly
-one restart.
+P3.2d completed the host-only collector core and inert review tools. The next
+milestone must implement and bound the actual AArch64 observation/publication
+adapters, reproduce the complete A4 SD identity checks, and statically inspect
+cross-built artifacts without yet producing a device-recognized autorun tree.
+Packaging and any single physical run remain separate authorization gates. Only
+after a successful baseline report should a new P3.2b design specify an
+independent zero-hook helper and exactly one restart.
 
 **No-go for device execution, P3.2b, relay deployment, DATA-hook deployment,
 and B1 physical hook testing.**

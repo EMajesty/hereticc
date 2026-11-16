@@ -194,6 +194,15 @@ evidence, and validates a bounded versioned report. No collector or package is
 implemented, and independent-unit survival remains unproved; see
 [P3.2c](INPUT-HOOK-B1-P3-2C.md).
 
+B1-P3.2d implements a dependency-free, library-only Rust collector model with
+bounded selected-source parsing, exact stock identity continuity, injected
+deadlines, deterministic reports, and a host-tested no-clobber publication
+boundary. The analyzer separates schema validity, producer completeness, and
+evidence consistency and reports legacy conflicts. Deterministic inert-manifest
+and structural safety tools create no autorun package. Device acquisition,
+AArch64 invocation, and full physical SD validation remain unimplemented; see
+[P3.2d](INPUT-HOOK-B1-P3-2D.md).
+
 ### M0.3b-C–E Device feasibility experiments — planned and blocked
 
 This requires a separate, explicitly reviewed task because it creates device-facing executable code.
@@ -321,8 +330,9 @@ Acceptance criteria:
 ## Practical next engineering task
 
 The next engineering milestone is host-only implementation and static review of
-P3.2c's bounded pre-restart collector and inert package generator. That work,
-package production, a single zero-hook physical run, and later P3.2b
-transient-unit testing each require separate authorization. Cross-building,
-relay deployment, and physical DATA-hook execution remain later gates.
-Rendering, stock voice, and timing remain separate later approvals.
+P3.2d's exact AArch64 observation/deadline adapters and complete A4-equivalent
+SD identity boundary, without creating an autorun-ready tree. Cross-building,
+package production, a single zero-hook physical run, and later P3.2b testing
+each require separate authorization. Relay deployment and physical DATA-hook
+execution remain later gates. Rendering, stock voice, and timing remain
+separate later approvals.

@@ -197,8 +197,14 @@ class InspectionTests(unittest.TestCase):
             "restart_observed=true\nservice_main_pid=1\nprocess_pid=2\n"
         )
         self.assertEqual(valid["facts"]["schema_validity"]["classification"], "confirmed")
+        self.assertEqual(valid["facts"]["collection_completeness"]["value"], "complete")
+        self.assertTrue(valid["facts"]["baseline_complete"]["value"])
+        self.assertTrue(valid["facts"]["evidence_consistency"]["value"])
         self.assertEqual(
             conflict["facts"]["schema_validity"]["classification"], "conflicting"
+        )
+        self.assertEqual(
+            conflict["facts"]["evidence_consistency"]["classification"], "conflicting"
         )
         self.assertEqual(len(conflict["contradictions"]), 2)
 
@@ -219,7 +225,7 @@ class InspectionTests(unittest.TestCase):
             oversized = INSPECT.analyze_collection(
                 "evidence_schema=neurogenic-b1-p3.2c-v1\n"
             )
-        self.assertEqual(missing["facts"]["schema_validity"]["classification"], "unknown")
+        self.assertEqual(missing["facts"]["schema_validity"]["classification"], "conflicting")
         self.assertEqual(
             duplicate["facts"]["schema_validity"]["classification"], "conflicting"
         )
@@ -229,6 +235,59 @@ class InspectionTests(unittest.TestCase):
         )
         self.assertNotIn("do-not-emit", json.dumps(unexpected))
         self.assertFalse(oversized["bounds"]["bytes_ok"])
+
+    def test_valid_partial_is_not_complete_or_gate_eligible(self):
+        partial = INSPECT.analyze_collection(
+            "evidence_schema=neurogenic-b1-p3.2c-v1\n"
+            "collection_phase=pre-restart\ncollection_status=partial\n"
+            "restart_observed=false\nsystemd_version=252\nservice_type=notify\n"
+            "service_kill_mode=control-group\nrun_filesystem=tmpfs\n"
+        )
+        self.assertEqual(partial["facts"]["schema_validity"]["classification"], "confirmed")
+        self.assertEqual(partial["facts"]["collection_completeness"]["value"], "partial")
+        self.assertFalse(partial["facts"]["baseline_complete"]["value"])
+        self.assertTrue(partial["facts"]["evidence_consistency"]["value"])
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write(directory, "collection.txt", "\n".join(
+                f"{key}={value}" for key, value in partial["selected_facts"].items()
+            ) + "\n")
+            inputs = {category: [] for category in INSPECT.CATEGORIES}
+            inputs["collection"] = [path]
+            gates = INSPECT.build_report(inputs)["decision_gates"]
+            self.assertEqual(gates["independent_systemd_unit_feasibility"]["status"], "unknown")
+
+    def test_complete_collection_populates_gates_and_legacy_conflicts_win(self):
+        collection_text = (
+            "evidence_schema=neurogenic-b1-p3.2c-v1\ncollection_phase=pre-restart\n"
+            "collection_status=complete\nrestart_observed=false\n"
+            "systemd_version=252\nservice_type=notify\nservice_kill_mode=control-group\n"
+            "service_main_pid=4242\nservice_cgroup=/system.slice/ac50.service\n"
+            "process_pid=4242\nprocess_start_ticks=987654\nprocess_uid=1000\n"
+            "process_cgroup=/system.slice/ac50.service\nrun_filesystem=tmpfs\n"
+            "runtime_unit_dir_mode=755\n"
+            "usb_interface=usb0\nusb_ipv4=192.168.155.1/28\nusb_link_up=true\n"
+            "usb_route=192.168.155.0/28\nusb_route_interface=usb0\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            collection = self.write(directory, "collection.txt", collection_text)
+            inputs = {category: [] for category in INSPECT.CATEGORIES}
+            inputs["collection"] = [collection]
+            report = INSPECT.build_report(inputs)
+            self.assertEqual(
+                report["decision_gates"]["independent_systemd_unit_feasibility"]["status"],
+                "inferred",
+            )
+            self.assertEqual(
+                report["decision_gates"]["usb_only_network_binding"]["status"], "inferred"
+            )
+            legacy = self.write(directory, "systemd.txt", "systemd 251\nType=simple\n")
+            inputs["systemd"] = [legacy]
+            report = INSPECT.build_report(inputs)
+            self.assertIn("systemd.version!=systemd_version", report["cross_source_conflicts"])
+            self.assertEqual(
+                report["decision_gates"]["independent_systemd_unit_feasibility"]["status"],
+                "conflicting",
+            )
 
     def test_oversized_and_invalid_encoding_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:

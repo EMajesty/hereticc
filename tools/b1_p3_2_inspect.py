@@ -456,6 +456,7 @@ COLLECTION_FIELDS = {
     "run_filesystem",
     "run_read_write",
     "run_mode",
+    "runtime_unit_dir_mode",
     "usb_interface",
     "usb_ipv4",
     "usb_link_up",
@@ -527,6 +528,7 @@ def analyze_collection(text: str) -> dict[str, object]:
         "service_restart",
         "run_filesystem",
         "run_mode",
+        "runtime_unit_dir_mode",
         "usb_interface",
         "usb_route_interface",
     }
@@ -572,20 +574,23 @@ def analyze_collection(text: str) -> dict[str, object]:
     if usb_interface is not None and route_interface is not None and usb_interface != route_interface:
         contradictions.append("USB address and route interfaces differ")
 
-    conflicting = duplicate_conflict or bool(contradictions)
-    invalid_report = (
+    schema_invalid = (
         oversized
         or len(lines) > MAX_COLLECTION_FIELDS
         or malformed > 0
         or bool(invalid)
         or bool(unexpected)
+        or duplicate_conflict
+        or bool(missing)
+        or (
+            one("collection_phase") == "pre-restart"
+            and one("restart_observed") != "false"
+        )
     )
-    if conflicting or invalid_report:
-        classification = "conflicting"
-    elif missing:
-        classification = "unknown"
-    else:
-        classification = "confirmed"
+    schema_classification = "conflicting" if schema_invalid else "confirmed"
+    status = one("collection_status")
+    completeness_classification = "confirmed" if status in {"complete", "partial", "failed"} else "unknown"
+    consistency_classification = "conflicting" if contradictions else "confirmed"
 
     safe_values = {
         key: next(iter(items))
@@ -595,10 +600,25 @@ def analyze_collection(text: str) -> dict[str, object]:
     return {
         "facts": {
             "schema_validity": _fact(
-                classification,
-                classification == "confirmed",
+                schema_classification,
+                not schema_invalid,
                 "bounded selected-fact P3.2c evidence contract",
-            )
+            ),
+            "collection_completeness": _fact(
+                completeness_classification,
+                status,
+                "producer-declared collection completion status",
+            ),
+            "baseline_complete": _fact(
+                completeness_classification,
+                status == "complete",
+                "only a complete producer status is eligible for baseline gates",
+            ),
+            "evidence_consistency": _fact(
+                consistency_classification,
+                not contradictions,
+                "selected cross-field consistency checks",
+            ),
         },
         "selected_facts": safe_values,
         "missing_fields": missing,
@@ -640,12 +660,66 @@ def _confirmed_value(analyses: list[dict[str, object]], name: str, value: object
     )
 
 
+def _collection_ready(collection: list[dict[str, object]]) -> bool:
+    return (
+        _confirmed_value(collection, "schema_validity", True)
+        and _confirmed_value(collection, "baseline_complete", True)
+        and _confirmed_value(collection, "evidence_consistency", True)
+    )
+
+
+def _collection_values(collection: list[dict[str, object]]) -> dict[str, str]:
+    if not collection:
+        return {}
+    values = collection[0].get("selected_facts", {})
+    return values if isinstance(values, dict) else {}
+
+
+def cross_source_conflicts(report: dict[str, dict[str, object]]) -> list[str]:
+    collection = _analyses(report, "collection")
+    values = _collection_values(collection)
+    if not _confirmed_value(collection, "schema_validity", True):
+        return []
+    comparisons = (
+        ("systemd", "version", "systemd_version", lambda value: str(value)),
+        ("systemd", "Type", "service_type", str),
+        ("systemd", "KillMode", "service_kill_mode", str),
+        ("systemd", "MainPID", "service_main_pid", lambda value: str(value)),
+        ("systemd", "ControlGroup", "service_cgroup", str),
+        ("process", "pid", "process_pid", lambda value: str(value)),
+        ("process", "uid", "process_uid", lambda value: str(value)),
+        ("process", "gid", "process_gid", lambda value: str(value)),
+        ("cgroup", "membership", "process_cgroup", str),
+        ("mount", "run_filesystem", "run_filesystem", str),
+        ("mount", "run_mode", "run_mode", str),
+        ("mount", "runtime_unit_dir_mode", "runtime_unit_dir_mode", str),
+        ("network", "expected_address_interface", "usb_interface", str),
+        ("network", "expected_subnet_route_interface", "usb_route_interface", str),
+        ("network", "expected_interface_up", "usb_link_up", lambda value: str(value).lower()),
+    )
+    conflicts = []
+    for category, legacy_name, collection_name, normalize in comparisons:
+        collection_value = values.get(collection_name)
+        if collection_value is None:
+            continue
+        for analysis in _analyses(report, category):
+            fact = analysis.get("facts", {}).get(legacy_name, {})
+            if fact.get("classification") == "confirmed" and normalize(fact.get("value")) != collection_value:
+                conflicts.append(f"{category}.{legacy_name}!={collection_name}")
+    return sorted(set(conflicts))
+
+
 def decision_gates(report: dict[str, dict[str, object]]) -> dict[str, dict[str, str]]:
     systemd = _analyses(report, "systemd")
     process = _analyses(report, "process")
     mount = _analyses(report, "mount")
     network = _analyses(report, "network")
     stock = _analyses(report, "stock")
+    collection = _analyses(report, "collection")
+    collection_values = _collection_values(collection)
+    collection_ready = _collection_ready(collection)
+    conflicts = cross_source_conflicts(report)
+    conflict_categories = {item.split(".", 1)[0] for item in conflicts}
     systemd_baseline = (
         _confirmed_value(systemd, "version")
         and _confirmed_value(systemd, "Type")
@@ -658,36 +732,84 @@ def decision_gates(report: dict[str, dict[str, object]]) -> dict[str, dict[str, 
         network, "address_route_relation", "matching"
     ) and _confirmed_value(network, "expected_interface_up", True)
     continuity = _confirmed_value(stock, "identity_continuity", True)
+    collection_systemd = collection_ready and all(
+        collection_values.get(name)
+        for name in (
+            "systemd_version",
+            "service_type",
+            "service_kill_mode",
+            "runtime_unit_dir_mode",
+        )
+    )
+    collection_run = collection_ready and collection_values.get("run_filesystem") == "tmpfs"
+    collection_process_uid = (
+        collection_ready
+        and collection_values.get("process_uid", "0").isdecimal()
+        and collection_values.get("process_uid") != "0"
+    )
+    collection_usb = collection_ready and all(
+        (
+            collection_values.get("usb_ipv4") == "192.168.155.1/28",
+            collection_values.get("usb_route") == "192.168.155.0/28",
+            collection_values.get("usb_interface")
+            == collection_values.get("usb_route_interface"),
+            collection_values.get("usb_link_up") == "true",
+        )
+    )
+    collection_continuity = collection_ready and all(
+        collection_values.get(name) for name in ("process_pid", "process_start_ticks")
+    )
 
     def gate(status: str, reason: str, phase: str) -> dict[str, str]:
         return {"status": status, "reason": reason, "phase": phase}
 
     return {
         "independent_systemd_unit_feasibility": gate(
-            "inferred" if systemd_baseline and run_tmpfs and runtime_unit_dir else "unknown",
+            "conflicting"
+            if {"systemd", "mount"} & conflict_categories
+            else "inferred"
+            if (systemd_baseline and run_tmpfs and runtime_unit_dir)
+            or (collection_systemd and collection_run)
+            else "unknown",
             "passive facts can support design review but cannot prove a new unit starts independently",
             "P3.2a then P3.2b",
         ),
         "survival_across_ac50_restart": gate("unknown", "requires the zero-hook active lifecycle experiment", "P3.2b"),
         "least_privilege_snapshot_access": gate(
-            "inferred" if process_uid and run_tmpfs else "unknown",
+            "conflicting"
+            if {"process", "cgroup", "mount"} & conflict_categories
+            else "inferred"
+            if (process_uid and run_tmpfs) or (collection_process_uid and collection_run)
+            else "unknown",
             "stock-only operation has no B0.2 snapshot; ownership must be demonstrated later",
             "P3.2a plus later zero-hook fixture",
         ),
         "constructor_report_accessibility": gate("unknown", "constructor report is absent during stock-only operation", "later zero-hook fixture"),
         "usb_only_network_binding": gate(
-            "inferred" if usb_mapping else "unknown",
+            "conflicting"
+            if "network" in conflict_categories
+            else "inferred"
+            if usb_mapping or collection_usb
+            else "unknown",
             "address assignment does not prove successful or exclusive bind",
             "P3.2a then P3.2b/P3.3",
         ),
         "firewall_routing_isolation": gate("unknown", "static route/rule text cannot prove end-to-end isolation", "P3.2a review then authorized test"),
         "pid_start_token_continuity": gate(
-            "confirmed" if continuity else "unknown",
+            "conflicting"
+            if {"systemd", "process", "cgroup"} & conflict_categories
+            else "confirmed"
+            if continuity or collection_continuity
+            else "unknown",
             "confirmation applies only to the bounded passive observation window",
             "P3.2a; restart continuity requires P3.2b",
         ),
         "runtime_only_cleanup": gate(
-            "inferred" if run_tmpfs else "unknown",
+            "conflicting"
+            if "mount" in conflict_categories
+            else "inferred"
+            if run_tmpfs or collection_run
+            else "unknown",
             "tmpfs supports reboot cleanup but does not prove unit/artifact cleanup after exit",
             "P3.2a then P3.2b",
         ),
@@ -724,6 +846,7 @@ def build_report(inputs: dict[str, list[Path]]) -> dict[str, object]:
             raise AssertionError("category report must be an object")
         typed_report[category] = item
     report["decision_gates"] = decision_gates(typed_report)
+    report["cross_source_conflicts"] = cross_source_conflicts(typed_report)
     report["missing_evidence_categories"] = missing
     report["limitations"] = [
         "offline analysis confirms only facts present in supplied evidence",

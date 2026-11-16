@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/neurogenic-b1-collector-model",
     "crates/neurogenic-b1-relay-model",
     "crates/neurogenic-core",
     "crates/neurogenic-host",
