@@ -264,3 +264,10 @@ The SDK exposes a millisecond monotonic clock used by the app and an output call
 Use one populated pad with transport stopped and no project writes. First forward a physical press/release as a baseline. In a separate run, consume that pad's physical event and, inside the same still-live press/release callbacks, call `send_note_on`/`send_note_off` with the callback arguments. Retain no firmware pointers afterward. An audio-output observer records only an atomic request sequence, callback-local cumulative frame count, and block peaks; offline host analysis compares call-to-onset block and release behavior.
 
 Run successive, separately stoppable phases: one synthetic press/release; two overlapping presses of the same pad followed by releases; physical and synthetic overlap; then repeat with stock transport stopped versus playing. Abort on restart, stale-object indication, stuck audio, unmatched release, project mutation, or inability to restore native input/lights/screen. Passing demonstrates callable, repeatable pad-path audition and measurable block correlation only. It does not pass token-addressable polyphony or sample-accurate scheduling unless distinct releases and stable frame offsets are directly observed.
+M0.3b-A2 uses the comparative removable-media identity rather than an autorun
+directory heuristic: Am MOD hardware observations identify the user SD data
+partition as `/dev/mmcblk1p1`, exFAT, mounted below `/media`; its guarded
+launchers independently require the same source/path/filesystem/writeability
+shape. HERETICC additionally verifies exFAT filesystem magic and rejects every
+ambiguous record. This is source-grounded comparative evidence, not a HERETICC
+physical result.

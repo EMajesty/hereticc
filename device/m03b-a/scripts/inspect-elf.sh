@@ -41,8 +41,12 @@ if printf '%s\n' "$sections" | awk '$0 ~ /PROGBITS|NOBITS/ && $0 ~ /W/ && $0 ~ /
 fi
 
 binary_strings=$(strings -a "$elf")
-printf '%s\n' "$binary_strings" | grep -Fq '/run/hereticc-m03b-a.txt'
-if printf '%s\n' "$binary_strings" | grep -Eiq 'snd_|alsa|install_paint|mpc_sample_sdk.*hook|sites::install'; then
+# Do not use grep -q for the large string table: with pipefail-enabled parent
+# shells, grep's early exit can make the producer's SIGPIPE look like failure.
+printf '%s\n' "$binary_strings" | grep -F '/run/hereticc-m03b-a.txt' >/dev/null
+printf '%s\n' "$binary_strings" | grep -F '/proc/mounts' >/dev/null
+printf '%s\n' "$binary_strings" | grep -F 'hereticc-results' >/dev/null
+if printf '%s\n' "$binary_strings" | grep -Ei 'snd_|alsa|install_paint|mpc_sample_sdk.*hook|sites::install' >/dev/null; then
     echo "forbidden feature-hook or interposition identifier found" >&2
     exit 1
 fi
@@ -60,4 +64,5 @@ alsa_interposition=absent
 writable_executable_sections=absent
 init_array=present
 report_path=present
+direct_sd_policy=present
 EOF

@@ -388,6 +388,14 @@ application's service as its final action. Because post-restart shell survival
 is unproven, the proposed same-card retrieval wrapper was not retained. No
 retry, remount, alternative write, service, or new package payload was added.
 
+M0.3b-A2 leaves that lifecycle conclusion intact and adds direct reporting from
+the constructor. It keeps `/run/hereticc-m03b-a.txt`, then attempts the same
+bounded report on the uniquely matched `/dev/mmcblk1p1` `rw` exFAT mount. Linux
+descriptor-relative operations prevent symlink following and replacement;
+publication uses a synced hidden partial, `RENAME_NOREPLACE`, and directory
+sync. No thread, helper, service, hook, executable-memory path, or autorun
+continuation is added.
+
 The inspected AArch64 ELF is ET_DYN and requires `libc.so.6`,
 `libpthread.so.0`, and `libdl.so.2`, with highest imported glibc version 2.30.
 It has no defined dynamic export; no ALSA, `mprotect`, `pwrite`, hook, note, or

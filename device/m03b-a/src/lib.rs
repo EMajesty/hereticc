@@ -10,6 +10,8 @@ use std::io::Write as _;
 
 use mpc_sample_sdk::probe::{self, ProbeResult, ProbeStatus};
 
+mod sd_report;
+
 /// HERETICC diagnostic version.
 pub const PROBE_VERSION: &str = "0.1.0";
 /// Exact upstream SDK revision patched by this experiment.
@@ -62,16 +64,14 @@ pub enum ReportError {
     TooLarge,
 }
 
-/// Write one report to the transient device path.
-///
-/// Failure is returned to the constructor and otherwise ignored; it cannot
-/// enable another SDK path or modify the stock application.
-///
-/// # Errors
-///
-/// Returns filesystem or report-formatting errors.
-fn write_report(result: ProbeResult) -> Result<(), WriteError> {
-    let report = format_report(result).map_err(|_| WriteError::Format)?;
+fn write_reports(result: ProbeResult) -> Result<(), ReportError> {
+    let report = format_report(result)?;
+    let _ = write_transient_report(&report);
+    let _ = sd_report::write_to_detected_sd(&report);
+    Ok(())
+}
+
+fn write_transient_report(report: &str) -> Result<(), WriteError> {
     let mut file = OpenOptions::new()
         .write(true)
         .create(true)
@@ -84,7 +84,6 @@ fn write_report(result: ProbeResult) -> Result<(), WriteError> {
 
 #[derive(Debug)]
 enum WriteError {
-    Format,
     Io,
 }
 
@@ -92,7 +91,7 @@ enum WriteError {
 /// returns immediately. The function is intentionally not exported by name.
 extern "C" fn start_probe() {
     let result = probe::inspect_process();
-    let _ = write_report(result);
+    let _ = write_reports(result);
 }
 
 #[used]

@@ -74,7 +74,7 @@ Acceptance criteria:
 - selective and hardened-full alternatives have reviewable failure-state requirements;
 - M0.3b-A implementation remains a separate review gate.
 
-### M0.3b-A Zero-hook compatibility probe — implemented; retrieval and physical validation blocked
+### M0.3b-A Zero-hook compatibility probe — implemented; awaiting physical validation
 
 Acceptance criteria achieved in source/build evidence:
 
@@ -90,12 +90,13 @@ Acceptance criteria achieved in source/build evidence:
   checksummed, and two package generations are byte-identical;
 - no package has been installed or executed on hardware.
 
-M0.3b-A1 found a blocking retrieval-lifecycle gap: the stock application owns
-the autorun handler and the SDK script restarts that application's service as
-its final command. Post-restart continuation has not been established, so no
-retrieval wrapper was packaged. Physical execution remains blocked until a
-separately reviewed bounded process-lifetime design exists; approval would then
-remain a separate owner action.
+M0.3b-A1 found that post-restart autorun continuation was not supportable.
+M0.3b-A2 resolves retrieval without a continuation: the constructor retains the
+`/run` report and attempts one bounded, no-clobber report on the uniquely
+identified `rw` exFAT SD data partition. Host failure injection and package/ELF
+review are complete. Physical execution remains a separate owner approval and
+would validate mount identity, filesystem operations, loader behavior, and
+stock coexistence only.
 
 ### M0.3b-B–E Device feasibility experiments — planned and blocked
 

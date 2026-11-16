@@ -2,7 +2,7 @@
 
 ## Status and authorization boundary
 
-The zero-hook probe is cross-built and packaged but has **not** run on an MPC
+The zero-hook probe with direct SD reporting is cross-built and packaged but has **not** run on an MPC
 Sample. Source review, package inspection, and physical execution are separate
 gates. Do not place the package on an SD card or insert it into the device until
 the owner explicitly approves physical execution.
@@ -23,8 +23,8 @@ The upstream autorun contract is visible in the extracted
 3. creates a transient systemd drop-in under `/run/systemd/system` with
    `LD_PRELOAD`;
 4. reloads systemd configuration and restarts `ac50` once; and
-5. requests the service restart. There is no verified post-restart retrieval
-   step.
+5. performs no post-restart autorun work. The preload constructor writes `/run` first,
+   then independently attempts the verified SD result before returning.
 
 The JSON has `askQuestion: false`; despite containing prompt text, it must be
 treated as automatic execution when the device's autorun loader accepts the
@@ -51,8 +51,9 @@ identifier, sample name, or project path.
   project loading/saving through normal stock behavior.
 - Owner review of the patch, generated SDK diff, ELF inspection, extracted
   autorun files, and `SHA256SUMS`.
-- A separately approved retrieval design. M0.3b-A1 did not establish one and
-  physical execution remains blocked.
+- An empty `hereticc-results` directory is not required; the probe creates it
+  only after mount verification. If it already exists, it must be a real
+  directory, not a symlink.
 
 Do not use raw partition backups as a recovery claim and do not enable an
 undocumented shell merely to retrieve the report.
@@ -93,8 +94,10 @@ autorun/hereticc-m03b-a-probe.so
    not repeatedly restart the service.
 6. Confirm that the stock application reaches its normal screen and remains
    responsive. The probe deliberately has no custom screen or control action.
-7. No report-retrieval step is currently authorized. Stop here; do not use SSH,
-   a listener, an undocumented command, or a persistent service.
+7. Shut down normally. Remove the card only after shutdown and read
+   `hereticc-results/m03b-a-report-00.txt` on a computer. If slot 00 existed,
+   inspect the first newly created slot through 03. No file means SD reporting
+   failed; it does not mean compatibility passed.
 
 Expected success fields include:
 
@@ -117,7 +120,7 @@ it is not a runtime census of arbitrary process hooks. A missing result file,
 an unchanged pre-existing result, or a `.partial` file is a failed retrieval,
 not a successful compatibility check and not permission to retry repeatedly.
 
-## M0.3b-A1 retrieval investigation — blocked
+## Direct SD reporting and evidence
 
 At pinned minimod commit `3770fb7edcfb432cd45ca4e8fa8bcbefe0435c25`,
 source analysis records that autorun is a feature of the stock application,
@@ -132,13 +135,23 @@ the card. These are comparative source/physical evidence, not HERETICC hardware
 validation: [autorun analysis](https://github.com/ioma8/mpc-minimod/blob/3770fb7edcfb432cd45ca4e8fa8bcbefe0435c25/docs/MODDING.md),
 [validated mount check](https://github.com/AlekseyMalykh/am-mod/blob/6cdc67276f43cd39f64871cb7e36782481244c65/sd-clone-trial/src/autorun.sh#L281-L292).
 
-The SD location and `rw` mount are therefore supportable, but the required
-post-restart process lifetime is not. A transient helper unit might solve that
-mechanically, but it would add a new lifecycle and background-process contract
-not established by the pinned SDK or authorized by this narrow follow-up. No
-runnable retrieval script, modified autorun, or new package content is retained.
-The existing package remains awaiting a revised, separately reviewed retrieval
-plan and physical execution is not ready.
+M0.3b-A2 avoids post-restart continuation. The constructor reads at most 64 KiB
+from `/proc/mounts` and requires exactly one record whose source is
+`/dev/mmcblk1p1`, filesystem is `exfat`, options contain `rw` but not `ro`, and
+mount point is `/media/<name>` with one nonempty ASCII alphanumeric/`._-`
+component. It rejects missing, duplicate, malformed, differently mounted, or
+read-only records. After opening the mount with `O_DIRECTORY|O_NOFOLLOW`, it
+also requires exFAT magic `0x2011bab0` from `fstatfs`. It never remounts.
+
+The only SD destination is `<verified-mount>/hereticc-results/`. Slots are
+`m03b-a-report-00.txt` through `m03b-a-report-03.txt`; corresponding hidden
+`.partial` names reserve each slot. Descriptor-relative creation uses
+`O_CREAT|O_EXCL|O_NOFOLLOW`. The complete report is capped at 768 bytes, synced,
+renamed with `RENAME_NOREPLACE`, and the directory is synced. Existing names are
+skipped, never replaced. Write/sync/finalization failures remove the incomplete
+name where possible and return without blocking stock startup. A storage failure
+can still prevent cleanup physically; any `.partial` file or absent final file
+is failure and must not be treated as a result.
 
 ## Normal exit and recovery
 
@@ -149,8 +162,8 @@ live unload and no `dlclose`.
 After the one bounded observation:
 
 1. shut down normally;
-2. remove the spare card, or delete its top-level `autorun` directory on a
-   computer;
+2. remove the spare card, copy the result on a computer, then delete its
+   top-level `autorun` and `hereticc-results` directories on the computer;
 3. boot with no probe package; and
 4. repeat the stock preflight checks for audio, all pads, display, encoder,
    knobs, fader, buttons, transport, sample loading, and saved projects.
@@ -162,7 +175,8 @@ HERETICC has inspected that mechanism but has not verified it physically.
 
 Immediately stop and return to a stock-only reboot on a boot loop, more than one
 unexpected service restart, missing stock UI, control loss, audio instability,
-unexpected project/sample change, write outside `/run`, overheating, or any
+unexpected project/sample change, write outside `/run` or the verified
+`hereticc-results` directory, overheating, or any
 failure to restore normal stock operation. Do not attempt live unpatching,
 `dlclose`, firmware flashing, partition repair, or repeated automated retries.
 

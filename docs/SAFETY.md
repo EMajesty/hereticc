@@ -62,11 +62,12 @@ execution, not package inspection. The script performs one guarded transient
 `ac50` restart; repeated restarts are a stop condition. Inspect the extracted
 script and checksums before any separately approved run.
 
-M0.3b-A1 did not retain an SD retrieval implementation. Although comparative
-evidence supports an `rw` exFAT card under `/media/<name>`, the stock application
-owns autorun and its service restart may terminate the invoking shell. Do not
-append post-restart copy commands or claim retrieval until an independent,
-bounded, non-persistent lifecycle is separately reviewed.
+M0.3b-A2 keeps post-restart autorun work prohibited. Instead, the probe
+constructor attempts one bounded write under `hereticc-results` only after
+matching `/dev/mmcblk1p1`, exFAT, `rw`, a safe direct `/media` child, and exFAT
+filesystem magic. It uses exclusive partial creation, no-replace finalization,
+and file/directory sync. Missing or partial output is failure. This is host-tested
+source behavior, not physical-device evidence.
 
 ## Data integrity
 

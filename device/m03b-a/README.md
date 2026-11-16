@@ -4,8 +4,18 @@ This isolated crate is the first device-facing HERETICC diagnostic. It is not a
 workspace member and has no relationship to the sequencer core or host adapter.
 It discovers the stock process, reads the pinned SDK's complete 63-word
 fingerprint table, writes one bounded report to `/run/hereticc-m03b-a.txt`, and
-returns. It installs no hook and exposes no audio, MIDI, input, lighting, UI, or
-firmware-write API.
+attempts the same report directly on one strictly identified SD data partition,
+and returns. It installs no hook and exposes no audio, MIDI, input, lighting,
+UI, or firmware-write API.
+
+Direct SD reporting accepts exactly one `/proc/mounts` record for
+`/dev/mmcblk1p1`: filesystem `exfat`, `rw`, and a single safe path component
+under `/media`. It then confirms exFAT with `fstatfs`, opens directories relative
+to pinned descriptors with `O_NOFOLLOW`, and uses one of four fixed names under
+`hereticc-results/`. A report is written exclusively to a hidden partial file,
+synced, finalized with `renameat2(RENAME_NOREPLACE)`, and followed by a directory
+sync. Existing final or partial names are never overwritten. Failure does not
+affect the `/run` report or stock startup.
 
 The dependency pipeline retrieves upstream `mpc-sample-sdk` v0.6.0 commit
 `e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39`, verifies the detached revision,
@@ -35,5 +45,10 @@ The build script does not package, install, or execute anything on a device.
 transient autorun generator, extracts the result for inspection, and writes
 `build/SHA256SUMS`. It never accesses a device or SD card. M0.3b-A1 confirmed
 that a post-restart autorun continuation cannot yet be justified: autorun is a
-child of the stock application whose service is restarted. No SD retrieval
-wrapper is packaged until a separately reviewed process-lifetime design exists.
+child of the stock application whose service is restarted. M0.3b-A2 avoids that
+lifecycle entirely: the preload constructor performs the bounded SD write and
+starts no helper, thread, service, or continuation.
+
+The crate directly declares `libc = 0.2.191` (MIT OR Apache-2.0), already pinned
+by the patched SDK, for descriptor-relative Linux filesystem calls. It adds no
+new package or lockfile version.
