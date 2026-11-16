@@ -351,3 +351,10 @@ reports. Generic SD identity, exFAT formatting, and basic writability are thus
 physical evidence, not leading P3.2g failure hypotheses. Recognition/check
 acceptance, wrapper gates, firmware validation, and standalone ELF startup are
 the ordered diagnostic boundaries.
+
+The owner subsequently recovered a complete P3.2j marker on firmware 1.3.0.12:
+autorun entry, canonical directory resolution, firmware-prefix validation, and
+SD marker publication all passed. P3.2k therefore preserves the P3.2f collector
+bytes and changes only launch integration: exclusive fixed-directory staging to
+volatile `/run`, one foreground invocation, bounded stage reporting, and
+post-exit cleanup. This is host-tested and not yet physical evidence.

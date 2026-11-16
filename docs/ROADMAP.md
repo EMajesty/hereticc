@@ -242,6 +242,16 @@ firmware-guard behavior, then standalone collector startup from the `noexec`
 SD. P3.2j physical execution remains owner-authorized only; see
 [P3.2j](INPUT-HOOK-B1-P3-2J.md).
 
+The owner subsequently obtained a complete passing P3.2j marker on stock
+1.3.0.12, physically confirming autorun recognition, shell entry, package
+directory resolution, firmware-prefix validation, and SD marker publication.
+B1-P3.2k leaves the reviewed P3.2f collector unchanged, stages it exclusively
+at a fixed volatile `/run` path, invokes it once in the foreground, records a
+separate bounded stage marker, cleans up after return, and never touches the
+stock service. The deterministic package and simulations are host-complete;
+physical execution remains owner-only and B1 hook testing remains no-go. See
+[P3.2k](INPUT-HOOK-B1-P3-2K.md).
+
 ### M0.3b-C–E Device feasibility experiments — planned and blocked
 
 This requires a separate, explicitly reviewed task because it creates device-facing executable code.

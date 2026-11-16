@@ -135,6 +135,13 @@ demonstrated. Diagnosis now prioritizes autorun recognition, early wrapper and
 firmware-guard behavior, then P3.2g's direct standalone execution from a
 `noexec` SD; see [B1-P3.2j](INPUT-HOOK-B1-P3-2J.md). No hook was involved.
 
+The subsequent physical P3.2j marker passed autorun entry, canonical package
+directory, exact firmware-prefix, and SD marker-publication stages. These early
+boundaries are now physically confirmed on firmware 1.3.0.12. P3.2k retains the
+same reviewed collector but stages it to a fixed volatile `/run` path before one
+foreground invocation; that revised executable-start boundary is host-tested,
+not hardware-tested.
+
 ## Unknown hardware questions
 
 - Exact end-to-end pad-to-sound and schedule-to-sound latency under stock-engine integration.

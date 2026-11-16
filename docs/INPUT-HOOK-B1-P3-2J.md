@@ -1,7 +1,7 @@
 # B1-P3.2j silent-autorun diagnosis
 
-Status: host-complete marker-only package. Physical execution is owner-only and
-was not performed during this milestone.
+Status: host-complete marker-only package; subsequently run once by the owner on
+stock firmware 1.3.0.12 with a complete passing marker.
 
 ## First P3.2g result
 
@@ -157,3 +157,13 @@ Interpretation:
 
 No hook, preload, executable payload, service operation, listener, internal
 write, or firmware modification exists in this package.
+
+## Subsequent physical result
+
+The owner later recovered a complete marker with `autorun_entered=true`,
+`directory_valid=true`, `firmware_guard=pass`, and
+`collector_invocation=deferred`. Autorun recognition, shell entry, package
+directory resolution, firmware-prefix validation, and marker publication are
+therefore physically confirmed. This narrows the earlier P3.2g no-report result
+to collector startup or later behavior and motivates the RAM-staged P3.2k
+package. It does not authorize B1 hook testing.
