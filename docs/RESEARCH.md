@@ -358,3 +358,10 @@ SD marker publication all passed. P3.2k therefore preserves the P3.2f collector
 bytes and changes only launch integration: exclusive fixed-directory staging to
 volatile `/run`, one foreground invocation, bounded stage reporting, and
 post-exit cleanup. This is host-tested and not yet physical evidence.
+
+P3.2k physically passed wrapper guards, RAM staging, invocation return, and
+cleanup but returned status 1 without a report. All collector errors were
+collapsed to that status before any observable write. Audit identified missing
+Linux mount-field escape decoding (`\040`) as a concrete early defect. P3.2l
+fixes it without relaxing SD identity and adds an allowlisted `/run` stage token
+that the wrapper transfers into a bounded marker; this remains host evidence.

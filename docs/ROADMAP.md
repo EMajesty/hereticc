@@ -252,6 +252,15 @@ stock service. The deterministic package and simulations are host-complete;
 physical execution remains owner-only and B1 hook testing remains no-go. See
 [P3.2k](INPUT-HOOK-B1-P3-2K.md).
 
+The owner-run P3.2k marker physically confirmed firmware/collector guards, RAM
+staging, invocation return with status 1, absent report, and cleanup. P3.2l found
+that the collector did not decode Linux `\040` mount-field escapes, corrected
+that parser without weakening identity/magic/no-follow checks, and adds one
+whitelisted volatile stage token to localize entry, firmware, SD, process,
+collection, and publication boundaries. The distinct deterministic package is
+host-complete; one owner-authorized zero-hook run is next. B1 hook testing
+remains no-go; see [P3.2l](INPUT-HOOK-B1-P3-2L.md).
+
 ### M0.3b-C–E Device feasibility experiments — planned and blocked
 
 This requires a separate, explicitly reviewed task because it creates device-facing executable code.

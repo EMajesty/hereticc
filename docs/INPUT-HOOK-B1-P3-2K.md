@@ -152,3 +152,11 @@ After separate owner authorization:
 
 Physical execution is not performed or authorized by this host milestone. B1
 DATA-hook testing remains no-go.
+
+## Subsequent physical result
+
+The owner later obtained a complete P3.2k marker with firmware, collector-file,
+and RAM-staging passes; invocation attempted; collector exit 1; report absent;
+and cleanup pass. This physically confirms the wrapper lifecycle but not ELF
+entry. P3.2l audits the collapsed exit paths, corrects escaped `/proc/mounts`
+path decoding, and adds bounded volatile stage evidence.

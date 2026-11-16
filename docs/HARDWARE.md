@@ -142,6 +142,13 @@ same reviewed collector but stages it to a fixed volatile `/run` path before one
 foreground invocation; that revised executable-start boundary is host-tested,
 not hardware-tested.
 
+P3.2k subsequently returned collector status 1 with no report after successful
+RAM staging and cleanup. Source audit found that the Rust collector did not
+decode `\040` in `/proc/mounts`, unlike the physically successful shell path.
+P3.2l corrects this while retaining exact device, exFAT, filesystem-magic,
+descriptor-identity, and no-follow checks, and adds bounded volatile stage
+evidence. Neither the fix nor collector entry is yet physically confirmed.
+
 ## Unknown hardware questions
 
 - Exact end-to-end pad-to-sound and schedule-to-sound latency under stock-engine integration.

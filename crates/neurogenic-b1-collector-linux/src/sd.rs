@@ -2,11 +2,12 @@
 #![allow(unsafe_code)]
 
 use std::ffi::{CStr, CString};
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::mem::MaybeUninit;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 use neurogenic_b1_collector_model::{MAX_REPORT_BYTES, RESULT_NAME};
@@ -15,6 +16,30 @@ use crate::{AcquireError, EXFAT_MAGIC, MAX_DIRECT_READ_BYTES};
 
 const SD_SOURCE: &str = "/dev/mmcblk1p1";
 const SD_FS: &str = "exfat";
+const COLLECTOR_STAGE_PATH: &str = "/run/neurogenic-b1-p3-2l/collector-stage.txt";
+
+/// Best-effort bounded progress publication to the wrapper-owned volatile directory.
+///
+/// # Errors
+///
+/// Returns an I/O error when the fixed no-follow stage file cannot be updated.
+pub fn write_collector_stage(stage: &[u8]) -> io::Result<()> {
+    write_stage_path(Path::new(COLLECTOR_STAGE_PATH), stage)
+}
+
+fn write_stage_path(path: &Path, stage: &[u8]) -> io::Result<()> {
+    if stage.len() > 64 {
+        return Err(io::Error::from(io::ErrorKind::InvalidInput));
+    }
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+        .open(path)?;
+    file.write_all(stage)
+}
 
 /// Terminate the separately created child process group.
 ///
@@ -60,10 +85,13 @@ pub fn select_mount(mounts: &[u8]) -> Result<MountRecord, AcquireError> {
             continue;
         }
         let options: std::collections::BTreeSet<_> = words[3].split(',').collect();
-        if !options.contains("rw") || options.contains("ro") || !safe_mount_path(words[1]) {
+        let Some(path) = decode_mount_path(words[1]) else {
+            continue;
+        };
+        if !options.contains("rw") || options.contains("ro") {
             continue;
         }
-        if candidate.replace(PathBuf::from(words[1])).is_some() {
+        if candidate.replace(path).is_some() {
             return Err(AcquireError::Mount);
         }
     }
@@ -71,6 +99,29 @@ pub fn select_mount(mounts: &[u8]) -> Result<MountRecord, AcquireError> {
         (1, Some(path)) => Ok(MountRecord { path }),
         _ => Err(AcquireError::Mount),
     }
+}
+
+pub(crate) fn decode_mount_path(path: &str) -> Option<PathBuf> {
+    let mut decoded = String::with_capacity(path.len());
+    let mut bytes = path.bytes();
+    while let Some(byte) = bytes.next() {
+        if byte != b'\\' {
+            decoded.push(char::from(byte));
+            continue;
+        }
+        let escape = [bytes.next()?, bytes.next()?, bytes.next()?];
+        decoded.push(match escape {
+            [b'0', b'4', b'0'] => ' ',
+            [b'0', b'1', b'1'] => '\t',
+            [b'0', b'1', b'2'] => '\n',
+            [b'1', b'3', b'4'] => '\\',
+            _ => return None,
+        });
+    }
+    if !safe_mount_path(&decoded) {
+        return None;
+    }
+    Some(PathBuf::from(decoded))
 }
 
 fn safe_mount_path(path: &str) -> bool {
@@ -81,7 +132,7 @@ fn safe_mount_path(path: &str) -> bool {
         && !component.contains('/')
         && component
             .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._- ".contains(&byte))
 }
 
 /// Retained, no-follow descriptor for the validated SD mount.
@@ -297,6 +348,19 @@ mod tests {
             select_mount(&[valid.as_slice(), valid.as_slice()].concat()),
             Err(AcquireError::Mount)
         );
+        assert_eq!(
+            select_mount(b"/dev/mmcblk1p1 /media/MPC\\040Sample exfat rw,noexec 0 0\n")
+                .expect("escaped space")
+                .path,
+            Path::new("/media/MPC Sample")
+        );
+        for unsafe_escape in [
+            b"/dev/mmcblk1p1 /media/MPC\\011Sample exfat rw 0 0\n".as_slice(),
+            b"/dev/mmcblk1p1 /media/MPC\\134Sample exfat rw 0 0\n".as_slice(),
+            b"/dev/mmcblk1p1 /media/MPC\\057Sample exfat rw 0 0\n".as_slice(),
+        ] {
+            assert_eq!(select_mount(unsafe_escape), Err(AcquireError::Mount));
+        }
     }
 
     #[test]
@@ -357,5 +421,22 @@ mod tests {
         assert!(SdDestination::open_fixture(&link).is_err());
         std::fs::remove_file(link).expect("cleanup link");
         std::fs::remove_dir_all(root).expect("cleanup root");
+    }
+
+    #[test]
+    fn stage_write_is_bounded_replaced_and_no_follow() {
+        let root = fixture("stage");
+        let stage = root.join("stage");
+        write_stage_path(&stage, b"entry-reached\n").expect("entry");
+        write_stage_path(&stage, b"firmware-passed\n").expect("replace");
+        assert_eq!(std::fs::read(&stage).expect("read"), b"firmware-passed\n");
+        std::fs::remove_file(&stage).expect("remove");
+        let target = root.join("target");
+        std::fs::write(&target, b"unchanged").expect("target");
+        symlink(&target, &stage).expect("symlink");
+        assert!(write_stage_path(&stage, b"entry-reached\n").is_err());
+        assert_eq!(std::fs::read(&target).expect("target"), b"unchanged");
+        assert!(write_stage_path(&target, &[0; 65]).is_err());
+        std::fs::remove_dir_all(root).expect("cleanup");
     }
 }

@@ -129,6 +129,11 @@ impl ExactFileReader for SystemFileReader {
 
 pub struct BoundedCommandRunner;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AcquisitionStage {
+    ServiceProcessAcquired,
+}
+
 fn terminate_group(
     child: &mut std::process::Child,
     process_group: u32,
@@ -307,6 +312,20 @@ pub fn acquire(
     files: &mut impl ExactFileReader,
     deadline: Instant,
 ) -> Result<ObservationInputs, AcquireError> {
+    acquire_with_observer(runner, files, deadline, |_| {})
+}
+
+/// Acquire evidence while reporting only bounded, non-sensitive stage progress.
+///
+/// # Errors
+///
+/// Returns the same bounded acquisition errors as [`acquire`].
+pub fn acquire_with_observer(
+    runner: &mut impl CommandRunner,
+    files: &mut impl ExactFileReader,
+    deadline: Instant,
+    mut observer: impl FnMut(AcquisitionStage),
+) -> Result<ObservationInputs, AcquireError> {
     let service_output = runner.run(SYSTEMCTL_SHOW, deadline)?;
     let version_output = runner.run(SYSTEMD_VERSION, deadline)?;
     let mut service = service_output.stdout;
@@ -319,6 +338,7 @@ pub fn acquire(
     let executable = files.read_link(&proc_root.join("exe"), deadline)?;
     let status = files.read(&proc_root.join("status"), MAX_DIRECT_READ_BYTES, deadline)?;
     let cgroup = files.read(&proc_root.join("cgroup"), MAX_DIRECT_READ_BYTES, deadline)?;
+    observer(AcquisitionStage::ServiceProcessAcquired);
 
     let run_mount = optional_file(files, Path::new("/proc/mounts"), deadline)?;
     let run_mode = optional_mode(files, Path::new("/run"), deadline)?;
@@ -511,16 +531,7 @@ pub fn validate_sd_mount(mounts: &[u8], filesystem_magic: u64) -> Result<PathBuf
             if !options.contains("rw") || options.contains("ro") {
                 return None;
             }
-            let component = words[1].strip_prefix("/media/")?;
-            if component.is_empty()
-                || component.contains('/')
-                || !component
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
-            {
-                return None;
-            }
-            Some(PathBuf::from(words[1]))
+            sd::decode_mount_path(words[1])
         })
         .collect();
     if matches.len() == 1 {
