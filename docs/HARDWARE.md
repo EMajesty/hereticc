@@ -28,6 +28,8 @@ The most detailed public hardware record reviewed is MPC Sample Lab at commit [`
 | Audio | I2S/AK4558 path and ALSA PCM; stock and replacement projects use signed 32-bit streams at 44.1 kHz | upstream hardware-verified for their paths |
 | Storage | SD is mounted `noexec`; `/data` is writable; root filesystem is protected by dm-verity | upstream hardware-verified |
 | Removable SD data partition | Comparative evidence identifies `/dev/mmcblk1p1` as exFAT at `/media/<safe-name>`; the A2 probe required that identity plus `rw` and exFAT magic and successfully published four reports | HERETICC-era owner-run A2 observation |
+| USB composite connection | VID:PID `09e8:205c` exposes USB audio, USB MIDI, and CDC-NCM; Linux bound `cdc_ncm` and received `192.168.155.8/28` from the device at `192.168.155.1` | owner-run observation on firmware 1.3.0.12; one unit |
+| USB HTTP service | `192.168.155.1` served the React firmware updater as `AZ0X Web Server/0.5.1+git9826367`; Akai documents this address for updates | owner-run observation plus official vendor documentation; diagnostic access not established |
 
 Primary references: [Sample Lab README](https://github.com/gospodindilly-ops/mpc-sample-lab/blob/3d482b94c918b96d174f31c411686f2b18b74ce6/README.en.md), [control-surface protocol](https://github.com/gospodindilly-ops/mpc-sample-lab/blob/3d482b94c918b96d174f31c411686f2b18b74ce6/docs/control-surface-protocol.en.md), and [audio/display notes](https://github.com/gospodindilly-ops/mpc-sample-lab/blob/3d482b94c918b96d174f31c411686f2b18b74ce6/docs/audio-display.en.md).
 
@@ -116,6 +118,13 @@ Physical A4 evidence confirms that one MPC Sample running 1.3.0.12 reaches exact
 constructor left controls and audio normal and stock-only reboot succeeded. No
 input hook has been hardware-tested. B0's DATA encoder ABI and thread/lifetime
 behavior remain source-derived assumptions; see [B0 analysis](INPUT-HOOK-B0.md).
+
+Physical B1-P2 evidence confirms a USB CDC-NCM network and stock updater HTTP
+service on the same firmware version. The updater's confirmed application calls
+are a version read and firmware upload; the latter restarts the device and is
+prohibited for diagnostic discovery. Generic object/WebSocket client code in
+the frontend and a 404 subtree response do not establish a diagnostic or command
+API. See [B1-P2](INPUT-HOOK-B1-P2.md).
 
 ## Unknown hardware questions
 

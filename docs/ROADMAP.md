@@ -143,6 +143,14 @@ network, autorun, or stock-export path that can retrieve counters after
 interaction while preserving the live stock PID. Read-only computer and stock
 UI discovery is specified in [B1-P1](INPUT-HOOK-B1-P1.md); B1 remains no-go.
 
+B1-P2 incorporates physical confirmation of USB audio/MIDI, CDC-NCM networking,
+and Akai's updater HTTP service on firmware 1.3.0.12. The rendered updater has
+only a confirmed version read and firmware-upload path. Generic object/WebSocket
+client code is not evidence of active server support, and one subtree request
+returned 404. [P2](INPUT-HOOK-B1-P2.md) adds an offline evidence analyzer and a
+bounded operator procedure; no stock diagnostic or `/run` retrieval path was
+found, so B1 remains no-go.
+
 ### M0.3b-C–E Device feasibility experiments — planned and blocked
 
 This requires a separate, explicitly reviewed task because it creates device-facing executable code.
@@ -269,8 +277,9 @@ Acceptance criteria:
 
 ## Practical next engineering task
 
-Perform only the passive computer-side and stock-UI observations specified by
-[B1-P1](INPUT-HOOK-B1-P1.md). Any operation that executes a device command,
+Complete only the passive evidence capture and allowlisted updater GET
+observations in [B1-P2](INPUT-HOOK-B1-P2.md), then analyze the saved frontend
+offline. Any operation that executes a device command, invokes generic RPC,
 exports diagnostics, packages B1, or runs a physical DATA hook still needs
 separate explicit authorization. Rendering, stock voice, and timing remain
 separate later approvals.

@@ -94,6 +94,12 @@ to match before reporting counters. This hardening does not establish a device
 command channel: no SSH, ADB, USB `/run` exposure, serial shell, or passive SD
 copier is confirmed or authorized.
 
+B1-P2 confirms USB CDC-NCM and the stock firmware-updater HTTP service on one
+firmware 1.3.0.12 unit, but not diagnostic or command access. The documented
+firmware upload endpoint, generic object mutations/methods, WebSocket probing,
+unknown endpoint enumeration, and any server extension remain prohibited.
+Network reachability must not be treated as permission or `/run` access.
+
 ## Data integrity
 
 - NEUROGENIC project data should initially be an SD sidecar, not an undocumented modification of stock project files.

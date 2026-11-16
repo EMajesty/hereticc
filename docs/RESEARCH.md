@@ -10,6 +10,19 @@ Research date: **2026-11-15**. Repositories were inspected at the commits linked
 
 “Hardware-verified” below means the upstream author reports a device test. NEUROGENIC has not reproduced it.
 
+## MPC Sample USB updater evidence
+
+Akai's official
+[MPC Sample update guide](https://support.akaipro.com/en/support/solutions/articles/69000877649-mpc-sample-firmware-update)
+documents a browser updater at `mpc-sample.local` with `192.168.155.1` as the
+fallback address. Owner observations on firmware 1.3.0.12 confirm CDC-NCM and
+the updater HTTP service. The public inMusic
+[AZ0x open-source release](https://github.com/inmusic-software/az0x-open-source)
+provides third-party Linux sources for license compliance but no reviewed
+updater-server or remote-object protocol documentation. Generic object/WebSocket
+client code in the updater bundle is therefore not evidence of a supported
+diagnostic API; see [B1-P2](INPUT-HOOK-B1-P2.md).
+
 ## Summary
 
 | Project | Strategy | Relevance | License/reuse |

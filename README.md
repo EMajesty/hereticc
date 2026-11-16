@@ -8,7 +8,7 @@ NEUROGENIC is an open-source custom firmware extension for the Akai MPC Sample. 
 
 ## Status
 
-NEUROGENIC is in **M0: host core and guarded integration feasibility**. The M0.2/M0.2a host sequencer foundation is complete. M0.3b-A4 was physically validated on one MPC Sample running firmware 1.3.0.12: the expected executable was reached and all 63 firmware fingerprints matched without hooks. M0.3b-B0/B0.1/B0.2 are host-validated only. B1-P1's host-only access review found no supported non-restarting path for post-interaction counter retrieval. No B1 physical hook test is authorized.
+NEUROGENIC is in **M0: host core and guarded integration feasibility**. The M0.2/M0.2a host sequencer foundation is complete. M0.3b-A4 was physically validated on one MPC Sample running firmware 1.3.0.12: the expected executable was reached and all 63 firmware fingerprints matched without hooks. M0.3b-B0/B0.1/B0.2 are host-validated only. B1-P2 confirms USB CDC-NCM and the stock firmware-updater HTTP service, but finds no supported non-restarting diagnostic path to the live counter snapshot. No B1 physical hook test is authorized.
 
 Project website: [neurogeni.cc](https://neurogeni.cc). Source repository: [EMajesty/neurogenic](https://github.com/EMajesty/neurogenic).
 
