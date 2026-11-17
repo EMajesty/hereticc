@@ -701,8 +701,8 @@ class NativeExperimentTests(unittest.TestCase):
         self.assertEqual(len(directories), 1)
         return json.loads((directories[0] / "report.json").read_text())
 
-    def successful_responses(self):
-        return [
+    def successful_responses(self, *, skip_remove_accepted=False):
+        responses = [
             self.response("idle"),
             self.response("armed", diagnostic="waiting_for_paint"),
             self.response(
@@ -733,6 +733,9 @@ class NativeExperimentTests(unittest.TestCase):
                 native=0, byte_matches=0,
             ),
         ]
+        if skip_remove_accepted:
+            responses[-3] = responses[-2]
+        return responses
 
     def test_native_confirmation_is_distinct_and_required(self):
         parsed = hil.parser().parse_args([
@@ -775,6 +778,24 @@ class NativeExperimentTests(unittest.TestCase):
         self.assertFalse(report["audible_playback_observed"])
         patched["restore_stock"].assert_called_once()
         self.assertFalse(self.run_lock.exists())
+
+    def test_rapid_removal_transition_satisfies_acceptance_then_absence(self):
+        ssh = self.NativeSsh(self.successful_responses(skip_remove_accepted=True))
+        stack, patched = self.patches()
+        with stack, contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(hil.orchestrate_native_experiment(self.args, ssh), 0)
+        report = self.only_report()
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["assertions"], {"passed": 6, "failed": 0})
+        self.assertEqual(ssh.commands.count("NATIVE REMOVE"), 1)
+        patched["restore_stock"].assert_called_once()
+
+    def test_skipped_removal_state_requires_sticky_absence_evidence(self):
+        invalid = hil.parse_native_response(self.response(
+            "removed", accepted=1, present=1, removed=0, paint=1,
+            diagnostic="remove_accepted",
+        ))
+        self.assertFalse(hil.removal_command_accepted(invalid))
 
     def test_partial_arm_failure_is_terminal_and_restores(self):
         responses = [self.response("idle"), self.response("idle", action=0)]

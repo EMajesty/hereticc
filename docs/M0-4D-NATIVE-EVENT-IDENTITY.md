@@ -52,10 +52,11 @@ The inspected AArch64 shared library is
 The linked ELF SHA-256 is
 `3d437b9866f3a0a61da9c54b2839fbdc272704693e3cd01c147506f67770758b`.
 
-M0.5 grid editing is not implemented yet. Its safety prerequisite is one
-controlled run that observes exactly one inserted event, removes it, and
-verifies absence. Use a fresh disposable unsaved sequence or known-empty track;
-do not use the owner's saved project containing the prior event.
+The subsequent owner-run M0.4e evidence satisfied this gate: one event was
+uniquely observed, exactly removed, and verified absent before stock restoration.
+The runner initially mislabeled the run because polling skipped the transient
+`remove_accepted` state; [M0.4e/M0.5](M0-4E-M0-5-NATIVE-GRID.md) records the
+state-machine correction and grid integration boundary.
 
 The one-command experiment remains:
 

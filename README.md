@@ -8,7 +8,7 @@ NEUROGENIC is an open-source custom firmware extension for the Akai MPC Sample. 
 
 ## Status
 
-NEUROGENIC is in **M0: guarded native-sequencer integration**. The M0.2/M0.2a host sequencer foundation is complete, and M0.3c's SDK v0.7.1 page/input prototype was physically validated on one MPC Sample running firmware 1.3.0.12. M0.3e restores that stable editor model. M0.4c physically confirmed one NEUROGENIC-generated stock event and audible stock-engine playback; M0.4d host-hardens unique native observation/removal before the grid is connected. The B1 diagnostic models remain separate and B1 hook testing is unauthorized.
+NEUROGENIC is in **M0: guarded native-sequencer integration**. The M0.2/M0.2a host sequencer foundation is complete, and M0.3c's SDK v0.7.1 page/input prototype was physically validated on one MPC Sample running firmware 1.3.0.12. M0.3e restores that stable editor model. M0.4e physically verifies native insertion, unique observation, exact removal, absence, audible stock-engine playback, and stock restoration. M0.5 now has a host-tested commit-on-proof grid coordinator; wiring it to the overlay remains blocked on a legitimate shared Step Edit UI-thread context. The B1 diagnostic models remain separate and B1 hook testing is unauthorized.
 
 Project website: [neurogeni.cc](https://neurogeni.cc). Source repository: [EMajesty/neurogenic](https://github.com/EMajesty/neurogenic).
 
@@ -71,6 +71,7 @@ The core currently implements integer musical time, validated sixteen-track proj
 - [M0.3e sequencer integration](docs/M0-3E-SEQUENCER-INTEGRATION.md) — stable editor restoration and reuse-first stock sequence plan
 - [M0.4 native sequencer](docs/M0-4-NATIVE-SEQUENCER.md) — first physically confirmed stock event and audible playback
 - [M0.4d event identity](docs/M0-4D-NATIVE-EVENT-IDENTITY.md) — unique native observation/removal gate for the playable grid
+- [M0.4e/M0.5 grid boundary](docs/M0-4E-M0-5-NATIVE-GRID.md) — verified lifecycle and commit-on-proof grid coordinator
 - [Roadmap](docs/ROADMAP.md) — milestones and acceptance criteria
 - [Safety](docs/SAFETY.md) — development, deployment, and recovery rules
 - [Device adapter contract](docs/ADAPTER.md) — future clock, voice, capacity, and recovery boundary

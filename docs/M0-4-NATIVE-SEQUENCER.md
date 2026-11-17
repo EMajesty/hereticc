@@ -9,7 +9,8 @@ The owner-run M0.4c experiment on firmware 1.3.0.12 physically confirmed the
 first NEUROGENIC-generated native event: the stock command accepted it, the
 note was visible in Step Edit, and stock transport played it audibly. Automatic
 stock restoration passed. The old raw-byte scanner did not observe the event,
-so native removal was not attempted and remains unverified.
+so native removal was not attempted in that run. M0.4e subsequently verified
+unique observation, exact removal, absence, and restoration on hardware.
 
 M0.4 establishes and host-tests the safe request side of one stock-sequencer
 insertion. A selected active NEUROGENIC cell becomes a bounded, pointer-free

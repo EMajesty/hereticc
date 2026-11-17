@@ -115,6 +115,27 @@ impl UiState {
         track < CELLS && step < CELLS && self.patterns[track] & (1_u16 << step) != 0
     }
 
+    /// Commit one stock-verified cell without changing selection or ownership.
+    ///
+    /// This is reserved for the native-grid coordinator after presence or
+    /// absence has been observed. It deliberately does not perform optimistic
+    /// toggling.
+    pub(crate) fn commit_step(&mut self, track: u8, step: u8, active: bool) -> bool {
+        let track = usize::from(track);
+        let step = usize::from(step);
+        if track >= CELLS || step >= CELLS {
+            return false;
+        }
+        let mask = 1_u16 << step;
+        if active {
+            self.patterns[track] |= mask;
+        } else {
+            self.patterns[track] &= !mask;
+        }
+        self.pending_repaint = true;
+        true
+    }
+
     /// Consume and clear a pending repaint request.
     pub fn take_repaint(&mut self) -> bool {
         core::mem::take(&mut self.pending_repaint)

@@ -50,8 +50,19 @@ the inserted note was visible in Step Edit and audibly played by stock
 transport. Automated observation still failed because NEUROGENIC compared all
 56 bytes, while pinned Am MOD uses the stock event comparator at `0x19722e0`
 for exact selection. M0.4d adopts that comparator, requires a unique match, and
-copies the live canonical value before removal. Hardware observation and
-removal remain to be verified.
+copies the live canonical value before removal. At the M0.4d checkpoint,
+hardware observation and removal were still unverified.
+
+M0.4e hardware evidence closes that uncertainty: the native comparator found
+one event, exact removal completed, a later callback found zero events, and
+stock restoration passed. The only failure was host polling for a transient
+intermediate state after the sticky final state had already been reached.
+
+The remaining M0.5 blocker is not event identity. The SDK's supported overlay
+context is the Sample page, whereas the native command service is valid only
+inside Step Edit paint. SDK tasks do not provide a stock UI-thread dispatcher,
+and repainting a retained Step component from another callback would violate
+its lifetime contract.
 
 ## Confidence labels
 

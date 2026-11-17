@@ -335,7 +335,7 @@ redirected toward a bounded stock sequence-command SDK extension informed by
 Am MOD's native event-list/Undo implementation. See
 [M0.3e sequencer integration](M0-3E-SEQUENCER-INTEGRATION.md).
 
-### M0.4d Native stock-sequence adapter — insertion/playback confirmed, identity fix ready
+### M0.4e Native stock-sequence editing lifecycle — physically verified
 
 M0.4 converts one active selected NEUROGENIC cell into a bounded, pointer-free
 request for the stock UI's current sequence/current track. The request uses the
@@ -363,7 +363,7 @@ M0.4b additionally binds arm/lookup/removal to the same sequence-track context,
 rejects a pre-existing identical event, prevents recursive paint from entering
 native work, verifies exact absence after removal, and adds a separately
 confirmed one-command HIL experiment with automatic stock restoration. Its
-command path has now executed on hardware; automated removal has not. See
+command path has now executed on hardware. See
 [M0.4b safety review](M0-4B-NATIVE-SAFETY.md).
 
 The first physical attempt reached and armed a valid Step-editor context but
@@ -378,16 +378,32 @@ note, but automated observation failed because the adapter compared all 56
 bytes rather than using the stock event comparator. M0.4d uses the comparator
 established by pinned Am MOD, requires a unique match, adopts the live canonical
 value for removal, and emits bounded scan counters. Host/QEMU validation passes.
-One controlled observation/removal run remains the gate for grid integration.
-See [M0.4d event identity](M0-4D-NATIVE-EVENT-IDENTITY.md).
 
-### M0.5 First playable native grid — gated
+M0.4e physically verified the complete bounded lifecycle: the comparator found
+one unique event, exact removal reached `event_removed`, a later scan found zero
+events, and stock restoration passed. The HIL runner alone reported failure
+because polling missed the transient `remove_accepted` state. It now accepts
+the later `removed` state only with sticky `event_removed=1` evidence, while the
+separate absence milestone still requires that final evidence. See
+[M0.4e and M0.5 grid boundary](M0-4E-M0-5-NATIVE-GRID.md).
 
-After M0.4d physically verifies unique observation, exact removal, and absence,
-connect the stable M0.3e 16-step grid to the current stock sequence/track. ON
-inserts the selected physical pad's live-mapped note at the existing 960-PPQ
-tick; OFF removes only that cell's verified receipt. The UI changes only after
-native commit evidence. Initial acceptance is A01 at steps 0, 4, 8, and 12.
+### M0.5 First playable native grid — transaction path host-tested, UI boundary gated
+
+The fixed-capacity coordinator now maps the stable M0.3e 16-step grid to the
+verified native adapter. ON uses the live pad mapping and existing 960-PPQ
+timing; OFF removes only a canonical receipt owned by that cell. Grid bits
+change only after unique presence or verified absence, and pending, failed and
+ambiguous states remain explicit. Host tests cover timing, delayed commit,
+exact receipt removal and refusal to remove untracked stock events.
+
+It is deliberately not connected to PLUS yet. The M0.3e overlay runs in the
+Sample-page callback, while native sequence edits are verified only in the
+Step-editor paint callback. The pinned SDK exposes no supported UI-thread task
+dispatcher, and retaining or repainting a borrowed Step component from another
+thread/callback would violate its lifetime contract. The next implementation
+must establish one legitimate shared Step UI callback boundary; it must not
+call native editing from input or HIL worker threads. Initial physical
+acceptance remains A01 at steps 0, 4, 8 and 12, followed by removal of step 8.
 
 ### M0.3b-C–E Device feasibility experiments — planned and blocked
 
@@ -541,9 +557,11 @@ One repeat of the same eight-command cycle is the only next HIL action; after
 that, priority returns to the bounded stock-sequencer adapter. See
 [HIL-1.2](HIL-1-2.md) and [HIL-1.3](HIL-1-3.md).
 
-M0.4c physically confirmed the first NEUROGENIC-generated stock event and
-audible stock playback. The next action is one controlled M0.4d run on a fresh
-disposable sequence/track to verify unique native-comparator observation,
-canonical removal, and absence. Only that result gates M0.5 grid integration.
-See [M0.4d](M0-4D-NATIVE-EVENT-IDENTITY.md). B1 DATA-hook testing remains
-unrelated and unauthorized.
+M0.4e physically confirmed unique native-comparator observation, canonical
+removal, verified absence and stock restoration. M0.5's host transaction path
+is complete; the next engineering task is the smallest supported way to own a
+shared Step-editor UI callback for the overlay and queued edit, without retained
+firmware pointers or cross-thread native calls. Only then should the A01
+four-on-the-floor acceptance run execute. See
+[M0.4e/M0.5](M0-4E-M0-5-NATIVE-GRID.md). B1 DATA-hook testing remains unrelated
+and unauthorized.

@@ -3,6 +3,8 @@
 #[cfg(feature = "hil-test-interface")]
 pub mod hil;
 #[cfg(feature = "native-sequence-adapter")]
+pub mod native_grid;
+#[cfg(feature = "native-sequence-adapter")]
 pub mod native_sequence_experiment;
 pub mod native_stock_sequence;
 pub mod reducer;

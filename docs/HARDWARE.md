@@ -87,7 +87,13 @@ note visible in stock Step Edit, audible playback through stock transport, and
 successful automatic stock restoration. Its raw 56-byte lookup did not find
 the event, so automated observation and removal did not occur. M0.4d replaces
 that incompatible comparison with the stock event comparator and a unique-match
-canonical receipt; this correction is host/QEMU-tested, not yet physical.
+canonical receipt; at the M0.4d checkpoint this correction was host/QEMU-tested
+but not yet physical.
+
+The M0.4e owner run physically verified the correction: one unique event was
+observed, exact removal completed, absence was observed with zero remaining
+events, and stock restoration passed. The runner's failure label came from
+missing the transient `remove_accepted` poll, not a device failure.
 
 These facts are research inputs, not permission to depend directly on raw protocols. An in-process extension should prefer a guarded adapter such as the SDK and retain stock ownership wherever possible.
 

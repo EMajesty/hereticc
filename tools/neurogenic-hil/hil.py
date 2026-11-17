@@ -493,6 +493,17 @@ def parse_native_scan_response(raw: bytes) -> dict[str, str]:
     return fields
 
 
+def removal_command_accepted(state: dict[str, str]) -> bool:
+    """Accept a polled state at or beyond removal dispatch, with sticky proof."""
+    if state["native"] == "remove_accepted":
+        return state["event_removed"] == "0" and state["diagnostic"] == "remove_accepted"
+    return (
+        state["native"] == "removed"
+        and state["event_removed"] == "1"
+        and state["diagnostic"] == "event_removed"
+    )
+
+
 def execute_level_b_scenario(
     ssh: Ssh, records: list[dict[str, object]] | None = None
 ) -> list[dict[str, object]]:
@@ -1125,7 +1136,7 @@ def orchestrate_native_experiment(args: argparse.Namespace, ssh: Ssh) -> int:
                 "remove-command-accepted",
                 lambda: wait_for(
                     "stock removal-command acceptance",
-                    lambda state: state["native"] == "remove_accepted",
+                    removal_command_accepted,
                     15,
                 ),
             )
