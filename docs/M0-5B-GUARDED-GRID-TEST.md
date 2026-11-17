@@ -1,7 +1,7 @@
 # M0.5b guarded playable-grid hardware test
 
-Status: runner implemented and host/QEMU-tested; physical grid acceptance has
-not been run.
+Status: runner physically exercised; activation passed and stock restoration
+passed, but the grid presentation did not open, so musical acceptance failed.
 
 ## Reviewed execution path
 
@@ -18,6 +18,11 @@ artifact. Its read-only `GRID QUERY` command reports only bounded counters and
 state: hook installation, Step paints, overlay activation, accepted intents,
 verified insertions/observations/removals, invalidations, and current state. It
 does not expose firmware pointers, memory, commands, paths, or audio claims.
+
+The owner run recorded `hook=1`, 18 Step paints and `state=ready`, but zero
+presentation activations, intents, insertions, observations, or removals. This
+confirms the native paint path while leaving the old SHIFT+DATA activation
+transition unobserved. M0.5c supersedes that activation model.
 
 ## One-command experiment
 

@@ -514,14 +514,14 @@ def parse_grid_response(raw: bytes) -> dict[str, str]:
             raise RemoteError("ambiguous native grid response")
         fields[key] = value
     required = {
-        "v", "hook", "paints", "open", "activations", "intents",
-        "insertions", "observations", "removals", "invalidations", "state",
+        "v", "hook", "paint", "ctx", "draw", "open", "input", "intent",
+        "ins", "obs", "rm", "inv", "state",
     }
-    if set(fields) != required or fields["v"] != "1":
+    if set(fields) != required or fields["v"] != "2":
         raise RemoteError("incomplete native grid response")
-    if fields["hook"] not in ("0", "1") or fields["open"] not in ("0", "1"):
+    if any(fields[key] not in ("0", "1") for key in ("hook", "ctx", "open")):
         raise RemoteError("invalid native grid evidence bit")
-    for key in required - {"v", "hook", "open", "state"}:
+    for key in required - {"v", "hook", "ctx", "open", "state"}:
         if not fields[key].isdigit() or int(fields[key]) > 2**32 - 1:
             raise RemoteError("invalid native grid counter")
     if fields["state"] not in {
@@ -1353,10 +1353,10 @@ def orchestrate_grid_experiment(
             print("[4/6] OWNER PHYSICAL TEST (experimental build remains active)", flush=True)
             print(
                 "  Use a disposable empty one-bar 4/4 sequence with A01 assigned.\n"
-                "  Open Step Edit; SHIFT+DATA opens NEUROGENIC. Select A01.\n"
+                "  Open Step Edit; NEUROGENIC must appear automatically. Select A01.\n"
                 "  Enable steps 1, 5, 9, 13; play and verify four even hits.\n"
-                "  Disable step 9; verify three hits. Close the grid and inspect\n"
-                "  stock Step Edit (ticks 0,960,2880 present; 1920 absent).",
+                "  Disable step 9; verify three hits. SHIFT+DATA shows stock view;\n"
+                "  inspect ticks 0,960,2880 present and tick 1920 absent.",
                 flush=True,
             )
             answer = input_fn("Type PASS or FAIL once the single test is complete: ").strip().upper()
@@ -1372,6 +1372,20 @@ def orchestrate_grid_experiment(
             }
             if answer == "FAIL":
                 raise RunCycleError("owner reported playable-grid acceptance failure")
+            required_counters = {
+                "paint": 1, "draw": 1, "input": 1, "intent": 5,
+                "ins": 4, "obs": 4, "rm": 1,
+            }
+            missing = {
+                key: {"expected_at_least": minimum, "actual": int(after[key])}
+                for key, minimum in required_counters.items()
+                if int(after[key]) < minimum
+            }
+            if after["ctx"] != "1" or after["hook"] != "1" or missing:
+                raise RemoteError(
+                    "owner reported PASS but bounded grid evidence was incomplete: "
+                    f"context={after['ctx']} hook={after['hook']} counters={missing}"
+                )
         except (EOFError, KeyboardInterrupt):
             original_error = RunCycleError("grid experiment interrupted before acknowledgement")
             report["errors"].append({"phase": "grid-experiment", "message": str(original_error)})
@@ -1379,7 +1393,7 @@ def orchestrate_grid_experiment(
         except HilError as exc:
             original_error = exc
             report["errors"].append({"phase": "grid-experiment", "message": str(exc)})
-            if report["assertions"] == {"passed": 0, "failed": 0}:
+            if report["assertions"].get("failed", 0) == 0:
                 report["assertions"] = {"passed": 0, "failed": 1}
             diagnostics = report.get("diagnostics")
             if mutated and (not isinstance(diagnostics, dict) or "after" not in diagnostics):

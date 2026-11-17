@@ -164,6 +164,16 @@ impl NeurogenicDevice {
 
             graphics.colour(MUTED);
             graphics.text("DATA: cursor   PADS: track", 10, 146, 300, 18, 11.0);
+            #[cfg(feature = "native-playable-grid")]
+            graphics.text(
+                "PLUS: toggle   SHIFT+DATA: stock view",
+                10,
+                169,
+                300,
+                18,
+                11.0,
+            );
+            #[cfg(not(feature = "native-playable-grid"))]
             graphics.text("PLUS: toggle   SHIFT+DATA: close", 10, 169, 300, 18, 11.0);
             graphics.text(
                 "16 physical pads; banks remain stock-owned",
@@ -225,11 +235,7 @@ impl Mod for NeurogenicDevice {
             _ => Button::Other,
         };
         #[cfg(feature = "native-playable-grid")]
-        if mapped == Button::Data
-            && event.pressed
-            && event.shift
-            && !native_grid_runtime::context_active()
-        {
+        if !native_grid_runtime::context_active() {
             return Flow::Forward;
         }
         #[cfg(feature = "native-playable-grid")]
@@ -240,12 +246,14 @@ impl Mod for NeurogenicDevice {
         };
         #[cfg(feature = "native-playable-grid")]
         {
+            if outcome.flow == reducer::Flow::Consume {
+                native_grid_runtime::note_input();
+            }
             if let Some(cell) = request {
                 let _ = native_grid_runtime::request_toggle(cell.track, cell.step);
             }
-            if outcome.restore {
-                native_grid_runtime::deactivate();
-            }
+            // In Step Edit this is a presentation switch, not page loss.
+            // Keeping the runtime/context alive preserves canonical receipts.
             return Self::sdk_flow(outcome.flow);
         }
 
@@ -265,11 +273,18 @@ impl Mod for NeurogenicDevice {
     fn on_encoder(&mut self, event: EncoderEvent) -> Flow {
         #[cfg(not(feature = "native-playable-grid"))]
         self.close_if_page_gone();
+        #[cfg(feature = "native-playable-grid")]
+        if !native_grid_runtime::context_active() {
+            return Flow::Forward;
+        }
         let Some(outcome) = self.with_ui(|ui| ui.encoder(event.delta)) else {
             return self.contention_encoder_flow(event.delta);
         };
         #[cfg(feature = "native-playable-grid")]
         {
+            if outcome.flow == reducer::Flow::Consume {
+                native_grid_runtime::note_input();
+            }
             // DATA remains the explicit repaint handshake: stock receives the
             // turn and schedules Step Edit paint; native work stays in paint.
             return if outcome.flow == reducer::Flow::Consume {
@@ -289,10 +304,18 @@ impl Mod for NeurogenicDevice {
     fn on_pad(&mut self, event: PadEvent) -> Flow {
         #[cfg(not(feature = "native-playable-grid"))]
         self.close_if_page_gone();
+        #[cfg(feature = "native-playable-grid")]
+        if !native_grid_runtime::context_active() {
+            return Flow::Forward;
+        }
         let Some(outcome) = self.with_ui(|ui| ui.pad(event.pad, event.action == PadAction::Press))
         else {
             return self.contention_pad_flow(event.pad);
         };
+        #[cfg(feature = "native-playable-grid")]
+        if outcome.flow == reducer::Flow::Consume {
+            native_grid_runtime::note_input();
+        }
         #[cfg(not(feature = "native-playable-grid"))]
         if outcome.repaint {
             Self::repaint_live_sample_page();
@@ -305,8 +328,8 @@ impl Mod for NeurogenicDevice {
         #[cfg(feature = "native-playable-grid")]
         {
             let _ = graphics;
-            // SAFETY: this is the callback-local SDK page component. A hidden
-            // Sample component repaint must not revoke a live Step context.
+            // SAFETY: Step paint uses the separately verified vtable hook and
+            // never arrives here. A visible Sample page ends Step ownership.
             if event.sample_page
                 && unsafe { mpc_sample_sdk::platform::page::visible(event.component) }
             {

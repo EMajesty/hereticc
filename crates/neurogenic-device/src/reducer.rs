@@ -88,6 +88,16 @@ impl Default for UiState {
 }
 
 impl UiState {
+    /// Enter the native Step Edit presentation without synthesizing input.
+    ///
+    /// Called only after the verified Step paint callback established a live
+    /// editing context. Existing committed bits and receipts are preserved.
+    #[cfg(feature = "native-playable-grid")]
+    pub(crate) fn activate_native_grid(&mut self) {
+        self.open = true;
+        self.pending_repaint = true;
+    }
+
     /// Whether the overlay currently owns its declared controls.
     #[must_use]
     pub const fn is_open(&self) -> bool {
@@ -299,5 +309,37 @@ impl UiState {
             repaint: true,
             restore: true,
         }
+    }
+}
+
+#[cfg(all(test, feature = "native-playable-grid"))]
+mod native_presentation_tests {
+    use super::{Button, Flow, UiState};
+
+    #[test]
+    fn verified_step_context_opens_without_a_synthetic_chord() {
+        let mut ui = UiState::default();
+        assert!(!ui.is_open());
+        ui.activate_native_grid();
+        assert!(ui.is_open());
+        assert!(ui.take_repaint());
+        assert_eq!(ui.encoder(1).flow, Flow::Consume);
+    }
+
+    #[test]
+    fn stock_view_toggle_preserves_committed_native_bits() {
+        let mut ui = UiState::default();
+        ui.activate_native_grid();
+        assert!(ui.commit_step(0, 0, true));
+        let (hidden, request) = ui.transaction_button(Button::Data, true, true);
+        assert!(hidden.restore);
+        assert!(request.is_none());
+        assert!(!ui.is_open());
+        let _ = ui.transaction_button(Button::Data, false, true);
+        let (shown, request) = ui.transaction_button(Button::Data, true, true);
+        assert!(!shown.restore);
+        assert!(request.is_none());
+        assert!(ui.is_open());
+        assert!(ui.step_active(0, 0));
     }
 }

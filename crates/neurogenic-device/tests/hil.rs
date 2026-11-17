@@ -79,7 +79,7 @@ fn native_experiment_commands_are_bounded_and_inert_until_install() {
 fn playable_grid_diagnostics_are_bounded_and_pointer_free() {
     let mut ui = UiState::default();
     let response = apply(&mut ui, b"GRID QUERY").expect("grid query");
-    assert!(response.as_str().starts_with("v=1 hook="));
+    assert!(response.as_str().starts_with("v=2 hook="));
     assert!(response.as_str().contains(" state="));
     assert!(response.as_str().len() <= MAX_RESPONSE_BYTES);
     assert!(!response.as_str().contains("0x"));

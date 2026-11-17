@@ -78,6 +78,13 @@ eight paints, and context changes fail closed. A new bounded diagnostic query
 reports counters and state only; it is evidence of callback/edit progression,
 not of stock-screen contents or audible playback.
 
+M0.5b hardware evidence narrowed the activation failure: the verified Step
+hook executed 18 times with a ready context, while the reducer recorded no
+activation or intent. It does not reveal whether the Step page omitted the
+button callback or delivered different SHIFT state. M0.5c avoids that unknown:
+the first valid Step paint opens and renders NEUROGENIC directly. Input remains
+on SDK hooks; native edit work remains exclusively on the Step paint thread.
+
 ## Confidence labels
 
 - **Verified:** directly supported by linked source/documentation or an explicit upstream hardware result.

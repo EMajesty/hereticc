@@ -107,6 +107,14 @@ experimental build active for one physical acceptance test, and restores stock
 in `finally`. Hook/counter evidence cannot establish audible output; only the
 owner's explicit result is recorded as physical audio evidence.
 
+The first M0.5b physical run confirmed the Step hook and 18 paints but showed
+zero presentation activations and zero intents; no musical acceptance test was
+possible. M0.5c therefore makes NEUROGENIC the default presentation on the
+first valid Step paint. Stock paint still runs first, and SHIFT+DATA switches
+temporarily to stock presentation without destroying the controller or native
+receipt ownership. This replacement model is host/QEMU-tested, not yet
+physically validated.
+
 These facts are research inputs, not permission to depend directly on raw protocols. An in-process extension should prefer a guarded adapter such as the SDK and retain stock ownership wherever possible.
 
 ## Controls relevant to NEUROGENIC

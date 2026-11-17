@@ -418,6 +418,17 @@ and restores stock in `finally`. Restoration outcome is independent of musical
 acceptance. The native edit implementation is unchanged. Physical success is
 still pending; see [M0.5b guarded grid test](M0-5B-GUARDED-GRID-TEST.md).
 
+### M0.5c Step Edit presentation replacement — hardware candidate
+
+The first M0.5b run physically confirmed hook installation and 18 Step paint
+callbacks, but the chord-dependent presentation never activated and no intents
+were accepted. M0.5c opens NEUROGENIC automatically on the first valid Step
+paint while leaving the stock controller alive. SHIFT+DATA is now only a
+temporary stock-view switch and preserves committed bits and receipts. The
+existing guarded runner validates v2 render/input/edit counters and restores
+stock. Physical UI and musical acceptance remain pending; see
+[M0.5c Step Edit presentation](M0-5C-STEP-EDIT-PRESENTATION.md).
+
 ### M0.3b-C–E Device feasibility experiments — planned and blocked
 
 This requires a separate, explicitly reviewed task because it creates device-facing executable code.

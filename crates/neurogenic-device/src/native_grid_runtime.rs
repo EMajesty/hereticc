@@ -29,7 +29,7 @@ impl RuntimeStatus {
             Self::Inactive => "NATIVE: inactive",
             Self::Ready => "NATIVE: READY",
             Self::Pending => "NATIVE: pending; turn DATA if idle",
-            Self::Failed => "NATIVE: FAILED (close and inspect stock)",
+            Self::Failed => "NATIVE: FAILED (SHIFT+DATA: stock view)",
             Self::ContextChanged => "NATIVE: context changed; grid closed",
             Self::Busy => "NATIVE: edit already pending",
         }
@@ -52,6 +52,9 @@ struct Runtime {
     observations: AtomicU32,
     removals: AtomicU32,
     invalidations: AtomicU32,
+    renders: AtomicU32,
+    inputs: AtomicU32,
+    reset_pending: AtomicBool,
 }
 
 static RUNTIME: OnceLock<Runtime> = OnceLock::new();
@@ -74,6 +77,9 @@ pub(crate) fn register(ui: Arc<Mutex<UiState>>, overlay_open: Arc<AtomicBool>) -
             observations: AtomicU32::new(0),
             removals: AtomicU32::new(0),
             invalidations: AtomicU32::new(0),
+            renders: AtomicU32::new(0),
+            inputs: AtomicU32::new(0),
+            reset_pending: AtomicBool::new(false),
         })
         .is_ok()
 }
@@ -106,6 +112,9 @@ pub(crate) struct DiagnosticSnapshot {
     pub observations: u32,
     pub removals: u32,
     pub invalidations: u32,
+    pub renders: u32,
+    pub inputs: u32,
+    pub context: bool,
     pub state: &'static str,
 }
 
@@ -121,6 +130,9 @@ pub(crate) fn diagnostic_snapshot() -> DiagnosticSnapshot {
             observations: 0,
             removals: 0,
             invalidations: 0,
+            renders: 0,
+            inputs: 0,
+            context: false,
             state: "unavailable",
         };
     };
@@ -142,7 +154,19 @@ pub(crate) fn diagnostic_snapshot() -> DiagnosticSnapshot {
         observations: runtime.observations.load(Ordering::Acquire),
         removals: runtime.removals.load(Ordering::Acquire),
         invalidations: runtime.invalidations.load(Ordering::Acquire),
+        renders: runtime.renders.load(Ordering::Acquire),
+        inputs: runtime.inputs.load(Ordering::Acquire),
+        context: runtime
+            .context
+            .try_lock()
+            .is_ok_and(|context| context.is_some()),
         state,
+    }
+}
+
+pub(crate) fn note_input() {
+    if let Some(runtime) = RUNTIME.get() {
+        increment(&runtime.inputs);
     }
 }
 
@@ -205,9 +229,9 @@ pub(crate) fn request_toggle(track: u8, step: u8) -> bool {
 }
 
 pub(crate) fn context_active() -> bool {
-    RUNTIME
-        .get()
-        .is_some_and(|runtime| runtime.active.load(Ordering::Acquire))
+    RUNTIME.get().is_some_and(|runtime| {
+        runtime.active.load(Ordering::Acquire) && !runtime.reset_pending.load(Ordering::Acquire)
+    })
 }
 
 pub(crate) fn deactivate() {
@@ -215,20 +239,12 @@ pub(crate) fn deactivate() {
         return;
     };
     runtime.active.store(false, Ordering::Release);
+    runtime.reset_pending.store(true, Ordering::Release);
     runtime.intent.store(NO_INTENT, Ordering::Release);
     runtime.overlay_open.store(false, Ordering::Release);
     runtime
         .status
         .store(RuntimeStatus::Inactive as u8, Ordering::Release);
-    if let Ok(mut ui) = runtime.ui.try_lock() {
-        ui.invalidate_native_grid();
-    }
-    if let Ok(mut editor) = runtime.editor.try_lock() {
-        editor.invalidate();
-    }
-    if let Ok(mut context) = runtime.context.try_lock() {
-        *context = None;
-    }
 }
 
 fn status(runtime: &Runtime) -> RuntimeStatus {
@@ -248,6 +264,7 @@ fn fail_context(
     editor: &mut NativeGridEditor<NativeEditReceipt>,
 ) {
     increment(&runtime.invalidations);
+    runtime.reset_pending.store(true, Ordering::Release);
     editor.invalidate();
     ui.invalidate_native_grid();
     runtime.intent.store(NO_INTENT, Ordering::Release);
@@ -256,6 +273,45 @@ fn fail_context(
     runtime
         .status
         .store(RuntimeStatus::ContextChanged as u8, Ordering::Release);
+}
+
+fn apply_pending_reset(
+    runtime: &Runtime,
+    ui: &mut UiState,
+    editor: &mut NativeGridEditor<NativeEditReceipt>,
+) -> bool {
+    if !runtime.reset_pending.swap(false, Ordering::AcqRel) {
+        return true;
+    }
+    ui.invalidate_native_grid();
+    editor.invalidate();
+    let Ok(mut context) = runtime.context.try_lock() else {
+        runtime.reset_pending.store(true, Ordering::Release);
+        return false;
+    };
+    *context = None;
+    true
+}
+
+fn record_progress(runtime: &Runtime, progress: GridEditProgress) {
+    match progress {
+        GridEditProgress::InsertCommitted => {
+            increment(&runtime.insertions);
+            increment(&runtime.observations);
+            runtime
+                .status
+                .store(RuntimeStatus::Ready as u8, Ordering::Release);
+        }
+        GridEditProgress::RemoveCommitted => {
+            increment(&runtime.removals);
+            runtime
+                .status
+                .store(RuntimeStatus::Ready as u8, Ordering::Release);
+        }
+        _ => runtime
+            .status
+            .store(RuntimeStatus::Pending as u8, Ordering::Release),
+    }
 }
 
 /// Run one bounded native-grid stage and draw from the live Step callback.
@@ -269,8 +325,6 @@ pub(crate) unsafe fn on_step_paint(screen: usize, graphics: usize) {
         return;
     };
     increment(&runtime.paints);
-    runtime.active.store(true, Ordering::Release);
-
     let mut ui = match runtime.ui.try_lock() {
         Ok(ui) => ui,
         Err(TryLockError::WouldBlock | TryLockError::Poisoned(_)) => {
@@ -289,6 +343,9 @@ pub(crate) unsafe fn on_step_paint(screen: usize, graphics: usize) {
             return;
         }
     };
+    if !apply_pending_reset(runtime, &mut ui, &mut editor) {
+        return;
+    }
     let mut port = unsafe { NativeStockSequencePort::from_step_paint(screen) };
     let Ok(identity) = port.context_identity() else {
         fail_context(runtime, &mut ui, &mut editor);
@@ -307,7 +364,9 @@ pub(crate) unsafe fn on_step_paint(screen: usize, graphics: usize) {
     }
     *context = Some(identity);
     drop(context);
+    runtime.active.store(true, Ordering::Release);
     if first_context {
+        ui.activate_native_grid();
         runtime
             .status
             .store(RuntimeStatus::Ready as u8, Ordering::Release);
@@ -325,24 +384,7 @@ pub(crate) unsafe fn on_step_paint(screen: usize, graphics: usize) {
         GridEditState::Idle | GridEditState::Failed(_)
     ) {
         match editor.drive(&mut port, &mut ui) {
-            Ok(
-                progress @ (GridEditProgress::InsertCommitted | GridEditProgress::RemoveCommitted),
-            ) => {
-                match progress {
-                    GridEditProgress::InsertCommitted => {
-                        increment(&runtime.insertions);
-                        increment(&runtime.observations);
-                    }
-                    GridEditProgress::RemoveCommitted => increment(&runtime.removals),
-                    _ => {}
-                }
-                runtime
-                    .status
-                    .store(RuntimeStatus::Ready as u8, Ordering::Release);
-            }
-            Ok(_) => runtime
-                .status
-                .store(RuntimeStatus::Pending as u8, Ordering::Release),
+            Ok(progress) => record_progress(runtime, progress),
             Err(_) => runtime
                 .status
                 .store(RuntimeStatus::Failed as u8, Ordering::Release),
@@ -354,6 +396,7 @@ pub(crate) unsafe fn on_step_paint(screen: usize, graphics: usize) {
         increment(&runtime.overlay_activations);
     }
     if ui.is_open() {
+        increment(&runtime.renders);
         let footer = status(runtime).footer();
         NeurogenicDevice::draw_native(&ui, mpc_sample_sdk::draw::Graphics::new(graphics), footer);
         let _ = ui.take_repaint();

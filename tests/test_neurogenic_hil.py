@@ -897,8 +897,8 @@ class GridExperimentTests(unittest.TestCase):
         def __init__(self, responses=None):
             super().__init__()
             self.responses = list(responses or [
-                b"v=1 hook=1 paints=0 open=0 activations=0 intents=0 insertions=0 observations=0 removals=0 invalidations=0 state=inactive\n",
-                b"v=1 hook=1 paints=12 open=0 activations=1 intents=5 insertions=4 observations=4 removals=1 invalidations=0 state=ready\n",
+                b"v=2 hook=1 paint=0 ctx=0 draw=0 open=0 input=0 intent=0 ins=0 obs=0 rm=0 inv=0 state=inactive\n",
+                b"v=2 hook=1 paint=12 ctx=1 draw=12 open=0 input=15 intent=5 ins=4 obs=4 rm=1 inv=0 state=ready\n",
             ])
 
         def test_command(self, command):
@@ -965,7 +965,7 @@ class GridExperimentTests(unittest.TestCase):
         self.assertEqual(report["status"], "pass")
         self.assertEqual(report["owner_result"], "pass")
         self.assertTrue(report["audible_playback_observed"])
-        self.assertEqual(report["diagnostics"]["after"]["removals"], "1")
+        self.assertEqual(report["diagnostics"]["after"]["rm"], "1")
         patched["restore_stock"].assert_called_once()
 
     def test_owner_failure_and_interruption_restore_stock(self):
@@ -996,6 +996,19 @@ class GridExperimentTests(unittest.TestCase):
         })()
         with self.assertRaises(hil.RunCycleError):
             hil.orchestrate_grid_experiment(bad, mock.Mock(), lambda _: "PASS")
+
+    def test_owner_pass_requires_matching_bounded_grid_evidence(self):
+        ssh = self.GridSsh(responses=[
+            self.GridSsh().responses[0],
+            b"v=2 hook=1 paint=8 ctx=1 draw=8 open=0 input=4 intent=0 ins=0 obs=0 rm=0 inv=0 state=ready\n",
+        ])
+        stack, patched = self.patches()
+        with stack, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(
+            hil.RunCycleError
+        ) as caught:
+            hil.orchestrate_grid_experiment(self.args, ssh, lambda _prompt: "PASS")
+        self.assertIn("bounded grid evidence was incomplete", str(caught.exception))
+        patched["restore_stock"].assert_called_once()
 
     def test_restoration_failure_is_prominent_and_run_remains_failed(self):
         ssh = self.GridSsh()

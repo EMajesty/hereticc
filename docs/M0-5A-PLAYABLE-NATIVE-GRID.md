@@ -1,7 +1,7 @@
 # M0.5a playable native grid candidate
 
-Status: implemented, host/QEMU-tested, cross-built, and not yet physically
-tested.
+Status: superseded by M0.5c after the first physical run confirmed the Step
+paint hook but failed to activate the chord-dependent presentation.
 
 ## Integration boundary
 

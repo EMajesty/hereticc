@@ -192,10 +192,11 @@ fn native_grid_response() -> Response {
     let mut response = Response::new();
     writeln!(
         response,
-        "v=1 hook={} paints={} open={} activations={} intents={} insertions={} observations={} removals={} invalidations={} state={}",
-        u8::from(snapshot.hook), snapshot.paints, u8::from(snapshot.open),
-        snapshot.activations, snapshot.intents, snapshot.insertions,
-        snapshot.observations, snapshot.removals, snapshot.invalidations,
+        "v=2 hook={} paint={} ctx={} draw={} open={} input={} intent={} ins={} obs={} rm={} inv={} state={}",
+        u8::from(snapshot.hook), snapshot.paints, u8::from(snapshot.context),
+        snapshot.renders, u8::from(snapshot.open), snapshot.inputs,
+        snapshot.intents, snapshot.insertions, snapshot.observations,
+        snapshot.removals, snapshot.invalidations,
         snapshot.state,
     )
     .expect("native grid response fits");
