@@ -4,17 +4,35 @@
 pub mod hil;
 pub mod reducer;
 
+use std::sync::{Arc, Mutex, TryLockError};
+
 use mpc_sample_sdk::event::button;
 use mpc_sample_sdk::{ButtonEvent, EncoderEvent, Flow, Mod, PadAction, PadEvent, PaintEvent};
 use reducer::{Button, UiState};
 
 /// Device mod state. It contains no retained firmware pointer.
-#[derive(Default)]
 pub struct NeurogenicDevice {
-    ui: UiState,
+    ui: Arc<Mutex<UiState>>,
+}
+
+impl Default for NeurogenicDevice {
+    fn default() -> Self {
+        Self {
+            ui: Arc::new(Mutex::new(UiState::default())),
+        }
+    }
 }
 
 impl NeurogenicDevice {
+    fn with_ui<R>(&self, apply: impl FnOnce(&mut UiState) -> R) -> Option<R> {
+        let mut ui = match self.ui.try_lock() {
+            Ok(ui) => ui,
+            Err(TryLockError::WouldBlock) => return None,
+            Err(TryLockError::Poisoned(error)) => error.into_inner(),
+        };
+        Some(apply(&mut ui))
+    }
+
     fn sdk_flow(flow: reducer::Flow) -> Flow {
         match flow {
             reducer::Flow::Forward => Flow::Forward,
@@ -35,19 +53,19 @@ impl NeurogenicDevice {
         }
     }
 
-    fn close_if_page_gone(&mut self) {
-        if !self.ui.is_open() {
+    fn close_if_page_gone(&self) {
+        if !self.with_ui(|ui| ui.is_open()).unwrap_or(false) {
             return;
         }
         let screen = mpc_sample_sdk::platform::page::screen();
         // SAFETY: callbacks run on the UI path; the SDK recorded this page and
         // checks its vtable before reading visibility.
         if screen == 0 || !unsafe { mpc_sample_sdk::platform::page::visible(screen) } {
-            let _ = self.ui.lose_page();
+            let _ = self.with_ui(UiState::lose_page);
         }
     }
 
-    fn draw(&self, graphics: mpc_sample_sdk::draw::Graphics) {
+    fn draw(ui: &UiState, graphics: mpc_sample_sdk::draw::Graphics) {
         const BG: u32 = 0xff0c_1018;
         const PANEL: u32 = 0xff1a_2230;
         const TEXT: u32 = 0xfff2_f5f8;
@@ -67,21 +85,18 @@ impl NeurogenicDevice {
 
             let status = format!(
                 "TRACK {:02}   STEP {:02}",
-                self.ui.selected_track() + 1,
-                self.ui.selected_step() + 1
+                ui.selected_track() + 1,
+                ui.selected_step() + 1
             );
             graphics.colour(MUTED);
             graphics.text(&status, 10, 38, 300, 18, 12.0);
 
             for step in 0..reducer::CELLS {
                 let x = 8 + i32::try_from(step).unwrap_or(0) * 19;
-                let selected = step == usize::from(self.ui.selected_step());
+                let selected = step == usize::from(ui.selected_step());
                 graphics.colour(if selected { CURSOR } else { PANEL });
                 graphics.rect(x, 76, 17, 42);
-                if self
-                    .ui
-                    .step_active(usize::from(self.ui.selected_track()), step)
-                {
+                if ui.step_active(usize::from(ui.selected_track()), step) {
                     graphics.colour(ACTIVE);
                     graphics.rect(x + 4, 84, 9, 26);
                 }
@@ -105,6 +120,11 @@ impl NeurogenicDevice {
 }
 
 impl Mod for NeurogenicDevice {
+    fn on_start(&mut self) {
+        #[cfg(feature = "hil-test-interface")]
+        hil::start_bridge(Arc::clone(&self.ui));
+    }
+
     fn on_button(&mut self, event: ButtonEvent) -> Flow {
         self.close_if_page_gone();
         let mapped = match event.code {
@@ -112,7 +132,9 @@ impl Mod for NeurogenicDevice {
             button::PLUS => Button::Plus,
             _ => Button::Other,
         };
-        let outcome = self.ui.button(mapped, event.pressed, event.shift);
+        let Some(outcome) = self.with_ui(|ui| ui.button(mapped, event.pressed, event.shift)) else {
+            return Flow::Forward;
+        };
         if outcome.repaint {
             Self::repaint_live_sample_page();
         }
@@ -121,7 +143,9 @@ impl Mod for NeurogenicDevice {
 
     fn on_encoder(&mut self, event: EncoderEvent) -> Flow {
         self.close_if_page_gone();
-        let outcome = self.ui.encoder(event.delta);
+        let Some(outcome) = self.with_ui(|ui| ui.encoder(event.delta)) else {
+            return Flow::Forward;
+        };
         if outcome.repaint {
             Self::repaint_live_sample_page();
         }
@@ -130,7 +154,10 @@ impl Mod for NeurogenicDevice {
 
     fn on_pad(&mut self, event: PadEvent) -> Flow {
         self.close_if_page_gone();
-        let outcome = self.ui.pad(event.pad, event.action == PadAction::Press);
+        let Some(outcome) = self.with_ui(|ui| ui.pad(event.pad, event.action == PadAction::Press))
+        else {
+            return Flow::Forward;
+        };
         if outcome.repaint {
             Self::repaint_live_sample_page();
         }
@@ -139,14 +166,17 @@ impl Mod for NeurogenicDevice {
 
     fn on_paint(&mut self, graphics: &mut mpc_sample_sdk::draw::Graphics, event: PaintEvent) {
         if !event.sample_page {
-            let _ = self.ui.lose_page();
+            let _ = self.with_ui(UiState::lose_page);
             return;
         }
-        let _ = self.ui.take_repaint();
-        if self.ui.is_open() {
-            self.draw(*graphics);
-        }
+        let _ = self.with_ui(|ui| {
+            let _ = ui.take_repaint();
+            if ui.is_open() {
+                Self::draw(ui, *graphics);
+            }
+        });
     }
 }
 
+#[cfg(feature = "device-export")]
 mpc_sample_sdk::export_mod!(NeurogenicDevice);

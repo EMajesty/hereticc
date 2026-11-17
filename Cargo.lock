@@ -45,6 +45,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "neurogenic-device-hil"
+version = "0.1.0"
+dependencies = [
+ "mpc-sample-sdk",
+ "neurogenic-device",
+]
+
+[[package]]
 name = "neurogenic-host"
 version = "0.1.0"
 dependencies = [

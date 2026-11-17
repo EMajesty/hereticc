@@ -10,6 +10,12 @@ already provides scripted control-surface frames, autorun/preload testing, QEMU
 screen capture, and an audio bridge; it is the preferred future Level C/D
 backend rather than a new emulator. See [HIL-0](HIL-0.md).
 
+HIL-1 retains that reuse decision. The SDK task implementation was reviewed,
+but no supported external-to-UI callback scheduler was established. The
+test-only bridge therefore confines I/O to its own worker and mutates only the
+pointer-free reducer under a nonblocking callback boundary; it does not call
+firmware drawing APIs or claim SDK input injection. See [HIL-1](HIL-1.md).
+
 ## Confidence labels
 
 - **Verified:** directly supported by linked source/documentation or an explicit upstream hardware result.

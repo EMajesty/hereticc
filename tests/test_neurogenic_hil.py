@@ -7,6 +7,7 @@ import stat
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 
 MODULE_PATH = Path(__file__).parents[1] / "tools/neurogenic-hil/hil.py"
@@ -100,6 +101,14 @@ class HilTests(unittest.TestCase):
         self.assertIn(str(self.known), joined)
         self.assertNotIn("accept-new", joined)
 
+    def test_ssh_preserves_nixos_path_and_identity_uses_busybox_dd(self):
+        runner = Runner([completed(identity_output())])
+        with mock.patch.dict(hil.os.environ, {"PATH": "/nix/store/ssh/bin"}, clear=True):
+            hil.identity(hil.Ssh(self.config, runner))
+        self.assertEqual(runner.calls[0][1]["env"]["PATH"], "/nix/store/ssh/bin")
+        self.assertIn('dd if="$stock" bs=4096 count=1', hil.IDENTITY)
+        self.assertNotIn("head -c", hil.IDENTITY)
+
     def test_absent_device_auth_and_host_key_fail_closed(self):
         for failure in (
             subprocess.TimeoutExpired("ssh", 5),
@@ -135,9 +144,9 @@ class HilTests(unittest.TestCase):
         args, kwargs = runner.calls[0]
         script = args[-1]
         self.assertIn("d='/run/neurogenic-hil'", script)
-        self.assertIn('incoming="$d/incoming.so"', script)
-        self.assertIn("/run/neurogenic-hil/current.so", script)
-        self.assertIn("/run/neurogenic-hil/previous.so", script)
+        self.assertIn(f'"$builds/{digest}.incoming"', script)
+        self.assertIn(f'"$builds/{digest}.so"', script)
+        self.assertIn('test "$count" -lt 3', script)
         self.assertEqual(kwargs["input"], data)
         self.assertNotIn("/data/", script)
         self.assertNotIn("/media/", script)
@@ -156,24 +165,28 @@ class HilTests(unittest.TestCase):
         artifact.write_bytes(b"reviewed")
         digest = __import__("hashlib").sha256(b"reviewed").hexdigest()
         sums.write_text(f"{digest}  mod.so\n")
-        old_artifact, old_sums = hil.ARTIFACT, hil.ARTIFACT_SUMS
-        try:
-            hil.ARTIFACT, hil.ARTIFACT_SUMS = artifact, sums
-            self.assertEqual(hil.read_reviewed_artifact(), (b"reviewed", digest))
-            artifact.write_bytes(b"changed")
-            with self.assertRaises(hil.HilError):
-                hil.read_reviewed_artifact()
-        finally:
-            hil.ARTIFACT, hil.ARTIFACT_SUMS = old_artifact, old_sums
+        self.assertEqual(hil.read_reviewed_artifact(artifact, sums), (b"reviewed", digest))
+        artifact.write_bytes(b"changed")
+        with self.assertRaises(hil.HilError):
+            hil.read_reviewed_artifact(artifact, sums)
+
+    def test_normal_build_and_deploy_use_the_same_m03c_artifact(self):
+        self.assertEqual(hil.BUILD, hil.ROOT / "device/m03e/scripts/build-package.sh")
+        self.assertEqual(
+            hil.NORMAL_ARTIFACT,
+            hil.ROOT / "target/m03c/build/neurogenic-m03c-ui.so",
+        )
+        self.assertEqual(hil.NORMAL_SUMS.parent, hil.NORMAL_ARTIFACT.parent)
 
     def test_only_fixed_operations_are_exposed(self):
         ssh = hil.Ssh(self.config, Runner([]))
         with self.assertRaises(hil.HilError):
             ssh.fixed("shell")
         self.assertNotIn("LD_PRELOAD", hil.IDENTITY)
-        self.assertEqual(hil.RESTART.count("systemctl restart ac50.service"), 1)
+        activation = hil.activation_script("a" * 64)
+        self.assertEqual(activation.count("systemctl restart ac50.service"), 1)
         self.assertEqual(hil.RESTORE.count("systemctl restart ac50.service"), 1)
-        self.assertNotIn("reboot", hil.RESTART + hil.RESTORE)
+        self.assertNotIn("reboot", activation + hil.RESTORE)
 
     def test_mutations_require_exact_confirmation(self):
         for value in (None, "", "yes", hil.CONFIRM.lower()):
@@ -182,26 +195,32 @@ class HilTests(unittest.TestCase):
         hil.confirm(hil.CONFIRM)
 
     def test_restart_and_restore_remote_failures_are_terminal(self):
-        for name in ("restart", "restore"):
-            ssh = hil.Ssh(self.config, Runner([completed(stderr=b"systemctl failed", code=1)]))
-            with self.assertRaises(hil.RemoteError):
-                ssh.fixed(name)
+        ssh = hil.Ssh(self.config, Runner([completed(stderr=b"systemctl failed", code=1)]))
+        with self.assertRaises(hil.RemoteError):
+            ssh.activate("a" * 64)
+        ssh = hil.Ssh(self.config, Runner([completed(stderr=b"systemctl failed", code=1)]))
+        with self.assertRaises(hil.RemoteError):
+            ssh.fixed("restore")
+
+    def test_restore_recognizes_failed_activation_dropin_by_immutable_build(self):
+        self.assertIn("for library in '/run/neurogenic-hil/builds'/*.so", hil.RESTORE)
+        self.assertIn("test \"$actual\" = \"$expected\" && valid=1", hil.RESTORE)
 
     def test_single_restart_and_explicit_stock_restoration_settle(self):
-        restarted = identity_output(
-            main_pid="202", dropins=hil.DROPIN,
-        )
+        digest = "a" * 64
+        restarted = identity_output(main_pid="202", dropins=hil.DROPIN)
         runner = Runner([
             completed(identity_output()),
-            completed(b"restart_requested=1\n"),
+            completed(f"activated_sha256={digest}\n".encode()),
             completed(restarted),
+            completed(f"active_sha256={digest}\nprevious_sha256=absent\n".encode()),
         ])
         restart_args = type(
-            "Args", (), {"command": "restart", "confirm": hil.CONFIRM}
+            "Args", (), {"command": "restart", "confirm": hil.CONFIRM, "sha256": digest}
         )()
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(hil.run_command(restart_args, hil.Ssh(self.config, runner)), 0)
-        self.assertEqual(len(runner.calls), 3)
+        self.assertEqual(len(runner.calls), 4)
 
         restore_runner = Runner([
             completed(restarted),
@@ -220,12 +239,44 @@ class HilTests(unittest.TestCase):
     def test_collect_has_no_mutating_commands(self):
         self.assertNotIn("systemctl restart", hil.COLLECT)
         self.assertNotIn(" rm ", hil.COLLECT)
-        self.assertNotIn(">", hil.COLLECT)
+        self.assertNotIn(" > ", hil.COLLECT)
 
-    def test_level_b_is_explicitly_unsupported(self):
-        args = type("Args", (), {"command": "test", "level": "B"})()
-        with self.assertRaises(hil.Unsupported):
-            hil.run_command(args, None)
+    def test_level_b_command_is_bounded_and_parsed(self):
+        response = (
+            b"v=1 open=1 track=4 step=2 bits=0002 flow=consume "
+            b"repaint=1 restore=0 pending_repaint=1\n"
+        )
+        runner = Runner([completed(response)])
+        actual = hil.parse_hil_response(hil.Ssh(self.config, runner).test_command("QUERY"))
+        self.assertEqual(actual["track"], "4")
+        script = runner.calls[0][0][-1]
+        self.assertIn("request=\"$d/request\"", script)
+        self.assertNotIn("systemctl", script)
+        with self.assertRaises(hil.HilError):
+            hil.Ssh(self.config, Runner([])).test_command("QUERY; id")
+        with self.assertRaises(hil.RemoteError):
+            hil.parse_hil_response(b"x" * 193)
+
+    def test_repeatable_activation_never_overwrites_library(self):
+        digest = "b" * 64
+        script = hil.activation_script(digest)
+        self.assertIn(f"/builds/{digest}.so", script)
+        self.assertNotIn(f"> '/run/neurogenic-hil/builds/{digest}.so'", script)
+        self.assertIn("active.sha256", script)
+        self.assertIn("previous.sha256", script)
+
+    def test_rollback_uses_verified_previous_hash(self):
+        previous = "c" * 64
+        restarted = identity_output(main_pid="202", dropins=hil.DROPIN)
+        runner = Runner([
+            completed(identity_output(dropins=hil.DROPIN)),
+            completed(f"active_sha256={'a' * 64}\nprevious_sha256={previous}\n".encode()),
+            completed(f"activated_sha256={previous}\n".encode()),
+            completed(restarted),
+        ])
+        args = type("Args", (), {"command": "rollback", "confirm": hil.CONFIRM})()
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(hil.run_command(args, hil.Ssh(self.config, runner)), 0)
 
     def test_parser_rejects_unknown_commands(self):
         with self.assertRaises(SystemExit):

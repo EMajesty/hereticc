@@ -4,6 +4,13 @@
 //! A future Level B bridge may feed it one bounded command from a safe UI task.
 
 use core::fmt::{self, Write};
+use std::fs::{self, OpenOptions};
+use std::io::{Read, Write as IoWrite};
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use crate::reducer::{Button, CELLS, Flow, Outcome, UiState};
 
@@ -11,6 +18,14 @@ use crate::reducer::{Button, CELLS, Flow, Outcome, UiState};
 pub const MAX_COMMAND_BYTES: usize = 64;
 /// Fixed upper bound for one encoded response.
 pub const MAX_RESPONSE_BYTES: usize = 192;
+/// Volatile directory prepared by the HIL deployer.
+pub const BRIDGE_DIRECTORY: &str = "/run/neurogenic-hil";
+/// Fixed request mailbox.
+pub const REQUEST_FILE: &str = "request";
+/// Fixed response mailbox.
+pub const RESPONSE_FILE: &str = "response";
+/// Marker proving that the test-only worker reached its loop.
+pub const READY_FILE: &str = "bridge.ready";
 
 /// Protocol parsing or execution failure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -172,4 +187,149 @@ pub fn apply(ui: &mut UiState, input: &[u8]) -> Result<Response, Error> {
     };
 
     Ok(encode(ui, outcome))
+}
+
+fn error_response(error: Error) -> &'static [u8] {
+    match error {
+        Error::Empty => b"error=empty\n",
+        Error::TooLong => b"error=too_long\n",
+        Error::NonAscii => b"error=non_ascii\n",
+        Error::Malformed => b"error=malformed\n",
+        Error::Unknown => b"error=unknown\n",
+        Error::OutOfRange => b"error=out_of_range\n",
+    }
+}
+
+fn process_mailbox(directory: &Path, ui: &Mutex<UiState>) {
+    let request = directory.join(REQUEST_FILE);
+    let response = directory.join(RESPONSE_FILE);
+    if response.exists() {
+        return;
+    }
+    let Ok(metadata) = fs::symlink_metadata(&request) else {
+        return;
+    };
+    if !metadata.file_type().is_file() || metadata.len() > MAX_COMMAND_BYTES as u64 {
+        let _ = fs::remove_file(&request);
+        publish(&response, b"error=invalid_request\n");
+        return;
+    }
+    let mut bytes = [0_u8; MAX_COMMAND_BYTES + 1];
+    let read = OpenOptions::new()
+        .read(true)
+        .open(&request)
+        .and_then(|mut file| file.read(&mut bytes));
+    let _ = fs::remove_file(&request);
+    match read {
+        Ok(length) if length <= MAX_COMMAND_BYTES => {
+            let mut state = ui.lock().unwrap_or_else(PoisonError::into_inner);
+            match apply(&mut state, &bytes[..length]) {
+                Ok(result) => publish(&response, result.as_str().as_bytes()),
+                Err(error) => publish(&response, error_response(error)),
+            }
+        }
+        _ => publish(&response, b"error=invalid_request\n"),
+    }
+}
+
+fn publish(path: &Path, bytes: &[u8]) {
+    if bytes.len() > MAX_RESPONSE_BYTES {
+        return;
+    }
+    if let Ok(mut output) = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+    {
+        let _ = output.write_all(bytes);
+    }
+}
+
+fn bridge_loop(directory: &Path, ui: &Mutex<UiState>, stop: &AtomicBool) {
+    if !directory.is_dir() {
+        return;
+    }
+    publish(
+        &directory.join(READY_FILE),
+        b"schema=neurogenic-hil-bridge-v1\n",
+    );
+    while !stop.load(Ordering::Acquire) && directory.is_dir() {
+        process_mailbox(directory, ui);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Start the test-only volatile mailbox worker once.
+///
+/// The worker performs all file I/O. SDK callbacks only use `try_lock`, so the
+/// bridge cannot block a UI or audio callback and never observes firmware data.
+pub fn start_bridge(ui: Arc<Mutex<UiState>>) {
+    static STARTED: AtomicBool = AtomicBool::new(false);
+    if STARTED.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let _ = std::thread::Builder::new()
+        .name("neurogenic-hil".to_owned())
+        .spawn(move || {
+            let stop = AtomicBool::new(false);
+            bridge_loop(Path::new(BRIDGE_DIRECTORY), &ui, &stop);
+        });
+}
+
+#[cfg(test)]
+mod bridge_tests {
+    use super::{READY_FILE, REQUEST_FILE, RESPONSE_FILE, UiState, bridge_loop};
+    use std::fs;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    fn temporary_directory() -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "neurogenic-hil-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir(&path).expect("fixture directory");
+        path
+    }
+
+    fn wait(path: &std::path::Path) -> Vec<u8> {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if let Ok(bytes) = fs::read(path) {
+                return bytes;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("mailbox response timeout");
+    }
+
+    #[test]
+    fn mailbox_applies_real_reducer_and_rejects_invalid_input() {
+        let directory = temporary_directory();
+        let ui = Arc::new(Mutex::new(UiState::default()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_dir = directory.clone();
+        let worker_ui = Arc::clone(&ui);
+        let worker_stop = Arc::clone(&stop);
+        let worker = std::thread::spawn(move || {
+            bridge_loop(&worker_dir, &worker_ui, &worker_stop);
+        });
+        wait(&directory.join(READY_FILE));
+
+        fs::write(directory.join(REQUEST_FILE), b"OPEN\n").expect("request");
+        let response = wait(&directory.join(RESPONSE_FILE));
+        assert!(response.starts_with(b"v=1 open=1"));
+        fs::remove_file(directory.join(RESPONSE_FILE)).expect("consume response");
+
+        fs::write(directory.join(REQUEST_FILE), b"SHELL\n").expect("request");
+        assert_eq!(wait(&directory.join(RESPONSE_FILE)), b"error=unknown\n");
+
+        stop.store(true, Ordering::Release);
+        worker.join().expect("worker");
+        fs::remove_dir_all(directory).expect("cleanup");
+    }
 }

@@ -1,12 +1,13 @@
 # HIL-0 — USB development and hardware-test foundation
 
-Status: **host-tested foundation; no NEUROGENIC hardware operation performed**.
-The temporary SSH prerequisite is upstream hardware-tested on one MPC Sample
-running 1.3.0.12, but the HIL CLI has not been exercised against hardware.
+Status: **physically validated baseline** on one MPC Sample running 1.3.0.12.
+The owner confirmed identity verification, volatile deployment, controlled
+restart, M0.3e operation, and stock restoration. HIL-1 supersedes the original
+two-slot deployment and implements the previously blocked Level B bridge.
 
 ## Outcome
 
-HIL-0 provides:
+The original HIL-0 implementation provided:
 
 - a standard-library Python CLI with `status`, `build`, `deploy`, `restart`,
   `test`, `collect`, and `restore-stock`;
@@ -20,10 +21,9 @@ HIL-0 provides:
 - a feature-gated, fixed-capacity reducer command protocol with no I/O;
 - mocked host tests. They never discover or contact an MPC.
 
-It does **not** install SSH, simulate physical controls, capture screenshots or
-audio, or prove this workflow on hardware. It does not expose arbitrary remote
-commands. Level B is blocked until a reviewed in-process bridge can deliver one
-bounded command outside audio and UI callbacks.
+It did **not** install SSH, simulate physical controls, capture screenshots or
+audio, or expose arbitrary remote commands. The subsequent owner run validated
+its device workflow; HIL-1 supplies the reviewed Level B bridge.
 
 ## Reuse audit
 
@@ -44,7 +44,7 @@ client key and host key, leaves `ac50.service` running, and stores active files
 under `/run`. Reboot removes it; removing the SD while running does not. It is
 still an unaudited root shell, and USB-only binding is not authentication.
 
-## CLI safety contract
+## Original CLI safety contract
 
 Run `python3 tools/neurogenic-hil/hil.py --help`.
 
@@ -73,7 +73,7 @@ MPC or writes internal persistent storage.
 runtime slots. It can create one new JSON file directly under `target/hil`; it
 will not overwrite. SSH stdout/stderr are each bounded to 8192 bytes.
 
-## Test interface
+## Original test interface
 
 The `neurogenic-device` feature `hil-test-interface` is disabled by default.
 When enabled it accepts at most 64 ASCII bytes:
@@ -95,11 +95,11 @@ No exported firmware ABI or delivery transport exists yet.
 | Level | HIL-0 status | Claim |
 |---|---|---|
 | A — host reducer | implemented and host-tested | reducer/protocol behavior only |
-| B — in-process MPC mod | protocol implemented; delivery **blocked** | no physical-input simulation |
+| B — in-process MPC mod | protocol implemented; delivery moved to HIL-1 | no physical-input simulation |
 | C — real input path | planned; prefer virtual MPC first | must exercise SDK callbacks/stock path |
 | D — display/audio | planned | counters do not prove visible/audible output |
 
-## First physical setup procedure — requires owner authorization
+## Historical first physical setup procedure
 
 This procedure is proposed, not executed or authorized by this document.
 
@@ -148,7 +148,7 @@ If SSH/control is unavailable, use normal shutdown, remove the development SD,
 and boot stock-only. A forced shutdown is a last resort and may lose unsaved
 work.
 
-## Remaining prerequisites
+## HIL-0 prerequisites at completion
 
 - owner acceptance and setup of the unlicensed external root-SSH package;
 - first read-only hardware identity/host-key check;
@@ -158,5 +158,6 @@ work.
 - virtual-MPC backend integration for scripted real-path events/screenshots;
 - a separate audio/display oracle before making Level D claims.
 
-HIL-0 therefore provides a concrete safe path toward USB deployment, not
-authorization to deploy or a claim of full HIL automation.
+See [HIL-1](HIL-1.md) for the repeatable immutable deployment lifecycle and
+in-process reducer tests. Neither milestone simulates physical input or grants
+automatic permission to change a connected device.

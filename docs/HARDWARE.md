@@ -41,11 +41,11 @@ upstream physical evidence, not a NEUROGENIC test. The kit has no license file,
 and a root shell is a materially broader security boundary than the planned SDK
 mod, so SSH is not part of the normal integration path.
 
-HIL-0 adds a host-tested controller for this externally installed SSH path. It
-requires a pre-enrolled dedicated host key, exact USB endpoint, firmware
-prefix, AArch64 architecture, `ac50.service` state, MainPID, and executable
-identity before staging or restart. No HIL command has yet run on hardware;
-upstream SSH validation is not NEUROGENIC deployment validation.
+The owner physically validated HIL-0 on firmware 1.3.0.12: its dedicated host
+key, exact USB endpoint, firmware/process identity, volatile library transfer,
+controlled `ac50.service` restart, M0.3e UI, and stock restoration worked.
+HIL-1's repeatable immutable activation and in-process reducer bridge remain
+host-tested only; they are not evidence of physical input simulation.
 
 These facts are research inputs, not permission to depend directly on raw protocols. An in-process extension should prefer a guarded adapter such as the SDK and retain stock ownership wherever possible.
 

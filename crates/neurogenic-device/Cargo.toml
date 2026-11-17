@@ -7,7 +7,8 @@ rust-version = "1.97"
 description = "MPC Sample SDK UI/input prototype for NEUROGENIC"
 
 [features]
-default = []
+default = ["device-export"]
+device-export = []
 hil-test-interface = []
 
 [lib]

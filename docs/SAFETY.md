@@ -61,9 +61,11 @@ through a dedicated, strictly pinned host key and the fixed
 `root@192.168.155.1:2222` endpoint. Its host CLI exposes no arbitrary remote
 command, stages only under `/run/neurogenic-hil`, refuses unrelated service
 drop-ins, and requires an explicit confirmation token for deployment, restart,
-or restoration. Temporary root SSH remains a broad privileged attack surface
-and an unlicensed external prerequisite; it must not be redistributed by this
-repository. No HIL hardware session is authorized by the implementation.
+rollback, testing, or restoration. HIL-1 never overwrites a mapped library and
+keeps test mailboxes volatile and bounded. Temporary root SSH remains a broad
+privileged attack surface and an unlicensed external prerequisite; it must not
+be redistributed by this repository. The owner's successful HIL-0 run does not
+authorize automatic future device-changing sessions.
 
 The M0.3b-A package's `autorun.json` sets `askQuestion` to false. Treat copying
 its `autorun` directory to a card and inserting/booting that card as physical

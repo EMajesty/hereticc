@@ -5,6 +5,7 @@ members = [
     "crates/neurogenic-b1-relay-model",
     "crates/neurogenic-core",
     "crates/neurogenic-device",
+    "crates/neurogenic-device-hil",
     "crates/neurogenic-host",
 ]
 resolver = "2"
