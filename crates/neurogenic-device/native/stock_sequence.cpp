@@ -25,6 +25,10 @@ constexpr std::uintptr_t ADD_COMMAND = 0x019500e0;
 constexpr std::uintptr_t REMOVE_COMMAND = 0x0194fa30;
 constexpr std::uintptr_t RELEASE_SHARED = 0x0123bca0;
 constexpr std::uintptr_t TREE_NEXT = 0x00b51738;
+// Stock tag-3 equality used by the Step editor itself (AM Mod choose_exact).
+// Native events contain reserved/padding bytes, so raw 56-byte equality is not
+// the firmware's event identity contract.
+constexpr std::uintptr_t EVENT_EQUAL = 0x019722e0;
 
 template <typename T> T &field(void *pointer, std::size_t offset) {
     return *reinterpret_cast<T *>(static_cast<unsigned char *>(pointer) + offset);
@@ -81,6 +85,16 @@ struct Receipt {
     std::uint64_t context_identity[2];
 };
 static_assert(sizeof(Receipt) == 88);
+
+struct ScanStats {
+    std::uint32_t traversed;
+    std::uint32_t tag3;
+    std::uint32_t tick;
+    std::uint32_t note;
+    std::uint32_t native_equal;
+    std::uint32_t byte_equal;
+};
+static_assert(sizeof(ScanStats) == 24);
 
 struct Context {
     void *controller;
@@ -172,17 +186,38 @@ bool same_context(const Context &live, const Receipt &receipt) {
            std::memcmp(current, receipt.context_identity, sizeof(current)) == 0;
 }
 
-int contains_event(std::uintptr_t base, const Context &live, const Event &wanted) {
+int scan_event(std::uintptr_t base, const Context &live, const Event &wanted,
+               Event *canonical, ScanStats *stats) {
+    ScanStats observed{};
     void *end = static_cast<unsigned char *>(live.event_list) + 0x68;
     void *node = field<void *>(live.event_list, 0x78);
     unsigned budget = 4096;
     while (node != end && budget-- != 0) {
-        if (node == nullptr) return -3;
-        const void *event = static_cast<unsigned char *>(node) + 0x20;
-        if (std::memcmp(event, &wanted, sizeof(Event)) == 0) return 1;
+        if (node == nullptr) {
+            if (stats != nullptr) *stats = observed;
+            return -3;
+        }
+        const auto *event = reinterpret_cast<const Event *>(
+            static_cast<unsigned char *>(node) + 0x20);
+        ++observed.traversed;
+        if ((event->type & 0xffU) == 3) ++observed.tag3;
+        if (event->time == wanted.time) ++observed.tick;
+        if ((event->type & 0xffU) == 3 && event->data[0x20] == wanted.data[0x20]) {
+            ++observed.note;
+        }
+        if (std::memcmp(event, &wanted, sizeof(Event)) == 0) ++observed.byte_equal;
+        if ((function<int (*)(const void *, const void *)>(base, EVENT_EQUAL)(event, &wanted) & 0xff) != 0) {
+            ++observed.native_equal;
+            if (canonical != nullptr && observed.native_equal == 1) {
+                std::memcpy(canonical, event, sizeof(*canonical));
+            }
+        }
         node = function<void *(*)(void *)>(base, TREE_NEXT)(node);
     }
-    return node == end ? 0 : -3;
+    if (stats != nullptr) *stats = observed;
+    if (node != end) return -3;
+    if (observed.native_equal > 1) return -4;
+    return observed.native_equal == 1 ? 1 : 0;
 }
 
 void cleanup(std::uintptr_t base, NativeTree &removed, NativeTree &added,
@@ -227,7 +262,7 @@ extern "C" int neurogenic_stock_sequence_insert(std::uintptr_t base, void *scree
             base, NOTE_CONSTRUCTOR)(static_cast<unsigned>(note), request->tick, request->duration,
                                     100, 0, static_cast<float>(request->velocity) / 127.0F);
         if ((event.type & 0xffU) != 3 || event.time != request->tick) return 3;
-        const int already_present = contains_event(base, live, event);
+        const int already_present = scan_event(base, live, event, nullptr, nullptr);
         if (already_present != 0) return already_present > 0 ? 2 : 3;
 
         NativeTree removed{}, added{}, changed{};
@@ -280,12 +315,19 @@ extern "C" int neurogenic_stock_sequence_remove(std::uintptr_t base, void *scree
 }
 
 extern "C" int neurogenic_stock_sequence_contains(std::uintptr_t base, void *screen,
-                                                     const Receipt *receipt) noexcept {
+                                                     Receipt *receipt,
+                                                     ScanStats *stats) noexcept {
     if (receipt == nullptr || (receipt->event.type & 0xffU) != 3) return -2;
     try {
         Context live{};
         if (!context(base, screen, live) || !same_context(live, *receipt)) return -1;
-        return contains_event(base, live, receipt->event);
+        Event canonical{};
+        const int result = scan_event(base, live, receipt->event, &canonical, stats);
+        // A unique native-equal event is copied into the pointer-free receipt.
+        // Native removal therefore receives the stock list's canonical bytes,
+        // not constructor padding that the command may have normalized.
+        if (result == 1) std::memcpy(&receipt->event, &canonical, sizeof(canonical));
+        return result;
     } catch (...) {
         return -3;
     }

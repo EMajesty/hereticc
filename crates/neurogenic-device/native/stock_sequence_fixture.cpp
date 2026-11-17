@@ -15,9 +15,11 @@ alignas(16) unsigned char other_track_storage[0x20]{};
 alignas(16) unsigned char list_storage[0x100]{};
 alignas(16) unsigned char service_storage[0x20]{};
 alignas(16) unsigned char event_node[0x20 + sizeof(Event)]{};
+alignas(16) unsigned char second_event_node[0x20 + sizeof(Event)]{};
 constexpr std::uintptr_t BASE = 0x10000000;
 int inserts, frees, strings, drops, releases, adds, removes;
 bool fail_tree_insert;
+bool duplicate_event;
 Event last_event{};
 
 int visible(void *) { return 1; }
@@ -44,7 +46,16 @@ void string_construct(std::uint64_t *out, const char *) {
 }
 void string_drop(std::uint64_t *value) { assert(*value == 1); *value = 0; ++drops; }
 void release_shared(void *control) { assert(control == reinterpret_cast<void *>(0x5678)); ++releases; }
-void *tree_next(void *) { return list_storage + 0x68; }
+void *tree_next(void *node) {
+    if (duplicate_event && node == event_node) return second_event_node;
+    return list_storage + 0x68;
+}
+int event_equal(const void *left, const void *right) {
+    const auto &a = *static_cast<const Event *>(left);
+    const auto &b = *static_cast<const Event *>(right);
+    return a.time == b.time && (a.type & 0xffU) == (b.type & 0xffU) &&
+           a.data[0x20] == b.data[0x20];
+}
 
 struct SharedResult {
     void *object;
@@ -59,7 +70,7 @@ SharedResult add_command(void *service, void *list, void *, void *added, void *,
 }
 SharedResult remove_command(void *service, void *list, const void *event, const void *) {
     assert(service == service_storage && list == list_storage);
-    assert(std::memcmp(event, &last_event, sizeof(last_event)) == 0); ++removes;
+    assert(std::memcmp(event, event_node + 0x20, sizeof(last_event)) == 0); ++removes;
     return {reinterpret_cast<void *>(0x2222), reinterpret_cast<void *>(0x5678)};
 }
 
@@ -95,6 +106,7 @@ extern "C" void *neurogenic_fixture_function(std::uintptr_t offset) {
     case REMOVE_COMMAND: return reinterpret_cast<void *>(remove_command);
     case RELEASE_SHARED: return reinterpret_cast<void *>(release_shared);
     case TREE_NEXT: return reinterpret_cast<void *>(tree_next);
+    case EVENT_EQUAL: return reinterpret_cast<void *>(event_equal);
     default: return nullptr;
     }
 }
@@ -110,17 +122,31 @@ int main() {
     assert(receipt.note == 39 && receipt.event.time == 480 && (receipt.event.type & 255) == 3);
     assert(inserts == 1 && adds == 1 && frees == 1 && strings == 2 && drops == 2 && releases == 1);
     std::memcpy(event_node + 0x20, &receipt.event, sizeof(receipt.event));
-    assert(neurogenic_stock_sequence_contains(BASE, screen_storage, &receipt) == 1);
+    ScanStats scan{};
+    assert(neurogenic_stock_sequence_contains(BASE, screen_storage, &receipt, &scan) == 1);
+    assert(scan.traversed == 1 && scan.tag3 == 1 && scan.tick == 1 && scan.note == 1);
+    assert(scan.native_equal == 1 && scan.byte_equal == 1);
     assert(neurogenic_stock_sequence_insert(BASE, screen_storage, &request, &receipt) == 2);
     field<void *>(things_storage, 0x140) = other_track_storage;
     assert(neurogenic_stock_sequence_context(BASE, screen_storage, changed_identity) == 0);
     assert(std::memcmp(initial_identity, changed_identity, sizeof(initial_identity)) != 0);
-    assert(neurogenic_stock_sequence_contains(BASE, screen_storage, &receipt) == -1);
+    assert(neurogenic_stock_sequence_contains(BASE, screen_storage, &receipt, &scan) == -1);
     assert(neurogenic_stock_sequence_remove(BASE, screen_storage, &receipt) == 1);
     field<void *>(things_storage, 0x140) = track_storage;
     event_node[0x20] ^= 1;
-    assert(neurogenic_stock_sequence_contains(BASE, screen_storage, &receipt) == 0);
+    assert(neurogenic_stock_sequence_contains(BASE, screen_storage, &receipt, &scan) == 0);
     event_node[0x20] ^= 1;
+    // Reserved bytes may be normalized by the command. Native equality still
+    // identifies the unique event and observation adopts its canonical bytes.
+    event_node[0x20 + offsetof(Event, reserved)] ^= 0x5a;
+    assert(neurogenic_stock_sequence_contains(BASE, screen_storage, &receipt, &scan) == 1);
+    assert(scan.native_equal == 1 && scan.byte_equal == 0);
+    assert(receipt.event.reserved != 0);
+    std::memcpy(second_event_node + 0x20, event_node + 0x20, sizeof(Event));
+    duplicate_event = true;
+    assert(neurogenic_stock_sequence_contains(BASE, screen_storage, &receipt, &scan) == -4);
+    assert(scan.native_equal == 2);
+    duplicate_event = false;
     assert(neurogenic_stock_sequence_remove(BASE, screen_storage, &receipt) == 0);
     assert(removes == 1 && releases == 2);
 
@@ -137,5 +163,5 @@ int main() {
     request.tick = 0; request.physical_pad = 16;
     assert(neurogenic_stock_sequence_insert(BASE, screen_storage, &request, &receipt) == 2);
 
-    std::puts("PASS native tag-3 construction, ownership/cleanup, duplicate rejection, context identity, exact remove, and ABI dispatch");
+    std::puts("PASS native tag-3 construction, native equality/canonicalization, ownership/cleanup, duplicate rejection, context identity, exact remove, and ABI dispatch");
 }

@@ -35,6 +35,25 @@ pub struct NativeEditReceipt {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NativeContextIdentity([u64; 2]);
 
+/// Pointer-free, bounded evidence from one live event-list traversal.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NativeScanEvidence {
+    pub traversed: u32,
+    pub tag3: u32,
+    pub tick_matches: u32,
+    pub note_matches: u32,
+    pub native_matches: u32,
+    pub byte_matches: u32,
+}
+
+/// Result of native event identity comparison in one guarded list traversal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NativeEventPresence {
+    Absent,
+    Unique,
+    Ambiguous,
+}
+
 #[cfg(test)]
 impl NativeContextIdentity {
     pub(crate) const fn fixture(words: [u64; 2]) -> Self {
@@ -96,8 +115,11 @@ impl NativeStockSequencePort<'_> {
     ///
     /// Fails closed when the callback context changed or the bounded event-list
     /// traversal was malformed or exceeded its budget.
-    pub fn contains(&mut self, receipt: &NativeEditReceipt) -> Result<bool, NativeEditError> {
-        backend::contains(self.screen, receipt)
+    pub fn observe(
+        &mut self,
+        receipt: &mut NativeEditReceipt,
+    ) -> Result<(NativeEventPresence, NativeScanEvidence), NativeEditError> {
+        backend::observe(self.screen, receipt)
     }
 
     /// Validate that the callback owns a complete live Step editing context.
@@ -134,7 +156,7 @@ impl StockSequenceEditPort for NativeStockSequencePort<'_> {
 
 #[cfg(all(target_arch = "aarch64", feature = "native-sequence-adapter"))]
 mod backend {
-    use super::{NativeEditError, NativeEditReceipt};
+    use super::{NativeEditError, NativeEditReceipt, NativeEventPresence, NativeScanEvidence};
     use crate::stock_sequence::StockNoteRequest;
 
     #[repr(C)]
@@ -155,6 +177,17 @@ mod backend {
         context_identity: [u64; 2],
     }
 
+    #[repr(C)]
+    #[derive(Default)]
+    struct NativeScan {
+        traversed: u32,
+        tag3: u32,
+        tick_matches: u32,
+        note_matches: u32,
+        native_matches: u32,
+        byte_matches: u32,
+    }
+
     unsafe extern "C" {
         fn neurogenic_stock_sequence_insert(
             base: usize,
@@ -170,7 +203,8 @@ mod backend {
         fn neurogenic_stock_sequence_contains(
             base: usize,
             screen: usize,
-            receipt: *const NativeReceipt,
+            receipt: *mut NativeReceipt,
+            scan: *mut NativeScan,
         ) -> i32;
         fn neurogenic_stock_sequence_context(
             base: usize,
@@ -255,24 +289,42 @@ mod backend {
         }
     }
 
-    pub(super) fn contains(
+    pub(super) fn observe(
         screen: usize,
-        receipt: &NativeEditReceipt,
-    ) -> Result<bool, NativeEditError> {
-        let native = NativeReceipt {
+        receipt: &mut NativeEditReceipt,
+    ) -> Result<(NativeEventPresence, NativeScanEvidence), NativeEditError> {
+        let mut native = NativeReceipt {
             event: receipt.event,
             sequence_length: receipt.sequence_length,
             note: receipt.note,
             reserved: 0,
             context_identity: receipt.context_identity,
         };
+        let mut scan = NativeScan::default();
         // SAFETY: same callback-scoped contract as insertion.
         let status = unsafe {
-            neurogenic_stock_sequence_contains(mpc_sample_sdk::image::base(), screen, &native)
+            neurogenic_stock_sequence_contains(
+                mpc_sample_sdk::image::base(),
+                screen,
+                &raw mut native,
+                &raw mut scan,
+            )
+        };
+        let evidence = NativeScanEvidence {
+            traversed: scan.traversed,
+            tag3: scan.tag3,
+            tick_matches: scan.tick_matches,
+            note_matches: scan.note_matches,
+            native_matches: scan.native_matches,
+            byte_matches: scan.byte_matches,
         };
         match status {
-            1 => Ok(true),
-            0 => Ok(false),
+            1 => {
+                receipt.event = native.event;
+                Ok((NativeEventPresence::Unique, evidence))
+            }
+            0 => Ok((NativeEventPresence::Absent, evidence)),
+            -4 => Ok((NativeEventPresence::Ambiguous, evidence)),
             value => Err(error(-value)),
         }
     }
@@ -299,7 +351,7 @@ mod backend {
 
 #[cfg(not(all(target_arch = "aarch64", feature = "native-sequence-adapter")))]
 mod backend {
-    use super::{NativeEditError, NativeEditReceipt};
+    use super::{NativeEditError, NativeEditReceipt, NativeEventPresence, NativeScanEvidence};
     use crate::stock_sequence::StockNoteRequest;
     pub(super) fn insert(
         _: usize,
@@ -310,7 +362,10 @@ mod backend {
     pub(super) fn remove(_: usize, _: &NativeEditReceipt) -> Result<(), NativeEditError> {
         Err(NativeEditError::UnsupportedTarget)
     }
-    pub(super) fn contains(_: usize, _: &NativeEditReceipt) -> Result<bool, NativeEditError> {
+    pub(super) fn observe(
+        _: usize,
+        _: &mut NativeEditReceipt,
+    ) -> Result<(NativeEventPresence, NativeScanEvidence), NativeEditError> {
         Err(NativeEditError::UnsupportedTarget)
     }
     pub(super) fn context_identity(

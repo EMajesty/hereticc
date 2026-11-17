@@ -66,6 +66,11 @@ fn native_experiment_commands_are_bounded_and_inert_until_install() {
     let arm = apply(&mut ui, b"NATIVE ARM").expect("arm");
     assert!(arm.as_str().contains("native=unavailable"));
     assert!(arm.as_str().contains("action_accepted=0"));
+    let diagnostic = apply(&mut ui, b"NATIVE DIAG").expect("diagnostic");
+    assert_eq!(
+        diagnostic.as_str(),
+        "v=1 attempts=0 traversed=0 tag3=0 tick=0 note=0 native=0 bytes=0\n"
+    );
     assert_eq!(apply(&mut ui, b"NATIVE EXEC"), Err(Error::Unknown));
 }
 

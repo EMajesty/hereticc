@@ -150,6 +150,7 @@ fn native_response(action: &str) -> Response {
         Diagnostic::EventObserved => "event_observed",
         Diagnostic::RemoveAccepted => "remove_accepted",
         Diagnostic::EventRemoved => "event_removed",
+        Diagnostic::AmbiguousEvent => "ambiguous_event",
     };
     let mut response = Response::new();
     writeln!(
@@ -163,6 +164,25 @@ fn native_response(action: &str) -> Response {
         u8::from(native_sequence_experiment::paint_after_arm()),
     )
     .expect("native response fits");
+    response
+}
+
+#[cfg(feature = "native-sequence-adapter")]
+fn native_scan_response() -> Response {
+    let scan = crate::native_sequence_experiment::scan_evidence();
+    let mut response = Response::new();
+    writeln!(
+        response,
+        "v=1 attempts={} traversed={} tag3={} tick={} note={} native={} bytes={}",
+        scan.attempts,
+        scan.traversed,
+        scan.tag3,
+        scan.tick_matches,
+        scan.note_matches,
+        scan.native_matches,
+        scan.byte_matches,
+    )
+    .expect("native scan response fits");
     response
 }
 
@@ -194,6 +214,9 @@ pub fn apply(ui: &mut UiState, input: &[u8]) -> Result<Response, Error> {
 
     #[cfg(feature = "native-sequence-adapter")]
     if let Some(action) = text.strip_prefix("NATIVE ") {
+        if action == "DIAG" {
+            return Ok(native_scan_response());
+        }
         if matches!(action, "ARM" | "STATUS" | "REMOVE") {
             return Ok(native_response(action));
         }

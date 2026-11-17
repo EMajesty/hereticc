@@ -45,6 +45,14 @@ protocol lacked a callback generation counter, no-paint is the strongest
 explanation rather than a proven exclusive cause. M0.4c makes that distinction
 observable and uses one normal DATA detent to request the next stock repaint.
 
+The subsequent M0.4c run physically reached the stock add-command boundary;
+the inserted note was visible in Step Edit and audibly played by stock
+transport. Automated observation still failed because NEUROGENIC compared all
+56 bytes, while pinned Am MOD uses the stock event comparator at `0x19722e0`
+for exact selection. M0.4d adopts that comparator, requires a unique match, and
+copies the live canonical value before removal. Hardware observation and
+removal remain to be verified.
+
 ## Confidence labels
 
 - **Verified:** directly supported by linked source/documentation or an explicit upstream hardware result.

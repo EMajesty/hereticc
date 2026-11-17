@@ -457,6 +457,7 @@ def parse_native_response(raw: bytes) -> dict[str, str]:
         "expired_before_paint", "expired_after_paint", "context_unavailable",
         "context_changed", "wrong_thread", "request_rejected", "native_failure",
         "command_accepted", "event_observed", "remove_accepted", "event_removed",
+        "ambiguous_event",
     }:
         raise RemoteError("invalid native diagnostic stage")
     if fields["native"] not in {
@@ -465,6 +466,30 @@ def parse_native_response(raw: bytes) -> dict[str, str]:
         "expired", "failed", "inserting", "removing",
     }:
         raise RemoteError("invalid native experiment status")
+    return fields
+
+
+def parse_native_scan_response(raw: bytes) -> dict[str, str]:
+    if len(raw) > 192:
+        raise RemoteError("native scan response exceeded 192 bytes")
+    try:
+        tokens = raw.decode("ascii").strip().split()
+    except UnicodeDecodeError as exc:
+        raise RemoteError("native scan response is not ASCII") from exc
+    fields: dict[str, str] = {}
+    for token in tokens:
+        if "=" not in token:
+            raise RemoteError("malformed native scan response")
+        key, value = token.split("=", 1)
+        if key in fields or not re.fullmatch(r"[a-z0-9_]+", key):
+            raise RemoteError("ambiguous native scan response")
+        fields[key] = value
+    required = {"v", "attempts", "traversed", "tag3", "tick", "note", "native", "bytes"}
+    if set(fields) != required or fields["v"] != "1":
+        raise RemoteError("incomplete native scan response")
+    for key in required - {"v"}:
+        if not fields[key].isdigit() or int(fields[key]) > 4096:
+            raise RemoteError("invalid native scan counter")
     return fields
 
 
@@ -739,6 +764,8 @@ def orchestrate_run(args: argparse.Namespace, ssh: Ssh | None) -> int:
             "restoration": {"status": "not-required"},
             "tests": [],
             "diagnostics": None,
+            "observation_scan": None,
+            "removal_scan": None,
             "steps": [],
             "errors": [],
             "assertions": {"passed": 0, "failed": 0},
@@ -957,6 +984,15 @@ def orchestrate_native_experiment(args: argparse.Namespace, ssh: Ssh) -> int:
             })
             return actual
 
+        def scan_command() -> dict[str, str]:
+            started = time.monotonic()
+            actual = parse_native_scan_response(ssh.test_command("NATIVE DIAG"))
+            report["tests"].append({
+                "level": "native", "command": "NATIVE DIAG", "actual": actual,
+                "duration_ms": round((time.monotonic() - started) * 1000, 3),
+            })
+            return actual
+
         def wait_for(
             label: str,
             predicate: Callable[[dict[str, str]], bool],
@@ -968,16 +1004,18 @@ def orchestrate_native_experiment(args: argparse.Namespace, ssh: Ssh) -> int:
                 if predicate(state):
                     return state
                 if state["native"] in {"failed", "rejected", "expired"}:
+                    scan = scan_command()
                     raise RemoteError(
                         f"native experiment entered terminal state {state['native']} "
                         f"while waiting for {label}: diagnostic={state['diagnostic']} "
-                        f"paint_after_arm={state['paint_after_arm']}"
+                        f"paint_after_arm={state['paint_after_arm']} scan={scan}"
                     )
                 if time.monotonic() >= deadline:
+                    scan = scan_command()
                     raise RemoteError(
                         f"native experiment timed out waiting for {label}: "
                         f"state={state['native']} diagnostic={state['diagnostic']} "
-                        f"paint_after_arm={state['paint_after_arm']}"
+                        f"paint_after_arm={state['paint_after_arm']} scan={scan}"
                     )
                 time.sleep(0.25)
 
@@ -1057,13 +1095,13 @@ def orchestrate_native_experiment(args: argparse.Namespace, ssh: Ssh) -> int:
             )
             passed_assertions += 1
             print(
-                "      Command accepted: turn DATA one detent to verify exact list presence.",
+                "      Command accepted: turn DATA one detent to verify unique native event identity.",
                 flush=True,
             )
             observed = step(
                 "event-observed",
                 lambda: wait_for(
-                    "exact event-list presence",
+                    "unique native event-list presence",
                     lambda state: state["event_observed"] == "1"
                     and state["native"] == "observed",
                     10,
@@ -1071,6 +1109,7 @@ def orchestrate_native_experiment(args: argparse.Namespace, ssh: Ssh) -> int:
             )
             if observed["event_removed"] != "0":
                 raise RemoteError("event reported removed before removal request")
+            report["observation_scan"] = scan_command()
             passed_assertions += 1
 
             print("[6/7] Removing and verifying absence...", flush=True)
@@ -1098,12 +1137,13 @@ def orchestrate_native_experiment(args: argparse.Namespace, ssh: Ssh) -> int:
             step(
                 "event-removed",
                 lambda: wait_for(
-                    "exact event-list absence",
+                    "native event-list absence",
                     lambda state: state["event_removed"] == "1"
                     and state["native"] == "removed",
                     10,
                 ),
             )
+            report["removal_scan"] = scan_command()
             passed_assertions += 1
             report["assertions"] = {"passed": passed_assertions, "failed": 0}
             report["diagnostics"] = step(

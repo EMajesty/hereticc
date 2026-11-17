@@ -335,7 +335,7 @@ redirected toward a bounded stock sequence-command SDK extension informed by
 Am MOD's native event-list/Undo implementation. See
 [M0.3e sequencer integration](M0-3E-SEQUENCER-INTEGRATION.md).
 
-### M0.4c Native stock-sequence adapter — first attempt diagnosed, retry prepared
+### M0.4d Native stock-sequence adapter — insertion/playback confirmed, identity fix ready
 
 M0.4 converts one active selected NEUROGENIC cell into a bounded, pointer-free
 request for the stock UI's current sequence/current track. The request uses the
@@ -354,24 +354,40 @@ hidden-result ABI, add/remove dispatch and cleanup. Normal M0.3e is unchanged.
 
 A distinct HIL artifact arms one fixed insertion through atomics and executes
 it only from the stock Step-screen paint callback. It distinguishes command
-acceptance, observed event-list presence, removal and failure. No live insertion
-has occurred; the first fresh-unsaved-sequence experiment remains
-approval-gated and audible playback is unverified. See
+acceptance, observed event-list presence, removal and failure. M0.4c physically
+confirmed one live insertion, its visible stock Step event, audible stock
+playback, and automatic restoration. See
 [M0.4 native sequencer](M0-4-NATIVE-SEQUENCER.md).
 
 M0.4b additionally binds arm/lookup/removal to the same sequence-track context,
 rejects a pre-existing identical event, prevents recursive paint from entering
 native work, verifies exact absence after removal, and adds a separately
-confirmed one-command HIL experiment with automatic stock restoration. It is
-host/QEMU-tested but has not executed on hardware. See
+confirmed one-command HIL experiment with automatic stock restoration. Its
+command path has now executed on hardware; automated removal has not. See
 [M0.4b safety review](M0-4B-NATIVE-SAFETY.md).
 
 The first physical attempt reached and armed a valid Step-editor context but
 never reported command acceptance; restoration passed. Evidence supports an
 idle-screen repaint gap, not a native-command failure. M0.4c adds explicit
 post-arm paint and adapter-stage evidence, host-side expiry, and one bounded
-operator DATA-detent repaint request. No insertion has yet been confirmed. See
+operator DATA-detent repaint request. See
 [M0.4c diagnosis](M0-4C-NATIVE-INSERTION-DIAGNOSIS.md).
+
+That retry accepted the command and the owner observed and heard the inserted
+note, but automated observation failed because the adapter compared all 56
+bytes rather than using the stock event comparator. M0.4d uses the comparator
+established by pinned Am MOD, requires a unique match, adopts the live canonical
+value for removal, and emits bounded scan counters. Host/QEMU validation passes.
+One controlled observation/removal run remains the gate for grid integration.
+See [M0.4d event identity](M0-4D-NATIVE-EVENT-IDENTITY.md).
+
+### M0.5 First playable native grid — gated
+
+After M0.4d physically verifies unique observation, exact removal, and absence,
+connect the stable M0.3e 16-step grid to the current stock sequence/track. ON
+inserts the selected physical pad's live-mapped note at the existing 960-PPQ
+tick; OFF removes only that cell's verified receipt. The UI changes only after
+native commit evidence. Initial acceptance is A01 at steps 0, 4, 8, and 12.
 
 ### M0.3b-C–E Device feasibility experiments — planned and blocked
 
@@ -394,7 +410,7 @@ Decision gate: proceed with the SDK adapter only if stock-engine control and tim
 
 UI feasibility is a separate gate within M0.3b: one named page scope must sustain an agreed repaint/primitive budget and restore the stock screen and pad lights on every exit. Passing that gate approves renderer implementation work, not a complete UI.
 
-### M0.5 Effects feasibility gates — planned
+### M0.6 Effects feasibility gates — planned
 
 These are three independent experiments; success in one does not imply success in another. They require a later task explicitly authorizing device-facing executable work.
 
@@ -482,7 +498,7 @@ Acceptance criteria:
 - slice references survive save/reload or fail with actionable diagnostics;
 - timing remains within the threshold established at M0.3.
 
-Effects acceptance additionally requires the relevant M0.5 gate; parameter locks targeting unavailable routing remain editable but visibly unsupported.
+Effects acceptance additionally requires the relevant M0.6 gate; parameter locks targeting unavailable routing remain editable but visibly unsupported.
 
 ## M5 — Performance and MIDI
 
@@ -525,10 +541,9 @@ One repeat of the same eight-command cycle is the only next HIL action; after
 that, priority returns to the bounded stock-sequencer adapter. See
 [HIL-1.2](HIL-1-2.md) and [HIL-1.3](HIL-1-3.md).
 
-The bounded current-sequence/current-track UI-thread adapter, safety review and
-first-attempt diagnosis are complete. The next action is one run of the same
-approval-gated A01/tick-0 experiment with a single DATA-detent repaint request.
-It will now distinguish no paint, context failure, adapter failure, command
-acceptance, exact presence, removal and absence. Audible playback remains a
-later, separately observed result. See [M0.4c](M0-4C-NATIVE-INSERTION-DIAGNOSIS.md).
-This does not itself authorize that native write or B1 DATA-hook testing.
+M0.4c physically confirmed the first NEUROGENIC-generated stock event and
+audible stock playback. The next action is one controlled M0.4d run on a fresh
+disposable sequence/track to verify unique native-comparator observation,
+canonical removal, and absence. Only that result gates M0.5 grid integration.
+See [M0.4d](M0-4D-NATIVE-EVENT-IDENTITY.md). B1 DATA-hook testing remains
+unrelated and unauthorized.

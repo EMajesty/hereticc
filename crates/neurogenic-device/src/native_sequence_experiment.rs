@@ -3,11 +3,12 @@
 //! The HIL worker changes only atomics. Native work happens synchronously from
 //! the stock Step-screen paint callback after its stock painter returns.
 
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
 
 use crate::native_stock_sequence::{
-    NativeContextIdentity, NativeEditReceipt, NativeStockSequencePort,
+    NativeContextIdentity, NativeEditReceipt, NativeEventPresence, NativeScanEvidence,
+    NativeStockSequencePort,
 };
 use crate::stock_sequence::{StockNoteRequest, StockSequenceEditPort};
 
@@ -56,6 +57,7 @@ pub enum Diagnostic {
     EventObserved,
     RemoveAccepted,
     EventRemoved,
+    AmbiguousEvent,
 }
 
 static STATUS: AtomicU8 = AtomicU8::new(Status::Unavailable as u8);
@@ -71,6 +73,13 @@ static EVENT_REMOVED: AtomicBool = AtomicBool::new(false);
 static PAINT_GENERATION: AtomicU64 = AtomicU64::new(0);
 static ARM_PAINT_GENERATION: AtomicU64 = AtomicU64::new(0);
 static DIAGNOSTIC: AtomicU8 = AtomicU8::new(Diagnostic::NotReached as u8);
+static SCAN_ATTEMPTS: AtomicU32 = AtomicU32::new(0);
+static SCAN_TRAVERSED: AtomicU32 = AtomicU32::new(0);
+static SCAN_TAG3: AtomicU32 = AtomicU32::new(0);
+static SCAN_TICK: AtomicU32 = AtomicU32::new(0);
+static SCAN_NOTE: AtomicU32 = AtomicU32::new(0);
+static SCAN_NATIVE: AtomicU32 = AtomicU32::new(0);
+static SCAN_BYTES: AtomicU32 = AtomicU32::new(0);
 static RECEIPT: Mutex<Option<NativeEditReceipt>> = Mutex::new(None);
 static CURRENT_CONTEXT: Mutex<Option<NativeContextIdentity>> = Mutex::new(None);
 static ARMED_CONTEXT: Mutex<Option<NativeContextIdentity>> = Mutex::new(None);
@@ -216,8 +225,43 @@ pub fn diagnostic() -> Diagnostic {
         11 => Diagnostic::EventObserved,
         12 => Diagnostic::RemoveAccepted,
         13 => Diagnostic::EventRemoved,
+        14 => Diagnostic::AmbiguousEvent,
         _ => Diagnostic::NotReached,
     }
+}
+
+/// Latest bounded, pointer-free event-list scan evidence.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ScanEvidence {
+    pub attempts: u32,
+    pub traversed: u32,
+    pub tag3: u32,
+    pub tick_matches: u32,
+    pub note_matches: u32,
+    pub native_matches: u32,
+    pub byte_matches: u32,
+}
+
+pub fn scan_evidence() -> ScanEvidence {
+    ScanEvidence {
+        attempts: SCAN_ATTEMPTS.load(Ordering::Acquire),
+        traversed: SCAN_TRAVERSED.load(Ordering::Acquire),
+        tag3: SCAN_TAG3.load(Ordering::Acquire),
+        tick_matches: SCAN_TICK.load(Ordering::Acquire),
+        note_matches: SCAN_NOTE.load(Ordering::Acquire),
+        native_matches: SCAN_NATIVE.load(Ordering::Acquire),
+        byte_matches: SCAN_BYTES.load(Ordering::Acquire),
+    }
+}
+
+fn publish_scan(scan: NativeScanEvidence) {
+    SCAN_ATTEMPTS.fetch_add(1, Ordering::AcqRel);
+    SCAN_TRAVERSED.store(scan.traversed, Ordering::Release);
+    SCAN_TAG3.store(scan.tag3, Ordering::Release);
+    SCAN_TICK.store(scan.tick_matches, Ordering::Release);
+    SCAN_NOTE.store(scan.note_matches, Ordering::Release);
+    SCAN_NATIVE.store(scan.native_matches, Ordering::Release);
+    SCAN_BYTES.store(scan.byte_matches, Ordering::Release);
 }
 
 pub fn paint_generation() -> u64 {
@@ -276,6 +320,17 @@ pub fn arm() -> bool {
         return false;
     };
     *ARMED_CONTEXT.lock().unwrap_or_else(PoisonError::into_inner) = Some(current);
+    for counter in [
+        &SCAN_ATTEMPTS,
+        &SCAN_TRAVERSED,
+        &SCAN_TAG3,
+        &SCAN_TICK,
+        &SCAN_NOTE,
+        &SCAN_NATIVE,
+        &SCAN_BYTES,
+    ] {
+        counter.store(0, Ordering::Release);
+    }
     ARM_PAINT_GENERATION.store(paint_generation(), Ordering::Release);
     ARM_DEADLINE_NS.store(deadline, Ordering::Release);
     DIAGNOSTIC.store(Diagnostic::WaitingForPaint as u8, Ordering::Release);
@@ -409,6 +464,38 @@ fn insert_one(port: &mut NativeStockSequencePort<'_>) {
     }
 }
 
+fn observe_existing(port: &mut NativeStockSequencePort<'_>) -> bool {
+    let mut receipt = RECEIPT.lock().unwrap_or_else(PoisonError::into_inner);
+    let Some(existing) = receipt.as_mut() else {
+        return false;
+    };
+    match port.observe(existing) {
+        Ok((NativeEventPresence::Unique, scan))
+            if matches!(status(), Status::RemoveRequested | Status::RemoveAccepted) =>
+        {
+            publish_scan(scan);
+        }
+        Ok((NativeEventPresence::Unique, scan)) => {
+            publish_scan(scan);
+            EVENT_OBSERVED.store(true, Ordering::Release);
+            set_state(Status::Observed, Diagnostic::EventObserved);
+        }
+        Ok((NativeEventPresence::Absent, scan)) if status() == Status::RemoveAccepted => {
+            publish_scan(scan);
+            *receipt = None;
+            EVENT_REMOVED.store(true, Ordering::Release);
+            set_state(Status::Removed, Diagnostic::EventRemoved);
+        }
+        Ok((NativeEventPresence::Absent, scan)) => publish_scan(scan),
+        Ok((NativeEventPresence::Ambiguous, scan)) => {
+            publish_scan(scan);
+            set_state(Status::Failed, Diagnostic::AmbiguousEvent);
+        }
+        Err(_) => set_state(Status::Failed, Diagnostic::NativeFailure),
+    }
+    true
+}
+
 /// Feature-gated Step-screen vtable target. Installed only after exact slot
 /// validation by [`install`].
 ///
@@ -479,26 +566,7 @@ pub unsafe extern "C" fn neurogenic_m04a_step_paint(screen: usize, graphics: usi
         return;
     }
 
-    let existing = *RECEIPT.lock().unwrap_or_else(PoisonError::into_inner);
-    if let Some(existing) = existing.as_ref() {
-        match port.contains(existing) {
-            Ok(true) if matches!(status(), Status::RemoveRequested | Status::RemoveAccepted) => {}
-            Ok(true) => {
-                EVENT_OBSERVED.store(true, Ordering::Release);
-                DIAGNOSTIC.store(Diagnostic::EventObserved as u8, Ordering::Release);
-                STATUS.store(Status::Observed as u8, Ordering::Release);
-            }
-            Ok(false) if status() == Status::RemoveAccepted => {
-                *RECEIPT.lock().unwrap_or_else(PoisonError::into_inner) = None;
-                EVENT_REMOVED.store(true, Ordering::Release);
-                DIAGNOSTIC.store(Diagnostic::EventRemoved as u8, Ordering::Release);
-                STATUS.store(Status::Removed as u8, Ordering::Release);
-            }
-            Ok(false) => {}
-            Err(_) => {
-                set_state(Status::Failed, Diagnostic::NativeFailure);
-            }
-        }
+    if observe_existing(&mut port) {
         return;
     }
     if !ARMED.swap(false, Ordering::AcqRel) {

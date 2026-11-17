@@ -650,6 +650,14 @@ class NativeExperimentTests(unittest.TestCase):
             f"diagnostic={diagnostic}\n"
         ).encode()
 
+    @staticmethod
+    def scan_response(*, attempts=1, traversed=0, tag3=0, tick=0, note=0,
+                      native=0, byte_matches=0):
+        return (
+            f"v=1 attempts={attempts} traversed={traversed} tag3={tag3} "
+            f"tick={tick} note={note} native={native} bytes={byte_matches}\n"
+        ).encode()
+
     class NativeSsh(CycleSsh):
         def __init__(self, responses):
             super().__init__()
@@ -704,6 +712,10 @@ class NativeExperimentTests(unittest.TestCase):
                 "observed", accepted=1, present=1, paint=1,
                 diagnostic="event_observed",
             ),
+            self.scan_response(
+                attempts=1, traversed=1, tag3=1, tick=1, note=1,
+                native=1, byte_matches=0,
+            ),
             self.response(
                 "remove_requested", accepted=1, present=1, paint=1,
                 diagnostic="event_observed",
@@ -715,6 +727,10 @@ class NativeExperimentTests(unittest.TestCase):
             self.response(
                 "removed", accepted=1, present=1, removed=1, paint=1,
                 diagnostic="event_removed",
+            ),
+            self.scan_response(
+                attempts=2, traversed=0, tag3=0, tick=0, note=0,
+                native=0, byte_matches=0,
             ),
         ]
 
@@ -731,6 +747,18 @@ class NativeExperimentTests(unittest.TestCase):
             hil.orchestrate_native_experiment(bad, mock.Mock())
         self.assertFalse(self.run_root.exists())
 
+    def test_native_scan_response_is_strict_and_bounded(self):
+        parsed = hil.parse_native_scan_response(self.scan_response(
+            attempts=2, traversed=7, tag3=4, tick=2, note=1, native=1,
+            byte_matches=0,
+        ))
+        self.assertEqual(parsed["native"], "1")
+        self.assertEqual(parsed["bytes"], "0")
+        with self.assertRaises(hil.RemoteError):
+            hil.parse_native_scan_response(
+                b"v=1 attempts=1 traversed=0 tag3=0 tick=0 note=0 native=2\n"
+            )
+
     def test_success_adds_observes_removes_restores_and_reports(self):
         ssh = self.NativeSsh(self.successful_responses())
         stack, patched = self.patches()
@@ -742,6 +770,8 @@ class NativeExperimentTests(unittest.TestCase):
         self.assertEqual(report["status"], "pass")
         self.assertEqual(report["schema"], "neurogenic-native-experiment-v1")
         self.assertEqual(report["assertions"], {"passed": 6, "failed": 0})
+        self.assertEqual(report["observation_scan"]["native"], "1")
+        self.assertEqual(report["removal_scan"]["native"], "0")
         self.assertFalse(report["audible_playback_observed"])
         patched["restore_stock"].assert_called_once()
         self.assertFalse(self.run_lock.exists())
@@ -759,8 +789,9 @@ class NativeExperimentTests(unittest.TestCase):
         self.assertEqual(self.only_report()["status"], "fail")
 
     def test_removal_failure_never_retries_and_restores(self):
-        responses = self.successful_responses()[:-1] + [
+        responses = self.successful_responses()[:-2] + [
             self.response("failed", accepted=1, present=1),
+            self.scan_response(attempts=2, traversed=4, tag3=2, tick=1, note=1),
         ]
         ssh = self.NativeSsh(responses)
         stack, patched = self.patches()
@@ -775,6 +806,7 @@ class NativeExperimentTests(unittest.TestCase):
     def test_native_timeout_is_bounded_and_restores(self):
         responses = [self.response("idle"), self.response("armed")]
         responses.extend(self.response("armed") for _ in range(20))
+        responses.append(self.scan_response(attempts=0))
         ssh = self.NativeSsh(responses)
         ticks = iter(range(200))
         stack, patched = self.patches()
@@ -792,6 +824,7 @@ class NativeExperimentTests(unittest.TestCase):
             self.response("idle"),
             self.response("armed", diagnostic="waiting_for_paint"),
             self.response("expired", diagnostic="expired_before_paint"),
+            self.scan_response(attempts=0),
         ]
         ssh = self.NativeSsh(responses)
         stack, patched = self.patches()

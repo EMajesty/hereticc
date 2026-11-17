@@ -3,7 +3,13 @@
 M0.4b subsequently hardened this adapter and prepared a separately authorized
 one-command experiment. See [M0.4b safety review](M0-4B-NATIVE-SAFETY.md).
 
-## Result
+## Result through M0.4c
+
+The owner-run M0.4c experiment on firmware 1.3.0.12 physically confirmed the
+first NEUROGENIC-generated native event: the stock command accepted it, the
+note was visible in Step Edit, and stock transport played it audibly. Automatic
+stock restoration passed. The old raw-byte scanner did not observe the event,
+so native removal was not attempted and remains unverified.
 
 M0.4 establishes and host-tests the safe request side of one stock-sequencer
 insertion. A selected active NEUROGENIC cell becomes a bounded, pointer-free
@@ -13,7 +19,7 @@ velocity. A one-shot owner permits at most one adapter call and makes failures
 terminal because a native command's application status could otherwise be
 ambiguous.
 
-No native event was inserted. The pinned SDK has no stock sequence API, and
+At the original M0.4 host milestone no native event was inserted. The pinned SDK has no stock sequence API, and
 the source-proven native boundary requires substantially more live context than
 NEUROGENIC can currently acquire safely. M0.4 therefore does not add raw
 firmware writes, hardcoded calls, new hooks, or a HIL command that would imply
@@ -95,9 +101,9 @@ feature-gated implementation described below.
 | Level | Current result |
 |---|---|
 | A. NEUROGENIC step to typed native-constructor arguments | Host-tested |
-| B. Submission through a verified live stock editing boundary | Blocked: SDK API absent |
-| C. Event observed in the stock sequence | Not attempted |
-| D. Stock transport audibly plays the event | Not attempted |
+| B. Submission through a verified live stock editing boundary | Physically confirmed in M0.4c |
+| C. Event observed in the stock sequence | Visible in stock Step Edit; automated identity awaits M0.4d hardware verification |
+| D. Stock transport audibly plays the event | Owner-confirmed in M0.4c |
 
 Tests cover active/inactive UI capture, all 16-step timing, pad/step/velocity
 bounds, sequence-length bounds, normalized constructor fields, successful
@@ -125,14 +131,15 @@ sequence. That operation must use the existing exact firmware guard, one event,
 normal stock transport, native Undo/removal, automatic evidence collection, and
 stock restoration.
 
-## Safety and hardware status
+## Original M0.4 safety status
 
-The M0.3e UI and HIL reducer protocol are unchanged. No device-changing native
+At the original host-only M0.4 milestone, the M0.3e UI and HIL reducer protocol
+were unchanged. No device-changing native
 operation was added, so the established HIL runner cannot honestly validate
 insertion and was not extended. No MPC connection or restart was performed.
 
-The first native insertion and audible stock playback have **not** been
-demonstrated. M0.4's concrete blocker was an SDK-owned live sequence-command
+The first native insertion and audible stock playback are now physically
+demonstrated by M0.4c. M0.4's original concrete blocker was an SDK-owned live sequence-command
 API, not step timing or request construction. M0.4a implements that boundary
 as described below; physical execution remains a separate approval gate.
 
@@ -154,7 +161,9 @@ pinned `0x19500e0` factory through `controller+0x240`; exact removal uses
 
 A pointer-free receipt contains the copied 56-byte event, resolved note and
 sequence-length token. A bounded 4096-node lookup distinguishes command
-acceptance from observation of that exact value in the live list.
+acceptance from observation. M0.4d replaces the original raw 56-byte comparison
+with the stock Step editor's native event comparator and requires exactly one
+matching event.
 
 The implementation is adapted from Am MOD under MIT; its notice is preserved
 in `THIRD_PARTY_NOTICES.md` and source headers. It is isolated behind
@@ -189,22 +198,20 @@ cannot prove live Undo, stock stability, persistence, audio or timing.
 
 The approval-gated artifact is
 `target/m04a/build/neurogenic-m04a-native-test.so`, SHA-256
-`657ed92c2224af0f15947ccd637c56aa36f1717639074ecc6d59b2f76727b3d8`.
+`51e7be14232c72b19fa92a1b825cccd179de99dffb5243a5ffc2efeeec5cd446`.
 It is AArch64, has a non-executable stack, no writable/executable load segment,
 and requires no GLIBC symbol newer than 2.30.
 
-### Physical experiment gate
+### Current physical experiment gate
 
-The experiment is prepared but **not authorized or executed**. Before approval,
-the owner must accept one new in-memory Step-screen vtable hook and one native
-stock-sequence add command. M0.4b supersedes the manual command sequence below
-with a separately confirmed, fail-safe one-command runner. It validates the
-same context, acceptance, exact presence, exact removal and absence evidence;
-audible playback is deliberately outside that automated claim.
+M0.4c executed one insertion and physically confirmed audible playback. The
+remaining gate is M0.4d's unique native-comparator observation, canonical
+removal, and verified absence on a fresh disposable sequence/track. The same
+fail-safe one-command runner performs that bounded operation and restores stock.
 
 Stop on any unexpected event, UI/control/audio regression, unavailable/failed
 state, service instability or inability to remove. Do not re-arm in the same
-run. This is the next specific operation requiring owner approval.
+run.
 
 The M0.4a fixed host preparation/deployment commands were:
 

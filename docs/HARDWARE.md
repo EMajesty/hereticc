@@ -62,20 +62,18 @@ are the only asynchronous page-loss closers, although the report cannot identify
 which one ran. HIL-1.3 isolates synthetic Level B page ownership in test builds;
 it remains host-tested until the same scenario is rerun physically.
 
-M0.4a adds an approval-gated firmware-1.3.0.12 Step-editor command adapter. Its
+M0.4a added an approval-gated firmware-1.3.0.12 Step-editor command adapter. Its
 fixed offsets, vtable identities, command factories and object layouts are
 source-backed by Am MOD and exercised by an AArch64/QEMU fixture, not by this
 MPC. Loading the distinct experiment would add one guarded in-process
-Step-screen vtable hook; arming it would issue one native sequence edit. No such
-physical load, hook installation, event insertion, removal or audible playback
-has occurred.
+Step-screen vtable hook. M0.4c later physically exercised that guarded add path;
+the historical host-only qualification no longer applies to insertion.
 
 M0.4b binds arming, observation and removal to pointer-free identities derived
 from the same live sequence, track, event-list and Program graph; adds a
 bounded arm lease, nonblocking recursive-paint guard and same-pthread check;
-and prepares an independently confirmed one-command experiment. These are
-host/QEMU results only. The experiment has not been physically authorized or
-executed.
+and prepares an independently confirmed one-command experiment. Those safety
+guards were host/QEMU-tested before the later physical M0.4c insertion.
 
 The first M0.4b physical attempt reached a valid Step context and accepted the
 host arm request, but remained armed with no command acceptance until host
@@ -83,6 +81,13 @@ timeout; stock restoration passed. This does not establish that the native
 adapter or command ran. M0.4c adds direct post-arm paint/stage evidence and a
 single operator DATA-detent repaint request while keeping native work on the
 stock UI callback.
+
+The owner-run M0.4c retry then confirmed one native add-command acceptance, a
+note visible in stock Step Edit, audible playback through stock transport, and
+successful automatic stock restoration. Its raw 56-byte lookup did not find
+the event, so automated observation and removal did not occur. M0.4d replaces
+that incompatible comparison with the stock event comparator and a unique-match
+canonical receipt; this correction is host/QEMU-tested, not yet physical.
 
 These facts are research inputs, not permission to depend directly on raw protocols. An in-process extension should prefer a guarded adapter such as the SDK and retain stock ownership wherever possible.
 
