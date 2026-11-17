@@ -4,6 +4,10 @@ Status: **host-validated; physical validation pending**. HIL-0 was physically
 validated by the owner on an MPC Sample running 1.3.0.12. This work did not
 contact the device.
 
+The owner subsequently validated HIL-1 activation, one live `QUERY`, and stock
+restoration. [HIL-1.1](HIL-1-1.md) hardens request publication and callback
+contention for repeated scripted tests.
+
 ## Result
 
 HIL-1 preserves the fixed, strict SSH transport and adds immutable builds,

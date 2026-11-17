@@ -4,6 +4,7 @@
 pub mod hil;
 pub mod reducer;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, TryLockError};
 
 use mpc_sample_sdk::event::button;
@@ -13,12 +14,14 @@ use reducer::{Button, UiState};
 /// Device mod state. It contains no retained firmware pointer.
 pub struct NeurogenicDevice {
     ui: Arc<Mutex<UiState>>,
+    overlay_open: Arc<AtomicBool>,
 }
 
 impl Default for NeurogenicDevice {
     fn default() -> Self {
         Self {
             ui: Arc::new(Mutex::new(UiState::default())),
+            overlay_open: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -30,7 +33,37 @@ impl NeurogenicDevice {
             Err(TryLockError::WouldBlock) => return None,
             Err(TryLockError::Poisoned(error)) => error.into_inner(),
         };
-        Some(apply(&mut ui))
+        let result = apply(&mut ui);
+        self.overlay_open.store(ui.is_open(), Ordering::Release);
+        Some(result)
+    }
+
+    fn contention_button_flow(&self, button: Button, pressed: bool, shift: bool) -> Flow {
+        let open = self.overlay_open.load(Ordering::Acquire);
+        let owned = match button {
+            Button::Plus => open,
+            Button::Data => shift || (open && !pressed),
+            Button::Other => false,
+        };
+        if owned { Flow::Consume } else { Flow::Forward }
+    }
+
+    fn contention_encoder_flow(&self, delta: i32) -> Flow {
+        if self.overlay_open.load(Ordering::Acquire) && delta != 0 {
+            Flow::Consume
+        } else {
+            Flow::Forward
+        }
+    }
+
+    fn contention_pad_flow(&self, pad: i32) -> Flow {
+        if self.overlay_open.load(Ordering::Acquire)
+            && usize::try_from(pad).is_ok_and(|pad| pad < reducer::CELLS)
+        {
+            Flow::Consume
+        } else {
+            Flow::Forward
+        }
     }
 
     fn sdk_flow(flow: reducer::Flow) -> Flow {
@@ -122,7 +155,7 @@ impl NeurogenicDevice {
 impl Mod for NeurogenicDevice {
     fn on_start(&mut self) {
         #[cfg(feature = "hil-test-interface")]
-        hil::start_bridge(Arc::clone(&self.ui));
+        hil::start_bridge(Arc::clone(&self.ui), Arc::clone(&self.overlay_open));
     }
 
     fn on_button(&mut self, event: ButtonEvent) -> Flow {
@@ -133,7 +166,7 @@ impl Mod for NeurogenicDevice {
             _ => Button::Other,
         };
         let Some(outcome) = self.with_ui(|ui| ui.button(mapped, event.pressed, event.shift)) else {
-            return Flow::Forward;
+            return self.contention_button_flow(mapped, event.pressed, event.shift);
         };
         if outcome.repaint {
             Self::repaint_live_sample_page();
@@ -144,7 +177,7 @@ impl Mod for NeurogenicDevice {
     fn on_encoder(&mut self, event: EncoderEvent) -> Flow {
         self.close_if_page_gone();
         let Some(outcome) = self.with_ui(|ui| ui.encoder(event.delta)) else {
-            return Flow::Forward;
+            return self.contention_encoder_flow(event.delta);
         };
         if outcome.repaint {
             Self::repaint_live_sample_page();
@@ -156,7 +189,7 @@ impl Mod for NeurogenicDevice {
         self.close_if_page_gone();
         let Some(outcome) = self.with_ui(|ui| ui.pad(event.pad, event.action == PadAction::Press))
         else {
-            return Flow::Forward;
+            return self.contention_pad_flow(event.pad);
         };
         if outcome.repaint {
             Self::repaint_live_sample_page();
@@ -175,6 +208,56 @@ impl Mod for NeurogenicDevice {
                 Self::draw(ui, *graphics);
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod contention_tests {
+    use super::*;
+
+    #[test]
+    fn contention_never_forwards_controls_owned_by_an_open_overlay() {
+        let device = NeurogenicDevice::default();
+        device.overlay_open.store(true, Ordering::Release);
+        let guard = device.ui.lock().expect("fixture lock");
+        assert!(device.with_ui(|_| ()).is_none());
+        assert_eq!(device.contention_pad_flow(0), Flow::Consume);
+        assert_eq!(device.contention_encoder_flow(1), Flow::Consume);
+        assert_eq!(
+            device.contention_button_flow(Button::Plus, true, false),
+            Flow::Consume
+        );
+        assert_eq!(
+            device.contention_button_flow(Button::Plus, false, false),
+            Flow::Consume
+        );
+        assert_eq!(
+            device.contention_button_flow(Button::Data, false, false),
+            Flow::Consume
+        );
+        assert_eq!(
+            device.contention_button_flow(Button::Other, true, false),
+            Flow::Forward
+        );
+        drop(guard);
+    }
+
+    #[test]
+    fn closed_overlay_only_fail_closes_the_toggle_chord() {
+        let device = NeurogenicDevice::default();
+        assert_eq!(
+            device.contention_button_flow(Button::Data, true, true),
+            Flow::Consume
+        );
+        assert_eq!(
+            device.contention_button_flow(Button::Data, true, false),
+            Flow::Forward
+        );
+        assert_eq!(
+            device.contention_button_flow(Button::Plus, true, false),
+            Flow::Forward
+        );
+        assert_eq!(device.contention_pad_flow(0), Flow::Forward);
     }
 }
 

@@ -1,7 +1,6 @@
 //! Transport-independent, test-build-only reducer command protocol.
 //!
-//! This module deliberately performs no I/O and exposes no firmware objects.
-//! A future Level B bridge may feed it one bounded command from a safe UI task.
+//! The test-only worker owns all mailbox I/O and exposes no firmware objects.
 
 use core::fmt::{self, Write};
 use std::fs::{self, OpenOptions};
@@ -200,7 +199,7 @@ fn error_response(error: Error) -> &'static [u8] {
     }
 }
 
-fn process_mailbox(directory: &Path, ui: &Mutex<UiState>) {
+fn process_mailbox(directory: &Path, ui: &Mutex<UiState>, overlay_open: &AtomicBool) {
     let request = directory.join(REQUEST_FILE);
     let response = directory.join(RESPONSE_FILE);
     if response.exists() {
@@ -222,9 +221,18 @@ fn process_mailbox(directory: &Path, ui: &Mutex<UiState>) {
     let _ = fs::remove_file(&request);
     match read {
         Ok(length) if length <= MAX_COMMAND_BYTES => {
+            // Publish ownership before taking the reducer lock when OPEN can
+            // transition closed -> open. A colliding physical callback then
+            // fails closed instead of observing the previous ownership bit.
+            if bytes[..length] == *b"OPEN" || bytes[..length] == *b"OPEN\n" {
+                overlay_open.store(true, Ordering::Release);
+            }
             let mut state = ui.lock().unwrap_or_else(PoisonError::into_inner);
             match apply(&mut state, &bytes[..length]) {
-                Ok(result) => publish(&response, result.as_str().as_bytes()),
+                Ok(result) => {
+                    overlay_open.store(state.is_open(), Ordering::Release);
+                    publish(&response, result.as_str().as_bytes());
+                }
                 Err(error) => publish(&response, error_response(error)),
             }
         }
@@ -246,7 +254,12 @@ fn publish(path: &Path, bytes: &[u8]) {
     }
 }
 
-fn bridge_loop(directory: &Path, ui: &Mutex<UiState>, stop: &AtomicBool) {
+fn bridge_loop(
+    directory: &Path,
+    ui: &Mutex<UiState>,
+    overlay_open: &AtomicBool,
+    stop: &AtomicBool,
+) {
     if !directory.is_dir() {
         return;
     }
@@ -255,7 +268,7 @@ fn bridge_loop(directory: &Path, ui: &Mutex<UiState>, stop: &AtomicBool) {
         b"schema=neurogenic-hil-bridge-v1\n",
     );
     while !stop.load(Ordering::Acquire) && directory.is_dir() {
-        process_mailbox(directory, ui);
+        process_mailbox(directory, ui, overlay_open);
         std::thread::sleep(Duration::from_millis(20));
     }
 }
@@ -264,7 +277,7 @@ fn bridge_loop(directory: &Path, ui: &Mutex<UiState>, stop: &AtomicBool) {
 ///
 /// The worker performs all file I/O. SDK callbacks only use `try_lock`, so the
 /// bridge cannot block a UI or audio callback and never observes firmware data.
-pub fn start_bridge(ui: Arc<Mutex<UiState>>) {
+pub fn start_bridge(ui: Arc<Mutex<UiState>>, overlay_open: Arc<AtomicBool>) {
     static STARTED: AtomicBool = AtomicBool::new(false);
     if STARTED.swap(true, Ordering::AcqRel) {
         return;
@@ -273,7 +286,7 @@ pub fn start_bridge(ui: Arc<Mutex<UiState>>) {
         .name("neurogenic-hil".to_owned())
         .spawn(move || {
             let stop = AtomicBool::new(false);
-            bridge_loop(Path::new(BRIDGE_DIRECTORY), &ui, &stop);
+            bridge_loop(Path::new(BRIDGE_DIRECTORY), &ui, &overlay_open, &stop);
         });
 }
 
@@ -312,17 +325,20 @@ mod bridge_tests {
         let directory = temporary_directory();
         let ui = Arc::new(Mutex::new(UiState::default()));
         let stop = Arc::new(AtomicBool::new(false));
+        let overlay_open = Arc::new(AtomicBool::new(false));
         let worker_dir = directory.clone();
         let worker_ui = Arc::clone(&ui);
         let worker_stop = Arc::clone(&stop);
+        let worker_open = Arc::clone(&overlay_open);
         let worker = std::thread::spawn(move || {
-            bridge_loop(&worker_dir, &worker_ui, &worker_stop);
+            bridge_loop(&worker_dir, &worker_ui, &worker_open, &worker_stop);
         });
         wait(&directory.join(READY_FILE));
 
         fs::write(directory.join(REQUEST_FILE), b"OPEN\n").expect("request");
         let response = wait(&directory.join(RESPONSE_FILE));
         assert!(response.starts_with(b"v=1 open=1"));
+        assert!(overlay_open.load(Ordering::Acquire));
         fs::remove_file(directory.join(RESPONSE_FILE)).expect("consume response");
 
         fs::write(directory.join(REQUEST_FILE), b"SHELL\n").expect("request");
@@ -330,6 +346,25 @@ mod bridge_tests {
 
         stop.store(true, Ordering::Release);
         worker.join().expect("worker");
+        fs::remove_dir_all(directory).expect("cleanup");
+    }
+
+    #[test]
+    fn unpublished_temporary_request_is_ignored_and_stale_response_blocks_work() {
+        let directory = temporary_directory();
+        let ui = Mutex::new(UiState::default());
+        let open = AtomicBool::new(false);
+
+        fs::write(directory.join("request.pending"), b"OPEN\n").expect("partial fixture");
+        super::process_mailbox(&directory, &ui, &open);
+        assert!(!ui.lock().expect("state").is_open());
+
+        fs::write(directory.join(RESPONSE_FILE), b"stale\n").expect("stale response");
+        fs::write(directory.join(REQUEST_FILE), b"OPEN\n").expect("request");
+        super::process_mailbox(&directory, &ui, &open);
+        assert!(!ui.lock().expect("state").is_open());
+        assert!(directory.join(REQUEST_FILE).exists());
+
         fs::remove_dir_all(directory).expect("cleanup");
     }
 }

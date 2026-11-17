@@ -44,8 +44,14 @@ mod, so SSH is not part of the normal integration path.
 The owner physically validated HIL-0 on firmware 1.3.0.12: its dedicated host
 key, exact USB endpoint, firmware/process identity, volatile library transfer,
 controlled `ac50.service` restart, M0.3e UI, and stock restoration worked.
-HIL-1's repeatable immutable activation and in-process reducer bridge remain
-host-tested only; they are not evidence of physical input simulation.
+HIL-1 initially added repeatable immutable activation and an in-process reducer
+bridge under host tests; neither capability is evidence of physical input
+simulation.
+
+The owner then physically validated the HIL-1 library activation and restart,
+live Level B `QUERY`, and stock restoration on 1.3.0.12. The initial reducer
+state was closed, track/step 1, empty bits, forward/no-repaint/no-restore. This
+validates in-process state access, not physical input injection or rendering.
 
 These facts are research inputs, not permission to depend directly on raw protocols. An in-process extension should prefer a guarded adapter such as the SDK and retain stock ownership wherever possible.
 

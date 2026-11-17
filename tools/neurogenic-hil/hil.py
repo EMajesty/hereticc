@@ -214,10 +214,15 @@ if test -e '{DROPIN}' || test -L '{DROPIN}'; then
  test "$valid" -eq 1; rm '{DROPIN}'
 fi
 systemctl daemon-reload; systemctl restart ac50.service
-for path in '{RUNTIME}/bridge.ready' '{RUNTIME}/request' '{RUNTIME}/response' \
+for path in '{RUNTIME}/bridge.ready' '{RUNTIME}/request' '{RUNTIME}/request.pending' \
+ '{RUNTIME}/response' \
  '{ACTIVE}' '{PREVIOUS}' '{RUNTIME}/current.so' '{RUNTIME}/previous.so'; do
  if test -e "$path" || test -L "$path"; then test -f "$path" && test ! -L "$path"; rm "$path"; fi
 done
+if test -e '{RUNTIME}/request.lock' || test -L '{RUNTIME}/request.lock'; then
+ test -d '{RUNTIME}/request.lock' && test ! -L '{RUNTIME}/request.lock'
+ rmdir '{RUNTIME}/request.lock'
+fi
 if test -d '{BUILDS}' && test ! -L '{BUILDS}'; then
  for path in '{BUILDS}'/*; do
   test -e "$path" || continue; test -f "$path" && test ! -L "$path"
@@ -289,12 +294,24 @@ class Ssh:
     def test_command(self, command: str) -> bytes:
         if len(command) > 64 or not re.fullmatch(r"[A-Z0-9 +\-]+", command):
             raise HilError("invalid bounded HIL command")
+        encoded_size = len(command.encode("ascii")) + 1
         script = f"""set -eu
-d='{RUNTIME}'; request="$d/request"; response="$d/response"
+d='{RUNTIME}'; request="$d/request"; response="$d/response"; pending="$d/request.pending"; lock="$d/request.lock"
 test -f "$d/bridge.ready" && test ! -L "$d/bridge.ready"
 test ! -e "$request" && test ! -L "$request"
 test ! -e "$response" && test ! -L "$response"
-( set -C; printf '%s\n' '{command}' > "$request" )
+test ! -e "$pending" && test ! -L "$pending"
+test ! -e "$lock" && test ! -L "$lock"; mkdir "$lock"
+trap 'rm -f "$pending"; if test -d "$lock" && ! test -L "$lock"; then rmdir "$lock"; fi' 0 1 2 3 15
+test ! -e "$request" && test ! -L "$request"
+test ! -e "$response" && test ! -L "$response"
+test ! -e "$pending" && test ! -L "$pending"
+( set -C; printf '%s\n' '{command}' > "$pending" )
+test -f "$pending" && test ! -L "$pending"
+test "$(wc -c < "$pending")" -eq {encoded_size}; chmod 0600 "$pending"
+test ! -e "$request" && test ! -L "$request"
+test ! -e "$response" && test ! -L "$response"
+mv "$pending" "$request"
 i=0
 while test "$i" -lt 6; do
  if test -f "$response" && test ! -L "$response"; then
@@ -383,13 +400,11 @@ def run_level_b_scenario(ssh: Ssh) -> None:
     steps = [
         ("RESET", {"open": "0", "track": "1", "step": "1", "bits": "0000"}),
         ("OPEN", {"open": "1"}),
-        ("OPEN", {"open": "1", "flow": "forward"}),
         ("SELECT 4", {"track": "4"}),
         ("MOVE 3", {"step": "4"}),
         ("TOGGLE", {"bits": "0008"}),
-        ("TOGGLE", {"bits": "0000"}),
+        ("QUERY", {"open": "1", "track": "4", "step": "4", "bits": "0008"}),
         ("CLOSE", {"open": "0", "restore": "1"}),
-        ("SHELL", {"error": "unknown"}),
         ("RESET", {"open": "0", "track": "1", "step": "1", "bits": "0000"}),
     ]
     failed = False

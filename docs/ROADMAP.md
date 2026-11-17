@@ -470,6 +470,12 @@ not simulate SDK callbacks; Level C input and Level D visual/audio capture
 remain planned. Prefer the MIT-licensed `virtual-mpc-sample` backend rather
 than a new emulator. See [HIL-0](HIL-0.md) and [HIL-1](HIL-1.md).
 
+The first HIL-1 hardware run also validated activation, live Level B `QUERY`,
+and stock restoration. HIL-1.1 atomically publishes commands and fails closed
+for overlay-owned callbacks during the worker's short reducer lock. Its next
+action is one scripted Level B hardware run, after which development returns to
+the stock-sequencer adapter. See [HIL-1.1](HIL-1-1.md).
+
 The immediate decision is owner review and, if separately authorized, one
 M0.3e regression run of the restored M0.3c editor behavior. The next engineering
 milestone should implement a bounded, firmware-guarded SDK stock-sequence

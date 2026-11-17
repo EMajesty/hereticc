@@ -205,6 +205,8 @@ class HilTests(unittest.TestCase):
     def test_restore_recognizes_failed_activation_dropin_by_immutable_build(self):
         self.assertIn("for library in '/run/neurogenic-hil/builds'/*.so", hil.RESTORE)
         self.assertIn("test \"$actual\" = \"$expected\" && valid=1", hil.RESTORE)
+        self.assertIn("'/run/neurogenic-hil/request.pending'", hil.RESTORE)
+        self.assertIn("rmdir '/run/neurogenic-hil/request.lock'", hil.RESTORE)
 
     def test_single_restart_and_explicit_stock_restoration_settle(self):
         digest = "a" * 64
@@ -250,12 +252,66 @@ class HilTests(unittest.TestCase):
         actual = hil.parse_hil_response(hil.Ssh(self.config, runner).test_command("QUERY"))
         self.assertEqual(actual["track"], "4")
         script = runner.calls[0][0][-1]
-        self.assertIn("request=\"$d/request\"", script)
+        self.assertIn('pending="$d/request.pending"', script)
+        self.assertIn('lock="$d/request.lock"', script)
+        self.assertIn('mkdir "$lock"', script)
+        self.assertIn('> "$pending"', script)
+        self.assertIn('test "$(wc -c < "$pending")" -eq 6', script)
+        self.assertIn('mv "$pending" "$request"', script)
+        self.assertLess(script.index('> "$pending"'), script.index('mv "$pending" "$request"'))
+        self.assertNotIn('> "$request"', script)
         self.assertNotIn("systemctl", script)
         with self.assertRaises(hil.HilError):
             hil.Ssh(self.config, Runner([])).test_command("QUERY; id")
         with self.assertRaises(hil.RemoteError):
             hil.parse_hil_response(b"x" * 193)
+
+    def test_level_b_stale_mailbox_timeout_and_repeated_commands_fail_cleanly(self):
+        stale = hil.Ssh(self.config, Runner([completed(stderr=b"stale response", code=1)]))
+        with self.assertRaises(hil.RemoteError):
+            stale.test_command("QUERY")
+
+        timed = hil.Ssh(self.config, Runner([subprocess.TimeoutExpired("ssh", 8)]))
+        with self.assertRaises(hil.TransportError):
+            timed.test_command("QUERY")
+
+        response = (
+            b"v=1 open=0 track=1 step=1 bits=0000 flow=forward "
+            b"repaint=0 restore=0 pending_repaint=0\n"
+        )
+        runner = Runner([completed(response), completed(response)])
+        ssh = hil.Ssh(self.config, runner)
+        hil.parse_hil_response(ssh.test_command("QUERY"))
+        hil.parse_hil_response(ssh.test_command("QUERY"))
+        self.assertEqual(len(runner.calls), 2)
+
+    def test_level_b_scenario_is_exact_and_reports_expected_and_actual(self):
+        states = [
+            (0, 1, 1, "0000", "consume", 1, 0),
+            (1, 1, 1, "0000", "consume", 1, 0),
+            (1, 4, 1, "0000", "consume", 1, 0),
+            (1, 4, 4, "0000", "consume", 1, 0),
+            (1, 4, 4, "0008", "consume", 1, 0),
+            (1, 4, 4, "0008", "forward", 0, 0),
+            (0, 4, 4, "0008", "consume", 1, 1),
+            (0, 1, 1, "0000", "consume", 1, 0),
+        ]
+        replies = []
+        for opened, track, step, bits, flow, repaint, restore in states:
+            replies.append(completed(
+                f"v=1 open={opened} track={track} step={step} bits={bits} "
+                f"flow={flow} repaint={repaint} restore={restore} pending_repaint=1\n".encode()
+            ))
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            hil.run_level_b_scenario(hil.Ssh(self.config, Runner(replies)))
+        records = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual(
+            [record["command"] for record in records],
+            ["RESET", "OPEN", "SELECT 4", "MOVE 3", "TOGGLE", "QUERY", "CLOSE", "RESET"],
+        )
+        self.assertTrue(all(record["pass"] for record in records))
+        self.assertTrue(all("actual" in record and "expected" in record for record in records))
 
     def test_repeatable_activation_never_overwrites_library(self):
         digest = "b" * 64
