@@ -10,11 +10,14 @@ alignas(16) unsigned char controller_storage[0x300]{};
 alignas(16) unsigned char things_storage[0x300]{};
 alignas(16) unsigned char sequence_storage[0x20]{};
 alignas(16) unsigned char program_storage[0x20]{};
+alignas(16) unsigned char track_storage[0x20]{};
+alignas(16) unsigned char other_track_storage[0x20]{};
 alignas(16) unsigned char list_storage[0x100]{};
 alignas(16) unsigned char service_storage[0x20]{};
 alignas(16) unsigned char event_node[0x20 + sizeof(Event)]{};
 constexpr std::uintptr_t BASE = 0x10000000;
 int inserts, frees, strings, drops, releases, adds, removes;
+bool fail_tree_insert;
 Event last_event{};
 
 int visible(void *) { return 1; }
@@ -32,6 +35,7 @@ void tree_insert(void *tree_pointer, const void *event_pointer) {
     auto &tree = *static_cast<NativeTree *>(tree_pointer);
     assert(tree.left == &tree.colour && tree.right == &tree.colour);
     tree.parent = reinterpret_cast<void *>(0x1234); tree.size = 1;
+    if (fail_tree_insert) throw 7;
     std::memcpy(&last_event, event_pointer, sizeof(last_event)); ++inserts;
 }
 void tree_free(void *node) { assert(node == reinterpret_cast<void *>(0x1234)); ++frees; }
@@ -71,6 +75,7 @@ void reset_context() {
     field<void *>(controller_storage, 0x248) = things_storage;
     field<void *>(things_storage, 0x1c8) = sequence_storage;
     field<void *>(things_storage, 0xb8) = program_storage;
+    field<void *>(things_storage, 0x140) = track_storage;
     field<void *>(list_storage, 0x78) = event_node;
 }
 }
@@ -98,17 +103,32 @@ extern "C" void neurogenic_m04a_step_paint(void *, void *) {}
 
 int main() {
     reset_context();
+    std::uint64_t initial_identity[2]{}, changed_identity[2]{};
+    assert(neurogenic_stock_sequence_context(BASE, screen_storage, initial_identity) == 0);
     Request request{3, 100, 0, 480, 240}; Receipt receipt{};
     assert(neurogenic_stock_sequence_insert(BASE, screen_storage, &request, &receipt) == 0);
     assert(receipt.note == 39 && receipt.event.time == 480 && (receipt.event.type & 255) == 3);
     assert(inserts == 1 && adds == 1 && frees == 1 && strings == 2 && drops == 2 && releases == 1);
     std::memcpy(event_node + 0x20, &receipt.event, sizeof(receipt.event));
     assert(neurogenic_stock_sequence_contains(BASE, screen_storage, &receipt) == 1);
+    assert(neurogenic_stock_sequence_insert(BASE, screen_storage, &request, &receipt) == 2);
+    field<void *>(things_storage, 0x140) = other_track_storage;
+    assert(neurogenic_stock_sequence_context(BASE, screen_storage, changed_identity) == 0);
+    assert(std::memcmp(initial_identity, changed_identity, sizeof(initial_identity)) != 0);
+    assert(neurogenic_stock_sequence_contains(BASE, screen_storage, &receipt) == -1);
+    assert(neurogenic_stock_sequence_remove(BASE, screen_storage, &receipt) == 1);
+    field<void *>(things_storage, 0x140) = track_storage;
     event_node[0x20] ^= 1;
     assert(neurogenic_stock_sequence_contains(BASE, screen_storage, &receipt) == 0);
     event_node[0x20] ^= 1;
     assert(neurogenic_stock_sequence_remove(BASE, screen_storage, &receipt) == 0);
     assert(removes == 1 && releases == 2);
+
+    const int frees_before_failure = frees;
+    request.tick = 720; fail_tree_insert = true;
+    assert(neurogenic_stock_sequence_insert(BASE, screen_storage, &request, &receipt) == 3);
+    assert(frees == frees_before_failure + 1);
+    fail_tree_insert = false;
 
     field<std::uintptr_t>(screen_storage, 0) = 0;
     assert(neurogenic_stock_sequence_insert(BASE, screen_storage, &request, &receipt) == 1);
@@ -117,5 +137,5 @@ int main() {
     request.tick = 0; request.physical_pad = 16;
     assert(neurogenic_stock_sequence_insert(BASE, screen_storage, &request, &receipt) == 2);
 
-    std::puts("PASS native tag-3 construction, owned containers/strings, add command, cleanup, exact remove, and context rejection");
+    std::puts("PASS native tag-3 construction, ownership/cleanup, duplicate rejection, context identity, exact remove, and ABI dispatch");
 }

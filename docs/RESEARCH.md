@@ -31,6 +31,13 @@ and cleanup. The required live owner is specifically a visible
 `StepEditScreen` callback; the ordinary Sample-page overlay does not provide
 that service. This is host/QEMU evidence only.
 
+M0.4b's pinned-source audit confirms the adapted signatures and hidden-result
+bridges against those exact files. Am MOD treats an event-list pointer change
+as a sequence-context change and exposes the current track at
+`CurrentThings+0x140`; no stable native sequence UUID was established. The
+hardened adapter therefore compares pointer-derived, non-dereferenceable tokens
+for sequence, track, event list and Program within one short-lived process.
+
 ## Confidence labels
 
 - **Verified:** directly supported by linked source/documentation or an explicit upstream hardware result.

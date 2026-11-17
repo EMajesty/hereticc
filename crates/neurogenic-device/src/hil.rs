@@ -127,15 +127,21 @@ fn native_response(action: &str) -> Response {
         Status::Accepted => "accepted",
         Status::Observed => "observed",
         Status::RemoveRequested => "remove_requested",
+        Status::RemoveAccepted => "remove_accepted",
         Status::Removed => "removed",
         Status::Rejected => "rejected",
+        Status::Expired => "expired",
         Status::Failed => "failed",
     };
     let mut response = Response::new();
     writeln!(
         response,
-        "v=1 native={status} accepted={}",
-        u8::from(accepted)
+        "v=1 native={status} context={} action_accepted={} command_accepted={} event_observed={} event_removed={}",
+        if native_sequence_experiment::context_ready() { "ready" } else { "unavailable" },
+        u8::from(accepted),
+        u8::from(native_sequence_experiment::command_accepted()),
+        u8::from(native_sequence_experiment::event_observed()),
+        u8::from(native_sequence_experiment::event_removed()),
     )
     .expect("native response fits");
     response

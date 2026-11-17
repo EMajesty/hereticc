@@ -18,6 +18,7 @@ from typing import Callable, Sequence
 SCHEMA = "neurogenic-hil-config-v1"
 HOST, PORT, USER = "192.168.155.1", 2222, "root"
 CONFIRM = "MPC-SAMPLE-1.3.0.12"
+NATIVE_CONFIRM = "INSERT-ONE-UNSAVED-NATIVE-EVENT-1.3.0.12"
 FIRMWARE_SHA = "44507c7a7d3029c411b2e3780ea286ca3e08b7e3ffd7b5047d52f73bf5299d1f"
 ROOT = Path(__file__).resolve().parents[2]
 BUILD = ROOT / "device/m03e/scripts/build-package.sh"
@@ -423,6 +424,42 @@ def parse_hil_response(raw: bytes) -> dict[str, str]:
     return fields
 
 
+def parse_native_response(raw: bytes) -> dict[str, str]:
+    if len(raw) > 192:
+        raise RemoteError("native HIL response exceeded 192 bytes")
+    try:
+        tokens = raw.decode("ascii").strip().split()
+    except UnicodeDecodeError as exc:
+        raise RemoteError("native HIL response is not ASCII") from exc
+    fields: dict[str, str] = {}
+    for token in tokens:
+        if "=" not in token:
+            raise RemoteError("malformed native HIL response")
+        key, value = token.split("=", 1)
+        if key in fields or not re.fullmatch(r"[a-z_]+", key):
+            raise RemoteError("ambiguous native HIL response")
+        fields[key] = value
+    required = {
+        "v", "native", "context", "action_accepted", "command_accepted",
+        "event_observed", "event_removed",
+    }
+    if set(fields) != required or fields["v"] != "1":
+        raise RemoteError("incomplete native HIL response")
+    if fields["context"] not in ("ready", "unavailable"):
+        raise RemoteError("invalid native context status")
+    if any(fields[key] not in ("0", "1") for key in (
+        "action_accepted", "command_accepted", "event_observed", "event_removed",
+    )):
+        raise RemoteError("invalid native evidence bit")
+    if fields["native"] not in {
+        "unavailable", "idle", "armed", "accepted", "observed",
+        "remove_requested", "remove_accepted", "removed", "rejected",
+        "expired", "failed",
+    }:
+        raise RemoteError("invalid native experiment status")
+    return fields
+
+
 def execute_level_b_scenario(
     ssh: Ssh, records: list[dict[str, object]] | None = None
 ) -> list[dict[str, object]]:
@@ -512,6 +549,24 @@ def build_hil_artifact() -> tuple[bytes, str]:
     if code:
         raise HilError(f"fixed HIL build failed with status {code}")
     return read_reviewed_artifact(HIL_ARTIFACT, HIL_SUMS)
+
+
+def build_native_artifact() -> tuple[bytes, str]:
+    command = [
+        "nix", "shell", "nixpkgs#pkgsCross.aarch64-multiplatform.stdenv.cc",
+        "nixpkgs#qemu", "nixpkgs#llvmPackages_21.llvm",
+        "--command", "zsh", "-lc",
+        "set -eu; "
+        "export AARCH64_CXX=$(command -v aarch64-unknown-linux-gnu-g++); "
+        "device/m04a/scripts/verify-native-abi.sh; device/m04a/scripts/build.sh",
+    ]
+    try:
+        code = subprocess.run(command, cwd=ROOT, check=False, timeout=300).returncode
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise HilError(f"fixed M0.4 native build failed: {exc}") from exc
+    if code:
+        raise HilError(f"fixed M0.4 native build failed with status {code}")
+    return read_reviewed_artifact(M04A_ARTIFACT, M04A_SUMS)
 
 
 def deploy_artifact(ssh: Ssh, data: bytes, digest: str) -> None:
@@ -828,18 +883,251 @@ def orchestrate_run(args: argparse.Namespace, ssh: Ssh | None) -> int:
         return 0
 
 
+def orchestrate_native_experiment(args: argparse.Namespace, ssh: Ssh) -> int:
+    """Run the single approval-gated native insertion/removal experiment."""
+    confirm(args.confirm)
+    if args.confirm_native != NATIVE_CONFIRM:
+        raise RunCycleError(
+            f"native insertion requires --confirm-native {NATIVE_CONFIRM}"
+        )
+    with HostRunLock():
+        report_dir = create_report_directory()
+        report: dict[str, object] = {
+            "schema": "neurogenic-native-experiment-v1",
+            "started_at": utc_now(),
+            "git_commit": git_commit(),
+            "level": "NATIVE",
+            "scenario": "one-a01-tick-zero-add-observe-remove",
+            "status": "running",
+            "artifact_sha256": None,
+            "firmware_fingerprint": None,
+            "initial_state": None,
+            "active_state": None,
+            "final_state": None,
+            "activation": {"status": "not-attempted"},
+            "restoration": {"status": "not-required"},
+            "tests": [],
+            "diagnostics": None,
+            "steps": [],
+            "errors": [],
+            "assertions": {"passed": 0, "failed": 0},
+            "audible_playback_observed": False,
+            "operator_preconditions": {
+                "fresh_unsaved_sequence": "required-not-machine-verified",
+                "transport_stopped": "required-not-machine-verified",
+                "a01_sample_assigned": "required-not-machine-verified",
+            },
+        }
+        original_error: HilError | None = None
+        restoration_error: HilError | None = None
+        mutated = False
+        passed_assertions = 0
+
+        def step(name: str, operation: Callable[[], object]) -> object:
+            started = time.monotonic()
+            record: dict[str, object] = {"name": name, "status": "running"}
+            report["steps"].append(record)
+            try:
+                value = operation()
+                record["status"] = "pass"
+                return value
+            except HilError as exc:
+                record["status"] = "fail"
+                record["error"] = str(exc)
+                raise
+            finally:
+                record["duration_ms"] = round(
+                    (time.monotonic() - started) * 1000, 3
+                )
+
+        def command(name: str) -> dict[str, str]:
+            started = time.monotonic()
+            actual = parse_native_response(ssh.test_command(name))
+            report["tests"].append({
+                "level": "native", "command": name, "actual": actual,
+                "duration_ms": round((time.monotonic() - started) * 1000, 3),
+            })
+            return actual
+
+        def wait_for(
+            label: str,
+            predicate: Callable[[dict[str, str]], bool],
+            timeout: float,
+        ) -> dict[str, str]:
+            deadline = time.monotonic() + timeout
+            while True:
+                state = command("NATIVE STATUS")
+                if predicate(state):
+                    return state
+                if state["native"] in {"failed", "rejected", "expired"}:
+                    raise RemoteError(
+                        f"native experiment entered terminal state {state['native']} "
+                        f"while waiting for {label}"
+                    )
+                if time.monotonic() >= deadline:
+                    raise RemoteError(f"native experiment timed out waiting for {label}")
+                time.sleep(0.25)
+
+        try:
+            initial = step("initial-identity", lambda: identity(ssh))
+            report["initial_state"] = initial
+            report["firmware_fingerprint"] = initial["firmware_prefix_sha256"]
+            if initial.get("dropins") != "":
+                raise IdentityError("native experiment requires stock ac50.service")
+            prior = step("initial-runtime-state", lambda: parse_facts(ssh.fixed("collect")))
+            if (
+                prior.get("hil_runtime") != "absent"
+                or prior.get("active_sha256") != "absent"
+                or prior.get("previous_sha256") != "absent"
+            ):
+                raise IdentityError("an earlier HIL session requires explicit recovery")
+
+            print("[1/7] Building and ABI-testing native artifact...", flush=True)
+            data, digest = step("build-native", build_native_artifact)
+            report["artifact_sha256"] = digest
+
+            predeploy = step("pre-deploy-identity", lambda: identity(ssh))
+            if (
+                predeploy["firmware_prefix_sha256"]
+                != report["firmware_fingerprint"]
+                or predeploy.get("dropins") != ""
+            ):
+                raise IdentityError("device identity changed before native deployment")
+
+            print("[2/7] Deploying immutable native artifact...", flush=True)
+            mutated = True
+            step("deploy", lambda: deploy_artifact(ssh, data, digest))
+
+            print("[3/7] Activating once...", flush=True)
+            report["activation"] = {"status": "running", "sha256": digest}
+            active = step("activate", lambda: activate_artifact(ssh, digest, initial))
+            report["active_state"] = active
+            report["activation"] = {"status": "pass", "sha256": digest}
+            step("bridge-ready", lambda: wait_bridge(ssh))
+
+            print(
+                "[4/7] Create a fresh unsaved stopped one-bar sequence, assign "
+                "A01, and open the stock Step editor; waiting up to 180 seconds "
+                "for verified context...",
+                flush=True,
+            )
+            ready = step(
+                "step-context-ready",
+                lambda: wait_for(
+                    "idle Step-editor context",
+                    lambda state: state["native"] == "idle"
+                    and state["context"] == "ready",
+                    180,
+                ),
+            )
+            if ready["command_accepted"] != "0" or ready["event_observed"] != "0":
+                raise RemoteError("native experiment was not pristine before arming")
+            passed_assertions += 1
+
+            print("[5/7] Inserting and observing one fixed A01 event...", flush=True)
+            armed = step("arm-once", lambda: command("NATIVE ARM"))
+            if armed["action_accepted"] != "1":
+                raise RemoteError("native arm request was rejected")
+            passed_assertions += 1
+            step(
+                "command-accepted",
+                lambda: wait_for(
+                    "stock command acceptance",
+                    lambda state: state["command_accepted"] == "1",
+                    10,
+                ),
+            )
+            passed_assertions += 1
+            observed = step(
+                "event-observed",
+                lambda: wait_for(
+                    "exact event-list presence",
+                    lambda state: state["event_observed"] == "1"
+                    and state["native"] == "observed",
+                    10,
+                ),
+            )
+            if observed["event_removed"] != "0":
+                raise RemoteError("event reported removed before removal request")
+            passed_assertions += 1
+
+            print("[6/7] Removing and verifying absence...", flush=True)
+            removal = step("remove-once", lambda: command("NATIVE REMOVE"))
+            if removal["action_accepted"] != "1":
+                raise RemoteError("native removal request was rejected")
+            step(
+                "event-removed",
+                lambda: wait_for(
+                    "exact event-list absence",
+                    lambda state: state["event_removed"] == "1"
+                    and state["native"] == "removed",
+                    10,
+                ),
+            )
+            passed_assertions += 1
+            report["assertions"] = {"passed": passed_assertions, "failed": 0}
+            report["diagnostics"] = step(
+                "collect", lambda: parse_facts(ssh.fixed("collect"))
+            )
+        except HilError as exc:
+            original_error = exc
+            report["assertions"] = {"passed": passed_assertions, "failed": 1}
+            report["errors"].append({"phase": "native-experiment", "message": str(exc)})
+            if mutated:
+                try:
+                    report["diagnostics"] = parse_facts(ssh.fixed("collect"))
+                except HilError as diagnostic_error:
+                    report["errors"].append({
+                        "phase": "diagnostic-collection",
+                        "message": str(diagnostic_error),
+                    })
+        except KeyboardInterrupt:
+            original_error = RunCycleError("native experiment interrupted by operator")
+            report["assertions"] = {"passed": 0, "failed": 1}
+            report["errors"].append({
+                "phase": "native-experiment", "message": str(original_error),
+            })
+        finally:
+            if mutated:
+                print("[7/7] Restoring stock...", flush=True)
+                try:
+                    final = step("restore-stock", lambda: restore_stock(ssh))
+                    report["final_state"] = final
+                    report["restoration"] = {"status": "pass"}
+                except HilError as exc:
+                    restoration_error = exc
+                    report["restoration"] = {"status": "fail", "message": str(exc)}
+                    report["errors"].append({"phase": "restoration", "message": str(exc)})
+            report["finished_at"] = utc_now()
+            report["status"] = (
+                "pass" if original_error is None and restoration_error is None else "fail"
+            )
+            write_run_report(report_dir, report)
+
+        print(f"Overall {str(report['status']).upper()}")
+        print(f"Artifact SHA-256: {report['artifact_sha256'] or 'none'}")
+        print(f"Restoration: {report['restoration']['status']}")
+        print(f"Report directory: {report_dir}")
+        print("Audible playback: not tested by this experiment")
+        if restoration_error is not None:
+            raise RunCycleError(
+                "RESTORATION FAILED; MPC MAY STILL BE RUNNING THE NATIVE TEST MOD. "
+                f"Original error: {original_error or 'none'}; restoration: "
+                f"{restoration_error}. If SSH is unavailable, shut down normally, "
+                "remove the development SD, and perform a stock-only boot."
+            )
+        if original_error is not None:
+            raise RunCycleError(
+                f"native experiment failed: {original_error}; stock restoration "
+                f"status: {report['restoration']['status']}"
+            )
+        return 0
+
+
 def run_command(args: argparse.Namespace, ssh: Ssh | None) -> int:
     if args.command == "build":
         if args.native_m04a:
-            code = subprocess.run(
-                ["nix", "shell", "nixpkgs#pkgsCross.aarch64-multiplatform.stdenv.cc",
-                 "--command", "zsh", "-lc",
-                 "export AARCH64_CXX=$(command -v aarch64-unknown-linux-gnu-g++); "
-                 "device/m04a/scripts/build.sh"],
-                cwd=ROOT, check=False,
-            ).returncode
-            if code:
-                raise HilError(f"fixed M0.4a build failed with status {code}")
+            build_native_artifact()
         elif args.hil:
             build_hil_artifact()
         else:
@@ -892,6 +1180,8 @@ def run_command(args: argparse.Namespace, ssh: Ssh | None) -> int:
         print("stock ac50.service restored; volatile HIL files removed")
     elif args.command == "run":
         return orchestrate_run(args, ssh)
+    elif args.command == "native-experiment":
+        return orchestrate_native_experiment(args, ssh)
     elif args.command == "collect":
         identity(ssh, False)
         encoded = (json.dumps(parse_facts(ssh.fixed("collect")), indent=2, sort_keys=True) + "\n").encode()
@@ -931,6 +1221,9 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--level", choices=("A", "B"), default="B")
     run.add_argument("--scenario", action="store_true")
     run.add_argument("--confirm")
+    native = sub.add_parser("native-experiment")
+    native.add_argument("--confirm")
+    native.add_argument("--confirm-native")
     collect = sub.add_parser("collect"); collect.add_argument("--output")
     return result
 
@@ -949,7 +1242,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_command(args, ssh)
     except HilError as exc:
         print(f"error: {exc}", file=sys.stderr)
-        if args.command in ("restart", "rollback", "run"):
+        if args.command in ("restart", "rollback", "run", "native-experiment"):
             print(
                 f"recovery (explicit, never automatic): rerun with restore-stock --confirm {CONFIRM}",
                 file=sys.stderr,

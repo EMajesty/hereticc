@@ -28,6 +28,18 @@ pub struct NativeEditReceipt {
     event: [u8; 56],
     sequence_length: i64,
     note: u32,
+    context_identity: [u64; 2],
+}
+
+/// Non-dereferenceable identity of one live sequence/track editing context.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NativeContextIdentity([u64; 2]);
+
+#[cfg(test)]
+impl NativeContextIdentity {
+    pub(crate) const fn fixture(words: [u64; 2]) -> Self {
+        Self(words)
+    }
 }
 
 impl NativeEditReceipt {
@@ -87,6 +99,25 @@ impl NativeStockSequencePort<'_> {
     pub fn contains(&mut self, receipt: &NativeEditReceipt) -> Result<bool, NativeEditError> {
         backend::contains(self.screen, receipt)
     }
+
+    /// Validate that the callback owns a complete live Step editing context.
+    /// This does not retain or expose any firmware object.
+    ///
+    /// # Errors
+    ///
+    /// Returns a fail-closed native error when the context is incomplete.
+    pub fn validate_context(&mut self) -> Result<(), NativeEditError> {
+        self.context_identity().map(|_| ())
+    }
+
+    /// Copy a pointer-free token for this callback's live editing context.
+    ///
+    /// # Errors
+    ///
+    /// Returns a fail-closed native error when the context is incomplete.
+    pub fn context_identity(&mut self) -> Result<NativeContextIdentity, NativeEditError> {
+        backend::context_identity(self.screen)
+    }
 }
 
 impl StockSequenceEditPort for NativeStockSequencePort<'_> {
@@ -121,6 +152,7 @@ mod backend {
         sequence_length: i64,
         note: u32,
         reserved: u32,
+        context_identity: [u64; 2],
     }
 
     unsafe extern "C" {
@@ -139,6 +171,11 @@ mod backend {
             base: usize,
             screen: usize,
             receipt: *const NativeReceipt,
+        ) -> i32;
+        fn neurogenic_stock_sequence_context(
+            base: usize,
+            screen: usize,
+            identity: *mut [u64; 2],
         ) -> i32;
     }
 
@@ -173,6 +210,7 @@ mod backend {
             sequence_length: 0,
             note: 0,
             reserved: 0,
+            context_identity: [0; 2],
         };
         // SAFETY: the port constructor's contract supplies the live callback;
         // the C++ shim owns validation, native temporaries, and exception cleanup.
@@ -191,6 +229,7 @@ mod backend {
             event: receipt.event,
             sequence_length: receipt.sequence_length,
             note: receipt.note,
+            context_identity: receipt.context_identity,
         })
     }
 
@@ -203,6 +242,7 @@ mod backend {
             sequence_length: receipt.sequence_length,
             note: receipt.note,
             reserved: 0,
+            context_identity: receipt.context_identity,
         };
         // SAFETY: same callback-scoped contract as insertion.
         let status = unsafe {
@@ -224,6 +264,7 @@ mod backend {
             sequence_length: receipt.sequence_length,
             note: receipt.note,
             reserved: 0,
+            context_identity: receipt.context_identity,
         };
         // SAFETY: same callback-scoped contract as insertion.
         let status = unsafe {
@@ -233,6 +274,25 @@ mod backend {
             1 => Ok(true),
             0 => Ok(false),
             value => Err(error(-value)),
+        }
+    }
+
+    pub(super) fn context_identity(
+        screen: usize,
+    ) -> Result<super::NativeContextIdentity, NativeEditError> {
+        let mut identity = [0; 2];
+        // SAFETY: same callback-scoped contract as insertion.
+        let status = unsafe {
+            neurogenic_stock_sequence_context(
+                mpc_sample_sdk::image::base(),
+                screen,
+                &raw mut identity,
+            )
+        };
+        if status == 0 {
+            Ok(super::NativeContextIdentity(identity))
+        } else {
+            Err(error(status))
         }
     }
 }
@@ -251,6 +311,11 @@ mod backend {
         Err(NativeEditError::UnsupportedTarget)
     }
     pub(super) fn contains(_: usize, _: &NativeEditReceipt) -> Result<bool, NativeEditError> {
+        Err(NativeEditError::UnsupportedTarget)
+    }
+    pub(super) fn context_identity(
+        _: usize,
+    ) -> Result<super::NativeContextIdentity, NativeEditError> {
         Err(NativeEditError::UnsupportedTarget)
     }
 }

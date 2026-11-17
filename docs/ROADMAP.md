@@ -335,7 +335,7 @@ redirected toward a bounded stock sequence-command SDK extension informed by
 Am MOD's native event-list/Undo implementation. See
 [M0.3e sequencer integration](M0-3E-SEQUENCER-INTEGRATION.md).
 
-### M0.4a Native stock-sequence adapter — host/QEMU complete, physical insertion approval-gated
+### M0.4b Native stock-sequence adapter — safety-reviewed, experiment approval-gated
 
 M0.4 converts one active selected NEUROGENIC cell into a bounded, pointer-free
 request for the stock UI's current sequence/current track. The request uses the
@@ -358,6 +358,13 @@ acceptance, observed event-list presence, removal and failure. No live insertion
 has occurred; the first fresh-unsaved-sequence experiment remains
 approval-gated and audible playback is unverified. See
 [M0.4 native sequencer](M0-4-NATIVE-SEQUENCER.md).
+
+M0.4b additionally binds arm/lookup/removal to the same sequence-track context,
+rejects a pre-existing identical event, prevents recursive paint from entering
+native work, verifies exact absence after removal, and adds a separately
+confirmed one-command HIL experiment with automatic stock restoration. It is
+host/QEMU-tested but has not executed on hardware. See
+[M0.4b safety review](M0-4B-NATIVE-SAFETY.md).
 
 ### M0.3b-C–E Device feasibility experiments — planned and blocked
 
@@ -511,9 +518,10 @@ One repeat of the same eight-command cycle is the only next HIL action; after
 that, priority returns to the bounded stock-sequencer adapter. See
 [HIL-1.2](HIL-1-2.md) and [HIL-1.3](HIL-1-3.md).
 
-The bounded current-sequence/current-track UI-thread adapter and non-hardware
-ABI review are complete. The next action is one separately approved fixed
-A01/tick-0 insertion in a fresh unsaved stock sequence, followed by event-list
-observation, stock playback observation, exact native removal and stock
-restoration. See [M0.4](M0-4-NATIVE-SEQUENCER.md). This does not itself
-authorize that native write or B1 DATA-hook testing.
+The bounded current-sequence/current-track UI-thread adapter, safety review and
+automated experiment preparation are complete. The next action is one
+separately approved fixed A01/tick-0 insertion in a fresh unsaved stock
+sequence, followed by exact event-list presence, exact native removal, absence
+verification and stock restoration. Audible playback remains a later,
+separately observed result. See [M0.4](M0-4-NATIVE-SEQUENCER.md). This does not
+itself authorize that native write or B1 DATA-hook testing.

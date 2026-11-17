@@ -78,11 +78,15 @@ struct Receipt {
     std::int64_t sequence_length;
     std::uint32_t note;
     std::uint32_t reserved;
+    std::uint64_t context_identity[2];
 };
-static_assert(sizeof(Receipt) == 72);
+static_assert(sizeof(Receipt) == 88);
 
 struct Context {
     void *controller;
+    void *sequence;
+    void *program;
+    void *track;
     void *event_list;
     void *service;
     std::int64_t sequence_length;
@@ -121,27 +125,90 @@ bool context(std::uintptr_t base, void *screen, Context &out) {
     void *things = field<void *>(controller, 0x248);
     void *sequence = things == nullptr ? nullptr : field<void *>(things, 0x1c8);
     void *program = things == nullptr ? nullptr : field<void *>(things, 0xb8);
+    void *track = things == nullptr ? nullptr : field<void *>(things, 0x140);
     void *event_list = field<void *>(controller, 0xc0);
     void *service = field<void *>(controller, 0x240);
-    if (sequence == nullptr || program == nullptr || event_list == nullptr || service == nullptr) {
+    if (sequence == nullptr || program == nullptr || track == nullptr ||
+        event_list == nullptr || service == nullptr) {
         return false;
     }
     const std::int64_t length = function<std::int64_t (*)(void *)>(base, SEQUENCE_LENGTH)(sequence);
     if (length <= 0 || length > 960LL * 128 * 64) {
         return false;
     }
-    out = {controller, event_list, service, length};
+    out = {controller, sequence, program, track, event_list, service, length};
     return true;
 }
 
-void cleanup(std::uintptr_t base, NativeTree &added, std::uint64_t &title,
-             std::uint64_t &merge, NativeResult &result) {
+std::uint64_t mix(std::uint64_t value) {
+    value ^= value >> 30;
+    value *= UINT64_C(0xbf58476d1ce4e5b9);
+    value ^= value >> 27;
+    value *= UINT64_C(0x94d049bb133111eb);
+    return value ^ (value >> 31);
+}
+
+void context_identity(const Context &live, std::uint64_t out[2]) {
+    const std::uint64_t values[] = {
+        reinterpret_cast<std::uintptr_t>(live.sequence),
+        reinterpret_cast<std::uintptr_t>(live.track),
+        reinterpret_cast<std::uintptr_t>(live.event_list),
+        reinterpret_cast<std::uintptr_t>(live.program),
+    };
+    std::uint64_t a = UINT64_C(0x243f6a8885a308d3);
+    std::uint64_t b = UINT64_C(0x13198a2e03707344);
+    for (unsigned i = 0; i < 4; ++i) {
+        a = mix(a ^ mix(values[i] + UINT64_C(0x9e3779b97f4a7c15) * (i + 1)));
+        b = mix(b + mix(values[3 - i] ^ UINT64_C(0xd1b54a32d192ed03) * (i + 1)));
+    }
+    out[0] = a;
+    out[1] = b;
+}
+
+bool same_context(const Context &live, const Receipt &receipt) {
+    std::uint64_t current[2]{};
+    context_identity(live, current);
+    return live.sequence_length == receipt.sequence_length &&
+           std::memcmp(current, receipt.context_identity, sizeof(current)) == 0;
+}
+
+int contains_event(std::uintptr_t base, const Context &live, const Event &wanted) {
+    void *end = static_cast<unsigned char *>(live.event_list) + 0x68;
+    void *node = field<void *>(live.event_list, 0x78);
+    unsigned budget = 4096;
+    while (node != end && budget-- != 0) {
+        if (node == nullptr) return -3;
+        const void *event = static_cast<unsigned char *>(node) + 0x20;
+        if (std::memcmp(event, &wanted, sizeof(Event)) == 0) return 1;
+        node = function<void *(*)(void *)>(base, TREE_NEXT)(node);
+    }
+    return node == end ? 0 : -3;
+}
+
+void cleanup(std::uintptr_t base, NativeTree &removed, NativeTree &added,
+             NativeTree &changed, std::uint64_t &title, std::uint64_t &merge,
+             NativeResult &result) {
     release_result(base, result);
     if (title != 0) function<void (*)(std::uint64_t *)>(base, STRING_DROP)(&title);
     if (merge != 0) function<void (*)(std::uint64_t *)>(base, STRING_DROP)(&merge);
     if (added.parent != nullptr) function<void (*)(void *)>(base, TREE_FREE)(added.parent);
+    if (removed.parent != nullptr) function<void (*)(void *)>(base, TREE_FREE)(removed.parent);
+    if (changed.parent != nullptr) function<void (*)(void *)>(base, TREE_FREE)(changed.parent);
 }
 } // namespace
+
+extern "C" int neurogenic_stock_sequence_context(std::uintptr_t base, void *screen,
+                                                     std::uint64_t out[2]) noexcept {
+    if (out == nullptr) return 2;
+    try {
+        Context live{};
+        if (!context(base, screen, live)) return 1;
+        context_identity(live, out);
+        return 0;
+    } catch (...) {
+        return 3;
+    }
+}
 
 extern "C" int neurogenic_stock_sequence_insert(std::uintptr_t base, void *screen,
                                                    const Request *request, Receipt *receipt) noexcept {
@@ -160,6 +227,8 @@ extern "C" int neurogenic_stock_sequence_insert(std::uintptr_t base, void *scree
             base, NOTE_CONSTRUCTOR)(static_cast<unsigned>(note), request->tick, request->duration,
                                     100, 0, static_cast<float>(request->velocity) / 127.0F);
         if ((event.type & 0xffU) != 3 || event.time != request->tick) return 3;
+        const int already_present = contains_event(base, live, event);
+        if (already_present != 0) return already_present > 0 ? 2 : 3;
 
         NativeTree removed{}, added{}, changed{};
         tree_init(removed); tree_init(added); tree_init(changed);
@@ -173,14 +242,15 @@ extern "C" int neurogenic_stock_sequence_insert(std::uintptr_t base, void *scree
                                        &title, &merge, 0, &result,
                                        reinterpret_cast<std::uintptr_t>(function<void *>(base, ADD_COMMAND)));
         } catch (...) {
-            cleanup(base, added, title, merge, result);
+            cleanup(base, removed, added, changed, title, merge, result);
             return 3;
         }
-        cleanup(base, added, title, merge, result);
+        cleanup(base, removed, added, changed, title, merge, result);
         std::memcpy(&receipt->event, &event, sizeof(event));
         receipt->sequence_length = live.sequence_length;
         receipt->note = static_cast<std::uint32_t>(note);
         receipt->reserved = 0;
+        context_identity(live, receipt->context_identity);
         return 0;
     } catch (...) {
         return 3;
@@ -192,7 +262,7 @@ extern "C" int neurogenic_stock_sequence_remove(std::uintptr_t base, void *scree
     if (receipt == nullptr || (receipt->event.type & 0xffU) != 3) return 2;
     try {
         Context live{};
-        if (!context(base, screen, live) || live.sequence_length != receipt->sequence_length) return 1;
+        if (!context(base, screen, live) || !same_context(live, *receipt)) return 1;
         NativeResult result{};
         try {
             neurogenic_step_remove_result(live.service, live.event_list, &receipt->event, nullptr,
@@ -214,17 +284,8 @@ extern "C" int neurogenic_stock_sequence_contains(std::uintptr_t base, void *scr
     if (receipt == nullptr || (receipt->event.type & 0xffU) != 3) return -2;
     try {
         Context live{};
-        if (!context(base, screen, live) || live.sequence_length != receipt->sequence_length) return -1;
-        void *end = static_cast<unsigned char *>(live.event_list) + 0x68;
-        void *node = field<void *>(live.event_list, 0x78);
-        unsigned budget = 4096;
-        while (node != end && budget-- != 0) {
-            if (node == nullptr) return -3;
-            const void *event = static_cast<unsigned char *>(node) + 0x20;
-            if (std::memcmp(event, &receipt->event, sizeof(Event)) == 0) return 1;
-            node = function<void *(*)(void *)>(base, TREE_NEXT)(node);
-        }
-        return node == end ? 0 : -3;
+        if (!context(base, screen, live) || !same_context(live, *receipt)) return -1;
+        return contains_event(base, live, receipt->event);
     } catch (...) {
         return -3;
     }

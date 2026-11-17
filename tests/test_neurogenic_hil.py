@@ -151,6 +151,22 @@ class HilTests(unittest.TestCase):
             with self.assertRaises(hil.RemoteError):
                 hil.parse_facts(output)
 
+    def test_native_response_schema_is_exact_and_fail_closed(self):
+        valid = (
+            b"v=1 native=observed context=ready action_accepted=1 "
+            b"command_accepted=1 event_observed=1 event_removed=0\n"
+        )
+        self.assertEqual(hil.parse_native_response(valid)["native"], "observed")
+        invalid = (
+            valid.replace(b"event_observed=1", b"event_observed=2"),
+            valid + b"extra=1\n",
+            valid.replace(b"native=observed", b"native=audible"),
+            b"\xff",
+        )
+        for response in invalid:
+            with self.assertRaises(hil.RemoteError):
+                hil.parse_native_response(response)
+
     def test_upload_uses_fixed_runtime_paths_and_exact_payload(self):
         data = b"ELF fixture"
         digest = __import__("hashlib").sha256(data).hexdigest()
@@ -208,6 +224,23 @@ class HilTests(unittest.TestCase):
         self.assertEqual(hil.M04A_SUMS.parent, hil.M04A_ARTIFACT.parent)
         with self.assertRaises(SystemExit):
             hil.parser().parse_args(["deploy", "--hil", "--native-m04a"])
+
+    def test_native_build_is_fail_fast_and_has_all_fixture_tools(self):
+        completed = mock.Mock(returncode=0)
+        with mock.patch.object(hil.subprocess, "run", return_value=completed) as run:
+            with mock.patch.object(
+                hil, "read_reviewed_artifact", return_value=(b"native", "a" * 64)
+            ):
+                self.assertEqual(hil.build_native_artifact(), (b"native", "a" * 64))
+        command = run.call_args.args[0]
+        self.assertIn("nixpkgs#qemu", command)
+        self.assertIn("nixpkgs#llvmPackages_21.llvm", command)
+        shell_program = command[-1]
+        self.assertTrue(shell_program.startswith("set -eu;"))
+        self.assertLess(
+            shell_program.index("verify-native-abi.sh"),
+            shell_program.index("device/m04a/scripts/build.sh"),
+        )
 
     def test_only_fixed_operations_are_exposed(self):
         ssh = hil.Ssh(self.config, Runner([]))
@@ -587,6 +620,154 @@ class RunCycleTests(unittest.TestCase):
         self.assertEqual(report["level"], "A")
         self.assertEqual(report["assertions"], {"passed": 1, "failed": 0})
         self.assertEqual(report["restoration"]["status"], "not-required")
+
+
+class NativeExperimentTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        root = Path(self.temp.name)
+        self.run_root = root / "runs"
+        self.run_lock = root / "run.lock"
+        self.args = type("Args", (), {
+            "confirm": hil.CONFIRM,
+            "confirm_native": hil.NATIVE_CONFIRM,
+        })()
+        self.identity_facts = hil.parse_facts(identity_output())
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    @staticmethod
+    def response(
+        native, *, context="ready", action=1, accepted=0, present=0, removed=0
+    ):
+        return (
+            f"v=1 native={native} context={context} action_accepted={action} "
+            f"command_accepted={accepted} event_observed={present} "
+            f"event_removed={removed}\n"
+        ).encode()
+
+    class NativeSsh(CycleSsh):
+        def __init__(self, responses):
+            super().__init__()
+            self.responses = list(responses)
+            self.commands = []
+
+        def test_command(self, command):
+            self.commands.append(command)
+            if not self.responses:
+                raise AssertionError("unexpected native command")
+            result = self.responses.pop(0)
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+    def patches(self, **overrides):
+        defaults = {
+            "identity": mock.Mock(return_value=dict(self.identity_facts)),
+            "build_native_artifact": mock.Mock(return_value=(b"ELF", "d" * 64)),
+            "deploy_artifact": mock.Mock(return_value=None),
+            "activate_artifact": mock.Mock(return_value={
+                **self.identity_facts, "main_pid": "202", "dropins": hil.DROPIN,
+            }),
+            "wait_bridge": mock.Mock(return_value=None),
+            "restore_stock": mock.Mock(return_value={
+                **self.identity_facts, "main_pid": "303",
+            }),
+            "git_commit": mock.Mock(return_value="b" * 40),
+        }
+        defaults.update(overrides)
+        stack = contextlib.ExitStack()
+        stack.enter_context(mock.patch.object(hil, "RUN_ROOT", self.run_root))
+        stack.enter_context(mock.patch.object(hil, "RUN_LOCK", self.run_lock))
+        stack.enter_context(mock.patch.object(hil.time, "sleep", return_value=None))
+        for name, replacement in defaults.items():
+            stack.enter_context(mock.patch.object(hil, name, replacement))
+        return stack, defaults
+
+    def only_report(self):
+        directories = list(self.run_root.iterdir())
+        self.assertEqual(len(directories), 1)
+        return json.loads((directories[0] / "report.json").read_text())
+
+    def successful_responses(self):
+        return [
+            self.response("idle"),
+            self.response("armed"),
+            self.response("accepted", accepted=1),
+            self.response("observed", accepted=1, present=1),
+            self.response("remove_requested", accepted=1, present=1),
+            self.response("removed", accepted=1, present=1, removed=1),
+        ]
+
+    def test_native_confirmation_is_distinct_and_required(self):
+        parsed = hil.parser().parse_args([
+            "native-experiment", "--confirm", hil.CONFIRM,
+            "--confirm-native", hil.NATIVE_CONFIRM,
+        ])
+        self.assertEqual(parsed.confirm_native, hil.NATIVE_CONFIRM)
+        bad = type("Args", (), {
+            "confirm": hil.CONFIRM, "confirm_native": hil.CONFIRM,
+        })()
+        with self.assertRaises(hil.RunCycleError):
+            hil.orchestrate_native_experiment(bad, mock.Mock())
+        self.assertFalse(self.run_root.exists())
+
+    def test_success_adds_observes_removes_restores_and_reports(self):
+        ssh = self.NativeSsh(self.successful_responses())
+        stack, patched = self.patches()
+        with stack, contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(hil.orchestrate_native_experiment(self.args, ssh), 0)
+        self.assertEqual(ssh.commands.count("NATIVE ARM"), 1)
+        self.assertEqual(ssh.commands.count("NATIVE REMOVE"), 1)
+        report = self.only_report()
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["schema"], "neurogenic-native-experiment-v1")
+        self.assertEqual(report["assertions"], {"passed": 5, "failed": 0})
+        self.assertFalse(report["audible_playback_observed"])
+        patched["restore_stock"].assert_called_once()
+        self.assertFalse(self.run_lock.exists())
+
+    def test_partial_arm_failure_is_terminal_and_restores(self):
+        responses = [self.response("idle"), self.response("idle", action=0)]
+        ssh = self.NativeSsh(responses)
+        stack, patched = self.patches()
+        with stack, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(
+            hil.RunCycleError
+        ):
+            hil.orchestrate_native_experiment(self.args, ssh)
+        self.assertNotIn("NATIVE REMOVE", ssh.commands)
+        patched["restore_stock"].assert_called_once()
+        self.assertEqual(self.only_report()["status"], "fail")
+
+    def test_removal_failure_never_retries_and_restores(self):
+        responses = self.successful_responses()[:-1] + [
+            self.response("failed", accepted=1, present=1),
+        ]
+        ssh = self.NativeSsh(responses)
+        stack, patched = self.patches()
+        with stack, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(
+            hil.RunCycleError
+        ):
+            hil.orchestrate_native_experiment(self.args, ssh)
+        self.assertEqual(ssh.commands.count("NATIVE REMOVE"), 1)
+        self.assertEqual(ssh.commands.count("NATIVE ARM"), 1)
+        patched["restore_stock"].assert_called_once()
+
+    def test_native_timeout_is_bounded_and_restores(self):
+        responses = [self.response("idle"), self.response("armed")]
+        responses.extend(self.response("armed") for _ in range(20))
+        ssh = self.NativeSsh(responses)
+        ticks = iter(range(200))
+        stack, patched = self.patches()
+        stack.enter_context(mock.patch.object(hil.time, "monotonic", side_effect=ticks))
+        with stack, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(
+            hil.RunCycleError
+        ):
+            hil.orchestrate_native_experiment(self.args, ssh)
+        self.assertEqual(ssh.commands.count("NATIVE ARM"), 1)
+        self.assertNotIn("NATIVE REMOVE", ssh.commands)
+        patched["restore_stock"].assert_called_once()
 
 
 if __name__ == "__main__":

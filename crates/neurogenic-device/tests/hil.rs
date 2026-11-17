@@ -61,10 +61,11 @@ fn native_experiment_commands_are_bounded_and_inert_until_install() {
     let mut ui = UiState::default();
     let status = apply(&mut ui, b"NATIVE STATUS").expect("status");
     assert!(status.as_str().contains("native=unavailable"));
-    assert!(status.as_str().contains("accepted=1"));
+    assert!(status.as_str().contains("action_accepted=1"));
+    assert!(status.as_str().contains("context=unavailable"));
     let arm = apply(&mut ui, b"NATIVE ARM").expect("arm");
     assert!(arm.as_str().contains("native=unavailable"));
-    assert!(arm.as_str().contains("accepted=0"));
+    assert!(arm.as_str().contains("action_accepted=0"));
     assert_eq!(apply(&mut ui, b"NATIVE EXEC"), Err(Error::Unknown));
 }
 

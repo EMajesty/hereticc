@@ -70,6 +70,13 @@ Step-screen vtable hook; arming it would issue one native sequence edit. No such
 physical load, hook installation, event insertion, removal or audible playback
 has occurred.
 
+M0.4b binds arming, observation and removal to pointer-free identities derived
+from the same live sequence, track, event-list and Program graph; adds a
+two-second arm lease, nonblocking recursive-paint guard and same-pthread check;
+and prepares an independently confirmed one-command experiment. These are
+host/QEMU results only. The experiment has not been physically authorized or
+executed.
+
 These facts are research inputs, not permission to depend directly on raw protocols. An in-process extension should prefer a guarded adapter such as the SDK and retain stock ownership wherever possible.
 
 ## Controls relevant to NEUROGENIC

@@ -1,5 +1,8 @@
 # M0.4/M0.4a: first native stock-sequencer event
 
+M0.4b subsequently hardened this adapter and prepared a separately authorized
+one-command experiment. See [M0.4b safety review](M0-4B-NATIVE-SAFETY.md).
+
 ## Result
 
 M0.4 establishes and host-tests the safe request side of one stock-sequencer
@@ -186,7 +189,7 @@ cannot prove live Undo, stock stability, persistence, audio or timing.
 
 The approval-gated artifact is
 `target/m04a/build/neurogenic-m04a-native-test.so`, SHA-256
-`1a91ada34fddc5ed2d155e4c1d6e8bdb06e0d4736c6c1ee24cd5efcafb7886f4`.
+`13f108f8bfc32d2e467c4fe2d5ffef618efed41f1a2d08e4b202a56483cb2294`.
 It is AArch64, has a non-executable stack, no writable/executable load segment,
 and requires no GLIBC symbol newer than 2.30.
 
@@ -194,26 +197,23 @@ and requires no GLIBC symbol newer than 2.30.
 
 The experiment is prepared but **not authorized or executed**. Before approval,
 the owner must accept one new in-memory Step-screen vtable hook and one native
-stock-sequence add command. The controlled run must use a fresh unsaved one-bar
-sequence with a sample on A01; deploy only the reviewed hash; open the stock
-Step editor; require `native=idle`; issue one `NATIVE ARM`; require `accepted`
-then `observed`; observe stock Play separately; issue one `NATIVE REMOVE` and
-require `removed`; restore stock; and discard the unsaved sequence.
+stock-sequence add command. M0.4b supersedes the manual command sequence below
+with a separately confirmed, fail-safe one-command runner. It validates the
+same context, acceptance, exact presence, exact removal and absence evidence;
+audible playback is deliberately outside that automated claim.
 
 Stop on any unexpected event, UI/control/audio regression, unavailable/failed
 state, service instability or inability to remove. Do not re-arm in the same
 run. This is the next specific operation requiring owner approval.
 
-After that approval, the fixed host preparation/deployment commands are:
+The M0.4a fixed host preparation/deployment commands were:
 
 ```sh
 python3 tools/neurogenic-hil/hil.py --config target/hil/config.json build --native-m04a
 python3 tools/neurogenic-hil/hil.py --config target/hil/config.json deploy --native-m04a --confirm MPC-SAMPLE-1.3.0.12
-python3 tools/neurogenic-hil/hil.py --config target/hil/config.json restart --sha256 1a91ada34fddc5ed2d155e4c1d6e8bdb06e0d4736c6c1ee24cd5efcafb7886f4 --confirm MPC-SAMPLE-1.3.0.12
+python3 tools/neurogenic-hil/hil.py --config target/hil/config.json restart --sha256 13f108f8bfc32d2e467c4fe2d5ffef618efed41f1a2d08e4b202a56483cb2294 --confirm MPC-SAMPLE-1.3.0.12
 ```
 
-With the stock Step editor visible, use the existing bounded `test --level B
---command` operation for `NATIVE STATUS`, `NATIVE ARM`, and later `NATIVE
-REMOVE`. Finish with the existing `restore-stock --confirm
-MPC-SAMPLE-1.3.0.12`. These commands are documented for review only in M0.4a;
-they were not executed.
+They are retained as the historical M0.4a record and must not be used for the
+first experiment. Use the reviewed M0.4b command in
+[the safety review](M0-4B-NATIVE-SAFETY.md) only after explicit approval.
