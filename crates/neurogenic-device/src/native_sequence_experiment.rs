@@ -131,6 +131,7 @@ const fn expiry_diagnostic(paint_generation: u64, armed_generation: u64) -> Diag
     }
 }
 
+#[cfg_attr(feature = "native-playable-grid", allow(dead_code))]
 fn claim_status(status: &AtomicU8, expected: Status, claimed: Status) -> bool {
     status
         .compare_exchange(
@@ -254,6 +255,7 @@ pub fn scan_evidence() -> ScanEvidence {
     }
 }
 
+#[cfg_attr(feature = "native-playable-grid", allow(dead_code))]
 fn publish_scan(scan: NativeScanEvidence) {
     SCAN_ATTEMPTS.fetch_add(1, Ordering::AcqRel);
     SCAN_TRAVERSED.store(scan.traversed, Ordering::Release);
@@ -436,6 +438,7 @@ pub fn install() -> bool {
     true
 }
 
+#[cfg_attr(feature = "native-playable-grid", allow(dead_code))]
 fn insert_one(port: &mut NativeStockSequencePort<'_>) {
     let Ok(request) = StockNoteRequest::from_grid_step(0, 0, 100) else {
         DIAGNOSTIC.store(Diagnostic::RequestRejected as u8, Ordering::Release);
@@ -464,6 +467,7 @@ fn insert_one(port: &mut NativeStockSequencePort<'_>) {
     }
 }
 
+#[cfg_attr(feature = "native-playable-grid", allow(dead_code))]
 fn observe_existing(port: &mut NativeStockSequencePort<'_>) -> bool {
     let mut receipt = RECEIPT.lock().unwrap_or_else(PoisonError::into_inner);
     let Some(existing) = receipt.as_mut() else {
@@ -546,6 +550,14 @@ pub unsafe extern "C" fn neurogenic_m04a_step_paint(screen: usize, graphics: usi
         .lock()
         .unwrap_or_else(PoisonError::into_inner) = Some(current_context);
 
+    #[cfg(feature = "native-playable-grid")]
+    {
+        // SAFETY: this is the same verified callback-local Step screen and
+        // graphics object; the grid runtime retains neither.
+        unsafe { crate::native_grid_runtime::on_step_paint(screen, graphics) };
+    }
+
+    #[cfg(not(feature = "native-playable-grid"))]
     if REMOVE.swap(false, Ordering::AcqRel) {
         if !within_deadline(now, REMOVE_DEADLINE_NS.load(Ordering::Acquire)) {
             set_state(Status::Expired, Diagnostic::ExpiredAfterPaint);
@@ -566,27 +578,34 @@ pub unsafe extern "C" fn neurogenic_m04a_step_paint(screen: usize, graphics: usi
         return;
     }
 
+    #[cfg(not(feature = "native-playable-grid"))]
     if observe_existing(&mut port) {
         return;
     }
+    #[cfg(not(feature = "native-playable-grid"))]
     if !ARMED.swap(false, Ordering::AcqRel) {
         return;
     }
+    #[cfg(not(feature = "native-playable-grid"))]
     if !within_deadline(now, ARM_DEADLINE_NS.load(Ordering::Acquire)) {
         set_state(Status::Expired, Diagnostic::ExpiredAfterPaint);
         return;
     }
+    #[cfg(not(feature = "native-playable-grid"))]
     let armed_context = ARMED_CONTEXT
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .take();
+    #[cfg(not(feature = "native-playable-grid"))]
     if armed_context != Some(current_context) {
         set_state(Status::Rejected, Diagnostic::ContextChanged);
         return;
     }
+    #[cfg(not(feature = "native-playable-grid"))]
     if !claim_status(&STATUS, Status::Armed, Status::Inserting) {
         return;
     }
+    #[cfg(not(feature = "native-playable-grid"))]
     insert_one(&mut port);
 }
 

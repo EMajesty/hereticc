@@ -45,6 +45,7 @@ pub enum GridRequestError {
 pub enum GridEditError<E> {
     Native(E),
     AmbiguousEvent,
+    ObservationLimit,
     Terminal,
 }
 
@@ -116,6 +117,7 @@ enum Pending<R: Copy> {
     InsertAccepted {
         cell: GridCell,
         receipt: R,
+        observations: u8,
     },
     RemoveRequested {
         cell: GridCell,
@@ -124,6 +126,7 @@ enum Pending<R: Copy> {
     RemoveAccepted {
         cell: GridCell,
         receipt: R,
+        observations: u8,
     },
     Failed(GridCell),
 }
@@ -144,6 +147,12 @@ impl<R: Copy> Default for NativeGridEditor<R> {
 }
 
 impl<R: Copy> NativeGridEditor<R> {
+    /// Discard all pending work and context-bound receipts without native I/O.
+    pub fn invalidate(&mut self) {
+        self.receipts = [[None; CELLS]; CELLS];
+        self.pending = Pending::Idle;
+    }
+
     #[must_use]
     pub const fn state(&self) -> GridEditState {
         match self.pending {
@@ -163,18 +172,32 @@ impl<R: Copy> NativeGridEditor<R> {
     /// Rejects a closed editor, another pending/failed operation, an invalid
     /// cell, or an active cell for which this coordinator owns no receipt.
     pub fn request_selected(&mut self, ui: &UiState) -> Result<GridCell, GridRequestError> {
+        self.request(
+            ui,
+            GridCell {
+                physical_pad: ui.selected_track(),
+                step: ui.selected_step(),
+            },
+        )
+    }
+
+    /// Stage one previously captured pointer-free cell.
+    ///
+    /// # Errors
+    ///
+    /// Uses the same fail-closed validation as [`Self::request_selected`].
+    pub fn request(&mut self, ui: &UiState, cell: GridCell) -> Result<GridCell, GridRequestError> {
         if !matches!(self.pending, Pending::Idle) {
             return Err(GridRequestError::Busy);
         }
         if !ui.is_open() {
             return Err(GridRequestError::EditorClosed);
         }
-        let cell = GridCell {
-            physical_pad: ui.selected_track(),
-            step: ui.selected_step(),
-        };
         let track = usize::from(cell.physical_pad);
         let step = usize::from(cell.step);
+        if track >= CELLS || step >= CELLS {
+            return Err(GridRequestError::InvalidCell);
+        }
         if ui.step_active(track, step) {
             let Some(receipt) = self.receipts[track][step] else {
                 return Err(GridRequestError::UntrackedActiveCell);
@@ -207,14 +230,30 @@ impl<R: Copy> NativeGridEditor<R> {
             Pending::Idle => Ok(GridEditProgress::Waiting),
             Pending::InsertRequested { cell, request } => match port.insert(request) {
                 Ok(receipt) => {
-                    self.pending = Pending::InsertAccepted { cell, receipt };
+                    self.pending = Pending::InsertAccepted {
+                        cell,
+                        receipt,
+                        observations: 0,
+                    };
                     Ok(GridEditProgress::InsertCommandAccepted)
                 }
                 Err(error) => self.fail(cell, GridEditError::Native(error)),
             },
-            Pending::InsertAccepted { cell, mut receipt } => match port.observe(&mut receipt) {
+            Pending::InsertAccepted {
+                cell,
+                mut receipt,
+                observations,
+            } => match port.observe(&mut receipt) {
                 Ok((NativeEventPresence::Absent, _)) => {
-                    self.pending = Pending::InsertAccepted { cell, receipt };
+                    let observations = observations.saturating_add(1);
+                    if observations >= 8 {
+                        return self.fail(cell, GridEditError::ObservationLimit);
+                    }
+                    self.pending = Pending::InsertAccepted {
+                        cell,
+                        receipt,
+                        observations,
+                    };
                     Ok(GridEditProgress::Waiting)
                 }
                 Ok((NativeEventPresence::Unique, _)) => {
@@ -231,14 +270,30 @@ impl<R: Copy> NativeGridEditor<R> {
             },
             Pending::RemoveRequested { cell, receipt } => match port.remove(&receipt) {
                 Ok(()) => {
-                    self.pending = Pending::RemoveAccepted { cell, receipt };
+                    self.pending = Pending::RemoveAccepted {
+                        cell,
+                        receipt,
+                        observations: 0,
+                    };
                     Ok(GridEditProgress::RemoveCommandAccepted)
                 }
                 Err(error) => self.fail(cell, GridEditError::Native(error)),
             },
-            Pending::RemoveAccepted { cell, mut receipt } => match port.observe(&mut receipt) {
+            Pending::RemoveAccepted {
+                cell,
+                mut receipt,
+                observations,
+            } => match port.observe(&mut receipt) {
                 Ok((NativeEventPresence::Unique, _)) => {
-                    self.pending = Pending::RemoveAccepted { cell, receipt };
+                    let observations = observations.saturating_add(1);
+                    if observations >= 8 {
+                        return self.fail(cell, GridEditError::ObservationLimit);
+                    }
+                    self.pending = Pending::RemoveAccepted {
+                        cell,
+                        receipt,
+                        observations,
+                    };
                     Ok(GridEditProgress::Waiting)
                 }
                 Ok((NativeEventPresence::Absent, _)) => {

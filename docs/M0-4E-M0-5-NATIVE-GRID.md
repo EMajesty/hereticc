@@ -43,7 +43,7 @@ Host tests cover tick mapping, delayed commit, exact receipt removal, delayed
 absence, ambiguity, terminal native failure, and refusal to remove an
 untracked active cell.
 
-## Remaining execution-boundary blocker
+## M0.4e execution-boundary finding
 
 The stable M0.3e overlay is painted on the stock Sample page. The verified
 native sequence controller exists only in a visible stock Step Edit paint
@@ -58,6 +58,11 @@ not an acceptable substitute.
 
 Consequently the coordinator is not wired to physical PLUS yet, and no M0.5
 device package is produced. The stable M0.3e behavior remains unchanged.
+
+M0.5a subsequently resolves this boundary with a separate feature-gated Step
+Edit overlay and callback-local repaint handshake. See
+[M0.5a](M0-5A-PLAYABLE-NATIVE-GRID.md); this historical M0.4e conclusion still
+describes the base commit accurately.
 
 ## Host validation
 

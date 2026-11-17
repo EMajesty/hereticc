@@ -24,12 +24,15 @@ ROOT = Path(__file__).resolve().parents[2]
 BUILD = ROOT / "device/m03e/scripts/build-package.sh"
 HIL_BUILD = ROOT / "device/hil/scripts/build.sh"
 M04A_BUILD = ROOT / "device/m04a/scripts/build.sh"
+M05A_BUILD = ROOT / "device/m05a/scripts/build.sh"
 NORMAL_ARTIFACT = ROOT / "target/m03c/build/neurogenic-m03c-ui.so"
 NORMAL_SUMS = ROOT / "target/m03c/build/SHA256SUMS"
 HIL_ARTIFACT = ROOT / "target/hil/build/neurogenic-hil-test.so"
 HIL_SUMS = ROOT / "target/hil/build/SHA256SUMS"
 M04A_ARTIFACT = ROOT / "target/m04a/build/neurogenic-m04a-native-test.so"
 M04A_SUMS = ROOT / "target/m04a/build/SHA256SUMS"
+M05A_ARTIFACT = ROOT / "target/m05a/build/neurogenic-m05a-native-grid.so"
+M05A_SUMS = ROOT / "target/m05a/build/SHA256SUMS"
 RUNTIME = "/run/neurogenic-hil"
 BUILDS = RUNTIME + "/builds"
 ACTIVE = RUNTIME + "/active.sha256"
@@ -611,6 +614,23 @@ def build_native_artifact() -> tuple[bytes, str]:
     if code:
         raise HilError(f"fixed M0.4 native build failed with status {code}")
     return read_reviewed_artifact(M04A_ARTIFACT, M04A_SUMS)
+
+
+def build_native_grid_artifact() -> tuple[bytes, str]:
+    command = [
+        "nix", "shell", "nixpkgs#pkgsCross.aarch64-multiplatform.stdenv.cc",
+        "nixpkgs#qemu", "nixpkgs#llvmPackages_21.llvm", "--command", "zsh", "-lc",
+        "set -eu; "
+        "export AARCH64_CXX=$(command -v aarch64-unknown-linux-gnu-g++); "
+        "device/m04a/scripts/verify-native-abi.sh; device/m05a/scripts/build.sh",
+    ]
+    try:
+        code = subprocess.run(command, cwd=ROOT, check=False, timeout=300).returncode
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise HilError(f"fixed M0.5a native-grid build failed: {exc}") from exc
+    if code:
+        raise HilError(f"fixed M0.5a native-grid build failed with status {code}")
+    return read_reviewed_artifact(M05A_ARTIFACT, M05A_SUMS)
 
 
 def deploy_artifact(ssh: Ssh, data: bytes, digest: str) -> None:
@@ -1217,7 +1237,9 @@ def orchestrate_native_experiment(args: argparse.Namespace, ssh: Ssh) -> int:
 
 def run_command(args: argparse.Namespace, ssh: Ssh | None) -> int:
     if args.command == "build":
-        if args.native_m04a:
+        if args.native_m05a:
+            build_native_grid_artifact()
+        elif args.native_m04a:
             build_native_artifact()
         elif args.hil:
             build_hil_artifact()
@@ -1243,7 +1265,9 @@ def run_command(args: argparse.Namespace, ssh: Ssh | None) -> int:
         print(json.dumps(identity(ssh), indent=2, sort_keys=True))
     elif args.command == "deploy":
         confirm(args.confirm); identity(ssh)
-        if args.native_m04a:
+        if args.native_m05a:
+            artifact, sums = M05A_ARTIFACT, M05A_SUMS
+        elif args.native_m04a:
             artifact, sums = M04A_ARTIFACT, M04A_SUMS
         elif args.hil:
             artifact, sums = HIL_ARTIFACT, HIL_SUMS
@@ -1294,11 +1318,13 @@ def parser() -> argparse.ArgumentParser:
     build_mode = build.add_mutually_exclusive_group()
     build_mode.add_argument("--hil", action="store_true")
     build_mode.add_argument("--native-m04a", action="store_true")
+    build_mode.add_argument("--native-m05a", action="store_true")
     sub.add_parser("status")
     deploy = sub.add_parser("deploy")
     deploy_mode = deploy.add_mutually_exclusive_group()
     deploy_mode.add_argument("--hil", action="store_true")
     deploy_mode.add_argument("--native-m04a", action="store_true")
+    deploy_mode.add_argument("--native-m05a", action="store_true")
     deploy.add_argument("--confirm")
     restart = sub.add_parser("restart"); restart.add_argument("--sha256", required=True); restart.add_argument("--confirm")
     rollback = sub.add_parser("rollback"); rollback.add_argument("--confirm")

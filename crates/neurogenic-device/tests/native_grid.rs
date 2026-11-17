@@ -172,3 +172,45 @@ fn active_cells_without_owned_receipts_are_never_removed() {
         Err(GridRequestError::UntrackedActiveCell)
     );
 }
+
+#[test]
+fn missing_verification_paints_fail_after_a_bounded_observation_budget() {
+    let mut ui = open_at(0, 0);
+    let mut editor = NativeGridEditor::<u16>::default();
+    let mut port = FakePort::default();
+
+    editor.request_selected(&ui).unwrap();
+    editor.drive(&mut port, &mut ui).unwrap();
+    for _ in 0..7 {
+        assert_eq!(
+            editor.drive(&mut port, &mut ui),
+            Ok(GridEditProgress::Waiting)
+        );
+    }
+    assert_eq!(
+        editor.drive(&mut port, &mut ui),
+        Err(GridEditError::ObservationLimit)
+    );
+    assert!(!ui.step_active(0, 0));
+}
+
+#[test]
+fn invalidation_discards_pending_work_and_owned_receipts() {
+    let mut ui = open_at(0, 0);
+    let mut editor = NativeGridEditor::<u16>::default();
+    let mut port = FakePort::default();
+    port.observations.push_back(NativeEventPresence::Unique);
+
+    editor.request_selected(&ui).unwrap();
+    editor.drive(&mut port, &mut ui).unwrap();
+    editor.drive(&mut port, &mut ui).unwrap();
+    assert!(ui.step_active(0, 0));
+
+    editor.invalidate();
+    assert_eq!(editor.state(), GridEditState::Idle);
+    assert_eq!(
+        editor.request_selected(&ui),
+        Err(GridRequestError::UntrackedActiveCell)
+    );
+    assert_eq!(port.removes, Vec::<u16>::new());
+}

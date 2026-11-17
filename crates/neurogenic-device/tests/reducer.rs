@@ -70,6 +70,31 @@ fn unowned_bank_buttons_and_invalid_inputs_always_forward() {
 }
 
 #[test]
+fn transactional_plus_owns_pairs_without_optimistic_commit() {
+    let mut ui = UiState::default();
+    ui.button(Button::Data, true, true);
+    ui.button(Button::Data, false, true);
+
+    let (press, request) = ui.transaction_button(Button::Plus, true, false);
+    assert_eq!(press.flow, Flow::Consume);
+    assert_eq!(
+        request.map(|request| (request.track, request.step)),
+        Some((0, 0))
+    );
+    assert!(!ui.step_active(0, 0));
+
+    let (repeat, request) = ui.transaction_button(Button::Plus, true, false);
+    assert_eq!(repeat.flow, Flow::Consume);
+    assert!(request.is_none());
+    assert!(!ui.step_active(0, 0));
+
+    let (release, request) = ui.transaction_button(Button::Plus, false, false);
+    assert_eq!(release.flow, Flow::Consume);
+    assert!(request.is_none());
+    assert!(!ui.step_active(0, 0));
+}
+
+#[test]
 fn page_loss_closes_and_drains_owned_releases() {
     let mut ui = UiState::default();
     open(&mut ui);

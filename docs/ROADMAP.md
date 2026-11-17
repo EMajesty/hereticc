@@ -387,7 +387,7 @@ the later `removed` state only with sticky `event_removed=1` evidence, while the
 separate absence milestone still requires that final evidence. See
 [M0.4e and M0.5 grid boundary](M0-4E-M0-5-NATIVE-GRID.md).
 
-### M0.5 First playable native grid — transaction path host-tested, UI boundary gated
+### M0.5a First playable native grid — hardware candidate
 
 The fixed-capacity coordinator now maps the stable M0.3e 16-step grid to the
 verified native adapter. ON uses the live pad mapping and existing 960-PPQ
@@ -396,14 +396,17 @@ change only after unique presence or verified absence, and pending, failed and
 ambiguous states remain explicit. Host tests cover timing, delayed commit,
 exact receipt removal and refusal to remove untracked stock events.
 
-It is deliberately not connected to PLUS yet. The M0.3e overlay runs in the
-Sample-page callback, while native sequence edits are verified only in the
-Step-editor paint callback. The pinned SDK exposes no supported UI-thread task
-dispatcher, and retaining or repainting a borrowed Step component from another
-thread/callback would violate its lifetime contract. The next implementation
-must establish one legitimate shared Step UI callback boundary; it must not
-call native editing from input or HIL worker threads. Initial physical
-acceptance remains A01 at steps 0, 4, 8 and 12, followed by removal of step 8.
+M0.5a supplies that boundary in a distinct feature-gated artifact. It renders
+from the verified Step Edit paint hook, queues only pointer-free input intents,
+advances native work on the owning UI thread, and requests bounded follow-up
+paints only with the callback-local component. PLUS is transactional rather
+than optimistic. DATA is temporarily forwarded as the explicit repaint
+handshake. The stable M0.3e Sample overlay is unchanged.
+
+The artifact is ready for its first controlled physical test but is not yet
+hardware-validated. Initial acceptance remains A01 at steps 0, 4, 8 and 12,
+followed by removal of step 8 and stock restoration. See
+[M0.5a playable native grid](M0-5A-PLAYABLE-NATIVE-GRID.md).
 
 ### M0.3b-C–E Device feasibility experiments — planned and blocked
 
@@ -558,10 +561,9 @@ that, priority returns to the bounded stock-sequencer adapter. See
 [HIL-1.2](HIL-1-2.md) and [HIL-1.3](HIL-1-3.md).
 
 M0.4e physically confirmed unique native-comparator observation, canonical
-removal, verified absence and stock restoration. M0.5's host transaction path
-is complete; the next engineering task is the smallest supported way to own a
-shared Step-editor UI callback for the overlay and queued edit, without retained
-firmware pointers or cross-thread native calls. Only then should the A01
-four-on-the-floor acceptance run execute. See
-[M0.4e/M0.5](M0-4E-M0-5-NATIVE-GRID.md). B1 DATA-hook testing remains unrelated
+removal, verified absence and stock restoration. M0.5a now provides the
+feature-gated Step Edit overlay and queued native edit boundary. The next action
+is one controlled disposable-sequence A01 four-on-the-floor run followed by
+step-8 removal and stock restoration. See
+[M0.5a](M0-5A-PLAYABLE-NATIVE-GRID.md). B1 DATA-hook testing remains unrelated
 and unauthorized.

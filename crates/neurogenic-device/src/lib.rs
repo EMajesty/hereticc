@@ -4,6 +4,8 @@
 pub mod hil;
 #[cfg(feature = "native-sequence-adapter")]
 pub mod native_grid;
+#[cfg(feature = "native-playable-grid")]
+mod native_grid_runtime;
 #[cfg(feature = "native-sequence-adapter")]
 pub mod native_sequence_experiment;
 pub mod native_stock_sequence;
@@ -83,6 +85,7 @@ impl NeurogenicDevice {
         }
     }
 
+    #[cfg(not(feature = "native-playable-grid"))]
     fn repaint_live_sample_page() {
         let screen = mpc_sample_sdk::platform::page::screen();
         if screen == 0 {
@@ -96,6 +99,7 @@ impl NeurogenicDevice {
         }
     }
 
+    #[cfg(not(feature = "native-playable-grid"))]
     fn close_if_page_gone(&self) {
         if !self.with_ui(|ui| ui.is_open()).unwrap_or(false) {
             return;
@@ -108,6 +112,7 @@ impl NeurogenicDevice {
         }
     }
 
+    #[cfg_attr(feature = "native-playable-grid", allow(dead_code))]
     fn observe_page_loss(&self) {
         // A Level B OPEN deliberately exercises only the loaded reducer; it
         // does not claim to install a real SDK Sample-page context. Keep that
@@ -120,7 +125,7 @@ impl NeurogenicDevice {
         let _ = self.with_ui(UiState::lose_page);
     }
 
-    fn draw(ui: &UiState, graphics: mpc_sample_sdk::draw::Graphics) {
+    fn draw_grid(ui: &UiState, graphics: mpc_sample_sdk::draw::Graphics, footer: &str) {
         const BG: u32 = 0xff0c_1018;
         const PANEL: u32 = 0xff1a_2230;
         const TEXT: u32 = 0xfff2_f5f8;
@@ -169,8 +174,22 @@ impl NeurogenicDevice {
                 10.0,
             );
             graphics.colour(TEXT);
-            graphics.text("Prototype: edits are memory-only", 10, 210, 300, 16, 10.0);
+            graphics.text(footer, 10, 210, 300, 16, 10.0);
         }
+    }
+
+    #[cfg(not(feature = "native-playable-grid"))]
+    fn draw(ui: &UiState, graphics: mpc_sample_sdk::draw::Graphics) {
+        Self::draw_grid(ui, graphics, "Prototype: edits are memory-only");
+    }
+
+    #[cfg(feature = "native-playable-grid")]
+    pub(crate) fn draw_native(
+        ui: &UiState,
+        graphics: mpc_sample_sdk::draw::Graphics,
+        footer: &str,
+    ) {
+        Self::draw_grid(ui, graphics, footer);
     }
 }
 
@@ -178,6 +197,8 @@ impl Mod for NeurogenicDevice {
     fn on_start(&mut self) {
         #[cfg(feature = "native-sequence-adapter")]
         let _ = native_sequence_experiment::install();
+        #[cfg(feature = "native-playable-grid")]
+        let _ = native_grid_runtime::register(Arc::clone(&self.ui), Arc::clone(&self.overlay_open));
         #[cfg(feature = "hil-test-interface")]
         hil::start_bridge(
             Arc::clone(&self.ui),
@@ -186,50 +207,111 @@ impl Mod for NeurogenicDevice {
         );
     }
 
+    #[allow(clippy::needless_return)]
     fn on_button(&mut self, event: ButtonEvent) -> Flow {
+        #[cfg(not(feature = "native-playable-grid"))]
         self.close_if_page_gone();
         let mapped = match event.code {
             button::DATA => Button::Data,
             button::PLUS => Button::Plus,
             _ => Button::Other,
         };
+        #[cfg(feature = "native-playable-grid")]
+        if mapped == Button::Data
+            && event.pressed
+            && event.shift
+            && !native_grid_runtime::context_active()
+        {
+            return Flow::Forward;
+        }
+        #[cfg(feature = "native-playable-grid")]
+        let Some((outcome, request)) =
+            self.with_ui(|ui| ui.transaction_button(mapped, event.pressed, event.shift))
+        else {
+            return self.contention_button_flow(mapped, event.pressed, event.shift);
+        };
+        #[cfg(feature = "native-playable-grid")]
+        {
+            if let Some(cell) = request {
+                let _ = native_grid_runtime::request_toggle(cell.track, cell.step);
+            }
+            if outcome.restore {
+                native_grid_runtime::deactivate();
+            }
+            return Self::sdk_flow(outcome.flow);
+        }
+
+        #[cfg(not(feature = "native-playable-grid"))]
         let Some(outcome) = self.with_ui(|ui| ui.button(mapped, event.pressed, event.shift)) else {
             return self.contention_button_flow(mapped, event.pressed, event.shift);
         };
+        #[cfg(not(feature = "native-playable-grid"))]
         if outcome.repaint {
             Self::repaint_live_sample_page();
         }
+        #[cfg(not(feature = "native-playable-grid"))]
         Self::sdk_flow(outcome.flow)
     }
 
+    #[allow(clippy::needless_return)]
     fn on_encoder(&mut self, event: EncoderEvent) -> Flow {
+        #[cfg(not(feature = "native-playable-grid"))]
         self.close_if_page_gone();
         let Some(outcome) = self.with_ui(|ui| ui.encoder(event.delta)) else {
             return self.contention_encoder_flow(event.delta);
         };
+        #[cfg(feature = "native-playable-grid")]
+        {
+            // DATA remains the explicit repaint handshake: stock receives the
+            // turn and schedules Step Edit paint; native work stays in paint.
+            return if outcome.flow == reducer::Flow::Consume {
+                Flow::Forward
+            } else {
+                Self::sdk_flow(outcome.flow)
+            };
+        }
+        #[cfg(not(feature = "native-playable-grid"))]
         if outcome.repaint {
             Self::repaint_live_sample_page();
         }
+        #[cfg(not(feature = "native-playable-grid"))]
         Self::sdk_flow(outcome.flow)
     }
 
     fn on_pad(&mut self, event: PadEvent) -> Flow {
+        #[cfg(not(feature = "native-playable-grid"))]
         self.close_if_page_gone();
         let Some(outcome) = self.with_ui(|ui| ui.pad(event.pad, event.action == PadAction::Press))
         else {
             return self.contention_pad_flow(event.pad);
         };
+        #[cfg(not(feature = "native-playable-grid"))]
         if outcome.repaint {
             Self::repaint_live_sample_page();
         }
         Self::sdk_flow(outcome.flow)
     }
 
+    #[allow(clippy::needless_return)]
     fn on_paint(&mut self, graphics: &mut mpc_sample_sdk::draw::Graphics, event: PaintEvent) {
+        #[cfg(feature = "native-playable-grid")]
+        {
+            let _ = graphics;
+            // SAFETY: this is the callback-local SDK page component. A hidden
+            // Sample component repaint must not revoke a live Step context.
+            if event.sample_page
+                && unsafe { mpc_sample_sdk::platform::page::visible(event.component) }
+            {
+                native_grid_runtime::deactivate();
+            }
+            return;
+        }
+        #[cfg(not(feature = "native-playable-grid"))]
         if !event.sample_page {
             self.observe_page_loss();
             return;
         }
+        #[cfg(not(feature = "native-playable-grid"))]
         let _ = self.with_ui(|ui| {
             let _ = ui.take_repaint();
             if ui.is_open() {

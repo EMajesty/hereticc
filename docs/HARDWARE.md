@@ -95,6 +95,12 @@ observed, exact removal completed, absence was observed with zero remaining
 events, and stock restoration passed. The runner's failure label came from
 missing the transient `remove_accepted` poll, not a device failure.
 
+M0.5a adds a separate experimental build that renders and advances the grid
+from that same Step Edit paint callback. Input callbacks publish only copied
+cell intents. DATA is temporarily forwarded as an explicit repaint handshake;
+no Step or graphics pointer crosses a callback boundary. This artifact is
+host/QEMU-tested but has not run on hardware.
+
 These facts are research inputs, not permission to depend directly on raw protocols. An in-process extension should prefer a guarded adapter such as the SDK and retain stock ownership wherever possible.
 
 ## Controls relevant to NEUROGENIC

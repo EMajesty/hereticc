@@ -35,6 +35,13 @@ pub struct Outcome {
     pub restore: bool,
 }
 
+/// Pointer-free cell captured by a transactional PLUS press.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ToggleRequest {
+    pub track: u8,
+    pub step: u8,
+}
+
 impl Outcome {
     const FORWARD: Self = Self {
         flow: Flow::Forward,
@@ -120,6 +127,7 @@ impl UiState {
     /// This is reserved for the native-grid coordinator after presence or
     /// absence has been observed. It deliberately does not perform optimistic
     /// toggling.
+    #[cfg(feature = "native-sequence-adapter")]
     pub(crate) fn commit_step(&mut self, track: u8, step: u8, active: bool) -> bool {
         let track = usize::from(track);
         let step = usize::from(step);
@@ -182,6 +190,59 @@ impl UiState {
         } else {
             Outcome::FORWARD
         }
+    }
+
+    /// Apply a button without optimistically changing a native-backed cell.
+    ///
+    /// The existing [`Self::button`] remains the memory-only M0.3e behavior.
+    /// This variant owns the same complete event pairs but returns one copied
+    /// toggle intent for the Step-paint native coordinator.
+    pub fn transaction_button(
+        &mut self,
+        button: Button,
+        pressed: bool,
+        shift: bool,
+    ) -> (Outcome, Option<ToggleRequest>) {
+        let owner = match button {
+            Button::Data => DATA_OWNED,
+            Button::Plus => PLUS_OWNED,
+            Button::Other => return (Outcome::FORWARD, None),
+        };
+
+        if !pressed && self.owned_buttons & owner != 0 {
+            self.owned_buttons &= !owner;
+            return (Outcome::consumed(false, false), None);
+        }
+        if button == Button::Data && pressed && shift && self.owned_buttons & owner == 0 {
+            self.owned_buttons |= owner;
+            self.open = !self.open;
+            self.pending_repaint = true;
+            return (Outcome::consumed(true, !self.open), None);
+        }
+        if button == Button::Plus && pressed && self.open {
+            let request = if self.owned_buttons & owner == 0 {
+                self.owned_buttons |= owner;
+                Some(ToggleRequest {
+                    track: self.selected_track,
+                    step: self.selected_step,
+                })
+            } else {
+                None
+            };
+            return (Outcome::consumed(false, false), request);
+        }
+        if self.owned_buttons & owner != 0 {
+            (Outcome::consumed(false, false), None)
+        } else {
+            (Outcome::FORWARD, None)
+        }
+    }
+
+    #[cfg(feature = "native-playable-grid")]
+    pub(crate) fn invalidate_native_grid(&mut self) {
+        self.open = false;
+        self.patterns = [0; CELLS];
+        self.pending_repaint = false;
     }
 
     /// Apply a DATA encoder delta.

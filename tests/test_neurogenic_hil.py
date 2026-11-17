@@ -226,6 +226,21 @@ class HilTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             hil.parser().parse_args(["deploy", "--hil", "--native-m04a"])
 
+    def test_m05a_mode_selects_only_the_fixed_reviewed_grid_artifact(self):
+        build = hil.parser().parse_args(["build", "--native-m05a"])
+        deploy = hil.parser().parse_args([
+            "deploy", "--native-m05a", "--confirm", hil.CONFIRM,
+        ])
+        self.assertTrue(build.native_m05a)
+        self.assertTrue(deploy.native_m05a)
+        self.assertEqual(
+            hil.M05A_ARTIFACT,
+            hil.ROOT / "target/m05a/build/neurogenic-m05a-native-grid.so",
+        )
+        self.assertEqual(hil.M05A_SUMS.parent, hil.M05A_ARTIFACT.parent)
+        with self.assertRaises(SystemExit):
+            hil.parser().parse_args(["deploy", "--native-m04a", "--native-m05a"])
+
     def test_native_build_is_fail_fast_and_has_all_fixture_tools(self):
         completed = mock.Mock(returncode=0)
         with mock.patch.object(hil.subprocess, "run", return_value=completed) as run:
@@ -241,6 +256,21 @@ class HilTests(unittest.TestCase):
         self.assertLess(
             shell_program.index("verify-native-abi.sh"),
             shell_program.index("device/m04a/scripts/build.sh"),
+        )
+
+    def test_native_grid_build_reuses_abi_fixture_before_fixed_build(self):
+        completed = mock.Mock(returncode=0)
+        with mock.patch.object(hil.subprocess, "run", return_value=completed) as run:
+            with mock.patch.object(
+                hil, "read_reviewed_artifact", return_value=(b"grid", "b" * 64)
+            ):
+                self.assertEqual(hil.build_native_grid_artifact(), (b"grid", "b" * 64))
+        command = run.call_args.args[0]
+        self.assertIn("nixpkgs#qemu", command)
+        shell_program = command[-1]
+        self.assertLess(
+            shell_program.index("verify-native-abi.sh"),
+            shell_program.index("device/m05a/scripts/build.sh"),
         )
 
     def test_only_fixed_operations_are_exposed(self):

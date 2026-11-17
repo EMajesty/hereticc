@@ -12,6 +12,7 @@ default = ["device-export"]
 device-export = []
 hil-test-interface = []
 native-sequence-adapter = ["dep:libc"]
+native-playable-grid = ["native-sequence-adapter"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]

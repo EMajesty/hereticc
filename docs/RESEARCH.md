@@ -64,6 +64,14 @@ inside Step Edit paint. SDK tasks do not provide a stock UI-thread dispatcher,
 and repainting a retained Step component from another callback would violate
 its lifetime contract.
 
+M0.5a resolves the command/drawing boundary without a dispatcher: the
+feature-gated grid draws and advances copied input intents directly from the
+already verified Step Edit paint hook. Follow-up verification repaint requests
+are issued only from that callback with its live component. DATA remains a
+temporary stock-forwarded repaint handshake for the initial paint after an
+input action. This integration is host/QEMU-tested and cross-built, not yet
+physical evidence.
+
 ## Confidence labels
 
 - **Verified:** directly supported by linked source/documentation or an explicit upstream hardware result.
