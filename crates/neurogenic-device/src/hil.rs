@@ -113,7 +113,7 @@ fn virtual_action() -> Outcome {
 
 #[cfg(feature = "native-sequence-adapter")]
 fn native_response(action: &str) -> Response {
-    use crate::native_sequence_experiment::{self, Status};
+    use crate::native_sequence_experiment::{self, Diagnostic, Status};
     let accepted = match action {
         "ARM" => native_sequence_experiment::arm(),
         "REMOVE" => native_sequence_experiment::request_remove(),
@@ -132,16 +132,35 @@ fn native_response(action: &str) -> Response {
         Status::Rejected => "rejected",
         Status::Expired => "expired",
         Status::Failed => "failed",
+        Status::Inserting => "inserting",
+        Status::Removing => "removing",
+    };
+    let diagnostic = match native_sequence_experiment::diagnostic() {
+        Diagnostic::NotReached => "not_reached",
+        Diagnostic::WaitingForPaint => "waiting_for_paint",
+        Diagnostic::PaintEntered => "paint_entered",
+        Diagnostic::ExpiredBeforePaint => "expired_before_paint",
+        Diagnostic::ExpiredAfterPaint => "expired_after_paint",
+        Diagnostic::ContextUnavailable => "context_unavailable",
+        Diagnostic::ContextChanged => "context_changed",
+        Diagnostic::WrongThread => "wrong_thread",
+        Diagnostic::RequestRejected => "request_rejected",
+        Diagnostic::NativeFailure => "native_failure",
+        Diagnostic::CommandAccepted => "command_accepted",
+        Diagnostic::EventObserved => "event_observed",
+        Diagnostic::RemoveAccepted => "remove_accepted",
+        Diagnostic::EventRemoved => "event_removed",
     };
     let mut response = Response::new();
     writeln!(
         response,
-        "v=1 native={status} context={} action_accepted={} command_accepted={} event_observed={} event_removed={}",
+        "v=2 native={status} context={} action_accepted={} command_accepted={} event_observed={} event_removed={} paint_after_arm={} diagnostic={diagnostic}",
         if native_sequence_experiment::context_ready() { "ready" } else { "unavailable" },
         u8::from(accepted),
         u8::from(native_sequence_experiment::command_accepted()),
         u8::from(native_sequence_experiment::event_observed()),
         u8::from(native_sequence_experiment::event_removed()),
+        u8::from(native_sequence_experiment::paint_after_arm()),
     )
     .expect("native response fits");
     response

@@ -441,20 +441,28 @@ def parse_native_response(raw: bytes) -> dict[str, str]:
         fields[key] = value
     required = {
         "v", "native", "context", "action_accepted", "command_accepted",
-        "event_observed", "event_removed",
+        "event_observed", "event_removed", "paint_after_arm", "diagnostic",
     }
-    if set(fields) != required or fields["v"] != "1":
+    if set(fields) != required or fields["v"] != "2":
         raise RemoteError("incomplete native HIL response")
     if fields["context"] not in ("ready", "unavailable"):
         raise RemoteError("invalid native context status")
     if any(fields[key] not in ("0", "1") for key in (
         "action_accepted", "command_accepted", "event_observed", "event_removed",
+        "paint_after_arm",
     )):
         raise RemoteError("invalid native evidence bit")
+    if fields["diagnostic"] not in {
+        "not_reached", "waiting_for_paint", "paint_entered",
+        "expired_before_paint", "expired_after_paint", "context_unavailable",
+        "context_changed", "wrong_thread", "request_rejected", "native_failure",
+        "command_accepted", "event_observed", "remove_accepted", "event_removed",
+    }:
+        raise RemoteError("invalid native diagnostic stage")
     if fields["native"] not in {
         "unavailable", "idle", "armed", "accepted", "observed",
         "remove_requested", "remove_accepted", "removed", "rejected",
-        "expired", "failed",
+        "expired", "failed", "inserting", "removing",
     }:
         raise RemoteError("invalid native experiment status")
     return fields
@@ -962,10 +970,15 @@ def orchestrate_native_experiment(args: argparse.Namespace, ssh: Ssh) -> int:
                 if state["native"] in {"failed", "rejected", "expired"}:
                     raise RemoteError(
                         f"native experiment entered terminal state {state['native']} "
-                        f"while waiting for {label}"
+                        f"while waiting for {label}: diagnostic={state['diagnostic']} "
+                        f"paint_after_arm={state['paint_after_arm']}"
                     )
                 if time.monotonic() >= deadline:
-                    raise RemoteError(f"native experiment timed out waiting for {label}")
+                    raise RemoteError(
+                        f"native experiment timed out waiting for {label}: "
+                        f"state={state['native']} diagnostic={state['diagnostic']} "
+                        f"paint_after_arm={state['paint_after_arm']}"
+                    )
                 time.sleep(0.25)
 
         try:
@@ -1024,20 +1037,29 @@ def orchestrate_native_experiment(args: argparse.Namespace, ssh: Ssh) -> int:
                 raise RemoteError("native experiment was not pristine before arming")
             passed_assertions += 1
 
-            print("[5/7] Inserting and observing one fixed A01 event...", flush=True)
+            print(
+                "[5/7] Prepare to turn DATA one detent when ARM is confirmed; "
+                "this requests the stock Step editor's UI-thread repaint.",
+                flush=True,
+            )
             armed = step("arm-once", lambda: command("NATIVE ARM"))
             if armed["action_accepted"] != "1":
                 raise RemoteError("native arm request was rejected")
             passed_assertions += 1
+            print("      ARM confirmed: turn DATA one detent now.", flush=True)
             step(
                 "command-accepted",
                 lambda: wait_for(
                     "stock command acceptance",
                     lambda state: state["command_accepted"] == "1",
-                    10,
+                    15,
                 ),
             )
             passed_assertions += 1
+            print(
+                "      Command accepted: turn DATA one detent to verify exact list presence.",
+                flush=True,
+            )
             observed = step(
                 "event-observed",
                 lambda: wait_for(
@@ -1052,9 +1074,27 @@ def orchestrate_native_experiment(args: argparse.Namespace, ssh: Ssh) -> int:
             passed_assertions += 1
 
             print("[6/7] Removing and verifying absence...", flush=True)
+            print(
+                "      Prepare to turn DATA one detent again when REMOVE is confirmed.",
+                flush=True,
+            )
             removal = step("remove-once", lambda: command("NATIVE REMOVE"))
             if removal["action_accepted"] != "1":
                 raise RemoteError("native removal request was rejected")
+            print("      REMOVE armed: turn DATA one detent now.", flush=True)
+            step(
+                "remove-command-accepted",
+                lambda: wait_for(
+                    "stock removal-command acceptance",
+                    lambda state: state["native"] == "remove_accepted",
+                    15,
+                ),
+            )
+            passed_assertions += 1
+            print(
+                "      Removal accepted: turn DATA one detent to verify exact absence.",
+                flush=True,
+            )
             step(
                 "event-removed",
                 lambda: wait_for(

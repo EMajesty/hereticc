@@ -38,6 +38,13 @@ as a sequence-context change and exposes the current track at
 hardened adapter therefore compares pointer-derived, non-dereferenceable tokens
 for sequence, track, event list and Program within one short-lived process.
 
+The first physical insertion attempt showed that an idle Step editor may not
+repaint after a mailbox-side arm: the arm was accepted, then every response
+remained armed with stale context and no command acceptance. Because the old
+protocol lacked a callback generation counter, no-paint is the strongest
+explanation rather than a proven exclusive cause. M0.4c makes that distinction
+observable and uses one normal DATA detent to request the next stock repaint.
+
 ## Confidence labels
 
 - **Verified:** directly supported by linked source/documentation or an explicit upstream hardware result.

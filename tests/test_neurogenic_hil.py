@@ -153,8 +153,9 @@ class HilTests(unittest.TestCase):
 
     def test_native_response_schema_is_exact_and_fail_closed(self):
         valid = (
-            b"v=1 native=observed context=ready action_accepted=1 "
-            b"command_accepted=1 event_observed=1 event_removed=0\n"
+            b"v=2 native=observed context=ready action_accepted=1 "
+            b"command_accepted=1 event_observed=1 event_removed=0 "
+            b"paint_after_arm=1 diagnostic=event_observed\n"
         )
         self.assertEqual(hil.parse_native_response(valid)["native"], "observed")
         invalid = (
@@ -639,12 +640,14 @@ class NativeExperimentTests(unittest.TestCase):
 
     @staticmethod
     def response(
-        native, *, context="ready", action=1, accepted=0, present=0, removed=0
+        native, *, context="ready", action=1, accepted=0, present=0, removed=0,
+        paint=0, diagnostic="not_reached",
     ):
         return (
-            f"v=1 native={native} context={context} action_accepted={action} "
+            f"v=2 native={native} context={context} action_accepted={action} "
             f"command_accepted={accepted} event_observed={present} "
-            f"event_removed={removed}\n"
+            f"event_removed={removed} paint_after_arm={paint} "
+            f"diagnostic={diagnostic}\n"
         ).encode()
 
     class NativeSsh(CycleSsh):
@@ -693,11 +696,26 @@ class NativeExperimentTests(unittest.TestCase):
     def successful_responses(self):
         return [
             self.response("idle"),
-            self.response("armed"),
-            self.response("accepted", accepted=1),
-            self.response("observed", accepted=1, present=1),
-            self.response("remove_requested", accepted=1, present=1),
-            self.response("removed", accepted=1, present=1, removed=1),
+            self.response("armed", diagnostic="waiting_for_paint"),
+            self.response(
+                "accepted", accepted=1, paint=1, diagnostic="command_accepted"
+            ),
+            self.response(
+                "observed", accepted=1, present=1, paint=1,
+                diagnostic="event_observed",
+            ),
+            self.response(
+                "remove_requested", accepted=1, present=1, paint=1,
+                diagnostic="event_observed",
+            ),
+            self.response(
+                "remove_accepted", accepted=1, present=1, paint=1,
+                diagnostic="remove_accepted",
+            ),
+            self.response(
+                "removed", accepted=1, present=1, removed=1, paint=1,
+                diagnostic="event_removed",
+            ),
         ]
 
     def test_native_confirmation_is_distinct_and_required(self):
@@ -723,7 +741,7 @@ class NativeExperimentTests(unittest.TestCase):
         report = self.only_report()
         self.assertEqual(report["status"], "pass")
         self.assertEqual(report["schema"], "neurogenic-native-experiment-v1")
-        self.assertEqual(report["assertions"], {"passed": 5, "failed": 0})
+        self.assertEqual(report["assertions"], {"passed": 6, "failed": 0})
         self.assertFalse(report["audible_playback_observed"])
         patched["restore_stock"].assert_called_once()
         self.assertFalse(self.run_lock.exists())
@@ -765,6 +783,26 @@ class NativeExperimentTests(unittest.TestCase):
             hil.RunCycleError
         ):
             hil.orchestrate_native_experiment(self.args, ssh)
+        self.assertEqual(ssh.commands.count("NATIVE ARM"), 1)
+        self.assertNotIn("NATIVE REMOVE", ssh.commands)
+        patched["restore_stock"].assert_called_once()
+
+    def test_missing_post_arm_paint_is_reported_without_generic_timeout(self):
+        responses = [
+            self.response("idle"),
+            self.response("armed", diagnostic="waiting_for_paint"),
+            self.response("expired", diagnostic="expired_before_paint"),
+        ]
+        ssh = self.NativeSsh(responses)
+        stack, patched = self.patches()
+        error = io.StringIO()
+        with stack, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(
+            hil.RunCycleError
+        ) as caught:
+            hil.orchestrate_native_experiment(self.args, ssh)
+        error.write(str(caught.exception))
+        self.assertIn("expired_before_paint", error.getvalue())
+        self.assertIn("paint_after_arm=0", error.getvalue())
         self.assertEqual(ssh.commands.count("NATIVE ARM"), 1)
         self.assertNotIn("NATIVE REMOVE", ssh.commands)
         patched["restore_stock"].assert_called_once()

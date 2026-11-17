@@ -189,7 +189,7 @@ cannot prove live Undo, stock stability, persistence, audio or timing.
 
 The approval-gated artifact is
 `target/m04a/build/neurogenic-m04a-native-test.so`, SHA-256
-`13f108f8bfc32d2e467c4fe2d5ffef618efed41f1a2d08e4b202a56483cb2294`.
+`657ed92c2224af0f15947ccd637c56aa36f1717639074ecc6d59b2f76727b3d8`.
 It is AArch64, has a non-executable stack, no writable/executable load segment,
 and requires no GLIBC symbol newer than 2.30.
 
@@ -211,7 +211,7 @@ The M0.4a fixed host preparation/deployment commands were:
 ```sh
 python3 tools/neurogenic-hil/hil.py --config target/hil/config.json build --native-m04a
 python3 tools/neurogenic-hil/hil.py --config target/hil/config.json deploy --native-m04a --confirm MPC-SAMPLE-1.3.0.12
-python3 tools/neurogenic-hil/hil.py --config target/hil/config.json restart --sha256 13f108f8bfc32d2e467c4fe2d5ffef618efed41f1a2d08e4b202a56483cb2294 --confirm MPC-SAMPLE-1.3.0.12
+python3 tools/neurogenic-hil/hil.py --config target/hil/config.json restart --sha256 657ed92c2224af0f15947ccd637c56aa36f1717639074ecc6d59b2f76727b3d8 --confirm MPC-SAMPLE-1.3.0.12
 ```
 
 They are retained as the historical M0.4a record and must not be used for the

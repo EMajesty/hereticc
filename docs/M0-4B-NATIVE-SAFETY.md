@@ -1,5 +1,8 @@
 # M0.4b native adapter safety review
 
+The first physical attempt and its focused paint-trigger diagnosis are recorded
+in [M0.4c](M0-4C-NATIVE-INSERTION-DIAGNOSIS.md).
+
 ## Outcome
 
 M0.4b keeps the M0.4a native event and stock command boundary, but closes the
@@ -44,8 +47,10 @@ combines the sequence, current track, event list and Program addresses without
 retaining any individual address. Only that non-dereferenceable fingerprint is
 copied; borrowed firmware pointers never leave the paint callback.
 
-Arm and removal requests expire after two seconds. Arm captures the most
-recently validated context, and the insertion callback rejects a changed token.
+The original M0.4b arm and removal requests expired after two seconds. M0.4c
+retains a two-second recent-context requirement but gives the post-arm operation
+ten seconds for one deliberate repaint request. Arm captures the most recently
+validated context, and the insertion callback rejects a changed token.
 The receipt carries
 the same tokens, and both presence lookup and removal reject any later context
 change even when sequence lengths and event bytes match. A pre-insertion scan
@@ -87,7 +92,7 @@ python3 tools/neurogenic-hil/hil.py \
 
 The reviewed shared library is
 `target/m04a/build/neurogenic-m04a-native-test.so`, SHA-256
-`13f108f8bfc32d2e467c4fe2d5ffef618efed41f1a2d08e4b202a56483cb2294`.
+`657ed92c2224af0f15947ccd637c56aa36f1717639074ecc6d59b2f76727b3d8`.
 
 This deliberately uses a token different from ordinary HIL authorization. The
 runner reuses the existing lock, identity verification, immutable deployment,

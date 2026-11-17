@@ -72,10 +72,17 @@ has occurred.
 
 M0.4b binds arming, observation and removal to pointer-free identities derived
 from the same live sequence, track, event-list and Program graph; adds a
-two-second arm lease, nonblocking recursive-paint guard and same-pthread check;
+bounded arm lease, nonblocking recursive-paint guard and same-pthread check;
 and prepares an independently confirmed one-command experiment. These are
 host/QEMU results only. The experiment has not been physically authorized or
 executed.
+
+The first M0.4b physical attempt reached a valid Step context and accepted the
+host arm request, but remained armed with no command acceptance until host
+timeout; stock restoration passed. This does not establish that the native
+adapter or command ran. M0.4c adds direct post-arm paint/stage evidence and a
+single operator DATA-detent repaint request while keeping native work on the
+stock UI callback.
 
 These facts are research inputs, not permission to depend directly on raw protocols. An in-process extension should prefer a guarded adapter such as the SDK and retain stock ownership wherever possible.
 

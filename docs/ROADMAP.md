@@ -335,7 +335,7 @@ redirected toward a bounded stock sequence-command SDK extension informed by
 Am MOD's native event-list/Undo implementation. See
 [M0.3e sequencer integration](M0-3E-SEQUENCER-INTEGRATION.md).
 
-### M0.4b Native stock-sequence adapter — safety-reviewed, experiment approval-gated
+### M0.4c Native stock-sequence adapter — first attempt diagnosed, retry prepared
 
 M0.4 converts one active selected NEUROGENIC cell into a bounded, pointer-free
 request for the stock UI's current sequence/current track. The request uses the
@@ -365,6 +365,13 @@ native work, verifies exact absence after removal, and adds a separately
 confirmed one-command HIL experiment with automatic stock restoration. It is
 host/QEMU-tested but has not executed on hardware. See
 [M0.4b safety review](M0-4B-NATIVE-SAFETY.md).
+
+The first physical attempt reached and armed a valid Step-editor context but
+never reported command acceptance; restoration passed. Evidence supports an
+idle-screen repaint gap, not a native-command failure. M0.4c adds explicit
+post-arm paint and adapter-stage evidence, host-side expiry, and one bounded
+operator DATA-detent repaint request. No insertion has yet been confirmed. See
+[M0.4c diagnosis](M0-4C-NATIVE-INSERTION-DIAGNOSIS.md).
 
 ### M0.3b-C–E Device feasibility experiments — planned and blocked
 
@@ -519,9 +526,9 @@ that, priority returns to the bounded stock-sequencer adapter. See
 [HIL-1.2](HIL-1-2.md) and [HIL-1.3](HIL-1-3.md).
 
 The bounded current-sequence/current-track UI-thread adapter, safety review and
-automated experiment preparation are complete. The next action is one
-separately approved fixed A01/tick-0 insertion in a fresh unsaved stock
-sequence, followed by exact event-list presence, exact native removal, absence
-verification and stock restoration. Audible playback remains a later,
-separately observed result. See [M0.4](M0-4-NATIVE-SEQUENCER.md). This does not
-itself authorize that native write or B1 DATA-hook testing.
+first-attempt diagnosis are complete. The next action is one run of the same
+approval-gated A01/tick-0 experiment with a single DATA-detent repaint request.
+It will now distinguish no paint, context failure, adapter failure, command
+acceptance, exact presence, removal and absence. Audible playback remains a
+later, separately observed result. See [M0.4c](M0-4C-NATIVE-INSERTION-DIAGNOSIS.md).
+This does not itself authorize that native write or B1 DATA-hook testing.

@@ -16,6 +16,10 @@ const STEP_PAINT_SLOT: usize = STEP_SCREEN_VTABLE + 0xd8;
 const STOCK_STEP_PAINT: usize = 0x010e_2e10;
 const PAGE_SIZE: usize = 4096;
 const CONTEXT_LEASE_NS: u64 = 2_000_000_000;
+// A human must request one stock Step repaint after arming. Context identity is
+// revalidated in that callback, so this longer bound permits the deliberate
+// input without moving firmware work onto the mailbox thread.
+const OPERATION_LEASE_NS: u64 = 10_000_000_000;
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,6 +35,27 @@ pub enum Status {
     Rejected,
     Expired,
     Failed,
+    Inserting,
+    Removing,
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Diagnostic {
+    NotReached,
+    WaitingForPaint,
+    PaintEntered,
+    ExpiredBeforePaint,
+    ExpiredAfterPaint,
+    ContextUnavailable,
+    ContextChanged,
+    WrongThread,
+    RequestRejected,
+    NativeFailure,
+    CommandAccepted,
+    EventObserved,
+    RemoveAccepted,
+    EventRemoved,
 }
 
 static STATUS: AtomicU8 = AtomicU8::new(Status::Unavailable as u8);
@@ -43,6 +68,9 @@ static REMOVE_DEADLINE_NS: AtomicU64 = AtomicU64::new(0);
 static COMMAND_ACCEPTED: AtomicBool = AtomicBool::new(false);
 static EVENT_OBSERVED: AtomicBool = AtomicBool::new(false);
 static EVENT_REMOVED: AtomicBool = AtomicBool::new(false);
+static PAINT_GENERATION: AtomicU64 = AtomicU64::new(0);
+static ARM_PAINT_GENERATION: AtomicU64 = AtomicU64::new(0);
+static DIAGNOSTIC: AtomicU8 = AtomicU8::new(Diagnostic::NotReached as u8);
 static RECEIPT: Mutex<Option<NativeEditReceipt>> = Mutex::new(None);
 static CURRENT_CONTEXT: Mutex<Option<NativeContextIdentity>> = Mutex::new(None);
 static ARMED_CONTEXT: Mutex<Option<NativeContextIdentity>> = Mutex::new(None);
@@ -86,6 +114,30 @@ const fn within_deadline(now: u64, deadline: u64) -> bool {
     now <= deadline
 }
 
+const fn expiry_diagnostic(paint_generation: u64, armed_generation: u64) -> Diagnostic {
+    if paint_generation > armed_generation {
+        Diagnostic::ExpiredAfterPaint
+    } else {
+        Diagnostic::ExpiredBeforePaint
+    }
+}
+
+fn claim_status(status: &AtomicU8, expected: Status, claimed: Status) -> bool {
+    status
+        .compare_exchange(
+            expected as u8,
+            claimed as u8,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        )
+        .is_ok()
+}
+
+fn set_state(status: Status, diagnostic: Diagnostic) {
+    DIAGNOSTIC.store(diagnostic as u8, Ordering::Release);
+    STATUS.store(status as u8, Ordering::Release);
+}
+
 #[cfg(target_arch = "aarch64")]
 unsafe extern "C" {
     fn neurogenic_m04a_step_paint_bridge(screen: usize, graphics: usize);
@@ -96,7 +148,7 @@ unsafe extern "C" fn neurogenic_m04a_step_paint_bridge(screen: usize, graphics: 
     unsafe { neurogenic_m04a_step_paint(screen, graphics) };
 }
 
-pub fn status() -> Status {
+fn raw_status() -> Status {
     match STATUS.load(Ordering::Acquire) {
         1 => Status::Idle,
         2 => Status::Armed,
@@ -108,8 +160,72 @@ pub fn status() -> Status {
         8 => Status::Rejected,
         9 => Status::Expired,
         10 => Status::Failed,
+        11 => Status::Inserting,
+        12 => Status::Removing,
         _ => Status::Unavailable,
     }
+}
+
+pub fn status() -> Status {
+    let current = raw_status();
+    let deadline = match current {
+        Status::Armed => ARM_DEADLINE_NS.load(Ordering::Acquire),
+        Status::RemoveRequested => REMOVE_DEADLINE_NS.load(Ordering::Acquire),
+        _ => return current,
+    };
+    let Some(now) = monotonic_ns() else {
+        return current;
+    };
+    if deadline != 0
+        && !within_deadline(now, deadline)
+        && STATUS
+            .compare_exchange(
+                current as u8,
+                Status::Expired as u8,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+    {
+        ARMED.store(false, Ordering::Release);
+        REMOVE.store(false, Ordering::Release);
+        DIAGNOSTIC.store(
+            expiry_diagnostic(
+                PAINT_GENERATION.load(Ordering::Acquire),
+                ARM_PAINT_GENERATION.load(Ordering::Acquire),
+            ) as u8,
+            Ordering::Release,
+        );
+        return Status::Expired;
+    }
+    raw_status()
+}
+
+pub fn diagnostic() -> Diagnostic {
+    match DIAGNOSTIC.load(Ordering::Acquire) {
+        1 => Diagnostic::WaitingForPaint,
+        2 => Diagnostic::PaintEntered,
+        3 => Diagnostic::ExpiredBeforePaint,
+        4 => Diagnostic::ExpiredAfterPaint,
+        5 => Diagnostic::ContextUnavailable,
+        6 => Diagnostic::ContextChanged,
+        7 => Diagnostic::WrongThread,
+        8 => Diagnostic::RequestRejected,
+        9 => Diagnostic::NativeFailure,
+        10 => Diagnostic::CommandAccepted,
+        11 => Diagnostic::EventObserved,
+        12 => Diagnostic::RemoveAccepted,
+        13 => Diagnostic::EventRemoved,
+        _ => Diagnostic::NotReached,
+    }
+}
+
+pub fn paint_generation() -> u64 {
+    PAINT_GENERATION.load(Ordering::Acquire)
+}
+
+pub fn paint_after_arm() -> bool {
+    paint_generation() > ARM_PAINT_GENERATION.load(Ordering::Acquire)
 }
 
 pub fn context_ready() -> bool {
@@ -148,7 +264,7 @@ pub fn arm() -> bool {
     {
         return false;
     }
-    let Some(deadline) = now.checked_add(CONTEXT_LEASE_NS) else {
+    let Some(deadline) = now.checked_add(OPERATION_LEASE_NS) else {
         STATUS.store(Status::Failed as u8, Ordering::Release);
         return false;
     };
@@ -160,7 +276,9 @@ pub fn arm() -> bool {
         return false;
     };
     *ARMED_CONTEXT.lock().unwrap_or_else(PoisonError::into_inner) = Some(current);
+    ARM_PAINT_GENERATION.store(paint_generation(), Ordering::Release);
     ARM_DEADLINE_NS.store(deadline, Ordering::Release);
+    DIAGNOSTIC.store(Diagnostic::WaitingForPaint as u8, Ordering::Release);
     ARMED.store(true, Ordering::Release);
     true
 }
@@ -169,7 +287,7 @@ pub fn request_remove() -> bool {
     let Some(now) = monotonic_ns() else {
         return false;
     };
-    let Some(deadline) = now.checked_add(CONTEXT_LEASE_NS) else {
+    let Some(deadline) = now.checked_add(OPERATION_LEASE_NS) else {
         return false;
     };
     if !context_ready()
@@ -250,6 +368,9 @@ pub fn install() -> bool {
     COMMAND_ACCEPTED.store(false, Ordering::Release);
     EVENT_OBSERVED.store(false, Ordering::Release);
     EVENT_REMOVED.store(false, Ordering::Release);
+    PAINT_GENERATION.store(0, Ordering::Release);
+    ARM_PAINT_GENERATION.store(0, Ordering::Release);
+    DIAGNOSTIC.store(Diagnostic::NotReached as u8, Ordering::Release);
     *RECEIPT.lock().unwrap_or_else(PoisonError::into_inner) = None;
     *CURRENT_CONTEXT
         .lock()
@@ -258,6 +379,34 @@ pub fn install() -> bool {
     *UI_THREAD.lock().unwrap_or_else(PoisonError::into_inner) = None;
     STATUS.store(Status::Idle as u8, Ordering::Release);
     true
+}
+
+fn insert_one(port: &mut NativeStockSequencePort<'_>) {
+    let Ok(request) = StockNoteRequest::from_grid_step(0, 0, 100) else {
+        DIAGNOSTIC.store(Diagnostic::RequestRejected as u8, Ordering::Release);
+        STATUS.store(Status::Rejected as u8, Ordering::Release);
+        return;
+    };
+    match port.insert_current_track(request) {
+        Ok(accepted) => {
+            *RECEIPT.lock().unwrap_or_else(PoisonError::into_inner) = Some(accepted);
+            COMMAND_ACCEPTED.store(true, Ordering::Release);
+            DIAGNOSTIC.store(Diagnostic::CommandAccepted as u8, Ordering::Release);
+            STATUS.store(Status::Accepted as u8, Ordering::Release);
+        }
+        Err(crate::native_stock_sequence::NativeEditError::ContextUnavailable) => {
+            DIAGNOSTIC.store(Diagnostic::ContextUnavailable as u8, Ordering::Release);
+            STATUS.store(Status::Failed as u8, Ordering::Release);
+        }
+        Err(crate::native_stock_sequence::NativeEditError::Rejected) => {
+            DIAGNOSTIC.store(Diagnostic::RequestRejected as u8, Ordering::Release);
+            STATUS.store(Status::Rejected as u8, Ordering::Release);
+        }
+        Err(_) => {
+            DIAGNOSTIC.store(Diagnostic::NativeFailure as u8, Ordering::Release);
+            STATUS.store(Status::Failed as u8, Ordering::Release);
+        }
+    }
 }
 
 /// Feature-gated Step-screen vtable target. Installed only after exact slot
@@ -276,6 +425,10 @@ pub unsafe extern "C" fn neurogenic_m04a_step_paint(screen: usize, graphics: usi
     let Some(_operation) = OperationGuard::enter(&IN_CALLBACK) else {
         return;
     };
+    PAINT_GENERATION.fetch_add(1, Ordering::AcqRel);
+    if matches!(raw_status(), Status::Armed | Status::RemoveRequested) {
+        DIAGNOSTIC.store(Diagnostic::PaintEntered as u8, Ordering::Release);
+    }
     // SAFETY: pthread_self/equal do not dereference firmware state. The first
     // stock paint establishes the owner; every later native action must run on
     // that same thread.
@@ -283,7 +436,7 @@ pub unsafe extern "C" fn neurogenic_m04a_step_paint(screen: usize, graphics: usi
     let mut owner = UI_THREAD.lock().unwrap_or_else(PoisonError::into_inner);
     if let Some(expected) = *owner {
         if unsafe { libc::pthread_equal(expected, thread) } == 0 {
-            STATUS.store(Status::Failed as u8, Ordering::Release);
+            set_state(Status::Failed, Diagnostic::WrongThread);
             return;
         }
     } else {
@@ -292,10 +445,13 @@ pub unsafe extern "C" fn neurogenic_m04a_step_paint(screen: usize, graphics: usi
     drop(owner);
     let mut port = unsafe { NativeStockSequencePort::from_step_paint(screen) };
     let Ok(current_context) = port.context_identity() else {
+        if matches!(raw_status(), Status::Armed | Status::RemoveRequested) {
+            set_state(Status::Failed, Diagnostic::ContextUnavailable);
+        }
         return;
     };
     let Some(now) = monotonic_ns() else {
-        STATUS.store(Status::Failed as u8, Ordering::Release);
+        set_state(Status::Failed, Diagnostic::NativeFailure);
         return;
     };
     LAST_CONTEXT_NS.store(now, Ordering::Release);
@@ -305,15 +461,19 @@ pub unsafe extern "C" fn neurogenic_m04a_step_paint(screen: usize, graphics: usi
 
     if REMOVE.swap(false, Ordering::AcqRel) {
         if !within_deadline(now, REMOVE_DEADLINE_NS.load(Ordering::Acquire)) {
-            STATUS.store(Status::Expired as u8, Ordering::Release);
+            set_state(Status::Expired, Diagnostic::ExpiredAfterPaint);
+            return;
+        }
+        if !claim_status(&STATUS, Status::RemoveRequested, Status::Removing) {
             return;
         }
         let existing = *RECEIPT.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(existing) = existing.as_ref() {
             if port.remove(existing).is_ok() {
+                DIAGNOSTIC.store(Diagnostic::RemoveAccepted as u8, Ordering::Release);
                 STATUS.store(Status::RemoveAccepted as u8, Ordering::Release);
             } else {
-                STATUS.store(Status::Failed as u8, Ordering::Release);
+                set_state(Status::Failed, Diagnostic::NativeFailure);
             }
         }
         return;
@@ -325,15 +485,19 @@ pub unsafe extern "C" fn neurogenic_m04a_step_paint(screen: usize, graphics: usi
             Ok(true) if matches!(status(), Status::RemoveRequested | Status::RemoveAccepted) => {}
             Ok(true) => {
                 EVENT_OBSERVED.store(true, Ordering::Release);
+                DIAGNOSTIC.store(Diagnostic::EventObserved as u8, Ordering::Release);
                 STATUS.store(Status::Observed as u8, Ordering::Release);
             }
             Ok(false) if status() == Status::RemoveAccepted => {
                 *RECEIPT.lock().unwrap_or_else(PoisonError::into_inner) = None;
                 EVENT_REMOVED.store(true, Ordering::Release);
+                DIAGNOSTIC.store(Diagnostic::EventRemoved as u8, Ordering::Release);
                 STATUS.store(Status::Removed as u8, Ordering::Release);
             }
             Ok(false) => {}
-            Err(_) => STATUS.store(Status::Failed as u8, Ordering::Release),
+            Err(_) => {
+                set_state(Status::Failed, Diagnostic::NativeFailure);
+            }
         }
         return;
     }
@@ -341,7 +505,7 @@ pub unsafe extern "C" fn neurogenic_m04a_step_paint(screen: usize, graphics: usi
         return;
     }
     if !within_deadline(now, ARM_DEADLINE_NS.load(Ordering::Acquire)) {
-        STATUS.store(Status::Expired as u8, Ordering::Release);
+        set_state(Status::Expired, Diagnostic::ExpiredAfterPaint);
         return;
     }
     let armed_context = ARMED_CONTEXT
@@ -349,26 +513,21 @@ pub unsafe extern "C" fn neurogenic_m04a_step_paint(screen: usize, graphics: usi
         .unwrap_or_else(PoisonError::into_inner)
         .take();
     if armed_context != Some(current_context) {
-        STATUS.store(Status::Rejected as u8, Ordering::Release);
+        set_state(Status::Rejected, Diagnostic::ContextChanged);
         return;
     }
-    let Ok(request) = StockNoteRequest::from_grid_step(0, 0, 100) else {
-        STATUS.store(Status::Rejected as u8, Ordering::Release);
+    if !claim_status(&STATUS, Status::Armed, Status::Inserting) {
         return;
-    };
-    match port.insert_current_track(request) {
-        Ok(accepted) => {
-            *RECEIPT.lock().unwrap_or_else(PoisonError::into_inner) = Some(accepted);
-            COMMAND_ACCEPTED.store(true, Ordering::Release);
-            STATUS.store(Status::Accepted as u8, Ordering::Release);
-        }
-        Err(_) => STATUS.store(Status::Failed as u8, Ordering::Release),
     }
+    insert_one(&mut port);
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{AtomicBool, NativeContextIdentity, OperationGuard, Ordering, within_deadline};
+    use super::{
+        AtomicBool, AtomicU8, Diagnostic, NativeContextIdentity, OperationGuard, Ordering, Status,
+        claim_status, expiry_diagnostic, within_deadline,
+    };
 
     #[test]
     fn callback_gate_is_nonblocking_and_released_on_scope_exit() {
@@ -394,5 +553,38 @@ mod tests {
         assert!(within_deadline(9, 10));
         assert!(within_deadline(10, 10));
         assert!(!within_deadline(11, 10));
+    }
+
+    #[test]
+    fn expiry_distinguishes_missing_paint_from_late_callback() {
+        assert_eq!(expiry_diagnostic(7, 7), Diagnostic::ExpiredBeforePaint);
+        assert_eq!(expiry_diagnostic(8, 7), Diagnostic::ExpiredAfterPaint);
+    }
+
+    #[test]
+    fn native_claim_and_host_expiry_are_mutually_exclusive() {
+        let callback_wins = AtomicU8::new(Status::Armed as u8);
+        assert!(claim_status(
+            &callback_wins,
+            Status::Armed,
+            Status::Inserting
+        ));
+        assert!(
+            callback_wins
+                .compare_exchange(
+                    Status::Armed as u8,
+                    Status::Expired as u8,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_err()
+        );
+
+        let expiry_wins = AtomicU8::new(Status::Expired as u8);
+        assert!(!claim_status(
+            &expiry_wins,
+            Status::Armed,
+            Status::Inserting
+        ));
     }
 }
