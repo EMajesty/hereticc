@@ -8,7 +8,7 @@ NEUROGENIC is an open-source custom firmware extension for the Akai MPC Sample. 
 
 ## Status
 
-NEUROGENIC is in **M0: host core and guarded integration feasibility**. The M0.2/M0.2a host sequencer foundation is complete. M0.3b-A4 validated the firmware fingerprints, and M0.3c's SDK v0.7.1 page/input prototype was physically validated on one MPC Sample running firmware 1.3.0.12. M0.3d.3 failed physical input-stability acceptance; M0.3e restores the M0.3c editor model and redirects playback work toward the stock sequencer event-command boundary. The B1 diagnostic models remain separate and B1 hook testing is unauthorized.
+NEUROGENIC is in **M0: host core and guarded integration feasibility**. The M0.2/M0.2a host sequencer foundation is complete. M0.3b-A4 validated the firmware fingerprints, and M0.3c's SDK v0.7.1 page/input prototype was physically validated on one MPC Sample running firmware 1.3.0.12. M0.3d.3 failed physical input-stability acceptance; M0.3e restores the M0.3c editor model. M0.4 host-tests one bounded stock-event request, but native insertion remains blocked on an SDK-owned UI-thread sequence-command API. The B1 diagnostic models remain separate and B1 hook testing is unauthorized.
 
 Project website: [neurogeni.cc](https://neurogeni.cc). Source repository: [EMajesty/neurogenic](https://github.com/EMajesty/neurogenic).
 
@@ -69,6 +69,7 @@ The core currently implements integer musical time, validated sixteen-track proj
 - [M0.3d.2 native properties](docs/M0-3D2-NATIVE-PROPERTIES.md) — null-properties contract and controlled native forwarding
 - [M0.3d.3 input stability](docs/M0-3D3-INPUT-STABILITY.md) — release ledger, bank scope, repaint, and restoration correction
 - [M0.3e sequencer integration](docs/M0-3E-SEQUENCER-INTEGRATION.md) — stable editor restoration and reuse-first stock sequence plan
+- [M0.4 native sequencer](docs/M0-4-NATIVE-SEQUENCER.md) — bounded one-step request and verified native insertion blocker
 - [Roadmap](docs/ROADMAP.md) — milestones and acceptance criteria
 - [Safety](docs/SAFETY.md) — development, deployment, and recovery rules
 - [Device adapter contract](docs/ADAPTER.md) — future clock, voice, capacity, and recovery boundary

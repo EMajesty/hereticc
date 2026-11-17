@@ -3,6 +3,7 @@
 #[cfg(feature = "hil-test-interface")]
 pub mod hil;
 pub mod reducer;
+pub mod stock_sequence;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, TryLockError};

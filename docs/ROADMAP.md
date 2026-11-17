@@ -335,6 +335,24 @@ redirected toward a bounded stock sequence-command SDK extension informed by
 Am MOD's native event-list/Undo implementation. See
 [M0.3e sequencer integration](M0-3E-SEQUENCER-INTEGRATION.md).
 
+### M0.4 First native stock-sequencer event — host request boundary complete, native insertion blocked
+
+M0.4 converts one active selected NEUROGENIC cell into a bounded, pointer-free
+request for the stock UI's current sequence/current track. The request uses the
+existing 960-PPQ grid, keeps physical-pad identity unresolved until a live
+Program mapping is available, and can be submitted through its adapter at most
+once. Host tests cover validation, constructor arguments, failure, cancellation,
+and repeat refusal.
+
+The pinned SDK exposes no stock sequence/event-list/command/Undo API. Am MOD's
+MIT-licensed source confirms a 56-byte tag-3 native note and legitimate stock
+add-command path, but that path requires live UI-thread controller, Program,
+event-list, mapping, container, result, and lifetime machinery. NEUROGENIC does
+not copy its firmware offsets or manufacture native bytes. Levels B–D—live
+submission, event presence, and audible transport playback—remain blocked on a
+reviewed SDK-owned sequence command extension. See
+[M0.4 native sequencer](M0-4-NATIVE-SEQUENCER.md).
+
 ### M0.3b-C–E Device feasibility experiments — planned and blocked
 
 This requires a separate, explicitly reviewed task because it creates device-facing executable code.
@@ -356,7 +374,7 @@ Decision gate: proceed with the SDK adapter only if stock-engine control and tim
 
 UI feasibility is a separate gate within M0.3b: one named page scope must sustain an agreed repaint/primitive budget and restore the stock screen and pad lights on every exit. Passing that gate approves renderer implementation work, not a complete UI.
 
-### M0.4 Effects feasibility gates — planned
+### M0.5 Effects feasibility gates — planned
 
 These are three independent experiments; success in one does not imply success in another. They require a later task explicitly authorizing device-facing executable work.
 
@@ -444,7 +462,7 @@ Acceptance criteria:
 - slice references survive save/reload or fail with actionable diagnostics;
 - timing remains within the threshold established at M0.3.
 
-Effects acceptance additionally requires the relevant M0.4 gate; parameter locks targeting unavailable routing remain editable but visibly unsupported.
+Effects acceptance additionally requires the relevant M0.5 gate; parameter locks targeting unavailable routing remain editable but visibly unsupported.
 
 ## M5 — Performance and MIDI
 
@@ -487,11 +505,10 @@ One repeat of the same eight-command cycle is the only next HIL action; after
 that, priority returns to the bounded stock-sequencer adapter. See
 [HIL-1.2](HIL-1-2.md) and [HIL-1.3](HIL-1-3.md).
 
-The immediate decision is owner review and, if separately authorized, one
-M0.3e regression run of the restored M0.3c editor behavior. The next engineering
-milestone should implement a bounded, firmware-guarded SDK stock-sequence
-command adapter and test one event in a fresh unsaved sequence; it should not
-extend physical-pad audition interception. See
-[M0.3e](M0-3E-SEQUENCER-INTEGRATION.md). This
-does not authorize B1 DATA-hook testing, a relay, SSH, or another diagnostic
-milestone.
+The immediate feature blocker is now precise: upstream the source-confirmed
+current-sequence/current-track add command as a bounded SDK-owned UI-thread API,
+including native ownership, cleanup, Undo, and stale-context rejection. Only
+after that API passes host/emulator ABI review should one event be tested in a
+fresh unsaved sequence. Physical-pad audition interception and further general
+HIL work are not prerequisites. See [M0.4](M0-4-NATIVE-SEQUENCER.md). This does
+not authorize B1 DATA-hook testing or an unreviewed native sequence write.

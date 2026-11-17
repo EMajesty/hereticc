@@ -131,6 +131,13 @@ Still unknown:
 - whether all stereo input/output and stock effects paths remain intact under the required hooks;
 - stable sample identity across load, save, project switch, and pool mutation.
 
+M0.4 host tests now cover one selected active grid cell becoming a bounded
+current-sequence/current-track request at 960 PPQ. This is not a stock event.
+The pinned SDK lacks the live controller/event-list/command/Undo API needed to
+implement Am MOD's source-proven tag-3 insertion path safely. No native write,
+HIL insertion command, event-list observation, transport playback, or audio was
+performed.
+
 ## Proposed page-scoped input ownership
 
 Ownership is a state machine, not a global key map. When NEUROGENIC is closed, every event is forwarded. On entry, the adapter captures the current page/surface generation; any mismatch or exit releases ownership, restores pad lights, and requests a stock repaint. A consumed press owns its matching release even if focus changes, preventing stuck stock notes or accidental release actions.

@@ -300,6 +300,9 @@ This proves a callable stock pad-input path, not a complete voice API:
 - no stock voice handle/token or completion is returned;
 - the call addresses a pad/source, not a stable sample ID or independent slice;
 - properties are borrowed firmware state, not documented per-event parameters;
+- release matching and repeated/overlapping triggers of one sound are not specified;
+- calls are UI-thread/lifetime constrained and accept no target audio frame;
+- there is no documented contract for transport, stock-sequence coexistence, voice stealing, choke/mono behavior, or project changes.
 
 M0.3d physical testing did not validate that call path. Its implementation
 required nonzero input/properties plus `midi::notes_ready()` before even handing
@@ -340,9 +343,21 @@ live Seq controller/event list plus native add/change/remove command results and
 Undo. The recommended reuse is a narrow upstream-compatible SDK wrapper around
 that UI-thread command boundary—not copied offsets or direct project-memory
 writes in NEUROGENIC.
-- release matching and repeated/overlapping triggers of one sound are not specified;
-- calls are UI-thread/lifetime constrained and accept no target audio frame;
-- there is no documented contract for transport, stock-sequence coexistence, voice stealing, choke/mono behavior, or project changes.
+
+M0.4 re-inspected that exact SDK and Am MOD revision. The SDK still has no
+sequence/event-list or Undo insertion surface. Am MOD's actual Steps path is
+not a single callable constructor: it validates a live Step controller, Program,
+sequence/event list and command service on its UI thread; resolves pad-to-note;
+constructs a 56-byte tag-3 value; owns native multisets, strings and shared
+results; and dispatches the stock add command. Its QEMU fixtures do not prove
+live audio or Undo replay. NEUROGENIC therefore implements only copied typed
+constructor arguments and an at-most-once adapter port. No upstream code,
+offsets, raw event bytes, or native calls were added.
+Current upstream heads were checked on 2026-11-17: SDK v0.7.4
+`7d82a51279c4e9af4a571eb4479805caeb0f1f9c` still has no sequence insertion
+surface, and Am MOD `119546dcd0078275393afc1155c4803f507cfcd6` has not changed
+the reviewed Steps implementation/native map/ABI bridge since the pinned
+revision. There is no newer upstream API to adopt directly.
 
 The SDK's [`NoteEvent::replay_as_pad`](https://github.com/ioma8/mpc-sample-sdk/blob/e62ffd33e33b0a37379fb0f5e47ae48cfdc53a39/src/midi.rs) rewrites an already-arriving MIDI event as a selected pad/16-Levels row, forwards it, and restores the bytes. MINIMOD pairs overlapping external MIDI presses/releases with a fixed-capacity ledger before using this path: [policy](https://github.com/ioma8/mpc-minimod/blob/3770fb7edcfb432cd45ca4e8fa8bcbefe0435c25/rust/crates/minimod/src/midi.rs). This supports safe interception/rewrite of incoming events; it does not create arbitrary frame-stamped scheduler events.
 
