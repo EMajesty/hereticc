@@ -59,3 +59,6 @@ failure, or restoration anomaly. No automatic retry is performed.
 
 After that validation, HIL work should return to supporting the planned
 stock-sequencer adapter rather than expanding the harness.
+
+[HIL-1.2](HIL-1-2.md) wraps this exact scenario in one bounded build/deploy/
+activate/test/collect/restore command with structured reports.

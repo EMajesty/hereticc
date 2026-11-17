@@ -52,6 +52,22 @@ def completed(stdout=b"", stderr=b"", code=0):
     return subprocess.CompletedProcess([], code, stdout, stderr)
 
 
+class CycleSsh:
+    def __init__(self):
+        self.collect_calls = 0
+
+    def fixed(self, name, timeout=10):
+        if name != "collect":
+            raise AssertionError(f"unexpected fixed operation {name}")
+        self.collect_calls += 1
+        runtime = "absent" if self.collect_calls == 1 else "present"
+        return (
+            f"hil_runtime={runtime}\nactive_sha256="
+            f"{'absent' if runtime == 'absent' else 'a' * 64}\n"
+            "previous_sha256=absent\n"
+        ).encode()
+
+
 class HilTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -337,6 +353,201 @@ class HilTests(unittest.TestCase):
     def test_parser_rejects_unknown_commands(self):
         with self.assertRaises(SystemExit):
             hil.parser().parse_args(["arbitrary-shell"])
+
+
+class RunCycleTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        root = Path(self.temp.name)
+        self.run_root = root / "runs"
+        self.run_lock = root / "run.lock"
+        self.args = type(
+            "Args",
+            (),
+            {
+                "level": "B",
+                "scenario": True,
+                "confirm": hil.CONFIRM,
+            },
+        )()
+        self.initial = identity_output().decode()
+        self.identity_facts = hil.parse_facts(identity_output())
+        self.records = [
+            {
+                "level": "B",
+                "command": "QUERY",
+                "expected": {"open": "0"},
+                "actual": {"open": "0"},
+                "pass": True,
+                "duration_ms": 1.0,
+            }
+        ]
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def patches(self, **overrides):
+        def scenario(_ssh, records):
+            records.extend(self.records)
+            return records
+
+        defaults = {
+            "identity": mock.Mock(return_value=dict(self.identity_facts)),
+            "build_hil_artifact": mock.Mock(return_value=(b"ELF", "a" * 64)),
+            "deploy_artifact": mock.Mock(return_value=None),
+            "activate_artifact": mock.Mock(return_value={**self.identity_facts, "main_pid": "202", "dropins": hil.DROPIN}),
+            "wait_bridge": mock.Mock(return_value=None),
+            "execute_level_b_scenario": mock.Mock(side_effect=scenario),
+            "restore_stock": mock.Mock(return_value={**self.identity_facts, "main_pid": "303"}),
+            "git_commit": mock.Mock(return_value="b" * 40),
+        }
+        defaults.update(overrides)
+        stack = contextlib.ExitStack()
+        stack.enter_context(mock.patch.object(hil, "RUN_ROOT", self.run_root))
+        stack.enter_context(mock.patch.object(hil, "RUN_LOCK", self.run_lock))
+        for name, replacement in defaults.items():
+            stack.enter_context(mock.patch.object(hil, name, replacement))
+        return stack, defaults
+
+    def run_cycle(self, ssh=None, **overrides):
+        stack, patched = self.patches(**overrides)
+        output = io.StringIO()
+        with stack, contextlib.redirect_stdout(output):
+            result = hil.orchestrate_run(self.args, CycleSsh() if ssh is None else ssh)
+        return result, output.getvalue(), patched
+
+    def only_report(self):
+        directories = list(self.run_root.iterdir())
+        self.assertEqual(len(directories), 1)
+        return json.loads((directories[0] / "report.json").read_text())
+
+    def test_successful_full_run_generates_reports_and_restores(self):
+        result, output, patched = self.run_cycle()
+        self.assertEqual(result, 0)
+        self.assertIn("Overall PASS", output)
+        report = self.only_report()
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["artifact_sha256"], "a" * 64)
+        self.assertEqual(report["restoration"]["status"], "pass")
+        self.assertEqual(report["assertions"], {"passed": 1, "failed": 0})
+        self.assertTrue((next(self.run_root.iterdir()) / "summary.txt").is_file())
+        patched["restore_stock"].assert_called_once()
+        self.assertFalse(self.run_lock.exists())
+
+    def test_build_failure_does_not_restart_stock(self):
+        failure = mock.Mock(side_effect=hil.HilError("build failed"))
+        stack, patched = self.patches(build_hil_artifact=failure)
+        with stack, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(hil.RunCycleError):
+            hil.orchestrate_run(self.args, CycleSsh())
+        patched["restore_stock"].assert_not_called()
+        self.assertEqual(self.only_report()["restoration"]["status"], "not-required")
+
+    def test_mutating_failures_attempt_one_restoration(self):
+        for function, error in (
+            ("deploy_artifact", hil.RemoteError("deploy failed")),
+            ("activate_artifact", hil.RemoteError("activation failed")),
+            ("execute_level_b_scenario", hil.RemoteError("test timeout")),
+        ):
+            with self.subTest(function=function):
+                with tempfile.TemporaryDirectory() as temporary:
+                    self.run_root = Path(temporary) / "runs"
+                    self.run_lock = Path(temporary) / "lock"
+                    replacement = mock.Mock(side_effect=error)
+                    stack, patched = self.patches(**{function: replacement})
+                    with stack, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(hil.RunCycleError):
+                        hil.orchestrate_run(self.args, CycleSsh())
+                    patched["restore_stock"].assert_called_once()
+                    self.assertEqual(self.only_report()["restoration"]["status"], "pass")
+
+    def test_assertion_failure_is_reported_then_restored(self):
+        failed = [{**self.records[0], "pass": False, "actual": {"open": "1"}}]
+        def scenario(_ssh, records):
+            records.extend(failed)
+            return records
+        stack, patched = self.patches(
+            execute_level_b_scenario=mock.Mock(side_effect=scenario)
+        )
+        with stack, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(hil.RunCycleError):
+            hil.orchestrate_run(self.args, CycleSsh())
+        report = self.only_report()
+        self.assertEqual(report["assertions"], {"passed": 0, "failed": 1})
+        patched["restore_stock"].assert_called_once()
+
+    def test_ssh_disconnect_before_mutation_does_not_restore(self):
+        stack, patched = self.patches(
+            identity=mock.Mock(side_effect=hil.TransportError("SSH disconnected"))
+        )
+        with stack, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(hil.RunCycleError):
+            hil.orchestrate_run(self.args, CycleSsh())
+        patched["restore_stock"].assert_not_called()
+
+    def test_restoration_failure_is_prominent_and_preserves_original_error(self):
+        stack, _patched = self.patches(
+            execute_level_b_scenario=mock.Mock(side_effect=hil.RemoteError("test failed")),
+            restore_stock=mock.Mock(side_effect=hil.TransportError("SSH unavailable")),
+        )
+        with stack, contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(
+            hil.RunCycleError, "MAY STILL BE RUNNING THE TEST MOD"
+        ) as raised:
+            hil.orchestrate_run(self.args, CycleSsh())
+        self.assertIn("test failed", str(raised.exception))
+        report = self.only_report()
+        self.assertEqual(report["restoration"]["status"], "fail")
+
+    def test_unexpected_dropin_and_incomplete_runtime_are_refused(self):
+        unexpected = {**self.identity_facts, "dropins": "/unexpected.conf"}
+        stack, patched = self.patches(identity=mock.Mock(return_value=unexpected))
+        with stack, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(hil.RunCycleError):
+            hil.orchestrate_run(self.args, CycleSsh())
+        patched["build_hil_artifact"].assert_not_called()
+
+        with tempfile.TemporaryDirectory() as temporary:
+            self.run_root = Path(temporary) / "runs"
+            self.run_lock = Path(temporary) / "lock"
+            ssh = CycleSsh()
+            ssh.collect_calls = 1
+            stack, patched = self.patches()
+            with stack, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(hil.RunCycleError):
+                hil.orchestrate_run(self.args, ssh)
+            patched["build_hil_artifact"].assert_not_called()
+
+    def test_concurrent_run_lock_is_never_destroyed(self):
+        self.run_lock.mkdir(parents=True)
+        (self.run_lock / "owner.json").write_text('{"pid": 7}\n')
+        stack, _patched = self.patches()
+        with stack, self.assertRaises(hil.RunCycleError):
+            hil.orchestrate_run(self.args, CycleSsh())
+        self.assertTrue(self.run_lock.is_dir())
+        self.assertEqual((self.run_lock / "owner.json").read_text(), '{"pid": 7}\n')
+
+    def test_main_returns_nonzero_for_run_failure(self):
+        with mock.patch.object(hil.Config, "load", return_value=mock.Mock()), mock.patch.object(
+            hil, "Ssh", return_value=mock.Mock()
+        ), mock.patch.object(
+            hil, "orchestrate_run", side_effect=hil.RunCycleError("failed")
+        ), contextlib.redirect_stderr(io.StringIO()):
+            result = hil.main([
+                "--config", "fixture.json", "run", "--level", "B", "--scenario",
+                "--confirm", hil.CONFIRM,
+            ])
+        self.assertEqual(result, hil.RunCycleError.exit_code)
+
+    def test_level_a_run_is_host_only_and_reported(self):
+        args = type(
+            "Args", (), {"level": "A", "scenario": False, "confirm": None}
+        )()
+        with mock.patch.object(hil, "RUN_ROOT", self.run_root), mock.patch.object(
+            hil, "RUN_LOCK", self.run_lock
+        ), mock.patch.object(
+            hil, "git_commit", return_value="b" * 40
+        ), mock.patch.object(
+            hil.subprocess, "run", return_value=completed()
+        ), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(hil.orchestrate_run(args, None), 0)
+        report = self.only_report()
+        self.assertEqual(report["level"], "A")
+        self.assertEqual(report["assertions"], {"passed": 1, "failed": 0})
+        self.assertEqual(report["restoration"]["status"], "not-required")
 
 
 if __name__ == "__main__":

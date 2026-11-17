@@ -476,6 +476,12 @@ for overlay-owned callbacks during the worker's short reducer lock. Its next
 action is one scripted Level B hardware run, after which development returns to
 the stock-sequencer adapter. See [HIL-1.1](HIL-1-1.md).
 
+HIL-1.2 provides a single fail-safe `run` command and per-run JSON/text reports.
+Its first physical action is one complete HIL-1.1 scenario with verified stock
+restoration. Once that passes, the practical engineering priority is again the
+bounded stock-sequencer command adapter, not more harness infrastructure. See
+[HIL-1.2](HIL-1-2.md).
+
 The immediate decision is owner review and, if separately authorized, one
 M0.3e regression run of the restored M0.3c editor behavior. The next engineering
 milestone should implement a bounded, firmware-guarded SDK stock-sequence

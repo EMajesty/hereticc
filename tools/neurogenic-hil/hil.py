@@ -4,6 +4,7 @@
 from __future__ import annotations
 import argparse
 import dataclasses
+import datetime
 import hashlib
 import json
 import os
@@ -32,6 +33,8 @@ PREVIOUS = RUNTIME + "/previous.sha256"
 DROPIN = "/run/systemd/system/ac50.service.d/neurogenic-hil.conf"
 LEGACY_DROPIN_TEXT = "[Service]\nEnvironment=LD_PRELOAD=/run/neurogenic-hil/current.so\n"
 MAX_OUTPUT = 8192
+RUN_ROOT = ROOT / "target/hil/runs"
+RUN_LOCK = ROOT / "target/hil/run.lock"
 
 
 class HilError(Exception):
@@ -48,6 +51,10 @@ class TransportError(HilError):
 
 class RemoteError(HilError):
     exit_code = 6
+
+
+class RunCycleError(HilError):
+    exit_code = 7
 
 
 @dataclasses.dataclass(frozen=True)
@@ -117,11 +124,23 @@ if test "$pid" -gt 0; then printf 'main_exe=%s\n' "$(readlink "/proc/$pid/exe")"
 """
 
 COLLECT = IDENTITY + r"""
+if test ! -e '/run/neurogenic-hil' && test ! -L '/run/neurogenic-hil'; then
+ printf 'hil_runtime=absent\n'
+else
+ test -d '/run/neurogenic-hil' && test ! -L '/run/neurogenic-hil'
+ printf 'hil_runtime=present\n'
+fi
 for item in active previous; do
  path='/run/neurogenic-hil/'"$item"'.sha256'
  if test -f "$path" && ! test -L "$path"; then printf '%s_sha256=%s\n' "$item" "$(cat "$path")"
  else printf '%s_sha256=absent\n' "$item"; fi
 done
+"""
+
+BRIDGE_READY = f"""set -eu
+test -f '{RUNTIME}/bridge.ready' && test ! -L '{RUNTIME}/bridge.ready'
+test \"$(wc -c < '{RUNTIME}/bridge.ready')\" -le 64
+printf 'bridge_ready=1\\n'
 """
 
 
@@ -280,7 +299,12 @@ class Ssh:
         return result.stdout
 
     def fixed(self, name: str, timeout: float = 10) -> bytes:
-        scripts = {"identity": IDENTITY, "collect": COLLECT, "restore": RESTORE}
+        scripts = {
+            "identity": IDENTITY,
+            "collect": COLLECT,
+            "bridge": BRIDGE_READY,
+            "restore": RESTORE,
+        }
         if name not in scripts:
             raise HilError("unknown fixed remote operation")
         return self._call(scripts[name], timeout=timeout)
@@ -396,7 +420,9 @@ def parse_hil_response(raw: bytes) -> dict[str, str]:
     return fields
 
 
-def run_level_b_scenario(ssh: Ssh) -> None:
+def execute_level_b_scenario(
+    ssh: Ssh, records: list[dict[str, object]] | None = None
+) -> list[dict[str, object]]:
     steps = [
         ("RESET", {"open": "0", "track": "1", "step": "1", "bits": "0000"}),
         ("OPEN", {"open": "1"}),
@@ -407,17 +433,35 @@ def run_level_b_scenario(ssh: Ssh) -> None:
         ("CLOSE", {"open": "0", "restore": "1"}),
         ("RESET", {"open": "0", "track": "1", "step": "1", "bits": "0000"}),
     ]
-    failed = False
+    if records is None:
+        records = []
     for command, expected in steps:
-        actual = parse_hil_response(ssh.test_command(command))
+        started = time.monotonic()
+        try:
+            actual = parse_hil_response(ssh.test_command(command))
+        except HilError as exc:
+            records.append({
+                "level": "B", "command": command, "expected": expected,
+                "actual": None, "pass": False, "error": str(exc),
+                "duration_ms": round((time.monotonic() - started) * 1000, 3),
+            })
+            raise
         passed = all(actual.get(key) == value for key, value in expected.items())
-        print(json.dumps({
+        records.append({
             "level": "B", "command": command, "expected": expected,
             "actual": actual, "pass": passed,
-        }, sort_keys=True))
-        failed |= not passed
-    if failed:
+            "duration_ms": round((time.monotonic() - started) * 1000, 3),
+        })
+    return records
+
+
+def run_level_b_scenario(ssh: Ssh) -> list[dict[str, object]]:
+    records = execute_level_b_scenario(ssh)
+    for record in records:
+        print(json.dumps(record, sort_keys=True))
+    if any(not record["pass"] for record in records):
         raise RemoteError("one or more Level B state assertions failed")
+    return records
 
 
 def settle(ssh: Ssh, dropin: str, old_pid: str | None = None) -> dict[str, str]:
@@ -433,12 +477,339 @@ def settle(ssh: Ssh, dropin: str, old_pid: str | None = None) -> dict[str, str]:
     raise RemoteError("application did not settle after the single requested restart")
 
 
+def build_hil_artifact() -> tuple[bytes, str]:
+    try:
+        code = subprocess.run(
+            [str(HIL_BUILD)], cwd=ROOT, check=False, timeout=300
+        ).returncode
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise HilError(f"fixed HIL build failed: {exc}") from exc
+    if code:
+        raise HilError(f"fixed HIL build failed with status {code}")
+    return read_reviewed_artifact(HIL_ARTIFACT, HIL_SUMS)
+
+
+def deploy_artifact(ssh: Ssh, data: bytes, digest: str) -> None:
+    if parse_facts(ssh.upload(data, digest)) != {"deployed_sha256": digest}:
+        raise RemoteError("deployment acknowledgement mismatch")
+
+
+def activate_artifact(ssh: Ssh, digest: str, before: dict[str, str]) -> dict[str, str]:
+    if before.get("dropins") not in ("", DROPIN):
+        raise IdentityError("unexpected ac50.service drop-in")
+    if parse_facts(ssh.activate(digest)) != {"activated_sha256": digest}:
+        raise RemoteError("activation acknowledgement mismatch")
+    active = settle(ssh, DROPIN, before["main_pid"])
+    state = parse_facts(ssh.fixed("collect"))
+    if state.get("active_sha256") != digest:
+        raise RemoteError("active build state does not match the requested hash")
+    return active
+
+
+def wait_bridge(ssh: Ssh) -> None:
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        try:
+            if parse_facts(ssh.fixed("bridge")) == {"bridge_ready": "1"}:
+                return
+        except HilError:
+            pass
+        time.sleep(0.25)
+    raise RemoteError("HIL bridge did not become ready")
+
+
+def restore_stock(ssh: Ssh) -> dict[str, str]:
+    identity(ssh, False)
+    if parse_facts(ssh.fixed("restore", 15)) != {"stock_restart_requested": "1"}:
+        raise RemoteError("restore acknowledgement mismatch")
+    return settle(ssh, "")
+
+
+class HostRunLock:
+    """Exclusive host-side ownership of one complete HIL cycle."""
+
+    def __init__(self, path: Path | None = None):
+        self.path = RUN_LOCK if path is None else path
+        self.owned = False
+
+    def __enter__(self) -> "HostRunLock":
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise RunCycleError(f"cannot prepare HIL run lock: {exc}") from exc
+        try:
+            self.path.mkdir(mode=0o700)
+        except FileExistsError as exc:
+            raise RunCycleError(
+                f"another or incomplete HIL run owns {self.path}; recover it explicitly"
+            ) from exc
+        self.owned = True
+        owner = self.path / "owner.json"
+        try:
+            owner.write_text(
+                json.dumps({"pid": os.getpid()}, sort_keys=True) + "\n",
+                encoding="ascii",
+            )
+        except OSError as exc:
+            self.path.rmdir()
+            self.owned = False
+            raise RunCycleError(f"cannot record HIL run-lock ownership: {exc}") from exc
+        return self
+
+    def __exit__(self, _kind, _value, _traceback) -> None:
+        if not self.owned:
+            return
+        owner = self.path / "owner.json"
+        if owner.is_file() and not owner.is_symlink():
+            owner.unlink()
+        self.path.rmdir()
+        self.owned = False
+
+
+def utc_now() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def create_report_directory() -> Path:
+    try:
+        RUN_ROOT.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise RunCycleError(f"cannot prepare HIL report root: {exc}") from exc
+    if RUN_ROOT.is_symlink() or not RUN_ROOT.is_dir():
+        raise RunCycleError("unsafe HIL run-report root")
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+    path = RUN_ROOT / f"{stamp}-{os.getpid()}"
+    try:
+        path.mkdir(mode=0o700)
+    except OSError as exc:
+        raise RunCycleError(f"cannot create unique HIL report directory: {exc}") from exc
+    return path
+
+
+def git_commit() -> str:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, check=False,
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return "unknown"
+    commit = result.stdout.strip()
+    if result.returncode or not re.fullmatch(r"[0-9a-f]{40}", commit):
+        return "unknown"
+    return commit
+
+
+def write_run_report(directory: Path, report: dict[str, object]) -> None:
+    report_path = directory / "report.json"
+    summary_path = directory / "summary.txt"
+    if report_path.exists() or summary_path.exists():
+        raise RunCycleError("run report already exists")
+    encoded = (json.dumps(report, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    if len(encoded) > 128 * 1024:
+        raise RunCycleError("run report exceeded 128 KiB")
+    try:
+        report_path.write_bytes(encoded)
+    except OSError as exc:
+        raise RunCycleError(f"cannot write JSON run report: {exc}") from exc
+    assertions = report.get("assertions", {})
+    summary = (
+        f"overall={report['status']}\n"
+        f"level={report['level']}\n"
+        f"assertions_passed={assertions.get('passed', 0)}\n"
+        f"assertions_failed={assertions.get('failed', 0)}\n"
+        f"artifact_sha256={report.get('artifact_sha256') or 'none'}\n"
+        f"restoration={report.get('restoration', {}).get('status', 'not-required')}\n"
+        f"report_directory={directory}\n"
+    )
+    try:
+        summary_path.write_text(summary, encoding="utf-8")
+    except OSError as exc:
+        raise RunCycleError(f"cannot write text run summary: {exc}") from exc
+
+
+def orchestrate_run(args: argparse.Namespace, ssh: Ssh | None) -> int:
+    if args.level == "B":
+        confirm(args.confirm)
+        if not args.scenario:
+            raise RunCycleError("Level B run currently requires --scenario")
+    with HostRunLock():
+        report_dir = create_report_directory()
+        report: dict[str, object] = {
+            "schema": "neurogenic-hil-run-v1",
+            "started_at": utc_now(),
+            "git_commit": git_commit(),
+            "level": args.level,
+            "scenario": bool(args.scenario),
+            "status": "running",
+            "artifact_sha256": None,
+            "firmware_fingerprint": None,
+            "initial_state": None,
+            "active_state": None,
+            "final_state": None,
+            "activation": {"status": "not-attempted"},
+            "restoration": {"status": "not-required"},
+            "tests": [],
+            "diagnostics": None,
+            "steps": [],
+            "errors": [],
+            "assertions": {"passed": 0, "failed": 0},
+        }
+        original_error: HilError | None = None
+        restoration_error: HilError | None = None
+        mutated = False
+
+        def step(name: str, operation: Callable[[], object]) -> object:
+            started = time.monotonic()
+            record: dict[str, object] = {"name": name, "status": "running"}
+            report["steps"].append(record)
+            try:
+                value = operation()
+                record["status"] = "pass"
+                return value
+            except HilError as exc:
+                record["status"] = "fail"
+                record["error"] = str(exc)
+                raise
+            finally:
+                record["duration_ms"] = round((time.monotonic() - started) * 1000, 3)
+
+        try:
+            if args.level == "A":
+                print("[1/2] Testing host reducer...", flush=True)
+                def level_a() -> None:
+                    try:
+                        code = subprocess.run(
+                            ["cargo", "test", "-p", "neurogenic-device", "--features",
+                             "hil-test-interface", "--test", "hil"],
+                            cwd=ROOT, check=False, timeout=120,
+                        ).returncode
+                    except (OSError, subprocess.TimeoutExpired) as exc:
+                        raise HilError(f"Level A tests failed: {exc}") from exc
+                    if code:
+                        raise HilError(f"Level A tests failed with status {code}")
+                step("level-a-tests", level_a)
+                report["tests"] = [{"level": "A", "suite": "device-hil", "pass": True}]
+                report["assertions"] = {"passed": 1, "failed": 0}
+            else:
+                initial = step("initial-identity", lambda: identity(ssh))
+                report["initial_state"] = initial
+                report["firmware_fingerprint"] = initial["firmware_prefix_sha256"]
+                if initial.get("dropins") != "":
+                    raise IdentityError("run requires stock ac50.service with no drop-in")
+                prior = step("initial-runtime-state", lambda: parse_facts(ssh.fixed("collect")))
+                if (
+                    prior.get("hil_runtime") != "absent"
+                    or prior.get("active_sha256") != "absent"
+                    or prior.get("previous_sha256") != "absent"
+                ):
+                    raise IdentityError("an earlier HIL runtime session requires explicit recovery")
+
+                print("[1/6] Building...", flush=True)
+                data, digest = step("build", build_hil_artifact)
+                report["artifact_sha256"] = digest
+
+                print("[2/6] Deploying...", flush=True)
+                mutated = True
+                step("deploy", lambda: deploy_artifact(ssh, data, digest))
+
+                print("[3/6] Activating...", flush=True)
+                report["activation"] = {"status": "running", "sha256": digest}
+                try:
+                    active = step("activate", lambda: activate_artifact(ssh, digest, initial))
+                except HilError as exc:
+                    report["activation"] = {
+                        "status": "fail", "sha256": digest, "message": str(exc),
+                    }
+                    raise
+                report["active_state"] = active
+                report["activation"] = {"status": "pass", "sha256": digest}
+                step("bridge-ready", lambda: wait_bridge(ssh))
+
+                print("[4/6] Testing...", flush=True)
+                records: list[dict[str, object]] = []
+                report["tests"] = records
+                step("level-b-tests", lambda: execute_level_b_scenario(ssh, records))
+                passed = sum(bool(item["pass"]) for item in records)
+                failed = len(records) - passed
+                report["assertions"] = {"passed": passed, "failed": failed}
+                if failed:
+                    raise RemoteError("one or more Level B state assertions failed")
+                report["diagnostics"] = step(
+                    "collect", lambda: parse_facts(ssh.fixed("collect"))
+                )
+        except HilError as exc:
+            original_error = exc
+            test_records = report["tests"]
+            if test_records:
+                passed = sum(bool(item["pass"]) for item in test_records)
+                report["assertions"] = {
+                    "passed": passed,
+                    "failed": len(test_records) - passed,
+                }
+            report["errors"].append({"phase": "test-cycle", "message": str(exc)})
+            if mutated:
+                try:
+                    report["diagnostics"] = parse_facts(ssh.fixed("collect"))
+                except HilError as diagnostic_error:
+                    report["errors"].append({
+                        "phase": "diagnostic-collection", "message": str(diagnostic_error),
+                    })
+        except KeyboardInterrupt:
+            original_error = RunCycleError("run interrupted by operator")
+            report["errors"].append({
+                "phase": "test-cycle", "message": str(original_error),
+            })
+        finally:
+            if mutated:
+                print("[5/6] Restoring stock...", flush=True)
+                try:
+                    final = step("restore-stock", lambda: restore_stock(ssh))
+                    report["final_state"] = final
+                    report["restoration"] = {"status": "pass"}
+                except HilError as exc:
+                    restoration_error = exc
+                    report["restoration"] = {"status": "fail", "message": str(exc)}
+                    report["errors"].append({"phase": "restoration", "message": str(exc)})
+
+            print(
+                "[6/6] Reporting..." if args.level == "B" else "[2/2] Reporting...",
+                flush=True,
+            )
+            report["finished_at"] = utc_now()
+            report["status"] = "pass" if original_error is None and restoration_error is None else "fail"
+            write_run_report(report_dir, report)
+
+        assertions = report["assertions"]
+        print(f"Overall {str(report['status']).upper()}")
+        print(f"Assertions: {assertions['passed']} passed, {assertions['failed']} failed")
+        print(f"Artifact SHA-256: {report['artifact_sha256'] or 'none'}")
+        print(f"Restoration: {report['restoration']['status']}")
+        print(f"Report directory: {report_dir}")
+
+        if restoration_error is not None:
+            raise RunCycleError(
+                f"RESTORATION FAILED; MPC MAY STILL BE RUNNING THE TEST MOD. "
+                f"Original error: {original_error or 'none'}; restoration: {restoration_error}. "
+                "If SSH is unavailable, shut down normally, remove the development SD, "
+                "and perform a stock-only boot."
+            )
+        if original_error is not None:
+            raise RunCycleError(
+                f"HIL run failed: {original_error}; stock restoration status: "
+                f"{report['restoration']['status']}"
+            )
+        return 0
+
+
 def run_command(args: argparse.Namespace, ssh: Ssh | None) -> int:
     if args.command == "build":
-        script = HIL_BUILD if args.hil else BUILD
-        code = subprocess.run([str(script)], cwd=ROOT, check=False).returncode
-        if code:
-            raise HilError(f"fixed {'HIL' if args.hil else 'M0.3e'} build failed with status {code}")
+        if args.hil:
+            build_hil_artifact()
+        else:
+            code = subprocess.run([str(BUILD)], cwd=ROOT, check=False).returncode
+            if code:
+                raise HilError(f"fixed M0.3e build failed with status {code}")
     elif args.command == "test":
         if args.level == "B":
             confirm(args.confirm); identity(ssh)
@@ -462,20 +833,11 @@ def run_command(args: argparse.Namespace, ssh: Ssh | None) -> int:
             else (NORMAL_ARTIFACT, NORMAL_SUMS)
         )
         data, digest = read_reviewed_artifact(artifact, sums)
-        if parse_facts(ssh.upload(data, digest)) != {"deployed_sha256": digest}:
-            raise RemoteError("deployment acknowledgement mismatch")
+        deploy_artifact(ssh, data, digest)
         print(f"staged immutable build {digest}; activate with restart --sha256 {digest}")
     elif args.command == "restart":
         confirm(args.confirm); before = identity(ssh)
-        if before.get("dropins") not in ("", DROPIN):
-            raise IdentityError("unexpected ac50.service drop-in")
-        result = parse_facts(ssh.activate(args.sha256))
-        if result != {"activated_sha256": args.sha256}:
-            raise RemoteError("activation acknowledgement mismatch")
-        settle(ssh, DROPIN, before["main_pid"])
-        state = parse_facts(ssh.fixed("collect"))
-        if state.get("active_sha256") != args.sha256:
-            raise RemoteError("active build state does not match the requested hash")
+        activate_artifact(ssh, args.sha256, before)
         print(f"activated {args.sha256}; ac50.service restarted exactly once and settled")
     elif args.command == "rollback":
         confirm(args.confirm); before = identity(ssh)
@@ -488,11 +850,10 @@ def run_command(args: argparse.Namespace, ssh: Ssh | None) -> int:
         settle(ssh, DROPIN, before["main_pid"])
         print(f"rolled back to {target}; ac50.service restarted exactly once")
     elif args.command == "restore-stock":
-        confirm(args.confirm); identity(ssh, False)
-        if parse_facts(ssh.fixed("restore", 15)) != {"stock_restart_requested": "1"}:
-            raise RemoteError("restore acknowledgement mismatch")
-        settle(ssh, "")
+        confirm(args.confirm); restore_stock(ssh)
         print("stock ac50.service restored; volatile HIL files removed")
+    elif args.command == "run":
+        return orchestrate_run(args, ssh)
     elif args.command == "collect":
         identity(ssh, False)
         encoded = (json.dumps(parse_facts(ssh.fixed("collect")), indent=2, sort_keys=True) + "\n").encode()
@@ -521,6 +882,10 @@ def parser() -> argparse.ArgumentParser:
     test.add_argument("--command", dest="hil_command", default="QUERY")
     test.add_argument("--scenario", action="store_true")
     test.add_argument("--confirm")
+    run = sub.add_parser("run")
+    run.add_argument("--level", choices=("A", "B"), default="B")
+    run.add_argument("--scenario", action="store_true")
+    run.add_argument("--confirm")
     collect = sub.add_parser("collect"); collect.add_argument("--output")
     return result
 
@@ -528,14 +893,18 @@ def parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
-        local = args.command == "build" or (args.command == "test" and args.level == "A")
+        local = (
+            args.command == "build"
+            or (args.command == "test" and args.level == "A")
+            or (args.command == "run" and args.level == "A")
+        )
         if not local and args.config is None:
             raise HilError("this command requires --config")
         ssh = None if local else Ssh(Config.load(args.config))
         return run_command(args, ssh)
     except HilError as exc:
         print(f"error: {exc}", file=sys.stderr)
-        if args.command in ("restart", "rollback"):
+        if args.command in ("restart", "rollback", "run"):
             print(
                 f"recovery (explicit, never automatic): rerun with restore-stock --confirm {CONFIRM}",
                 file=sys.stderr,
