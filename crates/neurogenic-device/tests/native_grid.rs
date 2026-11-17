@@ -93,6 +93,27 @@ fn insert_uses_grid_timing_and_commits_only_after_unique_observation() {
 }
 
 #[test]
+fn synchronous_command_and_observation_commit_within_one_paint_budget() {
+    let mut ui = open_at(0, 0);
+    let mut editor = NativeGridEditor::<u16>::default();
+    let mut port = FakePort::default();
+    port.observations.push_back(NativeEventPresence::Unique);
+
+    editor.request_selected(&ui).unwrap();
+    assert_eq!(
+        editor.drive(&mut port, &mut ui),
+        Ok(GridEditProgress::InsertCommandAccepted)
+    );
+    assert!(!ui.step_active(0, 0));
+    assert_eq!(
+        editor.drive(&mut port, &mut ui),
+        Ok(GridEditProgress::InsertCommitted)
+    );
+    assert!(ui.step_active(0, 0));
+    assert_eq!(editor.state(), GridEditState::Idle);
+}
+
+#[test]
 fn removal_uses_owned_receipt_and_commits_only_after_absence() {
     let mut ui = open_at(0, 0);
     let mut editor = NativeGridEditor::<u16>::default();

@@ -189,14 +189,18 @@ fn native_scan_response() -> Response {
 #[cfg(feature = "native-playable-grid")]
 fn native_grid_response() -> Response {
     let snapshot = crate::native_grid_runtime::diagnostic_snapshot();
+    let cap = |value: u32| value.min(99);
     let mut response = Response::new();
     writeln!(
         response,
-        "v=2 hook={} paint={} ctx={} draw={} open={} input={} intent={} ins={} obs={} rm={} inv={} state={}",
-        u8::from(snapshot.hook), snapshot.paints, u8::from(snapshot.context),
-        snapshot.renders, u8::from(snapshot.open), snapshot.inputs,
-        snapshot.intents, snapshot.insertions, snapshot.observations,
-        snapshot.removals, snapshot.invalidations,
+        "v=3 hook={} paint={} ctx={} draw={} open={} input={} intent={} ins={} obs={} rm={} inv={} enc_cb={} enc_raw={} enc_move={} repaint={} switch={} commit={} state={}",
+        u8::from(snapshot.hook), cap(snapshot.paints), u8::from(snapshot.context),
+        cap(snapshot.renders), u8::from(snapshot.open), cap(snapshot.inputs),
+        cap(snapshot.intents), cap(snapshot.insertions), cap(snapshot.observations),
+        cap(snapshot.removals), cap(snapshot.invalidations),
+        cap(snapshot.encoder_callbacks), snapshot.encoder_raw_sum.clamp(-999, 999),
+        cap(snapshot.encoder_movements), cap(snapshot.repaint_requests),
+        cap(snapshot.presentation_switches), cap(snapshot.commits),
         snapshot.state,
     )
     .expect("native grid response fits");

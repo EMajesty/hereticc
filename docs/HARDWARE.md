@@ -110,10 +110,17 @@ owner's explicit result is recorded as physical audio evidence.
 The first M0.5b physical run confirmed the Step hook and 18 paints but showed
 zero presentation activations and zero intents; no musical acceptance test was
 possible. M0.5c therefore makes NEUROGENIC the default presentation on the
-first valid Step paint. Stock paint still runs first, and SHIFT+DATA switches
-temporarily to stock presentation without destroying the controller or native
-receipt ownership. This replacement model is host/QEMU-tested, not yet
-physically validated.
+first valid Step paint. Hardware confirmed native insertion/removal, correct
+stock event positions and audible stock-engine playback. It also showed raw
+DATA magnitudes moving multiple grid cells, verification redraw waiting for a
+later input, and incomplete stock pixels after presentation switching.
+
+M0.5d follows the pinned SDK encoder contract and converts each nonzero raw
+callback to one logical direction step. It performs one verification directly
+after synchronous native command acceptance, while retaining bounded later
+paint retries. SHIFT+DATA is forwarded only after presentation state changes so
+the stock controller can schedule a full repaint. These fixes are host/QEMU
+evidence until the owner repeats the guarded physical grid test.
 
 These facts are research inputs, not permission to depend directly on raw protocols. An in-process extension should prefer a guarded adapter such as the SDK and retain stock ownership wherever possible.
 

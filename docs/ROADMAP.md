@@ -418,16 +418,27 @@ and restores stock in `finally`. Restoration outcome is independent of musical
 acceptance. The native edit implementation is unchanged. Physical success is
 still pending; see [M0.5b guarded grid test](M0-5B-GUARDED-GRID-TEST.md).
 
-### M0.5c Step Edit presentation replacement — hardware candidate
+### M0.5c Step Edit presentation replacement — physically validated with UI defects
 
 The first M0.5b run physically confirmed hook installation and 18 Step paint
 callbacks, but the chord-dependent presentation never activated and no intents
 were accepted. M0.5c opens NEUROGENIC automatically on the first valid Step
-paint while leaving the stock controller alive. SHIFT+DATA is now only a
-temporary stock-view switch and preserves committed bits and receipts. The
-existing guarded runner validates v2 render/input/edit counters and restores
-stock. Physical UI and musical acceptance remain pending; see
+paint while leaving the stock controller alive. Hardware then confirmed native
+insert/remove, correct stock positions, audible playback and stock-view
+switching. DATA used raw multi-count deltas, committed bits waited for a later
+paint, and stock-view switching left stale overlay regions; see
 [M0.5c Step Edit presentation](M0-5C-STEP-EDIT-PRESENTATION.md).
+
+### M0.5d DATA navigation and redraw — hardware candidate
+
+The native grid now applies the pinned SDK's documented one-step-per-encoder-
+callback normalization, performs one same-paint verification after synchronous
+command acceptance, and forwards only the complete SHIFT+DATA presentation
+pair so stock schedules a full Step repaint. `GRID QUERY` v3 adds bounded raw
+encoder, logical movement, repaint, switch and commit counters. The verified
+native adapter is unchanged. Host/QEMU validation does not prove physical
+detents or framebuffer restoration; see
+[M0.5d DATA and redraw](M0-5D-DATA-AND-REDRAW.md).
 
 ### M0.3b-C–E Device feasibility experiments — planned and blocked
 
@@ -581,10 +592,9 @@ One repeat of the same eight-command cycle is the only next HIL action; after
 that, priority returns to the bounded stock-sequencer adapter. See
 [HIL-1.2](HIL-1-2.md) and [HIL-1.3](HIL-1-3.md).
 
-M0.4e physically confirmed unique native-comparator observation, canonical
-removal, verified absence and stock restoration. M0.5a now provides the
-feature-gated Step Edit overlay and queued native edit boundary. The next action
-is one controlled disposable-sequence A01 four-on-the-floor run followed by
-step-8 removal and stock restoration. See
-[M0.5a](M0-5A-PLAYABLE-NATIVE-GRID.md). B1 DATA-hook testing remains unrelated
-and unauthorized.
+M0.5c physically confirmed that the Step Edit replacement creates, removes and
+audibly plays native stock-sequencer notes. The next action is one guarded
+M0.5d run checking one-detent navigation, immediate commit redraw, complete
+presentation switching, the existing A01 four-on-the-floor edit, and stock
+restoration. See [M0.5d](M0-5D-DATA-AND-REDRAW.md). B1 DATA-hook testing remains
+unrelated and unauthorized.

@@ -8,7 +8,7 @@ NEUROGENIC is an open-source custom firmware extension for the Akai MPC Sample. 
 
 ## Status
 
-NEUROGENIC is in **M0: guarded native-sequencer integration**. The M0.2/M0.2a host sequencer foundation is complete, and M0.3c's SDK v0.7.1 page/input prototype was physically validated on one MPC Sample running firmware 1.3.0.12. M0.3e restores that stable editor model. M0.4e physically verifies native insertion, unique observation, exact removal, absence, audible stock-engine playback, and stock restoration. M0.5c is a host/QEMU-tested Step Edit presentation replacement; its first four-on-the-floor hardware run remains pending. The B1 diagnostic models remain separate and B1 hook testing is unauthorized.
+NEUROGENIC is in **M0: guarded native-sequencer integration**. The M0.2/M0.2a host sequencer foundation is complete, and M0.3c's SDK v0.7.1 page/input prototype was physically validated on one MPC Sample running firmware 1.3.0.12. M0.3e restores that stable editor model. M0.4e physically verifies native insertion, unique observation, exact removal, absence, audible stock-engine playback, and stock restoration. M0.5c physically validates the Step Edit replacement and direct native grid editing; M0.5d is the host/QEMU-tested DATA and full-redraw correction awaiting its guarded device run. The B1 diagnostic models remain separate and B1 hook testing is unauthorized.
 
 Project website: [neurogeni.cc](https://neurogeni.cc). Source repository: [EMajesty/neurogenic](https://github.com/EMajesty/neurogenic).
 
@@ -74,6 +74,7 @@ The core currently implements integer musical time, validated sixteen-track proj
 - [M0.4e/M0.5 grid boundary](docs/M0-4E-M0-5-NATIVE-GRID.md) — verified lifecycle and commit-on-proof grid coordinator
 - [M0.5a playable native grid](docs/M0-5A-PLAYABLE-NATIVE-GRID.md) — Step Edit overlay and first physical acceptance procedure
 - [M0.5c Step Edit presentation](docs/M0-5C-STEP-EDIT-PRESENTATION.md) — automatic grid presentation and guarded physical test
+- [M0.5d DATA and redraw](docs/M0-5D-DATA-AND-REDRAW.md) — encoder normalization and complete presentation redraw candidate
 - [Roadmap](docs/ROADMAP.md) — milestones and acceptance criteria
 - [Safety](docs/SAFETY.md) — development, deployment, and recovery rules
 - [Device adapter contract](docs/ADAPTER.md) — future clock, voice, capacity, and recovery boundary

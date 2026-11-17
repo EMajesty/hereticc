@@ -39,6 +39,11 @@ impl Default for NeurogenicDevice {
 }
 
 impl NeurogenicDevice {
+    #[cfg(feature = "native-playable-grid")]
+    const fn logical_encoder_delta(raw: i32) -> i32 {
+        raw.signum()
+    }
+
     fn with_ui<R>(&self, apply: impl FnOnce(&mut UiState) -> R) -> Option<R> {
         let mut ui = match self.ui.try_lock() {
             Ok(ui) => ui,
@@ -252,9 +257,23 @@ impl Mod for NeurogenicDevice {
             if let Some(cell) = request {
                 let _ = native_grid_runtime::request_toggle(cell.track, cell.step);
             }
+            let presentation_pair = mapped == Button::Data
+                && outcome.flow == reducer::Flow::Consume
+                && (event.shift || !event.pressed);
+            if mapped == Button::Data && event.pressed && event.shift {
+                native_grid_runtime::note_presentation_switch();
+            }
             // In Step Edit this is a presentation switch, not page loss.
             // Keeping the runtime/context alive preserves canonical receipts.
-            return Self::sdk_flow(outcome.flow);
+            // Forward the complete SHIFT+DATA pair after changing presentation:
+            // stock then schedules a full Step Edit paint, which either clears
+            // the overlay or redraws it. The native command path remains in the
+            // verified paint callback.
+            return if presentation_pair {
+                Flow::Forward
+            } else {
+                Self::sdk_flow(outcome.flow)
+            };
         }
 
         #[cfg(not(feature = "native-playable-grid"))]
@@ -277,11 +296,19 @@ impl Mod for NeurogenicDevice {
         if !native_grid_runtime::context_active() {
             return Flow::Forward;
         }
-        let Some(outcome) = self.with_ui(|ui| ui.encoder(event.delta)) else {
+        #[cfg(feature = "native-playable-grid")]
+        let logical_delta = Self::logical_encoder_delta(event.delta);
+        #[cfg(not(feature = "native-playable-grid"))]
+        let logical_delta = event.delta;
+        let Some(outcome) = self.with_ui(|ui| ui.encoder(logical_delta)) else {
             return self.contention_encoder_flow(event.delta);
         };
         #[cfg(feature = "native-playable-grid")]
         {
+            native_grid_runtime::note_encoder(
+                event.delta,
+                if outcome.repaint { logical_delta } else { 0 },
+            );
             if outcome.flow == reducer::Flow::Consume {
                 native_grid_runtime::note_input();
             }
@@ -399,6 +426,20 @@ mod contention_tests {
             Flow::Forward
         );
         assert_eq!(device.contention_pad_flow(0), Flow::Forward);
+    }
+}
+
+#[cfg(all(test, feature = "native-playable-grid"))]
+mod native_encoder_tests {
+    use super::NeurogenicDevice;
+
+    #[test]
+    fn raw_encoder_events_become_one_logical_step_per_callback() {
+        assert_eq!(NeurogenicDevice::logical_encoder_delta(4), 1);
+        assert_eq!(NeurogenicDevice::logical_encoder_delta(1), 1);
+        assert_eq!(NeurogenicDevice::logical_encoder_delta(-4), -1);
+        assert_eq!(NeurogenicDevice::logical_encoder_delta(-1), -1);
+        assert_eq!(NeurogenicDevice::logical_encoder_delta(0), 0);
     }
 }
 

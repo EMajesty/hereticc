@@ -897,8 +897,8 @@ class GridExperimentTests(unittest.TestCase):
         def __init__(self, responses=None):
             super().__init__()
             self.responses = list(responses or [
-                b"v=2 hook=1 paint=0 ctx=0 draw=0 open=0 input=0 intent=0 ins=0 obs=0 rm=0 inv=0 state=inactive\n",
-                b"v=2 hook=1 paint=12 ctx=1 draw=12 open=0 input=15 intent=5 ins=4 obs=4 rm=1 inv=0 state=ready\n",
+                b"v=3 hook=1 paint=0 ctx=0 draw=0 open=0 input=0 intent=0 ins=0 obs=0 rm=0 inv=0 enc_cb=0 enc_raw=0 enc_move=0 repaint=0 switch=0 commit=0 state=inactive\n",
+                b"v=3 hook=1 paint=12 ctx=1 draw=12 open=0 input=15 intent=5 ins=4 obs=4 rm=1 inv=0 enc_cb=8 enc_raw=32 enc_move=8 repaint=5 switch=2 commit=5 state=ready\n",
             ])
 
         def test_command(self, command):
@@ -953,6 +953,15 @@ class GridExperimentTests(unittest.TestCase):
         with self.assertRaises(hil.RemoteError):
             hil.parse_grid_response(b"v=1 hook=1 state=ready\n")
 
+        response = (
+            b"v=3 hook=1 paint=9 ctx=1 draw=8 open=1 input=4 intent=2 "
+            b"ins=1 obs=1 rm=1 inv=0 enc_cb=3 enc_raw=-4 enc_move=3 "
+            b"repaint=2 switch=1 commit=2 state=ready\n"
+        )
+        parsed = hil.parse_grid_response(response)
+        self.assertEqual(parsed["enc_raw"], "-4")
+        self.assertEqual(parsed["commit"], "2")
+
     def test_success_waits_for_owner_then_restores_and_reports(self):
         ssh = self.GridSsh()
         stack, patched = self.patches()
@@ -1000,7 +1009,7 @@ class GridExperimentTests(unittest.TestCase):
     def test_owner_pass_requires_matching_bounded_grid_evidence(self):
         ssh = self.GridSsh(responses=[
             self.GridSsh().responses[0],
-            b"v=2 hook=1 paint=8 ctx=1 draw=8 open=0 input=4 intent=0 ins=0 obs=0 rm=0 inv=0 state=ready\n",
+            b"v=3 hook=1 paint=8 ctx=1 draw=8 open=0 input=4 intent=0 ins=0 obs=0 rm=0 inv=0 enc_cb=4 enc_raw=16 enc_move=4 repaint=0 switch=2 commit=0 state=ready\n",
         ])
         stack, patched = self.patches()
         with stack, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(

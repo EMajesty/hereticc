@@ -85,6 +85,18 @@ button callback or delivered different SHIFT state. M0.5c avoids that unknown:
 the first valid Step paint opens and renders NEUROGENIC directly. Input remains
 on SDK hooks; native edit work remains exclusively on the Step paint thread.
 
+M0.5c hardware established the complete musical path but exposed presentation
+semantics. The pinned SDK v0.7.1 encoder documentation explicitly says raw
+`delta` can exceed one and recommends `signum()` for one step per event; the
+grid had instead applied the full magnitude. The delayed bit followed from the
+coordinator stopping at command acceptance and relying on a coalescible second
+paint for observation. The partial stock view followed from consuming the
+presentation chord without scheduling a stock repaint. M0.5d normalizes at the
+device boundary, performs one bounded same-callback observation after a
+synchronous command, and forwards only the complete presentation chord so the
+stock Step controller owns the redraw. Physical confirmation of the resulting
+detent and framebuffer behavior remains pending.
+
 ## Confidence labels
 
 - **Verified:** directly supported by linked source/documentation or an explicit upstream hardware result.

@@ -1,10 +1,12 @@
 //! Feature-gated bridge between pointer-free input intents and Step paint.
 
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU16, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, TryLockError};
 
 use crate::NeurogenicDevice;
-use crate::native_grid::{GridCell, GridEditProgress, GridEditState, NativeGridEditor};
+use crate::native_grid::{
+    GridCell, GridEditPort, GridEditProgress, GridEditState, NativeGridEditor,
+};
 use crate::native_stock_sequence::{
     NativeContextIdentity, NativeEditReceipt, NativeStockSequencePort,
 };
@@ -54,6 +56,12 @@ struct Runtime {
     invalidations: AtomicU32,
     renders: AtomicU32,
     inputs: AtomicU32,
+    encoder_callbacks: AtomicU32,
+    encoder_raw_sum: AtomicI32,
+    encoder_movements: AtomicU32,
+    repaint_requests: AtomicU32,
+    presentation_switches: AtomicU32,
+    commits: AtomicU32,
     reset_pending: AtomicBool,
 }
 
@@ -79,6 +87,12 @@ pub(crate) fn register(ui: Arc<Mutex<UiState>>, overlay_open: Arc<AtomicBool>) -
             invalidations: AtomicU32::new(0),
             renders: AtomicU32::new(0),
             inputs: AtomicU32::new(0),
+            encoder_callbacks: AtomicU32::new(0),
+            encoder_raw_sum: AtomicI32::new(0),
+            encoder_movements: AtomicU32::new(0),
+            repaint_requests: AtomicU32::new(0),
+            presentation_switches: AtomicU32::new(0),
+            commits: AtomicU32::new(0),
             reset_pending: AtomicBool::new(false),
         })
         .is_ok()
@@ -89,6 +103,17 @@ fn increment(value: &AtomicU32) {
     while current != u32::MAX {
         match value.compare_exchange_weak(current, current + 1, Ordering::AcqRel, Ordering::Acquire)
         {
+            Ok(_) => break,
+            Err(observed) => current = observed,
+        }
+    }
+}
+
+fn add_signed(value: &AtomicI32, delta: i32) {
+    let mut current = value.load(Ordering::Acquire);
+    loop {
+        let next = current.saturating_add(delta);
+        match value.compare_exchange_weak(current, next, Ordering::AcqRel, Ordering::Acquire) {
             Ok(_) => break,
             Err(observed) => current = observed,
         }
@@ -114,6 +139,12 @@ pub(crate) struct DiagnosticSnapshot {
     pub invalidations: u32,
     pub renders: u32,
     pub inputs: u32,
+    pub encoder_callbacks: u32,
+    pub encoder_raw_sum: i32,
+    pub encoder_movements: u32,
+    pub repaint_requests: u32,
+    pub presentation_switches: u32,
+    pub commits: u32,
     pub context: bool,
     pub state: &'static str,
 }
@@ -132,6 +163,12 @@ pub(crate) fn diagnostic_snapshot() -> DiagnosticSnapshot {
             invalidations: 0,
             renders: 0,
             inputs: 0,
+            encoder_callbacks: 0,
+            encoder_raw_sum: 0,
+            encoder_movements: 0,
+            repaint_requests: 0,
+            presentation_switches: 0,
+            commits: 0,
             context: false,
             state: "unavailable",
         };
@@ -156,6 +193,12 @@ pub(crate) fn diagnostic_snapshot() -> DiagnosticSnapshot {
         invalidations: runtime.invalidations.load(Ordering::Acquire),
         renders: runtime.renders.load(Ordering::Acquire),
         inputs: runtime.inputs.load(Ordering::Acquire),
+        encoder_callbacks: runtime.encoder_callbacks.load(Ordering::Acquire),
+        encoder_raw_sum: runtime.encoder_raw_sum.load(Ordering::Acquire),
+        encoder_movements: runtime.encoder_movements.load(Ordering::Acquire),
+        repaint_requests: runtime.repaint_requests.load(Ordering::Acquire),
+        presentation_switches: runtime.presentation_switches.load(Ordering::Acquire),
+        commits: runtime.commits.load(Ordering::Acquire),
         context: runtime
             .context
             .try_lock()
@@ -167,6 +210,22 @@ pub(crate) fn diagnostic_snapshot() -> DiagnosticSnapshot {
 pub(crate) fn note_input() {
     if let Some(runtime) = RUNTIME.get() {
         increment(&runtime.inputs);
+    }
+}
+
+pub(crate) fn note_encoder(raw: i32, logical: i32) {
+    if let Some(runtime) = RUNTIME.get() {
+        increment(&runtime.encoder_callbacks);
+        add_signed(&runtime.encoder_raw_sum, raw);
+        if logical != 0 {
+            increment(&runtime.encoder_movements);
+        }
+    }
+}
+
+pub(crate) fn note_presentation_switch() {
+    if let Some(runtime) = RUNTIME.get() {
+        increment(&runtime.presentation_switches);
     }
 }
 
@@ -298,12 +357,14 @@ fn record_progress(runtime: &Runtime, progress: GridEditProgress) {
         GridEditProgress::InsertCommitted => {
             increment(&runtime.insertions);
             increment(&runtime.observations);
+            increment(&runtime.commits);
             runtime
                 .status
                 .store(RuntimeStatus::Ready as u8, Ordering::Release);
         }
         GridEditProgress::RemoveCommitted => {
             increment(&runtime.removals);
+            increment(&runtime.commits);
             runtime
                 .status
                 .store(RuntimeStatus::Ready as u8, Ordering::Release);
@@ -311,6 +372,40 @@ fn record_progress(runtime: &Runtime, progress: GridEditProgress) {
         _ => runtime
             .status
             .store(RuntimeStatus::Pending as u8, Ordering::Release),
+    }
+}
+
+fn advance_editor<P>(
+    runtime: &Runtime,
+    editor: &mut NativeGridEditor<NativeEditReceipt>,
+    port: &mut P,
+    ui: &mut UiState,
+) where
+    P: GridEditPort<Receipt = NativeEditReceipt>,
+{
+    let first = editor.drive(port, ui);
+    match first {
+        Ok(progress) => {
+            record_progress(runtime, progress);
+            // The native command service commits synchronously on the verified
+            // Step UI thread. Verify once in the same callback so a committed
+            // bit is drawn in this frame. If firmware has not published the
+            // event yet, bounded later repaint observations remain in force.
+            if matches!(
+                progress,
+                GridEditProgress::InsertCommandAccepted | GridEditProgress::RemoveCommandAccepted
+            ) {
+                match editor.drive(port, ui) {
+                    Ok(progress) => record_progress(runtime, progress),
+                    Err(_) => runtime
+                        .status
+                        .store(RuntimeStatus::Failed as u8, Ordering::Release),
+                }
+            }
+        }
+        Err(_) => runtime
+            .status
+            .store(RuntimeStatus::Failed as u8, Ordering::Release),
     }
 }
 
@@ -383,12 +478,7 @@ pub(crate) unsafe fn on_step_paint(screen: usize, graphics: usize) {
         editor.state(),
         GridEditState::Idle | GridEditState::Failed(_)
     ) {
-        match editor.drive(&mut port, &mut ui) {
-            Ok(progress) => record_progress(runtime, progress),
-            Err(_) => runtime
-                .status
-                .store(RuntimeStatus::Failed as u8, Ordering::Release),
-        }
+        advance_editor(runtime, &mut editor, &mut port, &mut ui);
     }
 
     let was_open = runtime.overlay_open.swap(ui.is_open(), Ordering::AcqRel);
@@ -411,6 +501,7 @@ pub(crate) unsafe fn on_step_paint(screen: usize, graphics: usize) {
     ) {
         // SAFETY: request only the next verification paint while this callback
         // still owns the live Step component. No pointer is retained.
+        increment(&runtime.repaint_requests);
         unsafe { mpc_sample_sdk::draw::repaint_component(screen) };
     }
 }

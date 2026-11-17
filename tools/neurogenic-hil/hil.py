@@ -515,15 +515,18 @@ def parse_grid_response(raw: bytes) -> dict[str, str]:
         fields[key] = value
     required = {
         "v", "hook", "paint", "ctx", "draw", "open", "input", "intent",
-        "ins", "obs", "rm", "inv", "state",
+        "ins", "obs", "rm", "inv", "enc_cb", "enc_raw", "enc_move",
+        "repaint", "switch", "commit", "state",
     }
-    if set(fields) != required or fields["v"] != "2":
+    if set(fields) != required or fields["v"] != "3":
         raise RemoteError("incomplete native grid response")
     if any(fields[key] not in ("0", "1") for key in ("hook", "ctx", "open")):
         raise RemoteError("invalid native grid evidence bit")
-    for key in required - {"v", "hook", "ctx", "open", "state"}:
+    for key in required - {"v", "hook", "ctx", "open", "state", "enc_raw"}:
         if not fields[key].isdigit() or int(fields[key]) > 2**32 - 1:
             raise RemoteError("invalid native grid counter")
+    if not re.fullmatch(r"-?[0-9]+", fields["enc_raw"]) or not -(2**31) <= int(fields["enc_raw"]) < 2**31:
+        raise RemoteError("invalid native grid raw encoder sum")
     if fields["state"] not in {
         "unavailable", "inactive", "ready", "pending", "failed",
         "context_changed", "busy",
@@ -1354,9 +1357,13 @@ def orchestrate_grid_experiment(
             print(
                 "  Use a disposable empty one-bar 4/4 sequence with A01 assigned.\n"
                 "  Open Step Edit; NEUROGENIC must appear automatically. Select A01.\n"
+                "  Verify one DATA detent moves one step, four detents move four, and\n"
+                "  reversing direction responds immediately.\n"
                 "  Enable steps 1, 5, 9, 13; play and verify four even hits.\n"
-                "  Disable step 9; verify three hits. SHIFT+DATA shows stock view;\n"
-                "  inspect ticks 0,960,2880 present and tick 1920 absent.",
+                "  Each committed bit must redraw without another DATA turn. Disable\n"
+                "  step 9 and verify three hits. SHIFT+DATA must show a complete stock\n"
+                "  view; SHIFT+DATA again must redraw NEUROGENIC completely. Inspect\n"
+                "  ticks 0,960,2880 present and tick 1920 absent.",
                 flush=True,
             )
             answer = input_fn("Type PASS or FAIL once the single test is complete: ").strip().upper()
@@ -1374,7 +1381,8 @@ def orchestrate_grid_experiment(
                 raise RunCycleError("owner reported playable-grid acceptance failure")
             required_counters = {
                 "paint": 1, "draw": 1, "input": 1, "intent": 5,
-                "ins": 4, "obs": 4, "rm": 1,
+                "ins": 4, "obs": 4, "rm": 1, "enc_move": 1,
+                "switch": 2, "commit": 5,
             }
             missing = {
                 key: {"expected_at_least": minimum, "actual": int(after[key])}
