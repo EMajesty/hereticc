@@ -19,6 +19,7 @@ SCHEMA = "neurogenic-hil-config-v1"
 HOST, PORT, USER = "192.168.155.1", 2222, "root"
 CONFIRM = "MPC-SAMPLE-1.3.0.12"
 NATIVE_CONFIRM = "INSERT-ONE-UNSAVED-NATIVE-EVENT-1.3.0.12"
+GRID_CONFIRM = "PLAYABLE-GRID-ONE-BAR-1.3.0.12"
 FIRMWARE_SHA = "44507c7a7d3029c411b2e3780ea286ca3e08b7e3ffd7b5047d52f73bf5299d1f"
 ROOT = Path(__file__).resolve().parents[2]
 BUILD = ROOT / "device/m03e/scripts/build-package.sh"
@@ -493,6 +494,41 @@ def parse_native_scan_response(raw: bytes) -> dict[str, str]:
     for key in required - {"v"}:
         if not fields[key].isdigit() or int(fields[key]) > 4096:
             raise RemoteError("invalid native scan counter")
+    return fields
+
+
+def parse_grid_response(raw: bytes) -> dict[str, str]:
+    """Parse the bounded, pointer-free M0.5 grid diagnostic snapshot."""
+    if len(raw) > 192:
+        raise RemoteError("native grid response exceeded 192 bytes")
+    try:
+        tokens = raw.decode("ascii").strip().split()
+    except UnicodeDecodeError as exc:
+        raise RemoteError("native grid response is not ASCII") from exc
+    fields: dict[str, str] = {}
+    for token in tokens:
+        if "=" not in token:
+            raise RemoteError("malformed native grid response")
+        key, value = token.split("=", 1)
+        if key in fields or not re.fullmatch(r"[a-z0-9_]+", key):
+            raise RemoteError("ambiguous native grid response")
+        fields[key] = value
+    required = {
+        "v", "hook", "paints", "open", "activations", "intents",
+        "insertions", "observations", "removals", "invalidations", "state",
+    }
+    if set(fields) != required or fields["v"] != "1":
+        raise RemoteError("incomplete native grid response")
+    if fields["hook"] not in ("0", "1") or fields["open"] not in ("0", "1"):
+        raise RemoteError("invalid native grid evidence bit")
+    for key in required - {"v", "hook", "open", "state"}:
+        if not fields[key].isdigit() or int(fields[key]) > 2**32 - 1:
+            raise RemoteError("invalid native grid counter")
+    if fields["state"] not in {
+        "unavailable", "inactive", "ready", "pending", "failed",
+        "context_changed", "busy",
+    }:
+        raise RemoteError("invalid native grid state")
     return fields
 
 
@@ -1235,6 +1271,157 @@ def orchestrate_native_experiment(args: argparse.Namespace, ssh: Ssh) -> int:
         return 0
 
 
+def orchestrate_grid_experiment(
+    args: argparse.Namespace,
+    ssh: Ssh,
+    input_fn: Callable[[str], str] = input,
+) -> int:
+    """Run one owner-observed M0.5 grid experiment and always restore stock."""
+    confirm(args.confirm)
+    if args.confirm_grid != GRID_CONFIRM:
+        raise RunCycleError(f"playable grid requires --confirm-grid {GRID_CONFIRM}")
+    with HostRunLock():
+        report_dir = create_report_directory()
+        report: dict[str, object] = {
+            "schema": "neurogenic-playable-grid-experiment-v1",
+            "started_at": utc_now(), "git_commit": git_commit(), "level": "GRID",
+            "scenario": "a01-steps-1-5-9-13-remove-9", "status": "running",
+            "artifact_sha256": None, "firmware_fingerprint": None,
+            "initial_state": None, "active_state": None, "final_state": None,
+            "activation": {"status": "not-attempted"},
+            "restoration": {"status": "not-required"}, "steps": [],
+            "diagnostics": {}, "errors": [],
+            "assertions": {"passed": 0, "failed": 0},
+            "owner_result": "not-recorded", "audible_playback_observed": False,
+            "expected_ticks": [0, 960, 1920, 2880],
+        }
+        original_error: HilError | None = None
+        restoration_error: HilError | None = None
+        mutated = False
+
+        def step(name: str, operation: Callable[[], object]) -> object:
+            started = time.monotonic()
+            record: dict[str, object] = {"name": name, "status": "running"}
+            report["steps"].append(record)
+            try:
+                value = operation()
+                record["status"] = "pass"
+                return value
+            except HilError as exc:
+                record.update(status="fail", error=str(exc))
+                raise
+            finally:
+                record["duration_ms"] = round((time.monotonic() - started) * 1000, 3)
+
+        def grid_query() -> dict[str, str]:
+            return parse_grid_response(ssh.test_command("GRID QUERY"))
+
+        try:
+            initial = step("initial-identity", lambda: identity(ssh))
+            report["initial_state"] = initial
+            report["firmware_fingerprint"] = initial["firmware_prefix_sha256"]
+            if initial.get("dropins") != "":
+                raise IdentityError("grid experiment requires stock ac50.service")
+            prior = step("initial-runtime-state", lambda: parse_facts(ssh.fixed("collect")))
+            if any(prior.get(key) != "absent" for key in (
+                "hil_runtime", "active_sha256", "previous_sha256"
+            )):
+                raise IdentityError("an earlier HIL session requires explicit recovery")
+
+            print("[1/6] Building and inspecting M0.5 grid artifact...", flush=True)
+            data, digest = step("build-native-grid", build_native_grid_artifact)
+            report["artifact_sha256"] = digest
+            check = step("pre-deploy-identity", lambda: identity(ssh))
+            if check["firmware_prefix_sha256"] != report["firmware_fingerprint"] or check.get("dropins") != "":
+                raise IdentityError("device identity changed before grid deployment")
+
+            print("[2/6] Deploying immutable artifact...", flush=True)
+            mutated = True
+            step("deploy", lambda: deploy_artifact(ssh, data, digest))
+            print("[3/6] Activating once...", flush=True)
+            report["activation"] = {"status": "running", "sha256": digest}
+            report["active_state"] = step(
+                "activate", lambda: activate_artifact(ssh, digest, initial)
+            )
+            report["activation"] = {"status": "pass", "sha256": digest}
+            step("bridge-ready", lambda: wait_bridge(ssh))
+            before = step("grid-diagnostic-before", grid_query)
+            report["diagnostics"] = {"before": before}
+            if before["hook"] != "1":
+                raise RemoteError("Step Edit hook did not install")
+
+            print("[4/6] OWNER PHYSICAL TEST (experimental build remains active)", flush=True)
+            print(
+                "  Use a disposable empty one-bar 4/4 sequence with A01 assigned.\n"
+                "  Open Step Edit; SHIFT+DATA opens NEUROGENIC. Select A01.\n"
+                "  Enable steps 1, 5, 9, 13; play and verify four even hits.\n"
+                "  Disable step 9; verify three hits. Close the grid and inspect\n"
+                "  stock Step Edit (ticks 0,960,2880 present; 1920 absent).",
+                flush=True,
+            )
+            answer = input_fn("Type PASS or FAIL once the single test is complete: ").strip().upper()
+            if answer not in {"PASS", "FAIL"}:
+                raise RunCycleError("physical acknowledgement must be exactly PASS or FAIL")
+            report["owner_result"] = answer.lower()
+            report["audible_playback_observed"] = answer == "PASS"
+            after = step("grid-diagnostic-after", grid_query)
+            report["diagnostics"] = {"before": before, "after": after}
+            report["assertions"] = {
+                "passed": 1 if answer == "PASS" else 0,
+                "failed": 0 if answer == "PASS" else 1,
+            }
+            if answer == "FAIL":
+                raise RunCycleError("owner reported playable-grid acceptance failure")
+        except (EOFError, KeyboardInterrupt):
+            original_error = RunCycleError("grid experiment interrupted before acknowledgement")
+            report["errors"].append({"phase": "grid-experiment", "message": str(original_error)})
+            report["assertions"] = {"passed": 0, "failed": 1}
+        except HilError as exc:
+            original_error = exc
+            report["errors"].append({"phase": "grid-experiment", "message": str(exc)})
+            if report["assertions"] == {"passed": 0, "failed": 0}:
+                report["assertions"] = {"passed": 0, "failed": 1}
+            diagnostics = report.get("diagnostics")
+            if mutated and (not isinstance(diagnostics, dict) or "after" not in diagnostics):
+                try:
+                    report.setdefault("diagnostics", {})["failure"] = grid_query()
+                except HilError as diagnostic_error:
+                    report["errors"].append({"phase": "diagnostics", "message": str(diagnostic_error)})
+        finally:
+            if mutated:
+                print("[5/6] Restoring stock...", flush=True)
+                try:
+                    report["final_state"] = step("restore-stock", lambda: restore_stock(ssh))
+                    report["restoration"] = {"status": "pass"}
+                except HilError as exc:
+                    restoration_error = exc
+                    report["restoration"] = {"status": "fail", "message": str(exc)}
+                    report["errors"].append({"phase": "restoration", "message": str(exc)})
+            report["finished_at"] = utc_now()
+            report["status"] = "pass" if original_error is None and restoration_error is None else "fail"
+            write_run_report(report_dir, report)
+
+        print("[6/6] Reporting...", flush=True)
+        print(f"Overall {str(report['status']).upper()}")
+        print(f"Owner acceptance: {report['owner_result']}")
+        print(f"Artifact SHA-256: {report['artifact_sha256'] or 'none'}")
+        print(f"Restoration: {report['restoration']['status']}")
+        print(f"Report directory: {report_dir}")
+        if restoration_error is not None:
+            raise RunCycleError(
+                "RESTORATION FAILED; MPC MAY STILL BE RUNNING THE GRID MOD. "
+                f"Original error: {original_error or 'none'}; restoration: {restoration_error}. "
+                "If SSH is unavailable, shut down normally, remove the development SD, "
+                "and perform a stock-only boot."
+            )
+        if original_error is not None:
+            raise RunCycleError(
+                f"grid experiment failed: {original_error}; stock restoration status: "
+                f"{report['restoration']['status']}"
+            )
+        return 0
+
+
 def run_command(args: argparse.Namespace, ssh: Ssh | None) -> int:
     if args.command == "build":
         if args.native_m05a:
@@ -1297,6 +1484,8 @@ def run_command(args: argparse.Namespace, ssh: Ssh | None) -> int:
         return orchestrate_run(args, ssh)
     elif args.command == "native-experiment":
         return orchestrate_native_experiment(args, ssh)
+    elif args.command == "grid-experiment":
+        return orchestrate_grid_experiment(args, ssh)
     elif args.command == "collect":
         identity(ssh, False)
         encoded = (json.dumps(parse_facts(ssh.fixed("collect")), indent=2, sort_keys=True) + "\n").encode()
@@ -1341,6 +1530,9 @@ def parser() -> argparse.ArgumentParser:
     native = sub.add_parser("native-experiment")
     native.add_argument("--confirm")
     native.add_argument("--confirm-native")
+    grid = sub.add_parser("grid-experiment")
+    grid.add_argument("--confirm")
+    grid.add_argument("--confirm-grid")
     collect = sub.add_parser("collect"); collect.add_argument("--output")
     return result
 
@@ -1359,7 +1551,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_command(args, ssh)
     except HilError as exc:
         print(f"error: {exc}", file=sys.stderr)
-        if args.command in ("restart", "rollback", "run", "native-experiment"):
+        if args.command in ("restart", "rollback", "run", "native-experiment", "grid-experiment"):
             print(
                 f"recovery (explicit, never automatic): rerun with restore-stock --confirm {CONFIRM}",
                 file=sys.stderr,

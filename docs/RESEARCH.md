@@ -72,6 +72,12 @@ temporary stock-forwarded repaint handshake for the initial paint after an
 input action. This integration is host/QEMU-tested and cross-built, not yet
 physical evidence.
 
+The M0.5b safety review found no need for another dispatcher. The native
+operation guard rejects synchronous callback re-entry, observation is capped at
+eight paints, and context changes fail closed. A new bounded diagnostic query
+reports counters and state only; it is evidence of callback/edit progression,
+not of stock-screen contents or audible playback.
+
 ## Confidence labels
 
 - **Verified:** directly supported by linked source/documentation or an explicit upstream hardware result.

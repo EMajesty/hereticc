@@ -195,10 +195,18 @@ impl NeurogenicDevice {
 
 impl Mod for NeurogenicDevice {
     fn on_start(&mut self) {
-        #[cfg(feature = "native-sequence-adapter")]
+        #[cfg(all(
+            feature = "native-sequence-adapter",
+            not(feature = "native-playable-grid")
+        ))]
         let _ = native_sequence_experiment::install();
         #[cfg(feature = "native-playable-grid")]
-        let _ = native_grid_runtime::register(Arc::clone(&self.ui), Arc::clone(&self.overlay_open));
+        {
+            let registered =
+                native_grid_runtime::register(Arc::clone(&self.ui), Arc::clone(&self.overlay_open));
+            let installed = registered && native_sequence_experiment::install();
+            native_grid_runtime::set_hook_installed(installed);
+        }
         #[cfg(feature = "hil-test-interface")]
         hil::start_bridge(
             Arc::clone(&self.ui),

@@ -11,7 +11,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 mpc-sample-sdk = { git = "https://github.com/ioma8/mpc-sample-sdk", rev = "9487cbba3648afb29d8e3107e31a7ac930985220" }
-neurogenic-device = { path = "../neurogenic-device", default-features = false, features = ["native-playable-grid"] }
+neurogenic-device = { path = "../neurogenic-device", default-features = false, features = ["native-playable-grid", "hil-test-interface"] }
 
 [lints.rust]
 unsafe_code = "allow"

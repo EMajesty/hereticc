@@ -1,6 +1,6 @@
 //! Feature-gated bridge between pointer-free input intents and Step paint.
 
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, TryLockError};
 
 use crate::NeurogenicDevice;
@@ -44,6 +44,14 @@ struct Runtime {
     intent: AtomicU16,
     active: AtomicBool,
     status: AtomicU8,
+    hook_installed: AtomicBool,
+    paints: AtomicU32,
+    overlay_activations: AtomicU32,
+    intents: AtomicU32,
+    insertions: AtomicU32,
+    observations: AtomicU32,
+    removals: AtomicU32,
+    invalidations: AtomicU32,
 }
 
 static RUNTIME: OnceLock<Runtime> = OnceLock::new();
@@ -58,8 +66,84 @@ pub(crate) fn register(ui: Arc<Mutex<UiState>>, overlay_open: Arc<AtomicBool>) -
             intent: AtomicU16::new(NO_INTENT),
             active: AtomicBool::new(false),
             status: AtomicU8::new(RuntimeStatus::Inactive as u8),
+            hook_installed: AtomicBool::new(false),
+            paints: AtomicU32::new(0),
+            overlay_activations: AtomicU32::new(0),
+            intents: AtomicU32::new(0),
+            insertions: AtomicU32::new(0),
+            observations: AtomicU32::new(0),
+            removals: AtomicU32::new(0),
+            invalidations: AtomicU32::new(0),
         })
         .is_ok()
+}
+
+fn increment(value: &AtomicU32) {
+    let mut current = value.load(Ordering::Acquire);
+    while current != u32::MAX {
+        match value.compare_exchange_weak(current, current + 1, Ordering::AcqRel, Ordering::Acquire)
+        {
+            Ok(_) => break,
+            Err(observed) => current = observed,
+        }
+    }
+}
+
+pub(crate) fn set_hook_installed(installed: bool) {
+    if let Some(runtime) = RUNTIME.get() {
+        runtime.hook_installed.store(installed, Ordering::Release);
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DiagnosticSnapshot {
+    pub hook: bool,
+    pub paints: u32,
+    pub open: bool,
+    pub activations: u32,
+    pub intents: u32,
+    pub insertions: u32,
+    pub observations: u32,
+    pub removals: u32,
+    pub invalidations: u32,
+    pub state: &'static str,
+}
+
+pub(crate) fn diagnostic_snapshot() -> DiagnosticSnapshot {
+    let Some(runtime) = RUNTIME.get() else {
+        return DiagnosticSnapshot {
+            hook: false,
+            paints: 0,
+            open: false,
+            activations: 0,
+            intents: 0,
+            insertions: 0,
+            observations: 0,
+            removals: 0,
+            invalidations: 0,
+            state: "unavailable",
+        };
+    };
+    let state = match status(runtime) {
+        RuntimeStatus::Inactive => "inactive",
+        RuntimeStatus::Ready => "ready",
+        RuntimeStatus::Pending => "pending",
+        RuntimeStatus::Failed => "failed",
+        RuntimeStatus::ContextChanged => "context_changed",
+        RuntimeStatus::Busy => "busy",
+    };
+    DiagnosticSnapshot {
+        hook: runtime.hook_installed.load(Ordering::Acquire),
+        paints: runtime.paints.load(Ordering::Acquire),
+        open: runtime.overlay_open.load(Ordering::Acquire),
+        activations: runtime.overlay_activations.load(Ordering::Acquire),
+        intents: runtime.intents.load(Ordering::Acquire),
+        insertions: runtime.insertions.load(Ordering::Acquire),
+        observations: runtime.observations.load(Ordering::Acquire),
+        removals: runtime.removals.load(Ordering::Acquire),
+        invalidations: runtime.invalidations.load(Ordering::Acquire),
+        state,
+    }
 }
 
 fn encode(cell: GridCell) -> u16 {
@@ -116,6 +200,7 @@ pub(crate) fn request_toggle(track: u8, step: u8) -> bool {
     runtime
         .status
         .store(RuntimeStatus::Pending as u8, Ordering::Release);
+    increment(&runtime.intents);
     true
 }
 
@@ -162,6 +247,7 @@ fn fail_context(
     ui: &mut UiState,
     editor: &mut NativeGridEditor<NativeEditReceipt>,
 ) {
+    increment(&runtime.invalidations);
     editor.invalidate();
     ui.invalidate_native_grid();
     runtime.intent.store(NO_INTENT, Ordering::Release);
@@ -182,6 +268,7 @@ pub(crate) unsafe fn on_step_paint(screen: usize, graphics: usize) {
     let Some(runtime) = RUNTIME.get() else {
         return;
     };
+    increment(&runtime.paints);
     runtime.active.store(true, Ordering::Release);
 
     let mut ui = match runtime.ui.try_lock() {
@@ -238,9 +325,21 @@ pub(crate) unsafe fn on_step_paint(screen: usize, graphics: usize) {
         GridEditState::Idle | GridEditState::Failed(_)
     ) {
         match editor.drive(&mut port, &mut ui) {
-            Ok(GridEditProgress::InsertCommitted | GridEditProgress::RemoveCommitted) => runtime
-                .status
-                .store(RuntimeStatus::Ready as u8, Ordering::Release),
+            Ok(
+                progress @ (GridEditProgress::InsertCommitted | GridEditProgress::RemoveCommitted),
+            ) => {
+                match progress {
+                    GridEditProgress::InsertCommitted => {
+                        increment(&runtime.insertions);
+                        increment(&runtime.observations);
+                    }
+                    GridEditProgress::RemoveCommitted => increment(&runtime.removals),
+                    _ => {}
+                }
+                runtime
+                    .status
+                    .store(RuntimeStatus::Ready as u8, Ordering::Release);
+            }
             Ok(_) => runtime
                 .status
                 .store(RuntimeStatus::Pending as u8, Ordering::Release),
@@ -250,7 +349,10 @@ pub(crate) unsafe fn on_step_paint(screen: usize, graphics: usize) {
         }
     }
 
-    runtime.overlay_open.store(ui.is_open(), Ordering::Release);
+    let was_open = runtime.overlay_open.swap(ui.is_open(), Ordering::AcqRel);
+    if ui.is_open() && !was_open {
+        increment(&runtime.overlay_activations);
+    }
     if ui.is_open() {
         let footer = status(runtime).footer();
         NeurogenicDevice::draw_native(&ui, mpc_sample_sdk::draw::Graphics::new(graphics), footer);

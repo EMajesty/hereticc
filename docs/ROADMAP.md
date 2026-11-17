@@ -408,6 +408,16 @@ hardware-validated. Initial acceptance remains A01 at steps 0, 4, 8 and 12,
 followed by removal of step 8 and stock restoration. See
 [M0.5a playable native grid](M0-5A-PLAYABLE-NATIVE-GRID.md).
 
+### M0.5b Guarded first playable-grid test — ready for owner run
+
+The existing HIL CLI now provides one separately authorized `grid-experiment`
+cycle. It builds and immutably deploys the M0.5 artifact, verifies the Step hook
+through a bounded pointer-free diagnostic snapshot, holds the build active for
+the owner-operated musical test, records an exact PASS/FAIL acknowledgement,
+and restores stock in `finally`. Restoration outcome is independent of musical
+acceptance. The native edit implementation is unchanged. Physical success is
+still pending; see [M0.5b guarded grid test](M0-5B-GUARDED-GRID-TEST.md).
+
 ### M0.3b-C–E Device feasibility experiments — planned and blocked
 
 This requires a separate, explicitly reviewed task because it creates device-facing executable code.

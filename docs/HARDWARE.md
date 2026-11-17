@@ -101,6 +101,12 @@ cell intents. DATA is temporarily forwarded as an explicit repaint handshake;
 no Step or graphics pointer crosses a callback boundary. This artifact is
 host/QEMU-tested but has not run on hardware.
 
+M0.5b adds no native operation. Its owner-operated HIL cycle exposes a bounded
+`GRID QUERY` snapshot from the already established volatile mailbox, holds the
+experimental build active for one physical acceptance test, and restores stock
+in `finally`. Hook/counter evidence cannot establish audible output; only the
+owner's explicit result is recorded as physical audio evidence.
+
 These facts are research inputs, not permission to depend directly on raw protocols. An in-process extension should prefer a guarded adapter such as the SDK and retain stock ownership wherever possible.
 
 ## Controls relevant to NEUROGENIC

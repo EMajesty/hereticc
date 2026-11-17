@@ -79,16 +79,16 @@ target/m05a/build/neurogenic-m05a-native-grid.so
 
 | Artifact | SHA-256 |
 |---|---|
-| linked ELF | `a3500dcef764e4b83960836c2e900d58806dc8512d14c7cabae900a000325d3f` |
-| stripped shared library | `9c12a4ecd415eb2e059f57057dfce6ac6dd61c8f062f6977f73df80cdd4445e1` |
+| linked ELF | `2b3080bdeeda565e840b81c5a1d9b2ea01638a153b720eac9441474604c595c0` |
+| stripped shared library | `23221a9943a50865607818ab04672cec06aa04a363ccaee68a19c0c96ce4ac49` |
 
-The shared library is a 606,744-byte stripped AArch64 DSO. Static inspection
+The M0.5b instrumented shared library is a 657,616-byte stripped AArch64 DSO. Static inspection
 found no prohibited shell, process-control, or network imports. It uses the
 pinned SDK revision `9487cbba3648afb29d8e3107e31a7ac930985220` and the
 previously reviewed native adapter.
 Two consecutive builds produced the documented ELF and shared-library hashes.
 
-Host validation comprises 108 Python tests, 137 Rust workspace tests, Clippy
+Host validation comprises 113 Python tests, 138 Rust workspace tests, Clippy
 with warnings denied, formatting, both SDK patch-integrity checks, Nix flake
 evaluation, the AArch64/QEMU ABI fixture, the M0.5a cross-build and ELF/import
 inspection. The separate M0.3e rollback configuration also cross-builds and
@@ -101,13 +101,11 @@ This procedure is the next owner action, not a completed result.
 
 1. Save current work. Create a disposable empty one-bar 4/4 sequence and empty
    drum track, assign a known one-shot sample to A01, and open stock Step Edit.
-2. Build, deploy, and activate the exact reviewed artifact through the existing
-   volatile HIL commands:
+2. Use the M0.5b guarded one-command cycle rather than the superseded manual
+   multi-command sequence:
 
    ```sh
-   python3 tools/neurogenic-hil/hil.py --config target/hil/config.json build --native-m05a
-   python3 tools/neurogenic-hil/hil.py --config target/hil/config.json deploy --native-m05a --confirm MPC-SAMPLE-1.3.0.12
-   python3 tools/neurogenic-hil/hil.py --config target/hil/config.json restart --sha256 9c12a4ecd415eb2e059f57057dfce6ac6dd61c8f062f6977f73df80cdd4445e1 --confirm MPC-SAMPLE-1.3.0.12
+   python3 tools/neurogenic-hil/hil.py --config target/hil/config.json grid-experiment --confirm MPC-SAMPLE-1.3.0.12 --confirm-grid PLAYABLE-GRID-ONE-BAR-1.3.0.12
    ```
 
 3. Reopen Step Edit after the controlled application restart. Toggle the grid
@@ -122,11 +120,8 @@ This procedure is the next owner action, not a completed result.
    wait for `READY`. Confirm three hits remain.
 7. Close with SHIFT + DATA, turn DATA once if stock Step Edit needs a repaint,
    and inspect the four expected positions with tick 1920 absent.
-8. Restore immediately:
-
-   ```sh
-   python3 tools/neurogenic-hil/hil.py --config target/hil/config.json restore-stock --confirm MPC-SAMPLE-1.3.0.12
-   ```
+8. Enter the exact PASS or FAIL acknowledgement. The runner restores stock in
+   `finally`; if restoration fails it prints the stock-only recovery procedure.
 
 Confirm the stock process settles and ordinary Step Edit, pads, transport and
 audio work. Do not save the disposable sequence. Physical success must not be

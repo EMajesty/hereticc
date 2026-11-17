@@ -892,5 +892,125 @@ class NativeExperimentTests(unittest.TestCase):
         patched["restore_stock"].assert_called_once()
 
 
+class GridExperimentTests(unittest.TestCase):
+    class GridSsh(CycleSsh):
+        def __init__(self, responses=None):
+            super().__init__()
+            self.responses = list(responses or [
+                b"v=1 hook=1 paints=0 open=0 activations=0 intents=0 insertions=0 observations=0 removals=0 invalidations=0 state=inactive\n",
+                b"v=1 hook=1 paints=12 open=0 activations=1 intents=5 insertions=4 observations=4 removals=1 invalidations=0 state=ready\n",
+            ])
+
+        def test_command(self, command):
+            if command != "GRID QUERY" or not self.responses:
+                raise AssertionError("unexpected grid diagnostic command")
+            return self.responses.pop(0)
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        root = Path(self.temp.name)
+        self.run_root = root / "runs"
+        self.run_lock = root / "run.lock"
+        self.args = type("Args", (), {
+            "confirm": hil.CONFIRM,
+            "confirm_grid": hil.GRID_CONFIRM,
+        })()
+        self.identity_facts = hil.parse_facts(identity_output())
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def patches(self, **overrides):
+        defaults = {
+            "identity": mock.Mock(return_value=dict(self.identity_facts)),
+            "build_native_grid_artifact": mock.Mock(return_value=(b"ELF", "e" * 64)),
+            "deploy_artifact": mock.Mock(return_value=None),
+            "activate_artifact": mock.Mock(return_value={
+                **self.identity_facts, "main_pid": "202", "dropins": hil.DROPIN,
+            }),
+            "wait_bridge": mock.Mock(return_value=None),
+            "restore_stock": mock.Mock(return_value={
+                **self.identity_facts, "main_pid": "303",
+            }),
+            "git_commit": mock.Mock(return_value="b" * 40),
+        }
+        defaults.update(overrides)
+        stack = contextlib.ExitStack()
+        stack.enter_context(mock.patch.object(hil, "RUN_ROOT", self.run_root))
+        stack.enter_context(mock.patch.object(hil, "RUN_LOCK", self.run_lock))
+        for name, replacement in defaults.items():
+            stack.enter_context(mock.patch.object(hil, name, replacement))
+        return stack, defaults
+
+    def report(self):
+        directory, = self.run_root.iterdir()
+        return json.loads((directory / "report.json").read_text())
+
+    def test_grid_response_is_strict_and_bounded(self):
+        parsed = hil.parse_grid_response(self.GridSsh().responses[0])
+        self.assertEqual(parsed["hook"], "1")
+        self.assertEqual(parsed["state"], "inactive")
+        with self.assertRaises(hil.RemoteError):
+            hil.parse_grid_response(b"v=1 hook=1 state=ready\n")
+
+    def test_success_waits_for_owner_then_restores_and_reports(self):
+        ssh = self.GridSsh()
+        stack, patched = self.patches()
+        with stack, contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                hil.orchestrate_grid_experiment(self.args, ssh, lambda _prompt: "PASS"),
+                0,
+            )
+        report = self.report()
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["owner_result"], "pass")
+        self.assertTrue(report["audible_playback_observed"])
+        self.assertEqual(report["diagnostics"]["after"]["removals"], "1")
+        patched["restore_stock"].assert_called_once()
+
+    def test_owner_failure_and_interruption_restore_stock(self):
+        for response in ("FAIL", EOFError()):
+            with self.subTest(response=response):
+                with tempfile.TemporaryDirectory() as temporary:
+                    self.run_root = Path(temporary) / "runs"
+                    self.run_lock = Path(temporary) / "lock"
+                    ssh = self.GridSsh()
+                    stack, patched = self.patches()
+                    def answer(_prompt):
+                        if isinstance(response, Exception):
+                            raise response
+                        return response
+                    with stack, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(hil.RunCycleError):
+                        hil.orchestrate_grid_experiment(self.args, ssh, answer)
+                    patched["restore_stock"].assert_called_once()
+                    self.assertEqual(self.report()["restoration"]["status"], "pass")
+
+    def test_distinct_confirmation_is_required(self):
+        parsed = hil.parser().parse_args([
+            "grid-experiment", "--confirm", hil.CONFIRM,
+            "--confirm-grid", hil.GRID_CONFIRM,
+        ])
+        self.assertEqual(parsed.confirm_grid, hil.GRID_CONFIRM)
+        bad = type("Args", (), {
+            "confirm": hil.CONFIRM, "confirm_grid": hil.CONFIRM,
+        })()
+        with self.assertRaises(hil.RunCycleError):
+            hil.orchestrate_grid_experiment(bad, mock.Mock(), lambda _: "PASS")
+
+    def test_restoration_failure_is_prominent_and_run_remains_failed(self):
+        ssh = self.GridSsh()
+        stack, _patched = self.patches(
+            restore_stock=mock.Mock(side_effect=hil.RemoteError("restore timeout"))
+        )
+        with stack, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(
+            hil.RunCycleError
+        ) as caught:
+            hil.orchestrate_grid_experiment(self.args, ssh, lambda _prompt: "PASS")
+        self.assertIn("MAY STILL BE RUNNING THE GRID MOD", str(caught.exception))
+        report = self.report()
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["restoration"]["status"], "fail")
+
+
 if __name__ == "__main__":
     unittest.main()

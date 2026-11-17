@@ -186,6 +186,22 @@ fn native_scan_response() -> Response {
     response
 }
 
+#[cfg(feature = "native-playable-grid")]
+fn native_grid_response() -> Response {
+    let snapshot = crate::native_grid_runtime::diagnostic_snapshot();
+    let mut response = Response::new();
+    writeln!(
+        response,
+        "v=1 hook={} paints={} open={} activations={} intents={} insertions={} observations={} removals={} invalidations={} state={}",
+        u8::from(snapshot.hook), snapshot.paints, u8::from(snapshot.open),
+        snapshot.activations, snapshot.intents, snapshot.insertions,
+        snapshot.observations, snapshot.removals, snapshot.invalidations,
+        snapshot.state,
+    )
+    .expect("native grid response fits");
+    response
+}
+
 /// Apply one complete bounded command to the existing UI reducer.
 ///
 /// Accepted commands are `OPEN`, `CLOSE`, `MOVE <signed-delta>`,
@@ -221,6 +237,11 @@ pub fn apply(ui: &mut UiState, input: &[u8]) -> Result<Response, Error> {
             return Ok(native_response(action));
         }
         return Err(Error::Unknown);
+    }
+
+    #[cfg(feature = "native-playable-grid")]
+    if text == "GRID QUERY" {
+        return Ok(native_grid_response());
     }
 
     let outcome = match text {
