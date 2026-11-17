@@ -53,6 +53,15 @@ live Level B `QUERY`, and stock restoration on 1.3.0.12. The initial reducer
 state was closed, track/step 1, empty bits, forward/no-repaint/no-restore. This
 validates in-process state access, not physical input injection or rendering.
 
+The first complete HIL-1.2 owner run subsequently validated the one-command
+build/deploy/activate/test/restore/report cycle and restoration after failed
+assertions. `RESET` and synthetic `OPEN` passed, but a background SDK callback
+closed the reducer before `SELECT 4`; three assertions passed and five failed.
+Source inspection proves that visibility checks and non-Sample paint callbacks
+are the only asynchronous page-loss closers, although the report cannot identify
+which one ran. HIL-1.3 isolates synthetic Level B page ownership in test builds;
+it remains host-tested until the same scenario is rerun physically.
+
 These facts are research inputs, not permission to depend directly on raw protocols. An in-process extension should prefer a guarded adapter such as the SDK and retain stock ownership wherever possible.
 
 ## Controls relevant to NEUROGENIC

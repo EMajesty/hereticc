@@ -16,6 +16,13 @@ test-only bridge therefore confines I/O to its own worker and mutates only the
 pointer-free reducer under a nonblocking callback boundary; it does not call
 firmware drawing APIs or claim SDK input injection. See [HIL-1](HIL-1.md).
 
+The first physical HIL-1.2 scenario proved that a reducer-only `OPEN` does not
+establish the SDK Sample-page context: a normal visibility or non-Sample paint
+callback closed it before the next mailbox command. The report cannot identify
+which callback class ran. HIL-1.3 therefore gives only a bounded synthetic test
+session ownership of page state; production page-loss behavior is unchanged.
+This remains Level B reducer evidence, not SDK input or paint validation.
+
 ## Confidence labels
 
 - **Verified:** directly supported by linked source/documentation or an explicit upstream hardware result.

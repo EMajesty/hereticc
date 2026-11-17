@@ -455,11 +455,33 @@ def execute_level_b_scenario(
     return records
 
 
+def print_assertion_failures(records: list[dict[str, object]]) -> None:
+    """Print compact diagnostics while report.json remains authoritative."""
+    failures = [record for record in records if not record.get("pass", False)]
+    if not failures:
+        return
+    print("Level B assertion failures:")
+    for record in failures:
+        print(f"- Command: {record.get('command', 'unknown')}")
+        print(f"  Expected: {json.dumps(record.get('expected'), sort_keys=True)}")
+        print(f"  Actual: {json.dumps(record.get('actual'), sort_keys=True)}")
+        if record.get("error"):
+            print(f"  Error: {record['error']}")
+    first = failures[0]
+    print(
+        "First unexpected state transition: "
+        f"{first.get('command', 'unknown')} expected "
+        f"{json.dumps(first.get('expected'), sort_keys=True)}, actual "
+        f"{json.dumps(first.get('actual'), sort_keys=True)}"
+    )
+
+
 def run_level_b_scenario(ssh: Ssh) -> list[dict[str, object]]:
     records = execute_level_b_scenario(ssh)
     for record in records:
         print(json.dumps(record, sort_keys=True))
     if any(not record["pass"] for record in records):
+        print_assertion_failures(records)
         raise RemoteError("one or more Level B state assertions failed")
     return records
 
@@ -747,6 +769,7 @@ def orchestrate_run(args: argparse.Namespace, ssh: Ssh | None) -> int:
                     "passed": passed,
                     "failed": len(test_records) - passed,
                 }
+                print_assertion_failures(test_records)
             report["errors"].append({"phase": "test-cycle", "message": str(exc)})
             if mutated:
                 try:

@@ -329,6 +329,26 @@ class HilTests(unittest.TestCase):
         self.assertTrue(all(record["pass"] for record in records))
         self.assertTrue(all("actual" in record and "expected" in record for record in records))
 
+    def test_level_b_failure_prints_expected_actual_and_first_transition(self):
+        replies = [
+            completed(b"v=1 open=0 track=1 step=1 bits=0000 flow=consume repaint=1 restore=0 pending_repaint=0\n"),
+            completed(b"v=1 open=1 track=1 step=1 bits=0000 flow=consume repaint=1 restore=0 pending_repaint=1\n"),
+            completed(b"v=1 open=0 track=1 step=1 bits=0000 flow=forward repaint=0 restore=0 pending_repaint=1\n"),
+            completed(b"v=1 open=0 track=1 step=1 bits=0000 flow=forward repaint=0 restore=0 pending_repaint=1\n"),
+            completed(b"v=1 open=0 track=1 step=1 bits=0000 flow=forward repaint=0 restore=0 pending_repaint=0\n"),
+            completed(b"v=1 open=0 track=1 step=1 bits=0000 flow=forward repaint=0 restore=0 pending_repaint=0\n"),
+            completed(b"v=1 open=0 track=1 step=1 bits=0000 flow=forward repaint=0 restore=0 pending_repaint=0\n"),
+            completed(b"v=1 open=0 track=1 step=1 bits=0000 flow=consume repaint=1 restore=0 pending_repaint=0\n"),
+        ]
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), self.assertRaises(hil.HilError):
+            hil.run_level_b_scenario(hil.Ssh(self.config, Runner(replies)))
+        text = output.getvalue()
+        self.assertIn("Command: SELECT 4", text)
+        self.assertIn('Expected: {"track": "4"}', text)
+        self.assertIn('Actual: {"bits": "0000"', text)
+        self.assertIn("First unexpected state transition: SELECT 4", text)
+
     def test_repeatable_activation_never_overwrites_library(self):
         digest = "b" * 64
         script = hil.activation_script(digest)
@@ -467,10 +487,13 @@ class RunCycleTests(unittest.TestCase):
         stack, patched = self.patches(
             execute_level_b_scenario=mock.Mock(side_effect=scenario)
         )
-        with stack, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(hil.RunCycleError):
+        output = io.StringIO()
+        with stack, contextlib.redirect_stdout(output), self.assertRaises(hil.RunCycleError):
             hil.orchestrate_run(self.args, CycleSsh())
         report = self.only_report()
         self.assertEqual(report["assertions"], {"passed": 0, "failed": 1})
+        self.assertIn("Command: QUERY", output.getvalue())
+        self.assertIn("First unexpected state transition: QUERY", output.getvalue())
         patched["restore_stock"].assert_called_once()
 
     def test_ssh_disconnect_before_mutation_does_not_restore(self):

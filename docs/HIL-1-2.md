@@ -87,3 +87,9 @@ PID, and normal UI/audio/controls afterward.
 
 After this validation, development returns to the stock-sequencer integration;
 HIL should grow only when a concrete feature test requires it.
+
+The first owner-run full cycle on firmware 1.3.0.12 validated orchestration and
+automatic restoration, but produced three passing and five failing assertions.
+`OPEN` passed and state closed before `SELECT 4`. HIL-1.3 identifies the
+synthetic-open versus SDK page-lifecycle conflict and confines its correction
+to HIL builds; see [HIL-1.3](HIL-1-3.md).

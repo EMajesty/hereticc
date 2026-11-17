@@ -15,6 +15,8 @@ use reducer::{Button, UiState};
 pub struct NeurogenicDevice {
     ui: Arc<Mutex<UiState>>,
     overlay_open: Arc<AtomicBool>,
+    #[cfg(feature = "hil-test-interface")]
+    hil_page_owned: Arc<AtomicBool>,
 }
 
 impl Default for NeurogenicDevice {
@@ -22,6 +24,8 @@ impl Default for NeurogenicDevice {
         Self {
             ui: Arc::new(Mutex::new(UiState::default())),
             overlay_open: Arc::new(AtomicBool::new(false)),
+            #[cfg(feature = "hil-test-interface")]
+            hil_page_owned: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -94,8 +98,20 @@ impl NeurogenicDevice {
         // SAFETY: callbacks run on the UI path; the SDK recorded this page and
         // checks its vtable before reading visibility.
         if screen == 0 || !unsafe { mpc_sample_sdk::platform::page::visible(screen) } {
-            let _ = self.with_ui(UiState::lose_page);
+            self.observe_page_loss();
         }
+    }
+
+    fn observe_page_loss(&self) {
+        // A Level B OPEN deliberately exercises only the loaded reducer; it
+        // does not claim to install a real SDK Sample-page context. Keep that
+        // bounded test session independent from firmware paint/input traffic.
+        // Production builds do not contain this exception.
+        #[cfg(feature = "hil-test-interface")]
+        if self.hil_page_owned.load(Ordering::Acquire) {
+            return;
+        }
+        let _ = self.with_ui(UiState::lose_page);
     }
 
     fn draw(ui: &UiState, graphics: mpc_sample_sdk::draw::Graphics) {
@@ -155,7 +171,11 @@ impl NeurogenicDevice {
 impl Mod for NeurogenicDevice {
     fn on_start(&mut self) {
         #[cfg(feature = "hil-test-interface")]
-        hil::start_bridge(Arc::clone(&self.ui), Arc::clone(&self.overlay_open));
+        hil::start_bridge(
+            Arc::clone(&self.ui),
+            Arc::clone(&self.overlay_open),
+            Arc::clone(&self.hil_page_owned),
+        );
     }
 
     fn on_button(&mut self, event: ButtonEvent) -> Flow {
@@ -199,7 +219,7 @@ impl Mod for NeurogenicDevice {
 
     fn on_paint(&mut self, graphics: &mut mpc_sample_sdk::draw::Graphics, event: PaintEvent) {
         if !event.sample_page {
-            let _ = self.with_ui(UiState::lose_page);
+            self.observe_page_loss();
             return;
         }
         let _ = self.with_ui(|ui| {
@@ -255,6 +275,68 @@ mod contention_tests {
         );
         assert_eq!(
             device.contention_button_flow(Button::Plus, true, false),
+            Flow::Forward
+        );
+        assert_eq!(device.contention_pad_flow(0), Flow::Forward);
+    }
+}
+
+#[cfg(all(test, feature = "hil-test-interface"))]
+mod hil_page_context_tests {
+    use super::*;
+
+    #[test]
+    fn synthetic_open_survives_background_page_loss_until_close() {
+        let device = NeurogenicDevice::default();
+        {
+            let mut ui = device.ui.lock().expect("state");
+            assert!(
+                hil::apply(&mut ui, b"OPEN")
+                    .expect("open")
+                    .as_str()
+                    .contains("open=1")
+            );
+        }
+        device.overlay_open.store(true, Ordering::Release);
+        device.hil_page_owned.store(true, Ordering::Release);
+
+        // Models either asynchronous closer: a non-Sample paint or a
+        // visibility check made by an SDK input callback.
+        device.observe_page_loss();
+        {
+            let mut ui = device.ui.lock().expect("state");
+            assert!(
+                hil::apply(&mut ui, b"SELECT 4")
+                    .expect("select")
+                    .as_str()
+                    .contains("track=4")
+            );
+            assert!(
+                hil::apply(&mut ui, b"MOVE 3")
+                    .expect("move")
+                    .as_str()
+                    .contains("step=4")
+            );
+            assert!(
+                hil::apply(&mut ui, b"TOGGLE")
+                    .expect("toggle")
+                    .as_str()
+                    .contains("bits=0008")
+            );
+            assert!(ui.is_open());
+        }
+
+        device.hil_page_owned.store(false, Ordering::Release);
+        device.observe_page_loss();
+        assert!(!device.ui.lock().expect("state").is_open());
+    }
+
+    #[test]
+    fn hil_page_context_does_not_claim_unowned_physical_controls() {
+        let device = NeurogenicDevice::default();
+        device.hil_page_owned.store(true, Ordering::Release);
+        assert_eq!(
+            device.contention_button_flow(Button::Other, true, false),
             Flow::Forward
         );
         assert_eq!(device.contention_pad_flow(0), Flow::Forward);

@@ -199,7 +199,12 @@ fn error_response(error: Error) -> &'static [u8] {
     }
 }
 
-fn process_mailbox(directory: &Path, ui: &Mutex<UiState>, overlay_open: &AtomicBool) {
+fn process_mailbox(
+    directory: &Path,
+    ui: &Mutex<UiState>,
+    overlay_open: &AtomicBool,
+    hil_page_owned: &AtomicBool,
+) {
     let request = directory.join(REQUEST_FILE);
     let response = directory.join(RESPONSE_FILE);
     if response.exists() {
@@ -224,16 +229,34 @@ fn process_mailbox(directory: &Path, ui: &Mutex<UiState>, overlay_open: &AtomicB
             // Publish ownership before taking the reducer lock when OPEN can
             // transition closed -> open. A colliding physical callback then
             // fails closed instead of observing the previous ownership bit.
-            if bytes[..length] == *b"OPEN" || bytes[..length] == *b"OPEN\n" {
-                overlay_open.store(true, Ordering::Release);
+            let command = bytes[..length]
+                .strip_suffix(b"\n")
+                .unwrap_or(&bytes[..length]);
+            let command = command.strip_suffix(b"\r").unwrap_or(command);
+            let opening = command == b"OPEN";
+            let claiming_page = opening && !overlay_open.swap(true, Ordering::AcqRel);
+            if claiming_page {
+                hil_page_owned.store(true, Ordering::Release);
             }
             let mut state = ui.lock().unwrap_or_else(PoisonError::into_inner);
             match apply(&mut state, &bytes[..length]) {
                 Ok(result) => {
                     overlay_open.store(state.is_open(), Ordering::Release);
+                    if command == b"CLOSE"
+                        || command == b"RESET"
+                        || (claiming_page && !state.is_open())
+                    {
+                        hil_page_owned.store(false, Ordering::Release);
+                    }
                     publish(&response, result.as_str().as_bytes());
                 }
-                Err(error) => publish(&response, error_response(error)),
+                Err(error) => {
+                    if claiming_page {
+                        hil_page_owned.store(false, Ordering::Release);
+                        overlay_open.store(state.is_open(), Ordering::Release);
+                    }
+                    publish(&response, error_response(error));
+                }
             }
         }
         _ => publish(&response, b"error=invalid_request\n"),
@@ -258,6 +281,7 @@ fn bridge_loop(
     directory: &Path,
     ui: &Mutex<UiState>,
     overlay_open: &AtomicBool,
+    hil_page_owned: &AtomicBool,
     stop: &AtomicBool,
 ) {
     if !directory.is_dir() {
@@ -268,7 +292,7 @@ fn bridge_loop(
         b"schema=neurogenic-hil-bridge-v1\n",
     );
     while !stop.load(Ordering::Acquire) && directory.is_dir() {
-        process_mailbox(directory, ui, overlay_open);
+        process_mailbox(directory, ui, overlay_open, hil_page_owned);
         std::thread::sleep(Duration::from_millis(20));
     }
 }
@@ -277,7 +301,11 @@ fn bridge_loop(
 ///
 /// The worker performs all file I/O. SDK callbacks only use `try_lock`, so the
 /// bridge cannot block a UI or audio callback and never observes firmware data.
-pub fn start_bridge(ui: Arc<Mutex<UiState>>, overlay_open: Arc<AtomicBool>) {
+pub fn start_bridge(
+    ui: Arc<Mutex<UiState>>,
+    overlay_open: Arc<AtomicBool>,
+    hil_page_owned: Arc<AtomicBool>,
+) {
     static STARTED: AtomicBool = AtomicBool::new(false);
     if STARTED.swap(true, Ordering::AcqRel) {
         return;
@@ -286,7 +314,13 @@ pub fn start_bridge(ui: Arc<Mutex<UiState>>, overlay_open: Arc<AtomicBool>) {
         .name("neurogenic-hil".to_owned())
         .spawn(move || {
             let stop = AtomicBool::new(false);
-            bridge_loop(Path::new(BRIDGE_DIRECTORY), &ui, &overlay_open, &stop);
+            bridge_loop(
+                Path::new(BRIDGE_DIRECTORY),
+                &ui,
+                &overlay_open,
+                &hil_page_owned,
+                &stop,
+            );
         });
 }
 
@@ -326,12 +360,20 @@ mod bridge_tests {
         let ui = Arc::new(Mutex::new(UiState::default()));
         let stop = Arc::new(AtomicBool::new(false));
         let overlay_open = Arc::new(AtomicBool::new(false));
+        let hil_page_owned = Arc::new(AtomicBool::new(false));
         let worker_dir = directory.clone();
         let worker_ui = Arc::clone(&ui);
         let worker_stop = Arc::clone(&stop);
         let worker_open = Arc::clone(&overlay_open);
+        let worker_page = Arc::clone(&hil_page_owned);
         let worker = std::thread::spawn(move || {
-            bridge_loop(&worker_dir, &worker_ui, &worker_open, &worker_stop);
+            bridge_loop(
+                &worker_dir,
+                &worker_ui,
+                &worker_open,
+                &worker_page,
+                &worker_stop,
+            );
         });
         wait(&directory.join(READY_FILE));
 
@@ -339,10 +381,18 @@ mod bridge_tests {
         let response = wait(&directory.join(RESPONSE_FILE));
         assert!(response.starts_with(b"v=1 open=1"));
         assert!(overlay_open.load(Ordering::Acquire));
+        assert!(hil_page_owned.load(Ordering::Acquire));
         fs::remove_file(directory.join(RESPONSE_FILE)).expect("consume response");
 
         fs::write(directory.join(REQUEST_FILE), b"SHELL\n").expect("request");
         assert_eq!(wait(&directory.join(RESPONSE_FILE)), b"error=unknown\n");
+        fs::remove_file(directory.join(RESPONSE_FILE)).expect("consume response");
+
+        fs::write(directory.join(REQUEST_FILE), b"CLOSE\n").expect("request");
+        let response = wait(&directory.join(RESPONSE_FILE));
+        assert!(response.starts_with(b"v=1 open=0"));
+        assert!(!overlay_open.load(Ordering::Acquire));
+        assert!(!hil_page_owned.load(Ordering::Acquire));
 
         stop.store(true, Ordering::Release);
         worker.join().expect("worker");
@@ -354,14 +404,15 @@ mod bridge_tests {
         let directory = temporary_directory();
         let ui = Mutex::new(UiState::default());
         let open = AtomicBool::new(false);
+        let page = AtomicBool::new(false);
 
         fs::write(directory.join("request.pending"), b"OPEN\n").expect("partial fixture");
-        super::process_mailbox(&directory, &ui, &open);
+        super::process_mailbox(&directory, &ui, &open, &page);
         assert!(!ui.lock().expect("state").is_open());
 
         fs::write(directory.join(RESPONSE_FILE), b"stale\n").expect("stale response");
         fs::write(directory.join(REQUEST_FILE), b"OPEN\n").expect("request");
-        super::process_mailbox(&directory, &ui, &open);
+        super::process_mailbox(&directory, &ui, &open, &page);
         assert!(!ui.lock().expect("state").is_open());
         assert!(directory.join(REQUEST_FILE).exists());
 

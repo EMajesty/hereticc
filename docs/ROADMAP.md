@@ -477,10 +477,15 @@ action is one scripted Level B hardware run, after which development returns to
 the stock-sequencer adapter. See [HIL-1.1](HIL-1-1.md).
 
 HIL-1.2 provides a single fail-safe `run` command and per-run JSON/text reports.
-Its first physical action is one complete HIL-1.1 scenario with verified stock
-restoration. Once that passes, the practical engineering priority is again the
-bounded stock-sequencer command adapter, not more harness infrastructure. See
-[HIL-1.2](HIL-1-2.md).
+Its first physical full cycle validated build, deploy, activation, command
+delivery, automatic restoration, and reporting. The scenario exposed a
+test-context conflict: synthetic `OPEN` did not establish the SDK page context,
+so a normal background page-loss callback closed the reducer before `SELECT`.
+HIL-1.3 adds a feature-gated test-session ownership token covering both
+asynchronous closure paths and prints immediate expected/actual failure details.
+One repeat of the same eight-command cycle is the only next HIL action; after
+that, priority returns to the bounded stock-sequencer adapter. See
+[HIL-1.2](HIL-1-2.md) and [HIL-1.3](HIL-1-3.md).
 
 The immediate decision is owner review and, if separately authorized, one
 M0.3e regression run of the restored M0.3c editor behavior. The next engineering
