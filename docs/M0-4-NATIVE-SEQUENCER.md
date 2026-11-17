@@ -1,4 +1,4 @@
-# M0.4: first native stock-sequencer event
+# M0.4/M0.4a: first native stock-sequencer event
 
 ## Result
 
@@ -22,8 +22,9 @@ Pinned revisions and licenses:
 
 - `mpc-sample-sdk` `9487cbba3648afb29d8e3107e31a7ac930985220`,
   MIT, remains the device dependency;
-- Am MOD `6cdc67276f43cd39f64871cb7e36782481244c65`, MIT,
-  is research evidence only. No upstream code was copied.
+- Am MOD `6cdc67276f43cd39f64871cb7e36782481244c65`, MIT, was
+  research evidence only in M0.4. M0.4a later adapts its narrowly reviewed
+  native add/remove pattern with attribution and the full notice preserved.
 
 The upstream heads were also checked on 2026-11-17 to avoid recreating a newer
 solution. SDK v0.7.4 at `7d82a51279c4e9af4a571eb4479805caeb0f1f9c`
@@ -82,9 +83,9 @@ from NEUROGENIC.
   submitted, cancelled, and failed terminal states.
 
 The port's receipt means only that its implementation accepted the request. It
-is not evidence that the event is present or audible. There is intentionally no
-production implementation until the SDK owns the native object, UI-thread,
-command, and lifetime contracts.
+is not evidence that the event is present or audible. At the end of M0.4 there
+was intentionally no production implementation; M0.4a supplies the isolated,
+feature-gated implementation described below.
 
 ## Validation levels
 
@@ -128,5 +129,91 @@ operation was added, so the established HIL runner cannot honestly validate
 insertion and was not extended. No MPC connection or restart was performed.
 
 The first native insertion and audible stock playback have **not** been
-demonstrated. The concrete blocker is an SDK-owned live sequence-command API,
-not step timing or request construction.
+demonstrated. M0.4's concrete blocker was an SDK-owned live sequence-command
+API, not step timing or request construction. M0.4a implements that boundary
+as described below; physical execution remains a separate approval gate.
+
+## M0.4a implementation
+
+M0.4a adds a firmware-1.3.0.12-only implementation of
+`StockSequenceEditPort`. It is callback-scoped:
+`NativeStockSequencePort::from_step_paint` accepts the live stock
+`StepEditScreen` only for its owning UI paint callback. The port retains no
+screen, controller, Program, event-list, or command-service pointer afterward.
+
+The native shim validates exact Step-screen/controller vtables and visibility;
+current-things, sequence, Program, event list, command service and bounded
+sequence length; physical-pad range and native pad-to-note mapping; and the
+tag-3 constructor's returned type/tick. It owns three native tree containers,
+two native strings, the shared command result and cleanup. Addition uses the
+pinned `0x19500e0` factory through `controller+0x240`; exact removal uses
+`0x194fa30`. Both use the AArch64 hidden-result ABI bridge.
+
+A pointer-free receipt contains the copied 56-byte event, resolved note and
+sequence-length token. A bounded 4096-node lookup distinguishes command
+acceptance from observation of that exact value in the live list.
+
+The implementation is adapted from Am MOD under MIT; its notice is preserved
+in `THIRD_PARTY_NOTICES.md` and source headers. It is isolated behind
+`native-sequence-adapter`; normal M0.3e does not link or install it and remains
+byte-identical to the physically validated baseline.
+
+### UI-thread extension and first experiment
+
+The distinct `neurogenic-device-native-hil` build installs one guarded Step
+screen vtable callback. Installation requires the pinned original slot value,
+changes one process-memory pointer, returns the page read-only, and attempts
+rollback on publication failure. The callback invokes the stock painter first.
+The existing HIL worker only changes atomics:
+
+- `NATIVE ARM` arms exactly one A01, tick-0, velocity-100, 240-tick insertion;
+- the next valid stock Step-screen paint performs the command;
+- a later paint reports `observed` only after finding the exact event;
+- `NATIVE REMOVE` requests exact removal on the next valid Step-screen paint;
+- `NATIVE STATUS` is observation only.
+
+No insertion occurs merely by loading the artifact, and no retry exists.
+`accepted` is command-boundary evidence; `observed` is event-list evidence;
+neither proves audible playback.
+
+### Non-hardware evidence
+
+`device/m04a/scripts/verify-native-abi.sh` cross-builds and executes an
+AArch64/QEMU fixture covering constructor and hidden-result ABIs, owned
+containers/strings, add dispatch, shared-result cleanup, exact remove,
+presence lookup, bounds and invalid context. It does not run Akai firmware and
+cannot prove live Undo, stock stability, persistence, audio or timing.
+
+The approval-gated artifact is
+`target/m04a/build/neurogenic-m04a-native-test.so`, SHA-256
+`1a91ada34fddc5ed2d155e4c1d6e8bdb06e0d4736c6c1ee24cd5efcafb7886f4`.
+It is AArch64, has a non-executable stack, no writable/executable load segment,
+and requires no GLIBC symbol newer than 2.30.
+
+### Physical experiment gate
+
+The experiment is prepared but **not authorized or executed**. Before approval,
+the owner must accept one new in-memory Step-screen vtable hook and one native
+stock-sequence add command. The controlled run must use a fresh unsaved one-bar
+sequence with a sample on A01; deploy only the reviewed hash; open the stock
+Step editor; require `native=idle`; issue one `NATIVE ARM`; require `accepted`
+then `observed`; observe stock Play separately; issue one `NATIVE REMOVE` and
+require `removed`; restore stock; and discard the unsaved sequence.
+
+Stop on any unexpected event, UI/control/audio regression, unavailable/failed
+state, service instability or inability to remove. Do not re-arm in the same
+run. This is the next specific operation requiring owner approval.
+
+After that approval, the fixed host preparation/deployment commands are:
+
+```sh
+python3 tools/neurogenic-hil/hil.py --config target/hil/config.json build --native-m04a
+python3 tools/neurogenic-hil/hil.py --config target/hil/config.json deploy --native-m04a --confirm MPC-SAMPLE-1.3.0.12
+python3 tools/neurogenic-hil/hil.py --config target/hil/config.json restart --sha256 1a91ada34fddc5ed2d155e4c1d6e8bdb06e0d4736c6c1ee24cd5efcafb7886f4 --confirm MPC-SAMPLE-1.3.0.12
+```
+
+With the stock Step editor visible, use the existing bounded `test --level B
+--command` operation for `NATIVE STATUS`, `NATIVE ARM`, and later `NATIVE
+REMOVE`. Finish with the existing `restore-stock --confirm
+MPC-SAMPLE-1.3.0.12`. These commands are documented for review only in M0.4a;
+they were not executed.

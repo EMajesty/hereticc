@@ -22,10 +22,13 @@ FIRMWARE_SHA = "44507c7a7d3029c411b2e3780ea286ca3e08b7e3ffd7b5047d52f73bf5299d1f
 ROOT = Path(__file__).resolve().parents[2]
 BUILD = ROOT / "device/m03e/scripts/build-package.sh"
 HIL_BUILD = ROOT / "device/hil/scripts/build.sh"
+M04A_BUILD = ROOT / "device/m04a/scripts/build.sh"
 NORMAL_ARTIFACT = ROOT / "target/m03c/build/neurogenic-m03c-ui.so"
 NORMAL_SUMS = ROOT / "target/m03c/build/SHA256SUMS"
 HIL_ARTIFACT = ROOT / "target/hil/build/neurogenic-hil-test.so"
 HIL_SUMS = ROOT / "target/hil/build/SHA256SUMS"
+M04A_ARTIFACT = ROOT / "target/m04a/build/neurogenic-m04a-native-test.so"
+M04A_SUMS = ROOT / "target/m04a/build/SHA256SUMS"
 RUNTIME = "/run/neurogenic-hil"
 BUILDS = RUNTIME + "/builds"
 ACTIVE = RUNTIME + "/active.sha256"
@@ -234,7 +237,7 @@ if test -e '{DROPIN}' || test -L '{DROPIN}'; then
 fi
 systemctl daemon-reload; systemctl restart ac50.service
 for path in '{RUNTIME}/bridge.ready' '{RUNTIME}/request' '{RUNTIME}/request.pending' \
- '{RUNTIME}/response' \
+ '{RUNTIME}/response' '{RUNTIME}/response.pending' \
  '{ACTIVE}' '{PREVIOUS}' '{RUNTIME}/current.so' '{RUNTIME}/previous.so'; do
  if test -e "$path" || test -L "$path"; then test -f "$path" && test ! -L "$path"; rm "$path"; fi
 done
@@ -827,7 +830,17 @@ def orchestrate_run(args: argparse.Namespace, ssh: Ssh | None) -> int:
 
 def run_command(args: argparse.Namespace, ssh: Ssh | None) -> int:
     if args.command == "build":
-        if args.hil:
+        if args.native_m04a:
+            code = subprocess.run(
+                ["nix", "shell", "nixpkgs#pkgsCross.aarch64-multiplatform.stdenv.cc",
+                 "--command", "zsh", "-lc",
+                 "export AARCH64_CXX=$(command -v aarch64-unknown-linux-gnu-g++); "
+                 "device/m04a/scripts/build.sh"],
+                cwd=ROOT, check=False,
+            ).returncode
+            if code:
+                raise HilError(f"fixed M0.4a build failed with status {code}")
+        elif args.hil:
             build_hil_artifact()
         else:
             code = subprocess.run([str(BUILD)], cwd=ROOT, check=False).returncode
@@ -851,10 +864,12 @@ def run_command(args: argparse.Namespace, ssh: Ssh | None) -> int:
         print(json.dumps(identity(ssh), indent=2, sort_keys=True))
     elif args.command == "deploy":
         confirm(args.confirm); identity(ssh)
-        artifact, sums = (
-            (HIL_ARTIFACT, HIL_SUMS) if args.hil
-            else (NORMAL_ARTIFACT, NORMAL_SUMS)
-        )
+        if args.native_m04a:
+            artifact, sums = M04A_ARTIFACT, M04A_SUMS
+        elif args.hil:
+            artifact, sums = HIL_ARTIFACT, HIL_SUMS
+        else:
+            artifact, sums = NORMAL_ARTIFACT, NORMAL_SUMS
         data, digest = read_reviewed_artifact(artifact, sums)
         deploy_artifact(ssh, data, digest)
         print(f"staged immutable build {digest}; activate with restart --sha256 {digest}")
@@ -894,9 +909,16 @@ def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(prog="neurogenic-hil")
     result.add_argument("--config", type=Path)
     sub = result.add_subparsers(dest="command", required=True)
-    build = sub.add_parser("build"); build.add_argument("--hil", action="store_true")
+    build = sub.add_parser("build")
+    build_mode = build.add_mutually_exclusive_group()
+    build_mode.add_argument("--hil", action="store_true")
+    build_mode.add_argument("--native-m04a", action="store_true")
     sub.add_parser("status")
-    deploy = sub.add_parser("deploy"); deploy.add_argument("--hil", action="store_true"); deploy.add_argument("--confirm")
+    deploy = sub.add_parser("deploy")
+    deploy_mode = deploy.add_mutually_exclusive_group()
+    deploy_mode.add_argument("--hil", action="store_true")
+    deploy_mode.add_argument("--native-m04a", action="store_true")
+    deploy.add_argument("--confirm")
     restart = sub.add_parser("restart"); restart.add_argument("--sha256", required=True); restart.add_argument("--confirm")
     rollback = sub.add_parser("rollback"); rollback.add_argument("--confirm")
     restore = sub.add_parser("restore-stock"); restore.add_argument("--confirm")

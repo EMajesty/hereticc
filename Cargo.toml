@@ -6,6 +6,7 @@ members = [
     "crates/neurogenic-core",
     "crates/neurogenic-device",
     "crates/neurogenic-device-hil",
+    "crates/neurogenic-device-native-hil",
     "crates/neurogenic-host",
 ]
 resolver = "2"

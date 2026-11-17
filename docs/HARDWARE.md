@@ -62,6 +62,14 @@ are the only asynchronous page-loss closers, although the report cannot identify
 which one ran. HIL-1.3 isolates synthetic Level B page ownership in test builds;
 it remains host-tested until the same scenario is rerun physically.
 
+M0.4a adds an approval-gated firmware-1.3.0.12 Step-editor command adapter. Its
+fixed offsets, vtable identities, command factories and object layouts are
+source-backed by Am MOD and exercised by an AArch64/QEMU fixture, not by this
+MPC. Loading the distinct experiment would add one guarded in-process
+Step-screen vtable hook; arming it would issue one native sequence edit. No such
+physical load, hook installation, event insertion, removal or audible playback
+has occurred.
+
 These facts are research inputs, not permission to depend directly on raw protocols. An in-process extension should prefer a guarded adapter such as the SDK and retain stock ownership wherever possible.
 
 ## Controls relevant to NEUROGENIC

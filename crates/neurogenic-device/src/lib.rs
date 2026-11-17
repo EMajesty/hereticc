@@ -2,6 +2,9 @@
 
 #[cfg(feature = "hil-test-interface")]
 pub mod hil;
+#[cfg(feature = "native-sequence-adapter")]
+pub mod native_sequence_experiment;
+pub mod native_stock_sequence;
 pub mod reducer;
 pub mod stock_sequence;
 
@@ -171,6 +174,8 @@ impl NeurogenicDevice {
 
 impl Mod for NeurogenicDevice {
     fn on_start(&mut self) {
+        #[cfg(feature = "native-sequence-adapter")]
+        let _ = native_sequence_experiment::install();
         #[cfg(feature = "hil-test-interface")]
         hil::start_bridge(
             Arc::clone(&self.ui),

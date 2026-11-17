@@ -194,6 +194,21 @@ class HilTests(unittest.TestCase):
         )
         self.assertEqual(hil.NORMAL_SUMS.parent, hil.NORMAL_ARTIFACT.parent)
 
+    def test_m04a_mode_selects_only_the_fixed_reviewed_artifact(self):
+        build = hil.parser().parse_args(["build", "--native-m04a"])
+        deploy = hil.parser().parse_args([
+            "deploy", "--native-m04a", "--confirm", hil.CONFIRM,
+        ])
+        self.assertTrue(build.native_m04a)
+        self.assertTrue(deploy.native_m04a)
+        self.assertEqual(
+            hil.M04A_ARTIFACT,
+            hil.ROOT / "target/m04a/build/neurogenic-m04a-native-test.so",
+        )
+        self.assertEqual(hil.M04A_SUMS.parent, hil.M04A_ARTIFACT.parent)
+        with self.assertRaises(SystemExit):
+            hil.parser().parse_args(["deploy", "--hil", "--native-m04a"])
+
     def test_only_fixed_operations_are_exposed(self):
         ssh = hil.Ssh(self.config, Runner([]))
         with self.assertRaises(hil.HilError):
@@ -222,6 +237,7 @@ class HilTests(unittest.TestCase):
         self.assertIn("for library in '/run/neurogenic-hil/builds'/*.so", hil.RESTORE)
         self.assertIn("test \"$actual\" = \"$expected\" && valid=1", hil.RESTORE)
         self.assertIn("'/run/neurogenic-hil/request.pending'", hil.RESTORE)
+        self.assertIn("'/run/neurogenic-hil/response.pending'", hil.RESTORE)
         self.assertIn("rmdir '/run/neurogenic-hil/request.lock'", hil.RESTORE)
 
     def test_single_restart_and_explicit_stock_restoration_settle(self):

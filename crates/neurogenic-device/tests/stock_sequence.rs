@@ -1,4 +1,5 @@
 use neurogenic_core::GRID_STEP_TICKS;
+use neurogenic_device::native_stock_sequence::{NativeEditError, NativeStockSequencePort};
 use neurogenic_device::reducer::{Button, UiState};
 use neurogenic_device::stock_sequence::{
     AttemptState, OneShotInsertion, RequestError, StockNoteRequest, StockSequenceEditPort,
@@ -142,4 +143,16 @@ fn insertion_is_at_most_once_after_success_failure_or_cancellation() {
         Err(SubmitError::Terminal(AttemptState::Cancelled))
     );
     assert_eq!(port.calls, 1);
+}
+
+#[cfg(not(all(target_arch = "aarch64", feature = "native-sequence-adapter")))]
+#[test]
+fn firmware_adapter_fails_closed_off_target() {
+    let request = StockNoteRequest::from_grid_step(0, 0, 100).expect("request");
+    // SAFETY: the unsupported host backend never dereferences the fixture value.
+    let mut port = unsafe { NativeStockSequencePort::from_step_paint(0x1234) };
+    assert_eq!(
+        port.insert_current_track(request),
+        Err(NativeEditError::UnsupportedTarget)
+    );
 }

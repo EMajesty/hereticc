@@ -5,11 +5,13 @@ edition = "2024"
 license = "MIT"
 rust-version = "1.97"
 description = "MPC Sample SDK UI/input prototype for NEUROGENIC"
+build = "build.rs"
 
 [features]
 default = ["device-export"]
 device-export = []
 hil-test-interface = []
+native-sequence-adapter = ["dep:libc"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -17,6 +19,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 mpc-sample-sdk = { git = "https://github.com/ioma8/mpc-sample-sdk", rev = "9487cbba3648afb29d8e3107e31a7ac930985220" }
 neurogenic-core = { path = "../neurogenic-core" }
+libc = { version = "0.2", optional = true }
 
 [lints.rust]
 unsafe_code = "allow"

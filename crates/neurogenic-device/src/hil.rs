@@ -111,6 +111,36 @@ fn virtual_action() -> Outcome {
     }
 }
 
+#[cfg(feature = "native-sequence-adapter")]
+fn native_response(action: &str) -> Response {
+    use crate::native_sequence_experiment::{self, Status};
+    let accepted = match action {
+        "ARM" => native_sequence_experiment::arm(),
+        "REMOVE" => native_sequence_experiment::request_remove(),
+        "STATUS" => true,
+        _ => false,
+    };
+    let status = match native_sequence_experiment::status() {
+        Status::Unavailable => "unavailable",
+        Status::Idle => "idle",
+        Status::Armed => "armed",
+        Status::Accepted => "accepted",
+        Status::Observed => "observed",
+        Status::RemoveRequested => "remove_requested",
+        Status::Removed => "removed",
+        Status::Rejected => "rejected",
+        Status::Failed => "failed",
+    };
+    let mut response = Response::new();
+    writeln!(
+        response,
+        "v=1 native={status} accepted={}",
+        u8::from(accepted)
+    )
+    .expect("native response fits");
+    response
+}
+
 /// Apply one complete bounded command to the existing UI reducer.
 ///
 /// Accepted commands are `OPEN`, `CLOSE`, `MOVE <signed-delta>`,
@@ -135,6 +165,14 @@ pub fn apply(ui: &mut UiState, input: &[u8]) -> Result<Response, Error> {
         .trim_end_matches(['\r', '\n']);
     if text.is_empty() {
         return Err(Error::Empty);
+    }
+
+    #[cfg(feature = "native-sequence-adapter")]
+    if let Some(action) = text.strip_prefix("NATIVE ") {
+        if matches!(action, "ARM" | "STATUS" | "REMOVE") {
+            return Ok(native_response(action));
+        }
+        return Err(Error::Unknown);
     }
 
     let outcome = match text {
@@ -267,14 +305,22 @@ fn publish(path: &Path, bytes: &[u8]) {
     if bytes.len() > MAX_RESPONSE_BYTES {
         return;
     }
-    if let Ok(mut output) = OpenOptions::new()
+    let pending = path.with_extension("pending");
+    let Ok(mut output) = OpenOptions::new()
         .write(true)
         .create_new(true)
         .mode(0o600)
-        .open(path)
+        .open(&pending)
+    else {
+        return;
+    };
+    if output.write_all(bytes).is_ok()
+        && output.sync_data().is_ok()
+        && fs::rename(&pending, path).is_ok()
     {
-        let _ = output.write_all(bytes);
+        return;
     }
+    let _ = fs::remove_file(pending);
 }
 
 fn bridge_loop(

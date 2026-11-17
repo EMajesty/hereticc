@@ -23,6 +23,14 @@ which callback class ran. HIL-1.3 therefore gives only a bounded synthetic test
 session ownership of page state; production page-loss behavior is unchanged.
 This remains Level B reducer evidence, not SDK input or paint validation.
 
+M0.4a adapts the minimal stock Steps add/remove command pattern from Am MOD
+`6cdc67276f43cd39f64871cb7e36782481244c65` under its MIT license. Source and
+AArch64/QEMU evidence cover the tag-3 constructor, native containers/strings,
+hidden shared-result ABI, Step-controller command service, exact remove factory
+and cleanup. The required live owner is specifically a visible
+`StepEditScreen` callback; the ordinary Sample-page overlay does not provide
+that service. This is host/QEMU evidence only.
+
 ## Confidence labels
 
 - **Verified:** directly supported by linked source/documentation or an explicit upstream hardware result.
@@ -278,7 +286,7 @@ does not establish device loader behavior or physical compatibility.
 |---|---|---|---|
 | `mpc-sample-sdk` | [`9487cbba3648afb29d8e3107e31a7ac930985220`](https://github.com/ioma8/mpc-sample-sdk/tree/9487cbba3648afb29d8e3107e31a7ac930985220), tag `v0.7.1`, dated 2026-11-16 | [MIT](https://github.com/ioma8/mpc-sample-sdk/blob/9487cbba3648afb29d8e3107e31a7ac930985220/LICENSE), Jakub Kolcar; manifest declares MIT | Current direct-dependency candidate. Relative to the physically fingerprinted v0.6.0 source, it moves image-base publication after fingerprint success, tightens UI-thread repaint safety, fixes lighting retry behavior and external MIDI classification, and adds slice snapshot/restore APIs. These changes remain source/host evidence until the new revision is physically exercised. |
 | MINIMOD | [`18d41fd805beace4fed623653a250c46a4fa2243`](https://github.com/ioma8/mpc-minimod/tree/18d41fd805beace4fed623653a250c46a4fa2243), dated 2026-11-16 | Rust workspace/crates declare MIT; no repository-root license file was found | Current SDK consumer using SDK 0.7; whole-repository reuse remains ambiguous. |
-| Am MOD | [`6cdc67276f43cd39f64871cb7e36782481244c65`](https://github.com/AlekseyMalykh/am-mod/tree/6cdc67276f43cd39f64871cb7e36782481244c65), dated 2026-11-15 | [MIT](https://github.com/AlekseyMalykh/am-mod/blob/6cdc67276f43cd39f64871cb7e36782481244c65/LICENSE), AM Mod contributors | Comparative reverse-engineering evidence only; no code reuse. |
+| Am MOD | [`6cdc67276f43cd39f64871cb7e36782481244c65`](https://github.com/AlekseyMalykh/am-mod/tree/6cdc67276f43cd39f64871cb7e36782481244c65), dated 2026-11-15 | [MIT](https://github.com/AlekseyMalykh/am-mod/blob/6cdc67276f43cd39f64871cb7e36782481244c65/LICENSE), AM Mod contributors | Primary native-sequencer evidence; M0.4a narrowly adapts the reviewed add/remove command and ABI pattern with notice preserved. |
 
 The current SDK is Rust 2024, version 0.7.1, MSRV 1.97, and depends on `libc`.
 Historical A/B experiments remain pinned to their reviewed v0.6.0 tree; M0.3c

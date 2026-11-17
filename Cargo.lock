@@ -40,12 +40,21 @@ version = "0.1.0"
 name = "neurogenic-device"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "mpc-sample-sdk",
  "neurogenic-core",
 ]
 
 [[package]]
 name = "neurogenic-device-hil"
+version = "0.1.0"
+dependencies = [
+ "mpc-sample-sdk",
+ "neurogenic-device",
+]
+
+[[package]]
+name = "neurogenic-device-native-hil"
 version = "0.1.0"
 dependencies = [
  "mpc-sample-sdk",
