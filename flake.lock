@@ -1,0 +1,95 @@
+{
+  "nodes": {
+    "libremidi": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1768095610,
+        "narHash": "sha256-jX67QQu+hunV32u5np0eAS1Jiu+f3Ik09uYGhSCxRa8=",
+        "owner": "celtera",
+        "repo": "libremidi",
+        "rev": "6e3e8af0d80291fbd1ca10907aa7ceb13491afa9",
+        "type": "github"
+      },
+      "original": {
+        "owner": "celtera",
+        "ref": "v5.4.2",
+        "repo": "libremidi",
+        "type": "github"
+      }
+    },
+    "lua": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1747861947,
+        "narHash": "sha256-6TMsVp2D3WtvnwyhvwodjQH3kvTXz1rSMWwiHazvKys=",
+        "type": "tarball",
+        "url": "https://www.lua.org/ftp/lua-5.4.8.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://www.lua.org/ftp/lua-5.4.8.tar.gz"
+      }
+    },
+    "miniaudio": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1700011380,
+        "narHash": "sha256-EOIykyUXYcdDeTYb/Mf3xgcxEpKS4us213tEFwm5mEI=",
+        "owner": "mackron",
+        "repo": "miniaudio",
+        "rev": "4a5b74bef029b3592c54b6048650ee5f972c1a48",
+        "type": "github"
+      },
+      "original": {
+        "owner": "mackron",
+        "ref": "0.11.21",
+        "repo": "miniaudio",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1794872590,
+        "narHash": "sha256-E+XLAfnC7+bdr4qlEgRv6cdGmiqTU5oeFNKCha7epqQ=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "f68407657ad294471eb4b2e65d193df26edf729f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-26.05",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "libremidi": "libremidi",
+        "lua": "lua",
+        "miniaudio": "miniaudio",
+        "nixpkgs": "nixpkgs",
+        "sol2": "sol2"
+      }
+    },
+    "sol2": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1740509112,
+        "narHash": "sha256-bW6HD9WLOWizli6LnrkFZKxiT8IdN0QESlok+xCFz1w=",
+        "owner": "ThePhD",
+        "repo": "sol2",
+        "rev": "9190880c593dfb018ccf5cc9729ab87739709862",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ThePhD",
+        "ref": "v3.5.0",
+        "repo": "sol2",
+        "type": "github"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}

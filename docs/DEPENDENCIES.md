@@ -1,6 +1,8 @@
 # Dependencies and licenses
 
-Pins live in `cmake/Dependencies.cmake`; downloads are opt-in.
+Pins live in `cmake/Dependencies.cmake`; downloads are opt-in. The Nix flake
+locks the same upstream versions and supplies their source trees directly to
+CMake, so sandboxed package builds do not download during compilation.
 
 | Dependency | Pin | Purpose | License / note |
 |---|---|---|---|
@@ -23,3 +25,9 @@ the adapter layer and must not leak into engine state. This slice enables its
 ALSA sequencer backend when CMake finds the ALSA library and development
 headers (for example Debian/Ubuntu's `libasound2-dev`); absence is handled as
 no available MIDI input rather than an audio-engine failure.
+
+The Nix shell/package supplies `alsa-lib` headers and libraries. miniaudio uses
+its native ALSA backend, while libremidi uses ALSA sequencer; JACK and direct
+PipeWire backends remain disabled and non-mandatory. PipeWire hosts normally
+expose ALSA compatibility endpoints at runtime. Build inputs do not guarantee
+that a host service is running or that `/dev/snd` is accessible.

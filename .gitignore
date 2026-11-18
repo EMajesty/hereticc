@@ -5,6 +5,7 @@
 /.cargo-cache/
 /.cache/
 /target/
+/result
 device/**/build/
 device/**/target/
 *.wav

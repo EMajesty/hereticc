@@ -31,6 +31,8 @@ endif()
 
 add_executable(neurogenic apps/neurogenic.cpp)
 target_link_libraries(neurogenic PRIVATE neurogenic_engine neurogenic_live)
+install(TARGETS neurogenic RUNTIME DESTINATION bin)
+install(FILES examples/generate.lua DESTINATION share/neurogenic/examples)
 
 if(NEUROGENIC_BUILD_TESTS)
   enable_testing()

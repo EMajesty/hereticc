@@ -3,6 +3,11 @@ if(NOT NEUROGENIC_FETCH_DEPENDENCIES)
   return()
 endif()
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  find_package(ALSA REQUIRED)
+  message(STATUS "NEUROGENIC: ALSA development files found; enabling native Linux audio/MIDI backends")
+endif()
+
 # Pins are immutable release tags or commits. Update with license review.
 set(MINIAUDIO_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(MINIAUDIO_BUILD_TESTS OFF CACHE BOOL "" FORCE)

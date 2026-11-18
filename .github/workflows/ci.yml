@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  nix-build-and-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v17
+      - uses: DeterminateSystems/magic-nix-cache-action@v9
+      - name: Check locked flake
+        run: nix flake check --no-update-lock-file --print-build-logs
+      - name: Build package
+        run: nix build --no-update-lock-file --print-build-logs
+      - name: Headless device-enumeration smoke test
+        run: nix run --no-update-lock-file . -- --list-devices
