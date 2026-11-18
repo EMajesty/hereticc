@@ -5,6 +5,7 @@
 #include "neurogenic/midi/input.hpp"
 #include "neurogenic/midi/mapping.hpp"
 #include "neurogenic/scripting/runtime.hpp"
+#include "neurogenic/timeline/io.hpp"
 #include <atomic>
 #include <charconv>
 #include <chrono>
@@ -28,6 +29,7 @@ void usage(){
              "  --audio NAME      select audio output by index or name\n"
              "  --midi NAME       select MIDI input by index or name\n"
              "  --script FILE     Lua action for MIDI note 36\n"
+             "  --timeline FILE   load a NEUROGENIC_TIMELINE version 1 file\n"
              "  --list-devices    enumerate audio and MIDI devices\n"
              "  --headless        explicitly select null audio\n";
 }
@@ -50,7 +52,7 @@ std::uint32_t unsigned_number(std::string_view value,const char* option){
 
 int main(int argc,char** argv){
   try{
-    std::string wav,audio_name,midi_name,script="examples/generate.lua";
+    std::string wav,audio_name,midi_name,script="examples/generate.lua",timeline_file;
     std::vector<std::pair<std::uint32_t,std::filesystem::path>> slot_files;
     std::vector<std::pair<std::uint8_t,std::uint32_t>> note_maps;
     bool list=false,headless=false;
@@ -59,6 +61,7 @@ int main(int argc,char** argv){
       if(arg=="--audio"&&i+1<argc)audio_name=argv[++i];
       else if(arg=="--midi"&&i+1<argc)midi_name=argv[++i];
       else if(arg=="--script"&&i+1<argc)script=argv[++i];
+      else if(arg=="--timeline"&&i+1<argc)timeline_file=argv[++i];
       else if(arg=="--slot"&&i+1<argc){auto [id,path]=assignment(argv[++i],"--slot");slot_files.emplace_back(id,path);}
       else if(arg=="--map"&&i+1<argc){auto [note,id_text]=assignment(argv[++i],"--map");if(note>127)throw std::invalid_argument("--map note must be 0..127");note_maps.emplace_back(static_cast<std::uint8_t>(note),unsigned_number(id_text,"--map"));}
       else if(arg=="--list-devices")list=true;
@@ -92,7 +95,8 @@ int main(int argc,char** argv){
 
     neurogenic::ScriptRuntime lua([&](auto pattern){return engine.queue_pattern(pattern);},[&]{return engine.frame_position();});
     neurogenic::Pattern initial;for(auto step:{0U,4U,8U,12U})initial.steps[step]={true,36,1.0F};initial.revision=1;
-    if(!engine.queue_pattern(initial))throw std::runtime_error("initial pattern queue failed");
+    if(timeline_file.empty()){if(!engine.queue_pattern(initial))throw std::runtime_error("initial pattern queue failed");}
+    else {auto timeline=neurogenic::load_timeline(timeline_file);std::string timeline_error;if(!engine.queue_timeline(timeline,timeline_error))throw std::runtime_error("timeline queue failed: "+timeline_error);}
     mapper.set_note_handler([&](auto note,auto velocity){engine.trigger(note,velocity);});
     mapper.map_button(0,36,"pattern.generate",[&]{std::string error;if(lua.execute_file(script,error))std::cout<<"Lua pattern queued for next bar\n";else std::cerr<<"Lua error: "<<error<<'\n';});
     dispatcher.start();std::string error;
@@ -102,7 +106,7 @@ int main(int argc,char** argv){
     std::cout<<"Playing "<<engine.sample_slot_count()<<" sample slot(s). MIDI note 36 runs "<<script<<". Press Ctrl-C to stop.\n";
     while(running.load())std::this_thread::sleep_for(std::chrono::milliseconds(100));
     audio.stop();midi.close();dispatcher.stop();
-    std::cout<<"Stopped. dropped MIDI="<<mapper.dropped_messages()<<", triggers="<<engine.dropped_triggers()<<", patterns="<<engine.dropped_patterns()<<", missing slots="<<engine.missing_slot_triggers()<<", stolen voices="<<engine.stolen_voices()<<'\n';
+    std::cout<<"Stopped. dropped MIDI="<<mapper.dropped_messages()<<", triggers="<<engine.dropped_triggers()<<", patterns="<<engine.dropped_patterns()<<", timelines="<<engine.dropped_timelines()<<", timeline events="<<engine.dropped_timeline_events()<<", legacy events="<<engine.dropped_legacy_events()<<", transport commands="<<engine.dropped_transport_commands()<<", missing slots="<<engine.missing_slot_triggers()<<", stolen voices="<<engine.stolen_voices()<<'\n';
     return 0;
   }catch(const std::exception& error){std::cerr<<"error: "<<error.what()<<'\n';return 1;}
 }

@@ -3,14 +3,19 @@
 #include <cstdint>
 #include <fstream>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 
 namespace neurogenic {
-AudioEngine::AudioEngine(std::uint32_t rate,std::size_t voice_capacity)
-    :rate_(rate),scheduler_(rate,120.0),timeline_scheduler_(rate),voices_(voice_capacity){
-  if(voice_capacity==0)throw std::invalid_argument("voice capacity must be positive");
+AudioEngine::AudioEngine(std::uint32_t rate,std::size_t voice_capacity,std::size_t event_staging_capacity)
+    :rate_(rate),scheduler_(rate,120.0),timeline_scheduler_(rate),voices_(voice_capacity),legacy_events_(event_staging_capacity),timeline_events_(event_staging_capacity){
+  if(rate==0||voice_capacity==0||event_staging_capacity==0)throw std::invalid_argument("sample rate, voice capacity, and event staging capacity must be positive");
   note_slots_.fill(invalid_sample_slot);note_sample_indices_.fill(std::numeric_limits<std::size_t>::max());
   for(std::size_t i=0;i<default_note_bank_size;++i)note_slots_[36+i]=SampleSlotId{static_cast<std::uint32_t>(i)};
+}
+
+AudioEngine::~AudioEngine(){
+  reclaim_retired_plans();PlaybackPlan* plan{};while(timelines_.pop(plan))delete plan;delete active_timeline_;
 }
 
 void AudioEngine::set_sample(Sample sample){
@@ -55,10 +60,16 @@ bool AudioEngine::queue_pattern(const Pattern& pattern) noexcept {
 }
 
 bool AudioEngine::queue_timeline(const Timeline& timeline,std::string& error){
-  PlaybackPlan plan;if(!compile_timeline(timeline,plan,error))return false;
-  if(!timelines_.push(plan)){dropped_timelines_.fetch_add(1,std::memory_order_relaxed);error="timeline queue is full";return false;}
+  reclaim_retired_plans();auto plan=std::make_unique<PlaybackPlan>();if(!compile_timeline(timeline,*plan,error))return false;
+  if(!timelines_.push(plan.get())){dropped_timelines_.fetch_add(1,std::memory_order_relaxed);error="timeline queue is full";return false;}
+  plan.release();
   error.clear();return true;
 }
+
+void AudioEngine::reclaim_retired_plans() noexcept{PlaybackPlan* plan{};while(retired_timelines_.pop(plan))delete plan;}
+void AudioEngine::play() noexcept{if(!transport_commands_.push(TransportCommand::play))dropped_transport_commands_.fetch_add(1,std::memory_order_relaxed);}
+void AudioEngine::stop() noexcept{if(!transport_commands_.push(TransportCommand::stop))dropped_transport_commands_.fetch_add(1,std::memory_order_relaxed);}
+void AudioEngine::restart() noexcept{if(!transport_commands_.push(TransportCommand::restart))dropped_transport_commands_.fetch_add(1,std::memory_order_relaxed);}
 
 void AudioEngine::start_voice(std::uint8_t note,float velocity,TrackId track,EventId event,bool timeline_owned) noexcept {
   const auto sample_index=note_sample_indices_[note];
@@ -74,12 +85,16 @@ void AudioEngine::start_voice(std::uint8_t note,float velocity,TrackId track,Eve
   voices_[selected]={sample_index,0,velocity,next_voice_age_++,track,event,note,timeline_owned,true};
 }
 
-void AudioEngine::stop_timeline_voice(TrackId track,EventId event) noexcept{
+void AudioEngine::stop_timeline_voice(TrackId track,EventId event,std::uint8_t pitch) noexcept{
   auto selected=voices_.size();
   for(std::size_t i=0;i<voices_.size();++i)if(voices_[i].active&&voices_[i].timeline_owned&&voices_[i].track==track&&voices_[i].event==event&&
       (selected==voices_.size()||voices_[i].age<voices_[selected].age))selected=i;
+  if(selected==voices_.size())for(std::size_t i=0;i<voices_.size();++i)if(voices_[i].active&&voices_[i].timeline_owned&&voices_[i].track==track&&voices_[i].pitch==pitch&&
+      (selected==voices_.size()||voices_[i].age<voices_[selected].age))selected=i;
   if(selected<voices_.size())voices_[selected].active=false;
 }
+
+void AudioEngine::stop_voices(bool timeline_only) noexcept{for(auto& voice:voices_)if(!timeline_only||voice.timeline_owned)voice.active=false;}
 
 void AudioEngine::process(std::span<float> left,std::span<float> right) noexcept {
   processing_started_.store(true,std::memory_order_release);
@@ -88,8 +103,18 @@ void AudioEngine::process(std::span<float> left,std::span<float> right) noexcept
 
   Pattern pattern;
   while(patterns_.pop(pattern))scheduler_.request_pattern(pattern);
-  PlaybackPlan timeline;
-  while(timelines_.pop(timeline))timeline_scheduler_.set_plan(timeline);
+  PlaybackPlan* timeline{};
+  while(timelines_.pop(timeline)){
+    stop_voices(true);
+    if(active_timeline_!=nullptr&&!retired_timelines_.push(active_timeline_))dropped_timelines_.fetch_add(1,std::memory_order_relaxed);
+    active_timeline_=timeline;timeline_scheduler_.set_plan(timeline);scheduler_.set_tempo(timeline->transport.microseconds_per_quarter);
+  }
+  TransportCommand command;
+  while(transport_commands_.pop(command)){
+    if(command==TransportCommand::play)transport_playing_=true;
+    else if(command==TransportCommand::stop){transport_playing_=false;stop_voices();}
+    else {transport_frame_=0;transport_playing_=true;stop_voices();}
+  }
 
   Trigger incoming;
   while(pending_trigger_count_<pending_triggers_.size()&&triggers_.pop(incoming))
@@ -103,23 +128,21 @@ void AudioEngine::process(std::span<float> left,std::span<float> right) noexcept
     pending_triggers_[j]=value;
   }
 
-  std::array<ScheduledEvent,64> scheduled{};
-  const auto scheduled_count=scheduler_.schedule(static_cast<std::uint32_t>(frames),scheduled);
-  std::array<TimelineScheduledEvent,128> timeline_events{};
-  const auto timeline_count=timeline_scheduler_.schedule(static_cast<std::uint32_t>(frames),timeline_events);
+  const auto scheduled_count=transport_playing_?scheduler_.schedule(transport_frame_,static_cast<std::uint32_t>(frames),legacy_events_):0;
+  const auto timeline_count=transport_playing_?timeline_scheduler_.schedule(transport_frame_,static_cast<std::uint32_t>(frames),timeline_events_):0;
   dropped_timeline_events_.store(timeline_scheduler_.dropped_events(),std::memory_order_release);
-  published_frame_.store(scheduler_.frame_position(),std::memory_order_release);
+  dropped_legacy_events_.store(scheduler_.dropped_events(),std::memory_order_release);
   std::size_t external_index{},scheduled_index{},timeline_index{};
 
   for(std::size_t frame=0;frame<frames;++frame){
     while(external_index<pending_trigger_count_&&pending_triggers_[external_index].frame_offset==frame)
       {const auto& event=pending_triggers_[external_index++];start_voice(event.note,event.velocity);}
-    while(scheduled_index<scheduled_count&&scheduled[scheduled_index].frame==frame)
-      {const auto& event=scheduled[scheduled_index++];start_voice(event.note,event.velocity);}
-    while(timeline_index<timeline_count&&timeline_events[timeline_index].frame==frame){
-      const auto& event=timeline_events[timeline_index++];
+    while(scheduled_index<scheduled_count&&legacy_events_[scheduled_index].frame==frame)
+      {const auto& event=legacy_events_[scheduled_index++];start_voice(event.note,event.velocity);}
+    while(timeline_index<timeline_count&&timeline_events_[timeline_index].frame==frame){
+      const auto& event=timeline_events_[timeline_index++];
       if(event.type==MusicalEventType::note_on)start_voice(event.pitch,event.value,event.track,event.id,true);
-      else if(event.type==MusicalEventType::note_off)stop_timeline_voice(event.track,event.id);
+      else if(event.type==MusicalEventType::note_off)stop_timeline_voice(event.track,event.id,event.pitch);
     }
     for(auto& voice:voices_){
       if(!voice.active)continue;
@@ -138,6 +161,11 @@ void AudioEngine::process(std::span<float> left,std::span<float> right) noexcept
     pending_triggers_[i].frame_offset-=static_cast<std::uint32_t>(frames);
   }
   pending_trigger_count_=remaining;
+  if(transport_playing_){
+    if(frames>std::numeric_limits<std::uint64_t>::max()-transport_frame_){transport_frame_=std::numeric_limits<std::uint64_t>::max();transport_playing_=false;stop_voices();}
+    else transport_frame_+=frames;
+  }
+  published_frame_.store(transport_frame_,std::memory_order_release);published_playing_.store(transport_playing_,std::memory_order_release);
   effect_.process(left.first(frames),right.first(frames));
 }
 

@@ -1,14 +1,14 @@
 # Architecture
 
-The control thread owns files, projects, scripts, mappings, and editable state.
-It compiles edits into bounded pattern snapshots. The audio thread consumes
-only fixed-size events and sample memory prepared in advance.
+The control thread owns files, projects, scripts, mappings, editable state, and
+immutable compiled timeline plans. The audio thread consumes only plan pointers,
+bounded event staging, and sample memory prepared in advance.
 
 ```text
 CLI/UI -> command API -> project / Lua / MIDI mapping
                          | compiled, bounded PlaybackPlan snapshot
                          v
-timeline scheduler -> frame-offset events -> bounded voice pool -> DSP -> backend
+authoritative transport -> scheduler frame range -> bounded voice pool -> DSP -> backend
                                                     \-> offline WAV
 ```
 
@@ -57,11 +57,19 @@ consumer. The callback never executes Lua or MIDI code.
 
 Editable timelines own strings and vectors on the control side. `compile_timeline`
 validates stable identifiers and converts note durations into explicit on/off
-events in a bounded `PlaybackPlan` (32 tracks and 512 compiled events in this
-initial real-time implementation). The control thread is the sole plan-queue
-producer; the audio callback is its sole consumer. The callback schedules into
-fixed storage and drops excess events with a counter. These are real-time
-capacities, not musical-data or UI limits. See [TIMELINE.md](TIMELINE.md).
+events in an immutable, preparation-time-allocated `PlaybackPlan`. There is no
+fixed track or compiled-event count. The control thread is the sole plan-queue
+producer and reclaims plans returned by the audio thread; the callback only
+exchanges pointers. Scheduling uses a configurable preallocated staging buffer
+(512 events by default). Overflow retains the earliest deterministic events and
+increments a counter. See [TIMELINE.md](TIMELINE.md).
+
+`AudioEngine` owns the authoritative transport frame and play state. Both the
+timeline and 16-step compatibility schedulers receive the same frame range and
+tempo; neither owns a clock. Stop freezes position and cleans all voices, play
+resumes, and restart cleans voices and returns to zero. Timeline replacement
+preserves position and cleans timeline-owned voices. Plan destruction and final
+reclamation happen only after the audio device has stopped.
 
 Sample-slot memory and note mappings are installed before processing begins and remain immutable for
 the lifetime of live processing. Attempts to replace it after the first audio

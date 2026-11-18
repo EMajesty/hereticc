@@ -62,5 +62,16 @@ mute, loop boundaries, tempo conversion, long-run variable-buffer timing,
 duration note-off, sample slots, and legacy patterns. Parameter destinations,
 tempo maps, arrangement, recording, and quantized timeline-plan replacement
 remain future work.
+
+Task 008 makes the audio engine transport authoritative for both the general
+timeline and legacy Lua workflow. Host tests cover stop/play/restart, voice
+cleanup, active-note replacement, shared tempo/position, durations crossing
+loops, overlapping note identity, staging overload, scalable compiled plans,
+short loops, large-position saturation, and versioned file round trips.
+`NEUROGENIC_TIMELINE 1`, `--timeline`, and a three-track example provide
+application playback without C++. Compiled plans no longer impose 32-track or
+512-event musical limits; callback staging remains configurable and observable.
+MIDI clock, tempo maps, beat-continuous live tempo changes, and physical-device
+playback verification remain future work.
 Latency under load, hotplug, ARM64, and controller-specific behavior also remain
 untested.

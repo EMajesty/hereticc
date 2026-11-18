@@ -53,6 +53,8 @@ ctest --preset dev
   --script examples/generate.lua path/to/48000Hz-pcm16.wav
 ./build/dev/neurogenic --slot 0=kick.wav --slot 1=snare.wav \
   --slot 2=hihat.wav --map 52=2
+./build/dev/neurogenic --timeline examples/multitrack.ngt \
+  --slot 0=kick.wav --slot 1=snare.wav --slot 2=hihat.wav
 ```
 
 Omit `--audio` or `--midi` to select the first/default device. Selectors are
@@ -69,10 +71,22 @@ the initial bank policy maps notes 36–51 to slots 0–15. Use repeatable
 `--map NOTE=ID` assignments for slots or controller layouts outside that bank.
 All files must currently be non-empty mono or stereo PCM16 WAV at 48 kHz.
 
+`--timeline` loads the versioned, line-oriented `NEUROGENIC_TIMELINE 1`
+interchange format before audio starts. It carries transport metadata, stable
+track/event IDs, loop lengths, mute state, notes, velocities, and durations.
+Sample paths and routing remain separate `--slot`/`--map` configuration. See
+[`examples/multitrack.ngt`](examples/multitrack.ngt) and the
+[timeline reference](docs/TIMELINE.md).
+
 The engine provides 32 polyphonic sample voices shared across all slots by default. Embedders may set a
 different fixed capacity when constructing `AudioEngine`; exhaustion steals the
 oldest active voice deterministically. MIDI transport callbacks only enqueue
 messages. Controller actions and Lua run on a dedicated control thread.
+
+One transport frame position drives both general timelines and legacy Lua
+patterns. Stop freezes scheduled time and cleans voices, play resumes, and
+restart cleans voices and returns to musical position zero. Tracks loop at
+their own pattern lengths.
 
 `--headless` explicitly selects miniaudio's null backend. It is intended for
 CI and diagnostic enumeration without an audio device, not normal playback.

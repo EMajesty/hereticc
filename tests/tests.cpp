@@ -5,6 +5,7 @@
 #include "neurogenic/sequencer/pattern_adapter.hpp"
 #include "neurogenic/scripting/runtime.hpp"
 #include "neurogenic/timeline/playback.hpp"
+#include "neurogenic/timeline/io.hpp"
 #include <array>
 #include <atomic>
 #include <cmath>
@@ -12,6 +13,7 @@
 #include <fstream>
 #include <future>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -31,16 +33,16 @@ void test_queue_and_scheduler(){
   check(!queue.push(4),"queue overflow");int item{};check(queue.pop(item)&&item==1,"queue order");
 
   Scheduler scheduler(1600,60);Pattern first;first.steps[0]={true,42,1};first.steps[4]={true,42,1};first.revision=1;
-  scheduler.request_pattern(first);std::array<ScheduledEvent,64> events{};auto count=scheduler.schedule(1601,events);
+  scheduler.request_pattern(first);std::array<ScheduledEvent,64> events{};auto count=scheduler.schedule(0,1601,events);
   check(count==2&&events[0].frame==0&&events[1].frame==1600,"sample offsets");
   Pattern second;second.steps[4]={true,43,1};second.revision=2;scheduler.request_pattern(second);
-  scheduler.schedule(4799,events);check(scheduler.active_pattern().revision==1,"early pattern swap");
-  scheduler.schedule(2,events);check(scheduler.active_pattern().revision==2,"bar pattern swap");
+  scheduler.schedule(1601,4799,events);check(scheduler.active_pattern().revision==1,"early pattern swap");
+  scheduler.schedule(6400,2,events);check(scheduler.active_pattern().revision==2,"bar pattern swap");
 
   Scheduler drift(44100,123.0);Pattern every;for(auto& step:every.steps)step.enabled=true;drift.request_pattern(every);
   std::uint64_t absolute{},seen{};
   for(std::size_t call=0;seen<5000;++call){
-    const auto frames=static_cast<std::uint32_t>((call*7919)%997+1);auto n=drift.schedule(frames,events);
+    const auto frames=static_cast<std::uint32_t>((call*7919)%997+1);auto n=drift.schedule(absolute,frames,events);
     for(std::size_t i=0;i<n;++i){
       const auto expected=static_cast<std::uint64_t>(std::llround(static_cast<long double>(seen)*44100.0L*60.0L/123.0L/4.0L));
       check(absolute+events[i].frame==expected,"scheduler drift");++seen;
@@ -146,19 +148,19 @@ void test_timeline_and_tracks(){
   timeline.tracks={second,first};
 
   PlaybackPlan plan;std::string error;check(compile_timeline(timeline,plan,error),"timeline compilation");
-  check(plan.track_count==2&&plan.event_count==6,"compiled timeline dimensions");
-  TimelineScheduler scheduler(48000);scheduler.set_plan(plan);
+  check(plan.tracks.size()==2&&plan.events.size()==6,"compiled timeline dimensions");
+  TimelineScheduler scheduler(48000);scheduler.set_plan(&plan);
   check(scheduler.frame_at_tick(960)==24000,"tempo-to-frame conversion");
-  std::array<TimelineScheduledEvent,32> events{};auto count=scheduler.schedule(1,events);
+  std::array<TimelineScheduledEvent,32> events{};auto count=scheduler.schedule(0,1,events);
   check(count==3,"simultaneous multi-track events");
   check(events[0].track==10&&events[0].id==1&&events[1].id==2&&events[2].track==20,"deterministic event ordering");
 
   Timeline variable;Track odd;odd.id=1;odd.pattern.length=721;
   odd.pattern.events.push_back({1,0,MusicalEventType::note_on,36,1,0,0,0});variable.tracks.push_back(odd);
-  check(compile_timeline(variable,plan,error),"arbitrary pattern length compilation");scheduler=TimelineScheduler(44100);scheduler.set_plan(plan);
+  check(compile_timeline(variable,plan,error),"arbitrary pattern length compilation");scheduler=TimelineScheduler(44100);scheduler.set_plan(&plan);
   std::uint64_t absolute{};std::vector<std::uint64_t> observed;
   for(std::size_t call=0;observed.size()<20;++call){
-    const auto frames=static_cast<std::uint32_t>((call*37)%509+1);count=scheduler.schedule(frames,events);
+    const auto frames=static_cast<std::uint32_t>((call*37)%509+1);count=scheduler.schedule(absolute,frames,events);
     for(std::size_t i=0;i<count;++i)observed.push_back(absolute+events[i].frame);
     absolute+=frames;
   }
@@ -168,19 +170,19 @@ void test_timeline_and_tracks(){
   }
 
   Timeline muted=variable;muted.tracks[0].muted=true;check(compile_timeline(muted,plan,error),"muted timeline compilation");
-  scheduler=TimelineScheduler(48000);scheduler.set_plan(plan);check(scheduler.schedule(48000,events)==0,"muted track produced events");
+  scheduler=TimelineScheduler(48000);scheduler.set_plan(&plan);check(scheduler.schedule(0,48000,events)==0,"muted track produced events");
 
   Timeline boundary;Track looping;looping.id=9;looping.pattern.length=960;
   looping.pattern.events={{1,959,MusicalEventType::note_on,36,1,0,0,0},{2,0,MusicalEventType::note_on,37,1,0,0,0}};
   boundary.tracks.push_back(looping);check(compile_timeline(boundary,plan,error),"loop boundary compilation");
-  scheduler=TimelineScheduler(48000);scheduler.set_plan(plan);count=scheduler.schedule(24001,events);
+  scheduler=TimelineScheduler(48000);scheduler.set_plan(&plan);count=scheduler.schedule(0,24001,events);
   check(count==3&&events[0].pitch==37&&events[1].pitch==36&&events[2].pitch==37&&events[2].frame==24000,"loop boundary scheduling");
 
   Timeline invalid=boundary;invalid.tracks[0].pattern.events[1].id=1;
   check(!compile_timeline(invalid,plan,error)&&!error.empty(),"duplicate event identifier accepted");
-  Timeline too_many;Track crowded;crowded.id=1;crowded.pattern.length=max_realtime_events+2;
-  for(std::size_t i=0;i<=max_realtime_events;++i)crowded.pattern.events.push_back({i+1,static_cast<MusicalTick>(i),MusicalEventType::note_on,36,1,0,0,0});
-  too_many.tracks.push_back(std::move(crowded));check(!compile_timeline(too_many,plan,error),"real-time event capacity not enforced");
+  Timeline scalable;Track crowded;crowded.id=1;crowded.pattern.length=2000;
+  for(std::size_t i=0;i<1000;++i)crowded.pattern.events.push_back({i+1,static_cast<MusicalTick>(i),MusicalEventType::note_on,36,1,0,0,0});
+  scalable.tracks.push_back(std::move(crowded));check(compile_timeline(scalable,plan,error)&&plan.events.size()==1000,"preparation-time timeline scaling");
 
   AudioEngine plan_queue;Timeline one;Track one_track;one_track.id=1;one_track.pattern.length=960;
   one_track.pattern.events.push_back({1,0,MusicalEventType::note_on,36,1,0,0,0});one.tracks.push_back(one_track);
@@ -209,6 +211,56 @@ void test_timeline_and_tracks(){
   auto adapted=adapt_step_pattern(legacy,42);check(adapted.tracks.size()==1&&adapted.tracks[0].id==42,"legacy pattern track adapter");
   check(adapted.tracks[0].pattern.length==ticks_per_quarter*4&&adapted.tracks[0].pattern.events[0].tick==ticks_per_quarter*3/4,"legacy pattern timing adapter");
   check(compile_timeline(adapted,plan,error),"legacy pattern did not compile");
+}
+
+void test_transport_integration_and_timeline_io(){
+  using namespace neurogenic;std::string error;
+  Timeline timeline;Track track;track.id=1;track.pattern.length=3840;
+  track.pattern.events.push_back({1,0,MusicalEventType::note,36,1,1920,0,0});timeline.tracks.push_back(track);
+  AudioEngine transport(48000,4);transport.set_sample_slot(SampleSlotId{0},constant_sample(100000));
+  check(transport.queue_timeline(timeline,error),"transport timeline queue");std::array<float,4> left{},right{};
+  transport.process({left.data(),1},{right.data(),1});near(left[0],0.8F,"transport did not initially play");check(transport.frame_position()==1&&transport.playing(),"initial transport state");
+  transport.stop();transport.process({left.data(),2},{right.data(),2});near(left[0],0,"stop did not clean voices");check(transport.frame_position()==1&&!transport.playing(),"stopped transport advanced");
+  transport.play();transport.process({left.data(),1},{right.data(),1});near(left[0],0,"play unexpectedly restarted timeline");check(transport.frame_position()==2&&transport.playing(),"play did not resume");
+  transport.restart();transport.process({left.data(),1},{right.data(),1});near(left[0],0.8F,"restart did not return to tick zero");check(transport.frame_position()==1,"restart frame position");
+  AudioEngine command_overflow;for(int i=0;i<20;++i)command_overflow.play();check(command_overflow.dropped_transport_commands()==5,"transport command overflow counter");
+
+  Timeline replacement;Track muted;muted.id=2;muted.muted=true;muted.pattern.length=960;replacement.tracks.push_back(muted);
+  check(transport.queue_timeline(replacement,error),"replacement queue");transport.process({left.data(),1},{right.data(),1});near(left[0],0,"timeline replacement did not clean active notes");
+
+  Timeline crossing;Track short_loop;short_loop.id=8;short_loop.pattern.length=480;
+  short_loop.pattern.events.push_back({99,0,MusicalEventType::note,36,1,720,0,0});crossing.tracks.push_back(short_loop);
+  PlaybackPlan crossing_plan;check(compile_timeline(crossing,crossing_plan,error),"cross-loop duration compilation");TimelineScheduler crossing_scheduler(48000);crossing_scheduler.set_plan(&crossing_plan);
+  std::array<TimelineScheduledEvent,16> scheduled{};const auto crossing_count=crossing_scheduler.schedule(0,30001,scheduled);
+  check(crossing_count==5&&scheduled[0].type==MusicalEventType::note_on&&scheduled[1].frame==12000&&scheduled[2].type==MusicalEventType::note_off&&scheduled[2].frame==18000,"cross-loop note scheduling");
+  Timeline tiny;Track tiny_track;tiny_track.id=1;tiny_track.pattern.length=1;tiny_track.pattern.events.push_back({1,0,MusicalEventType::note_on,36,1,0,0,0});tiny.tracks.push_back(tiny_track);
+  PlaybackPlan tiny_plan;check(compile_timeline(tiny,tiny_plan,error),"one-tick loop compilation");TimelineScheduler tiny_scheduler(48000);tiny_scheduler.set_plan(&tiny_plan);check(tiny_scheduler.schedule(0,100,scheduled)==4,"one-tick loop scheduling");
+
+  AudioEngine edges(48000,2);edges.set_sample_slot(SampleSlotId{0},constant_sample(100));Timeline edge_timeline;Track edge_track;edge_track.id=5;edge_track.pattern.length=960;
+  edge_track.pattern.events={{1,0,MusicalEventType::note_on,36,1,0,0,0},{2,1,MusicalEventType::note_off,36,0,0,0,0}};edge_timeline.tracks.push_back(edge_track);
+  check(edges.queue_timeline(edge_timeline,error),"explicit note edges queue");std::array<float,26> edge_left{},edge_right{};edges.process(edge_left,edge_right);near(edge_left[0],0.8F,"explicit note-on missing");near(edge_left[25],0,"explicit note-off did not match pitch");
+
+  AudioEngine overflow(48000,4,2);overflow.set_sample_slot(SampleSlotId{0},constant_sample(2));Timeline burst;Track burst_track;burst_track.id=1;burst_track.pattern.length=960;
+  for(std::uint64_t id=1;id<=5;++id)burst_track.pattern.events.push_back({id,0,MusicalEventType::note_on,36,1,0,0,0});burst.tracks.push_back(burst_track);
+  check(overflow.queue_timeline(burst,error),"staging overflow timeline queue");overflow.process(left,right);check(overflow.dropped_timeline_events()==3,"timeline staging overflow counter");
+
+  AudioEngine shared(48000,8);shared.set_sample_slot(SampleSlotId{0},constant_sample(2,0.25F));shared.set_sample_slot(SampleSlotId{1},constant_sample(2,0.5F));
+  Timeline slow;slow.transport.microseconds_per_quarter=1'000'000;Track slow_track;slow_track.id=1;slow_track.pattern.length=3840;slow_track.pattern.events.push_back({1,960,MusicalEventType::note_on,37,1,0,0,0});slow.tracks.push_back(slow_track);
+  Pattern legacy;legacy.steps[4]={true,36,1};legacy.revision=1;check(shared.queue_pattern(legacy)&&shared.queue_timeline(slow,error),"shared transport setup");
+  std::vector<float> before_left(48000),before_right(48000);shared.process(before_left,before_right);near(before_left.back(),0,"shared transport events arrived early");
+  shared.process({left.data(),1},{right.data(),1});near(left[0],0.6F,"legacy and timeline workflows do not share tempo/position");
+
+  AudioEngine tempo_change(48000,2);tempo_change.set_sample_slot(SampleSlotId{0},constant_sample(8));Timeline empty;Track empty_track;empty_track.id=1;empty_track.pattern.length=960;empty.tracks.push_back(empty_track);check(tempo_change.queue_timeline(empty,error),"initial tempo plan");
+  std::vector<float> advance_left(12000),advance_right(12000);tempo_change.process(advance_left,advance_right);Timeline changed;changed.transport.microseconds_per_quarter=1'000'000;Track changed_track;changed_track.id=1;changed_track.pattern.length=960;changed_track.pattern.events.push_back({1,240,MusicalEventType::note_on,36,1,0,0,0});changed.tracks.push_back(changed_track);
+  check(tempo_change.queue_timeline(changed,error),"tempo transition plan");tempo_change.process({left.data(),1},{right.data(),1});near(left[0],0.8F,"tempo transition did not use authoritative position");
+
+  Timeline large;Track large_track;large_track.id=1;large_track.pattern.length=std::numeric_limits<MusicalTick>::max();large_track.pattern.events.push_back({1,std::numeric_limits<MusicalTick>::max()-1,MusicalEventType::note_on,36,1,0,0,0});large.tracks.push_back(large_track);
+  PlaybackPlan large_plan;check(compile_timeline(large,large_plan,error),"large-position compilation");TimelineScheduler large_scheduler(192000);large_scheduler.set_plan(&large_plan);check(large_scheduler.frame_at_tick(std::numeric_limits<MusicalTick>::max()-1)==std::numeric_limits<std::uint64_t>::max(),"large position did not saturate safely");
+
+  const auto path=std::filesystem::temp_directory_path()/"neurogenic-timeline-test.ngt";save_timeline(timeline,path);auto loaded=load_timeline(path);std::filesystem::remove(path);
+  check(loaded.tracks.size()==1&&loaded.tracks[0].pattern.events[0].duration==1920&&loaded.tracks[0].id==1,"timeline file round trip");
+  const auto invalid_path=std::filesystem::temp_directory_path()/"neurogenic-invalid-timeline.ngt";{std::ofstream invalid(invalid_path);invalid<<"NEUROGENIC_TIMELINE 99\n";}
+  bool rejected=false;try{(void)load_timeline(invalid_path);}catch(const std::runtime_error&){rejected=true;}std::filesystem::remove(invalid_path);check(rejected,"unsupported timeline version accepted");
 }
 
 void test_midi_control_dispatch(){
@@ -254,6 +306,6 @@ void test_lua_and_offline(){
 }
 
 int main(){
-  try{test_queue_and_scheduler();test_polyphony_and_events();test_sample_slots();test_timeline_and_tracks();test_midi_control_dispatch();test_lua_and_offline();std::cout<<"all tests passed\n";return 0;}
+  try{test_queue_and_scheduler();test_polyphony_and_events();test_sample_slots();test_timeline_and_tracks();test_transport_integration_and_timeline_io();test_midi_control_dispatch();test_lua_and_offline();std::cout<<"all tests passed\n";return 0;}
   catch(const std::exception& error){std::cerr<<"TEST FAILURE: "<<error.what()<<'\n';return 1;}
 }
