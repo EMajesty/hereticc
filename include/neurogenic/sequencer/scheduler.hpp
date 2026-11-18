@@ -14,8 +14,11 @@ public:
   [[nodiscard]] std::uint64_t frame_position() const noexcept { return frame_position_; }
   [[nodiscard]] const Pattern& active_pattern() const noexcept { return active_; }
 private:
-  std::uint64_t frames_per_step_{};
+  [[nodiscard]] std::uint64_t step_frame(std::uint64_t step) const noexcept;
+  std::uint64_t step_numerator_{};
+  std::uint64_t step_denominator_{};
   std::uint64_t frame_position_{};
+  std::uint64_t next_step_{};
   Pattern active_{};
   Pattern pending_{};
   bool has_pending_{};

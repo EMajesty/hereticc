@@ -11,7 +11,15 @@ FetchContent_Declare(miniaudio GIT_REPOSITORY https://github.com/mackron/miniaud
 
 FetchContent_Declare(lua URL https://www.lua.org/ftp/lua-5.4.8.tar.gz URL_HASH SHA256=4f18ddae154e793e46eeab727c59ef1c0c0c2b744e7b94219710d76f530629ae DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 FetchContent_Declare(sol2 GIT_REPOSITORY https://github.com/ThePhD/sol2.git GIT_TAG v3.5.0 GIT_SHALLOW TRUE)
-FetchContent_MakeAvailable(miniaudio lua sol2)
+set(LIBREMIDI_NO_JACK ON CACHE BOOL "" FORCE)
+set(LIBREMIDI_NO_PIPEWIRE ON CACHE BOOL "" FORCE)
+set(LIBREMIDI_NO_NETWORK ON CACHE BOOL "" FORCE)
+set(LIBREMIDI_NO_KEYBOARD ON CACHE BOOL "" FORCE)
+set(LIBREMIDI_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(LIBREMIDI_TESTS OFF CACHE BOOL "" FORCE)
+set(LIBREMIDI_SLIM_MESSAGE 32 CACHE STRING "" FORCE)
+FetchContent_Declare(libremidi GIT_REPOSITORY https://github.com/celtera/libremidi.git GIT_TAG v5.4.2 GIT_SHALLOW TRUE)
+FetchContent_MakeAvailable(miniaudio lua sol2 libremidi)
 
 add_library(neurogenic_miniaudio STATIC "${CMAKE_CURRENT_LIST_DIR}/../src/audio/miniaudio_impl.c")
 target_include_directories(neurogenic_miniaudio PUBLIC "${miniaudio_SOURCE_DIR}")
@@ -27,7 +35,4 @@ target_include_directories(lua_static PUBLIC "${lua_SOURCE_DIR}/src")
 target_compile_definitions(lua_static PRIVATE LUA_USE_LINUX)
 target_link_libraries(lua_static PRIVATE ${CMAKE_DL_LIBS} m)
 
-# libremidi is pinned and reviewed, but its platform backends are deliberately
-# enabled in a follow-up integration target once the desired Linux API is chosen.
-set(NEUROGENIC_LIBREMIDI_REV "v5.4.2" CACHE STRING "Reviewed libremidi revision")
 set(NEUROGENIC_AIRWINDOWS_REV "master-2026-11-review-required" CACHE STRING "Airwindows provenance marker")

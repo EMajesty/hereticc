@@ -14,14 +14,15 @@ musical scheduler -> frame-offset events -> sample voice -> DSP -> backend
 
 - `core`: stable command identifiers and application-domain boundary.
 - `sequencer`: integer frame clock, deterministic ordering, next-bar swaps.
-- `audio`: prepared sample voices, offline renderer, future backend interface.
-- `midi`: timestamped messages and stable action mappings; simulated input is
-  always available.
-- `scripting`: versioned `neurogenic.v1` API boundary. The fallback parser lets
-  host tests run without Lua; the native sol2 binding remains to be completed.
+- `audio`: prepared sample voices, miniaudio playback adapter, and offline renderer.
+- `midi`: timestamped messages, stable action mappings, simulated input, and a
+  libremidi adapter. MIDI timing does not drive the musical clock.
+- `scripting`: genuine Lua 5.4/sol2 `neurogenic.v1` API on a non-audio thread.
 - `dsp`: allocation-free effect interface and first gain stage.
 - `project`: deliberately tiny versioned format; not a promised final schema.
 
 No callback operation performs I/O, locks, allocation, logging, or Lua work.
-The current single trigger mailbox is bounded but can coalesce triggers; a
-fixed-capacity SPSC command queue is the next real-time hardening step.
+Trigger and pattern snapshots cross into audio through bounded SPSC queues.
+Overflow drops the newest item and increments an atomic diagnostic counter.
+The audio callback drains pattern snapshots, consumes trigger commands, and
+schedules events into fixed stack storage. It never executes Lua or MIDI code.

@@ -17,12 +17,20 @@ target_include_directories(neurogenic_engine PUBLIC include)
 target_compile_options(neurogenic_engine PRIVATE -Wall -Wextra -Wpedantic)
 
 if(NEUROGENIC_FETCH_DEPENDENCIES)
-  target_compile_definitions(neurogenic_engine PRIVATE NEUROGENIC_HAS_MINIAUDIO NEUROGENIC_HAS_LUA)
+  target_compile_definitions(neurogenic_engine PRIVATE NEUROGENIC_HAS_MINIAUDIO PUBLIC NEUROGENIC_HAS_LUA)
   target_link_libraries(neurogenic_engine PRIVATE neurogenic_miniaudio sol2::sol2 lua_static)
 endif()
 
+add_library(neurogenic_live src/audio/device.cpp src/midi/input.cpp)
+target_include_directories(neurogenic_live PUBLIC include)
+target_link_libraries(neurogenic_live PUBLIC neurogenic_engine)
+if(NEUROGENIC_FETCH_DEPENDENCIES)
+  target_compile_definitions(neurogenic_live PRIVATE NEUROGENIC_HAS_MINIAUDIO NEUROGENIC_HAS_LIBREMIDI)
+  target_link_libraries(neurogenic_live PRIVATE neurogenic_miniaudio libremidi)
+endif()
+
 add_executable(neurogenic apps/neurogenic.cpp)
-target_link_libraries(neurogenic PRIVATE neurogenic_engine)
+target_link_libraries(neurogenic PRIVATE neurogenic_engine neurogenic_live)
 
 if(NEUROGENIC_BUILD_TESTS)
   enable_testing()
