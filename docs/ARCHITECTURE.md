@@ -2,15 +2,25 @@
 
 ## Status and recommendation
 
-The device architecture remains proposed. M0.2a implements the hardware-independent `neurogenic-core` model, validator, scheduler, typed parameter representation, and bounded versioned codec, plus a separate host-only `neurogenic-host` semantic event consumer. M0.3a adds only stock-engine/UI research and interface/experiment documentation. There is no device adapter, voice adapter, effects engine, audio processing, UI renderer, MIDI backend, or deployment code.
+M0.2a implements the hardware-independent `neurogenic-core` subset. Subsequent
+milestones physically validated SDK UI/input integration and firmware-1.3.0.12
+native stock-sequence insertion, observation, exact removal, and audible stock
+playback. There is still no production playback-window materializer, MIDI
+backend, effects engine, or final project format.
 
-Start with **C: a separate host-testable sequencer core**, then integrate through **A: `mpc-sample-sdk`** if a focused device spike validates the required contracts. Do not fork or adapt a complete existing mod at this stage.
+The M0.6 decision is a hybrid with one source of truth: NEUROGENIC owns musical
+state and higher-level scheduling; a bounded adapter materializes audio events
+into disposable stock sequence data so the stock transport/audio engine plays
+them; a later NEUROGENIC MIDI backend consumes the same timeline. See
+[M0.6 playback architecture](M0-6-PLAYBACK-ARCHITECTURE.md).
 
 Why:
 
 - Sequencer correctness—event ordering, polymeter, transitions, locks, and persistence—can be specified and tested without undocumented firmware state.
 - [`mpc-sample-sdk`](https://github.com/ioma8/mpc-sample-sdk) is Rust/MIT, checks firmware fingerprints, exposes typed input/drawing/sample/slice/audio/lighting access, and supports reversible SD deployment.
-- Its public surface does not yet prove a sample-accurate stock-engine voice-trigger API or safe coexistence with the stock sequencer. Coupling the musical model to those interfaces now would turn unknown firmware behavior into core design constraints.
+- Its public surface does not prove a sample-accurate direct stock-engine voice
+  trigger. The verified stock-sequence command path avoids making that unknown
+  call the primary scheduler boundary.
 - Am MOD demonstrates deep stock-app sequencing edits, but its patch set is broad, firmware-specific, and much harder to isolate. MINIMOD is a useful SDK example but is a feature collection rather than a sequencer foundation. Sample Lab and MPCTRACKER replace the stock application and therefore conflict with the preservation goal.
 
 ## Component boundaries
@@ -22,10 +32,10 @@ control/UI/MIDI input
 device adapter  <---->  project adapter / persistence
         |
         v
-sequencer core -----> scheduled semantic events -----> voice adapter
+sequencer core -----> scheduled semantic events -----> playback adapters
         ^                                                   |
         |                                                   v
- transport clock                                  stock engine or fallback
+ transport clock                              stock sequence cache / MIDI
         |
         +------ control events ------> effects control plane
                                              |
@@ -89,9 +99,14 @@ Firmware pointers, offsets, unsafe calls, and thread-affinity rules stay inside 
 
 The future contract is specified in [Device adapter contract](ADAPTER.md). In particular, tick-to-frame conversion belongs at the transport/adapter boundary; it must use checked rational or fixed-point arithmetic and must not change semantic event ordering.
 
-### Voice adapter
+### Audio playback materializer
 
-The key unresolved boundary. Preferred behavior is to trigger and control voices through the stock audio engine so stock routing, effects, and stereo I/O remain intact. That capability is **not yet verified** by the reviewed SDK documentation. A separate mixer is not an assumed fallback: it would require an explicit architecture decision because it can bypass stock voice behavior and effects.
+The verified initial boundary is native stock sequence data, not direct voice
+calls. A playback-window compiler emits bounded native-note requests for a
+dedicated disposable stock target. The adapter owns canonical receipts and
+context generations; the stock sequencer schedules voices and preserves stock
+routing/effects. Live window replacement, edit horizon, and batch/Undo behavior
+remain gates. A separate mixer is not an implicit fallback.
 
 ### Effects control plane and audio adapter
 
@@ -123,8 +138,10 @@ A minimal, non-release spike must establish:
 
 1. pad/button/encoder/knob interception and correct forwarding/consumption;
 2. custom paint and full restoration of native pad lighting;
-3. repeated scheduled note-on/note-off through the stock engine, including velocity, polyphony, pitch, sample/slice selection, and effects routing;
-4. a monotonic clock correlated with audio output and measured jitter under UI load;
+3. bounded native event materialization through the stock engine, including
+   velocity, overlap, pad/sample mapping, duration behavior, and effects routing;
+4. stock transport correlation, a measured safe edit-ahead horizon, and timing
+   behavior under UI load;
 5. behavior while the stock transport and sequencer are running;
 6. safe project/sample changes without stale object access;
 7. inert behavior on unsupported firmware and stock boot after SD removal.
@@ -132,7 +149,10 @@ A minimal, non-release spike must establish:
 9. whether sixteen isolated stereo track paths and two feedback-safe send returns exist or must be custom-built;
 10. stock effect creation, real-time processing, parameter, tail, latency, and destruction contracts.
 
-If item 3 cannot be achieved safely, reconsider the preservation requirement and compare a replacement application separately. Do not silently mix the two architectures.
+If bounded materialization cannot be made safe, compare whole-sequence
+double-buffering with a separately validated direct-voice contract. A replacement
+application requires an explicit architecture decision; it is not an automatic
+fallback.
 
 ## Principal risks
 

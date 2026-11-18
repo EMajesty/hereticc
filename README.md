@@ -4,23 +4,23 @@
   <img src="assets/images/vibeslop.png" alt="Absolute vibeslop" width="512">
 </p>
 
-NEUROGENIC is an open-source custom firmware extension for the Akai MPC Sample. It aims to add a 16-track polyphonic sequencer, independent track patterns, scenes, song arrangements, parameter locks, tracker-style commands, non-destructive slicing, performance controls, and MIDI integration while preserving the stock sampling workflow and hardware experience wherever practical.
+NEUROGENIC is an open-source custom firmware extension for the Akai MPC Sample. It aims to add an independently owned sequencer with 16 audio and 16 MIDI tracks initially, extensible logical track identities, independent patterns, scenes, song arrangements, parameter locks, tracker-style editing, non-destructive slicing, performance controls, and MIDI integration while preserving the stock sampling workflow and hardware experience wherever practical.
 
 ## Status
 
-NEUROGENIC is in **M0: guarded native-sequencer integration**. The M0.2/M0.2a host sequencer foundation is complete, and M0.3c's SDK v0.7.1 page/input prototype was physically validated on one MPC Sample running firmware 1.3.0.12. M0.3e restores that stable editor model. M0.4e physically verifies native insertion, unique observation, exact removal, absence, audible stock-engine playback, and stock restoration. M0.5c physically validates the Step Edit replacement and direct native grid editing; M0.5d is the host/QEMU-tested DATA and full-redraw correction awaiting its guarded device run. The B1 diagnostic models remain separate and B1 hook testing is unauthorized.
+NEUROGENIC is in **M0: guarded native-sequencer integration**. The M0.2/M0.2a host sequencer foundation is complete, and M0.3c's SDK v0.7.1 page/input prototype was physically validated on one MPC Sample running firmware 1.3.0.12. M0.4e physically verifies native insertion, unique observation, exact removal, absence, audible stock-engine playback, and stock restoration. M0.5c physically validates the Step Edit replacement and direct native grid editing. M0.6 selects a NEUROGENIC-owned timeline with bounded native stock-sequence materialization for audio and a later transport-correlated MIDI backend; live playback-window replacement remains unverified. The B1 diagnostic models remain separate and B1 hook testing is unauthorized.
 
 Project website: [neurogeni.cc](https://neurogeni.cc). Source repository: [EMajesty/neurogenic](https://github.com/EMajesty/neurogenic).
 
 NEUROGENIC was previously developed under the name HERETICC. Historical experiment artifacts retain their original identifiers for traceability.
 
-The initial technical direction is:
+The current technical direction is:
 
 1. build a deterministic, device-independent Rust sequencer core with host-side tests;
-2. validate a narrow integration spike against [`mpc-sample-sdk`](https://github.com/ioma8/mpc-sample-sdk) on the supported firmware;
-3. choose the final stock-engine integration only after measuring event timing, trigger control, persistence, and coexistence with the stock sequencer.
+2. compile bounded audio event windows into disposable native stock sequence data so the stock transport, sampler, routing, and effects remain in use;
+3. schedule MIDI and higher-level scenes/songs from the same NEUROGENIC timeline after transport correlation is measured.
 
-This is approach **C first**, with **A as the leading integration candidate**. The Rust workspace has no third-party crate dependencies. See [Architecture](docs/ARCHITECTURE.md) and [Research](docs/RESEARCH.md).
+This is a hybrid with one musical source of truth, not a mirrored stock project. Direct firmware voice calls remain a targeted fallback, not the primary scheduler. The Rust workspace has no third-party crate dependencies. See [M0.6 playback architecture](docs/M0-6-PLAYBACK-ARCHITECTURE.md), [Architecture](docs/ARCHITECTURE.md), and [Research](docs/RESEARCH.md).
 
 ## Host development
 
@@ -45,12 +45,12 @@ The core currently implements integer musical time, validated sixteen-track proj
 
 ## Design goals
 
-- Sixteen independent polyphonic tracks, corresponding to the sixteen pads.
-- A pad-bound default sound plus freely assignable sample and slice events.
+- Sixteen audio and sixteen MIDI tracks initially, with extensible logical identities.
+- Tracks independent of pads; one audio track may contain a complete drum-kit performance.
 - Independent track patterns, lengths, timing, and polymetric playback.
 - Scenes that reference track patterns; songs that arrange scenes.
 - Quantized transitions, parameter locks, retriggers, pitch slides, and sample offsets.
-- Grid and tracker editing over one event model.
+- A vertically scrolling tracker editor with fixed selectable row resolution, expanding note columns, exact timestamps, and non-destructive resolution changes.
 - Non-destructive slicing and live slice capture.
 - A logical mixer with track inserts, shared sends, master inserts, performance effects, macros, temporary track overrides, and MIDI control.
 - Reversible SD-card deployment, with no partition or firmware flashing.
@@ -75,6 +75,7 @@ The core currently implements integer musical time, validated sixteen-track proj
 - [M0.5a playable native grid](docs/M0-5A-PLAYABLE-NATIVE-GRID.md) — Step Edit overlay and first physical acceptance procedure
 - [M0.5c Step Edit presentation](docs/M0-5C-STEP-EDIT-PRESENTATION.md) — automatic grid presentation and guarded physical test
 - [M0.5d DATA and redraw](docs/M0-5D-DATA-AND-REDRAW.md) — encoder normalization and complete presentation redraw candidate
+- [M0.6 playback architecture](docs/M0-6-PLAYBACK-ARCHITECTURE.md) — independent sequencer ownership and stock-engine playback decision
 - [Roadmap](docs/ROADMAP.md) — milestones and acceptance criteria
 - [Safety](docs/SAFETY.md) — development, deployment, and recovery rules
 - [Device adapter contract](docs/ADAPTER.md) — future clock, voice, capacity, and recovery boundary

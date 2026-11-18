@@ -2,20 +2,50 @@
 
 ## Status
 
-This is the agreed musical model. M0.2a implements a minimal host-testable subset: sixteen tracks, reusable independent patterns, scenes, note/parameter events, deterministic scheduling, overlapping voices, one scene-transition policy, validation, a bounded versioned binary round trip, and a host event-consumer trace. The remaining behavior is design-only. Numeric musical limits other than sixteen tracks remain provisional until tests and device measurements justify them.
+M0.2a implements a minimal host-testable subset: sixteen pad-shaped tracks,
+reusable independent patterns, scenes, note/parameter events, deterministic
+scheduling, overlapping voices, one scene-transition policy, validation, a
+bounded versioned binary round trip, and a host event-consumer trace. M0.6
+supersedes the old product assumption that sixteen pads are the complete track
+model. The implemented format-v1 subset remains unchanged; the requirements
+below guide an explicit future format-v2 migration. See
+[M0.6 playback architecture](M0-6-PLAYBACK-ARCHITECTURE.md).
+
+## Product requirements agreed in M0.6
+
+- NEUROGENIC owns tracks, patterns, scenes, chains, songs, and arrangement;
+  stock sequence-format compatibility is not required.
+- The initial target is 16 audio and 16 MIDI tracks with extensible stable
+  identities. Tracks are not pads, and one audio track may contain a complete
+  drum-kit performance.
+- The primary editor is vertically scrolling and tracker-inspired. It uses a
+  selectable fixed row resolution and horizontally expanding note columns, with
+  one note per row per note column. It does not insert subdivision rows.
+- Each note has its own velocity, duration, and microtiming. Raw/unquantized
+  recording is a required goal. Display-resolution changes do not quantize or
+  destroy events.
+- Entering a note into an occupied cell is an undoable replacement. It does not
+  implicitly become a retrigger.
+- Scenes, pattern chaining, and song arrangement are mandatory. Exact controls,
+  recording-time column allocation, maximum note columns, and tracker effect
+  commands remain open decisions.
 
 ## Model
 
 ### Track
 
-There are sixteen independent polyphonic tracks, corresponding to the sixteen physical pads. A track owns:
+The implemented format-v1 model has sixteen independent polyphonic tracks
+corresponding to physical pads. The product model instead begins with 16 audio
+and 16 MIDI tracks and permits future extension. A logical track owns:
 
-- a default pad-bound sound reference;
+- typed audio or MIDI routing defaults;
 - a set of patterns;
 - track-level defaults and performance overrides;
 - mute/solo and MIDI routing state.
 
-The physical-pad correspondence is a control and default-sound relationship, not a one-sample restriction. Events may select another sample or a slice non-destructively.
+Physical pads are controls and possible sound targets, never track identities.
+An audio track may address multiple pads/samples/slices; a MIDI track owns an
+explicit output route. Events store logical targets, never firmware pointers.
 
 ### Pattern
 
@@ -23,9 +53,25 @@ A pattern belongs to exactly one track and has its own length, step/grid setting
 
 Pattern identity is stable and separate from its display name or list position. Editing a pattern affects every scene that references it unless the user explicitly duplicates it.
 
+### Note events and editor projection
+
+Musical event time is the exact integer tick. Row resolution controls display,
+entry, and optional quantization only. Off-grid events retain their timestamp and
+display a microtiming offset. If a coarser resolution projects multiple events
+onto one row, the editor exposes that fact or additional note columns; it does
+not merge or delete them.
+
+Note columns have stable logical identities separate from horizontal screen
+position. One note may occupy a given editable row/column cell. Replacing that
+note is one reversible edit command. The live-recording column allocation policy
+and maximum column count remain undecided.
+
 ### Scene
 
-A scene is a set of sixteen references—one pattern selection per track—plus optional scene-level transition metadata. A scene does not copy pattern events. Missing/disabled references are silent for that track.
+A scene is a sparse selection of pattern references by stable logical track plus
+optional transition metadata. A scene does not copy pattern events.
+Missing/disabled references are silent for that track. The fixed 16-entry array
+is only the current format-v1 implementation.
 
 ### Song
 
@@ -102,10 +148,11 @@ The binary format is an internal M0.2 format and is not yet promised as a perman
 
 The `neurogenic-host` consumer preserves scheduler order, maintains voices by `VoiceToken`, and rejects malformed lifecycle events. It is useful for deterministic integration traces but does not convert ticks to time, render audio, send MIDI, or establish real-time safety.
 
-## Explicitly deferred
+## Explicitly deferred from the current implementation
 
 - tracker commands, probability, ratchets, microtiming offsets, tempo conversion, and external clock;
-- song arrangement, pattern editing APIs, undo/redo, and live recording;
+- extensible audio/MIDI tracks, song arrangement, pattern editing APIs,
+  undo/redo, note columns, velocity, microtiming metadata, and live recording;
 - scene phase-preserve/wait policies and cut/release transition behavior;
 - voice limits, stealing, choke groups, mute/solo behavior, and device triggers;
 - parameter-lock lifetimes/restoration, modulation composition, smoothing, and DSP;

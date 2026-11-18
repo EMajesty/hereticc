@@ -291,3 +291,16 @@ evidence. Neither the fix nor collector entry is yet physically confirmed.
 - Safe control and restoration of button/bank LEDs through an extension.
 - Reliable recovery procedure if the device itself fails to boot.
 - Whether a future firmware release changes autorun, service, security, or object layouts.
+
+## M0.6 playback boundary
+
+Physical firmware-1.3.0.12 evidence now establishes one native tag-3 note
+inserted through the stock command service, uniquely observed, exactly removed,
+verified absent, and audibly played by stock transport. M0.5c additionally
+confirmed several interactive grid edits at their expected stock positions.
+This supports native sequence materialization as the first audio backend.
+
+It does not establish safe live batch replacement, a minimum edit-ahead horizon,
+transport-correlated MIDI timing, arbitrary direct voice control, or release
+behavior across stock pad modes. Those remain explicit M0.6 gates; see
+[M0.6 playback architecture](M0-6-PLAYBACK-ARCHITECTURE.md).

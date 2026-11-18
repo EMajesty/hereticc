@@ -461,7 +461,7 @@ Decision gate: proceed with the SDK adapter only if stock-engine control and tim
 
 UI feasibility is a separate gate within M0.3b: one named page scope must sustain an agreed repaint/primitive budget and restore the stock screen and pad lights on every exit. Passing that gate approves renderer implementation work, not a complete UI.
 
-### M0.6 Effects feasibility gates — planned
+### Effects feasibility gates — planned (legacy pre-M0.6 label)
 
 These are three independent experiments; success in one does not imply success in another. They require a later task explicitly authorizing device-facing executable work.
 
@@ -549,7 +549,9 @@ Acceptance criteria:
 - slice references survive save/reload or fail with actionable diagnostics;
 - timing remains within the threshold established at M0.3.
 
-Effects acceptance additionally requires the relevant M0.6 gate; parameter locks targeting unavailable routing remain editable but visibly unsupported.
+Effects acceptance additionally requires the relevant effects gate above;
+parameter locks targeting unavailable routing remain editable but visibly
+unsupported.
 
 ## M5 — Performance and MIDI
 
@@ -593,8 +595,28 @@ that, priority returns to the bounded stock-sequencer adapter. See
 [HIL-1.2](HIL-1-2.md) and [HIL-1.3](HIL-1-3.md).
 
 M0.5c physically confirmed that the Step Edit replacement creates, removes and
-audibly plays native stock-sequencer notes. The next action is one guarded
-M0.5d run checking one-detent navigation, immediate commit redraw, complete
-presentation switching, the existing A01 four-on-the-floor edit, and stock
-restoration. See [M0.5d](M0-5D-DATA-AND-REDRAW.md). B1 DATA-hook testing remains
-unrelated and unauthorized.
+audibly plays native stock-sequencer notes. M0.5d's navigation/redraw correction
+remains host/QEMU-tested pending a guarded device run; it is not a playback
+architecture gate. The practical sequencer next step is M0.6a's bounded static
+materialization compiler and experiment described below. B1 DATA-hook testing
+remains unrelated and unauthorized.
+
+## M0.6 — Independent playback architecture — decision complete
+
+M0.6 records the expanded product model: 16 audio and 16 MIDI tracks initially,
+extensible identities, tracker note lanes, exact velocity/duration/microtiming,
+non-destructive display resolution, scenes, chains, and songs. The current fixed
+16-pad format-v1 model remains implemented history, not the final schema.
+
+The selected playback strategy keeps NEUROGENIC authoritative and materializes
+bounded audio windows into disposable stock native sequence events. The stock
+transport and audio engine schedule those events; a later NEUROGENIC MIDI
+backend consumes the same timeline. Direct engine voice calls are not the
+baseline because timing, voice identity, release, and thread contracts remain
+unverified.
+
+Next milestone: M0.6a adds a host-tested playback-window compiler and a guarded
+static two-bar native batch experiment. The hardware experiment must verify
+unique receipts, multiple pads, overlap, off-grid ticks, stock playback, exact
+cleanup, and restoration before any live rolling-window work. See
+[M0.6 playback architecture](M0-6-PLAYBACK-ARCHITECTURE.md).

@@ -279,7 +279,11 @@ Its frame-driven scheduler, tracker effects, input-thread audition, and host ren
 | Reversible SD deployment | Documented | Documented | Documented | RAM replacement procedure | Documented |
 | Firmware compatibility | 1.3.0.12 only | 1.3.0.12 only | 1.3.0.12 | Research target 1.3.0.12 | 1.3.0.12 |
 
-## Foundation decision
+## Foundation decision (historical M0.3 position)
+
+This decision explains why the host core preceded device work. M0.6 supersedes
+its unresolved playback choice after native stock-sequence editing and playback
+were physically demonstrated; see the M0.6 addendum below.
 
 Choose **C first**: implement the platform-neutral sequencer model, scheduler contract, serialization, and tests. In parallel only conceptually—not as a dependency yet—treat **A (`mpc-sample-sdk`) as the leading adapter**. The next device-facing milestone is a disposable integration spike, not a product feature.
 
@@ -542,3 +546,22 @@ collapsed to that status before any observable write. Audit identified missing
 Linux mount-field escape decoding (`\040`) as a concrete early defect. P3.2l
 fixes it without relaxing SD identity and adds an allowlisted `/run` stage token
 that the wrapper transfers into a bounded marker; this remains host evidence.
+
+## M0.6 playback research decision
+
+Reinspection of pinned SDK revision
+`9487cbba3648afb29d8e3107e31a7ac930985220` and Am MOD revision
+`6cdc67276f43cd39f64871cb7e36782481244c65` does not reveal a stable direct
+voice-scheduling API. SDK pad/MIDI replay requires a live incoming event and
+does not expose a scheduler deadline or voice handle. Am MOD's direct engine
+calls are source evidence of feasibility, but its implementation also manages
+engine/track pointers, held-note maps, recorder state, generations, and release
+selection. That complexity is a contract warning, not reusable proof.
+
+By contrast, NEUROGENIC has physically verified native stock event insertion,
+stock-comparator observation, exact removal, absence, and audible stock transport
+playback. M0.6 therefore selects a NEUROGENIC-owned project/timeline with a
+bounded disposable stock-sequence cache for audio. A separate future MIDI port
+shares the timeline. Static multi-event materialization, live replacement,
+editing horizon, Undo behavior, and MIDI clock correlation remain unverified.
+See [M0.6 playback architecture](M0-6-PLAYBACK-ARCHITECTURE.md).
