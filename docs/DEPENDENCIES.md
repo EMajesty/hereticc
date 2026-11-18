@@ -42,3 +42,9 @@ that a host service is running or that `/dev/snd` is accessible. Both adapters
 load ALSA by soname, so the Linux live adapter also retains a direct ALSA ELF
 dependency. This lets Nix record the pinned store path in RUNPATH while using
 the normal system loader paths on non-Nix Linux.
+
+The pinned miniaudio, libremidi, Lua 5.4, and sol2 sources build through their
+portable Linux paths on x86_64 and AArch64. libremidi and miniaudio use ALSA on
+both; no JACK or PipeWire development dependency is added. Lua's `LUA_USE_LINUX`
+configuration selects POSIX/Linux facilities rather than an ISA-specific VM.
+NEUROGENIC does not pass CPU-specific optimization flags to these dependencies.

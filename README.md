@@ -6,8 +6,9 @@ receives MIDI through libremidi, executes Lua 5.4 through sol2, applies generate
 16-step patterns at bar boundaries, and retains deterministic offline rendering.
 
 This is foundation software, not a DAW or a finished groovebox. The engine does
-not assume a UI, controller, or hardware layout. Linux x86_64 is the initial
-host; portable C++ and narrow backend interfaces keep AArch64 viable.
+not assume a UI, controller, or hardware layout. Linux x86_64 and AArch64 are
+supported build targets; portable C++ and narrow backend interfaces remain the
+default on both.
 
 The sequencing foundation uses a UI-independent 960-PPQ timeline with stable
 events, arbitrary pattern lengths, independent tracks, mute state, duration
@@ -18,7 +19,8 @@ is retained as a compatibility workflow rather than the fundamental data model.
 
 ### Nix development environment
 
-The committed flake supports x86_64 Linux and pins nixpkgs, miniaudio,
+The committed flake exposes packages, applications, checks, and development
+shells for `x86_64-linux` and `aarch64-linux`, and pins nixpkgs, miniaudio,
 libremidi, Lua, and sol2 in `flake.lock`:
 
 ```sh
@@ -40,6 +42,11 @@ With direnv installed, run `direnv allow` once; `.envrc` enters the same flake
 shell. Build the installable package with `nix build`, run it with
 `nix run . -- --list-devices`, and run all locked build/test checks with
 `nix flake check`.
+
+On an AArch64 Linux host, the same commands select the native
+`aarch64-linux` outputs. From x86_64, `nix build
+.#checks.x86_64-linux.aarch64-cross-compile` performs a dependency-enabled
+cross-compilation check; it cannot run the resulting application or tests.
 
 ### Non-Nix CMake
 
@@ -124,10 +131,11 @@ compatibility devices; PipeWire itself is not a build dependency.
 - An open error names the backend and distinguishes discovery from failure to
   open or start the selected device.
 
-GitHub Actions runs `nix flake check`, `nix build`, and an explicit headless
-enumeration smoke test. It verifies compilation, a resolvable retained ALSA
-runtime dependency, deterministic tests, and graceful device absence, not
-physical hardware compatibility.
+GitHub Actions is configured to run native x86_64 and AArch64 Nix builds,
+tests, and explicit headless enumeration smoke tests. The x86_64 flake check
+also cross-compiles the application for AArch64. This verifies compilation,
+deterministic host tests, a resolvable retained ALSA dependency, and graceful
+device absence; it does not verify physical ARM audio/MIDI hardware.
 
 See [architecture](docs/ARCHITECTURE.md), [live sample management](docs/SAMPLES.md), [musical timeline](docs/TIMELINE.md), [dependencies](docs/DEPENDENCIES.md),
 [benchmarks](docs/BENCHMARKS.md), [Lua API](docs/LUA.md), and [controller mappings](docs/CONTROLLERS.md).

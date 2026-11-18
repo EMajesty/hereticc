@@ -11,9 +11,9 @@
 
   outputs = inputs@{ self, nixpkgs, miniaudio, libremidi, sol2, lua, ... }:
     let
-      system = "x86_64-linux";
-      pkgs = import nixpkgs { inherit system; };
-      neurogenic = pkgs.stdenv.mkDerivation {
+      supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
+      forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
+      packageFor = pkgs: runTests: pkgs.stdenv.mkDerivation {
         pname = "neurogenic";
         version = "0.1.0";
         src = pkgs.lib.cleanSourceWith {
@@ -27,32 +27,45 @@
         buildInputs = with pkgs; [ alsa-lib ];
         cmakeFlags = [
           "-DNEUROGENIC_FETCH_DEPENDENCIES=ON"
-          "-DNEUROGENIC_BUILD_TESTS=ON"
+          "-DNEUROGENIC_BUILD_TESTS=${if runTests then "ON" else "OFF"}"
           "-DFETCHCONTENT_FULLY_DISCONNECTED=ON"
           "-DFETCHCONTENT_SOURCE_DIR_MINIAUDIO=${miniaudio}"
           "-DFETCHCONTENT_SOURCE_DIR_LIBREMIDI=${libremidi}"
           "-DFETCHCONTENT_SOURCE_DIR_SOL2=${sol2}"
           "-DFETCHCONTENT_SOURCE_DIR_LUA=${lua}"
         ];
-        doCheck = true;
+        doCheck = runTests;
         checkPhase = "ctest --output-on-failure";
       };
+      nativePackages = forAllSystems (system:
+        packageFor (import nixpkgs { inherit system; }) true);
     in {
-      packages.${system}.default = neurogenic;
-      checks.${system} = {
-        build-and-test = neurogenic;
-      };
-      apps.${system}.default = {
-        type = "app";
-        program = "${neurogenic}/bin/neurogenic";
-        meta.description = "Run NEUROGENIC";
-      };
-      devShells.${system}.default = pkgs.mkShell {
-        inputsFrom = [ neurogenic ];
-        packages = with pkgs; [ gcc gdb cmake ninja pkg-config git cacert direnv ];
-        shellHook = ''
-          echo "NEUROGENIC: cmake --preset dev && cmake --build --preset dev && ctest --preset dev"
-        '';
-      };
+      packages = forAllSystems (system: { default = nativePackages.${system}; });
+      checks = forAllSystems (system:
+        let pkgs = import nixpkgs { inherit system; };
+        in {
+          build-and-test = nativePackages.${system};
+        } // nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
+          # Compilation-only evidence: this binary is not executed on the x86 host.
+          aarch64-cross-compile = packageFor pkgs.pkgsCross.aarch64-multiplatform false;
+        });
+      apps = forAllSystems (system: {
+        default = {
+          type = "app";
+          program = "${nativePackages.${system}}/bin/neurogenic";
+          meta.description = "Run NEUROGENIC";
+        };
+      });
+      devShells = forAllSystems (system:
+        let pkgs = import nixpkgs { inherit system; };
+        in {
+          default = pkgs.mkShell {
+            inputsFrom = [ nativePackages.${system} ];
+            packages = with pkgs; [ gcc gdb cmake ninja pkg-config git cacert direnv ];
+            shellHook = ''
+              echo "NEUROGENIC (${system}): cmake --preset dev && cmake --build --preset dev && ctest --preset dev"
+            '';
+          };
+        });
     };
 }

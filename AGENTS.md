@@ -8,6 +8,9 @@
 - Use integer musical time and deterministic offline tests.
 - Put audio/MIDI/platform details behind narrow adapters.
 - Preserve dependency pins, licenses, notices, and stable external identifiers.
+- Keep portable x86_64/AArch64 implementations as the baseline. Do not add
+  `-march=native`, AVX/AVX2 requirements, or unconditional ISA-specific code;
+  optimized paths require feature selection and a portable fallback.
 - Distinguish host tests from physical audio/MIDI hardware tests.
 - Do not rely on a global `LD_LIBRARY_PATH` for Nix runtime dependencies; retain
   required ELF dependencies and verify they resolve in a clean environment.

@@ -84,8 +84,8 @@ note-offs and reports callback overruns. Host regression and leak-sanitizer
 tests cover rapid replacement/reclamation, saturation, exact explicit targets,
 stolen owners, dense backlogs, and deferred cleanup. The offline benchmark is
 documented in `docs/BENCHMARKS.md`; it is not hardware real-time evidence.
-Latency under load, hotplug, ARM64, and controller-specific behavior also remain
-untested.
+Latency under load, hotplug, physical ARM audio/MIDI devices, and
+controller-specific behavior also remain untested.
 
 Task 010 adds live load, replacement, and unload through the asynchronous
 hardware-independent `SampleManager` command/state boundary. Immutable sample
@@ -98,3 +98,11 @@ and observable state. WAV support now includes PCM16/24/32 and float32 with
 preparation-time windowed-sinc conversion. Streaming decode, non-WAV formats,
 mastering-grade selectable resampler profiles, hardware listening tests, and
 sample-management Lua/MIDI bindings remain future work.
+
+The AArch64 enablement task exposes the complete Nix package, app, check, and
+development-shell outputs for both `x86_64-linux` and `aarch64-linux`. The code
+and dependency audit found no x86 SIMD baseline; scheduler arithmetic relies on
+GCC/Clang 128-bit integers supported by both targets. CI is configured with a
+native AArch64 hosted runner and an x86-hosted AArch64 compilation-only check.
+A successful native AArch64 CI run is host-runtime evidence only; physical ARM
+audio/MIDI devices, latency, and subjective playback remain unverified.

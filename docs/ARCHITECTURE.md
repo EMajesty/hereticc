@@ -95,3 +95,17 @@ and pool reuse occur on the control side. Unload follows the same rule: new
 triggers see an empty slot while existing voices finish. Publication overload
 is rejected and counted rather than blocking or freeing memory in the callback.
 See [SAMPLES.md](SAMPLES.md).
+
+## CPU and ABI portability
+
+The engine uses standard C++20 and C11 without an x86 SIMD baseline. No target
+enables AVX, AVX2, SSE, `-march=native`, or architecture-specific intrinsics.
+Any future optimized DSP path must be optional, selected from supported runtime
+CPU features, and retain a portable implementation as the default/fallback.
+
+Timeline and legacy scheduler products use compiler-provided 128-bit integers
+to avoid cumulative timing drift and overflow. GCC and Clang provide this type
+on both supported 64-bit Linux targets. Public musical and serialized values
+use fixed-width integer types; container indices remain process-local
+`std::size_t`. The supported AArch64 target is little-endian Linux, matching
+the RIFF/WAVE byte order used by the current decoder.

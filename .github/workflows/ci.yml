@@ -26,3 +26,18 @@ jobs:
         run: nix develop --no-update-lock-file --command cmake --build --preset sanitize
       - name: Test with ASan and UBSan
         run: nix develop --no-update-lock-file --command ctest --preset sanitize
+
+  aarch64-native-build-and-test:
+    # GitHub's hosted Arm64 runner provides native compilation and host tests.
+    # It does not provide physical audio or MIDI hardware verification.
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v17
+      - uses: DeterminateSystems/magic-nix-cache-action@v9
+      - name: Check locked AArch64 flake outputs
+        run: nix flake check --no-update-lock-file --print-build-logs
+      - name: Build native AArch64 package
+        run: nix build --no-update-lock-file .#packages.aarch64-linux.default --print-build-logs
+      - name: Native AArch64 headless smoke test
+        run: nix run --no-update-lock-file .#apps.aarch64-linux.default -- --headless --list-devices
