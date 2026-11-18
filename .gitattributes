@@ -1,1 +1,2 @@
 device/m03b-a/patches/*.patch whitespace=-blank-at-eol
+device/m06d/patches/*.patch whitespace=-blank-at-eol

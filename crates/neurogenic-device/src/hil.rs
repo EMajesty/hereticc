@@ -251,6 +251,32 @@ fn native_grid_response() -> Response {
     response
 }
 
+#[cfg(feature = "transport-observer")]
+fn transport_response() -> Response {
+    let mut response = Response::new();
+    if let Some(snapshot) = mpc_sample_sdk::transport::snapshot() {
+        writeln!(
+            response,
+            "v=1 clock=observed valid={} tick={} running={} observed_ms={} callbacks={} serial={} transitions={} flags={:02x} drops={}",
+            u8::from(snapshot.valid),
+            snapshot.tick,
+            u8::from(snapshot.running),
+            snapshot.observed_ms,
+            snapshot.callback_count.min(999_999_999),
+            snapshot.observation_serial.min(999_999_999),
+            snapshot.transition_serial.min(999_999),
+            snapshot.discontinuities,
+            snapshot.reentrant_drops.min(999_999),
+        )
+        .expect("transport response fits");
+    } else {
+        response
+            .write_str("v=1 clock=waiting\n")
+            .expect("transport waiting response fits");
+    }
+    response
+}
+
 /// Apply one complete bounded command to the existing UI reducer.
 ///
 /// Accepted commands are `OPEN`, `CLOSE`, `MOVE <signed-delta>`,
@@ -299,6 +325,11 @@ pub fn apply(ui: &mut UiState, input: &[u8]) -> Result<Response, Error> {
     #[cfg(feature = "native-playable-grid")]
     if text == "GRID QUERY" {
         return Ok(native_grid_response());
+    }
+
+    #[cfg(feature = "transport-observer")]
+    if text == "CLOCK QUERY" {
+        return Ok(transport_response());
     }
 
     let outcome = match text {

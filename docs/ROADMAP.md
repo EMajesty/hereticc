@@ -660,3 +660,18 @@ The next implementation is a small read-only, upstream-compatible SDK transport
 observer, preflighted in the virtual MPC and physically tested without native
 edits. Direct voices remain a fallback, not the baseline. See
 [M0.6c upstream capabilities](M0-6C-UPSTREAM-CAPABILITIES.md).
+
+### M0.6d — Native transport observer — host validated
+
+An isolated SDK v0.7.1 patch installs the pinned Am MOD `NowPosition` observer
+through the SDK startup transaction and publishes only bounded copied
+tick/running/counter data. Host SDK concurrency/transition tests, strict HIL
+orchestration tests, patch-integrity checks, and an AArch64 cross-build pass.
+No physical or stock-process emulator run has occurred, and the observation
+serial is not a stock sequence identity.
+
+The next action is one owner-reviewed, read-only physical experiment covering
+stopped, looped playback, stop/continue, tempo change, and sequence change.
+Live replacement remains blocked on that result and a later objective
+event-consumption-horizon measurement. See
+[M0.6d transport observer](M0-6D-TRANSPORT-OBSERVER.md).

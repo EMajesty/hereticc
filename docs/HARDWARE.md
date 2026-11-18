@@ -323,3 +323,13 @@ package/UI/hook preflights, but its different audio buffering and possible
 software CPU emulation cannot establish queue horizon, jitter, latency, or
 physical voice behavior. Those remain explicit device gates; see
 [M0.6c](M0-6C-UPSTREAM-CAPABILITIES.md).
+
+M0.6d adds no physical result. A firmware-1.3.0.12-specific read-only transport
+observer is host tested and AArch64 cross-built. It is installed with the SDK's
+guarded startup transaction and forwards stock before copying tick and running
+state. The proposed HIL experiment performs no event edits or transport
+commands, but it still modifies the running process with a new entry hook and
+therefore remains pending owner execution. Even a physical pass would not
+establish sequence identity or the stock event-consumption horizon; live window
+replacement remains unauthorized. See
+[M0.6d](M0-6D-TRANSPORT-OBSERVER.md).

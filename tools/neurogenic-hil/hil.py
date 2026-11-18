@@ -21,6 +21,7 @@ CONFIRM = "MPC-SAMPLE-1.3.0.12"
 NATIVE_CONFIRM = "INSERT-ONE-UNSAVED-NATIVE-EVENT-1.3.0.12"
 GRID_CONFIRM = "PLAYABLE-GRID-ONE-BAR-1.3.0.12"
 BATCH_CONFIRM = "STATIC-BATCH-TWO-BAR-1.3.0.12"
+TRANSPORT_CONFIRM = "READ-ONLY-TRANSPORT-OBSERVER-1.3.0.12"
 FIRMWARE_SHA = "44507c7a7d3029c411b2e3780ea286ca3e08b7e3ffd7b5047d52f73bf5299d1f"
 ROOT = Path(__file__).resolve().parents[2]
 BUILD = ROOT / "device/m03e/scripts/build-package.sh"
@@ -28,6 +29,7 @@ HIL_BUILD = ROOT / "device/hil/scripts/build.sh"
 M04A_BUILD = ROOT / "device/m04a/scripts/build.sh"
 M05A_BUILD = ROOT / "device/m05a/scripts/build.sh"
 M06A_BUILD = ROOT / "device/m06a/scripts/build.sh"
+M06D_BUILD = ROOT / "device/m06d/scripts/build.sh"
 NORMAL_ARTIFACT = ROOT / "target/m03c/build/neurogenic-m03c-ui.so"
 NORMAL_SUMS = ROOT / "target/m03c/build/SHA256SUMS"
 HIL_ARTIFACT = ROOT / "target/hil/build/neurogenic-hil-test.so"
@@ -38,6 +40,8 @@ M05A_ARTIFACT = ROOT / "target/m05a/build/neurogenic-m05a-native-grid.so"
 M05A_SUMS = ROOT / "target/m05a/build/SHA256SUMS"
 M06A_ARTIFACT = ROOT / "target/m06a/build/neurogenic-m06a-native-batch.so"
 M06A_SUMS = ROOT / "target/m06a/build/SHA256SUMS"
+M06D_ARTIFACT = ROOT / "target/m06d/build/neurogenic-m06d-transport-observer.so"
+M06D_SUMS = ROOT / "target/m06d/build/SHA256SUMS"
 RUNTIME = "/run/neurogenic-hil"
 BUILDS = RUNTIME + "/builds"
 ACTIVE = RUNTIME + "/active.sha256"
@@ -583,6 +587,43 @@ def parse_grid_response(raw: bytes) -> dict[str, str]:
     return fields
 
 
+def parse_transport_response(raw: bytes) -> dict[str, str]:
+    """Parse one bounded, pointer-free transport observation."""
+    if len(raw) > 192:
+        raise RemoteError("transport response exceeded 192 bytes")
+    try:
+        tokens = raw.decode("ascii").strip().split()
+    except UnicodeDecodeError as exc:
+        raise RemoteError("transport response is not ASCII") from exc
+    fields: dict[str, str] = {}
+    for token in tokens:
+        if "=" not in token:
+            raise RemoteError("malformed transport response")
+        key, value = token.split("=", 1)
+        if key in fields or not re.fullmatch(r"[a-z0-9_]+", key):
+            raise RemoteError("ambiguous transport response")
+        fields[key] = value
+    if fields == {"v": "1", "clock": "waiting"}:
+        return fields
+    required = {
+        "v", "clock", "valid", "tick", "running", "observed_ms",
+        "callbacks", "serial", "transitions", "flags", "drops",
+    }
+    if set(fields) != required or fields["v"] != "1" or fields["clock"] != "observed":
+        raise RemoteError("incomplete transport response")
+    if fields["valid"] not in ("0", "1") or fields["running"] not in ("0", "1"):
+        raise RemoteError("invalid transport state bit")
+    for key in ("tick", "observed_ms"):
+        if not re.fullmatch(r"-?[0-9]+", fields[key]) or not -(2**63) <= int(fields[key]) < 2**63:
+            raise RemoteError("invalid transport signed value")
+    for key in ("callbacks", "serial", "transitions", "drops"):
+        if not fields[key].isdigit() or int(fields[key]) > 999_999_999:
+            raise RemoteError("invalid transport counter")
+    if not re.fullmatch(r"[0-9a-f]{2}", fields["flags"]):
+        raise RemoteError("invalid transport flags")
+    return fields
+
+
 def removal_command_accepted(state: dict[str, str]) -> bool:
     """Accept a polled state at or beyond removal dispatch, with sticky proof."""
     if state["native"] == "remove_accepted":
@@ -735,6 +776,22 @@ def build_native_batch_artifact() -> tuple[bytes, str]:
     if code:
         raise HilError(f"fixed M0.6a native-batch build failed with status {code}")
     return read_reviewed_artifact(M06A_ARTIFACT, M06A_SUMS)
+
+
+def build_transport_artifact() -> tuple[bytes, str]:
+    command = [
+        "nix", "shell", "nixpkgs#pkgsCross.aarch64-multiplatform.stdenv.cc",
+        "nixpkgs#llvmPackages_21.llvm", "--command", "zsh", "-lc",
+        "set -eu; export AARCH64_CXX=$(command -v aarch64-unknown-linux-gnu-g++); "
+        "device/m06d/scripts/build.sh",
+    ]
+    try:
+        code = subprocess.run(command, cwd=ROOT, check=False, timeout=300).returncode
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise HilError(f"fixed M0.6d transport build failed: {exc}") from exc
+    if code:
+        raise HilError(f"fixed M0.6d transport build failed with status {code}")
+    return read_reviewed_artifact(M06D_ARTIFACT, M06D_SUMS)
 
 
 def deploy_artifact(ssh: Ssh, data: bytes, digest: str) -> None:
@@ -1746,9 +1803,194 @@ def orchestrate_static_batch_experiment(
         return 0
 
 
+def collect_transport_samples(ssh: Ssh, duration: float = 2.0) -> list[dict[str, str]]:
+    """Collect bounded snapshots; never sends a transport or editing command."""
+    deadline = time.monotonic() + duration
+    samples: list[dict[str, str]] = []
+    while True:
+        sample = parse_transport_response(ssh.test_command("CLOCK QUERY"))
+        samples.append(sample)
+        if time.monotonic() >= deadline:
+            return samples
+        time.sleep(0.25)
+
+
+def orchestrate_transport_experiment(
+    args: argparse.Namespace,
+    ssh: Ssh,
+    input_fn: Callable[[str], str] = input,
+) -> int:
+    """Run the approval-gated, read-only native transport observation."""
+    confirm(args.confirm)
+    if args.confirm_transport != TRANSPORT_CONFIRM:
+        raise RunCycleError(
+            f"transport observation requires --confirm-transport {TRANSPORT_CONFIRM}"
+        )
+    with HostRunLock():
+        report_dir = create_report_directory()
+        report: dict[str, object] = {
+            "schema": "neurogenic-transport-observer-experiment-v1",
+            "level": "transport-observer",
+            "started_at": utc_now(), "git_commit": git_commit(),
+            "status": "running", "artifact_sha256": None,
+            "firmware_fingerprint": None, "initial_state": None,
+            "active_state": None, "final_state": None,
+            "activation": {"status": "not-attempted"},
+            "restoration": {"status": "not-required"},
+            "steps": [], "phases": {}, "errors": [],
+            "assertions": {"passed": 0, "failed": 0},
+            "scope": "read-only; no transport commands or native event edits",
+        }
+        original_error: HilError | None = None
+        restoration_error: HilError | None = None
+        mutated = False
+
+        def step(name: str, operation: Callable[[], object]) -> object:
+            started = time.monotonic()
+            record: dict[str, object] = {"name": name, "status": "running"}
+            report["steps"].append(record)
+            try:
+                value = operation()
+                record["status"] = "pass"
+                return value
+            except HilError as exc:
+                record["status"] = "fail"; record["error"] = str(exc); raise
+            finally:
+                record["duration_ms"] = round((time.monotonic() - started) * 1000, 3)
+
+        def phase(name: str, prompt: str, duration: float = 2.0) -> list[dict[str, str]]:
+            input_fn(prompt)
+            values = collect_transport_samples(ssh, duration)
+            report["phases"][name] = values
+            if not any(value.get("clock") == "observed" and value.get("valid") == "1" for value in values):
+                raise RemoteError(f"{name} produced no valid transport observation")
+            return values
+
+        try:
+            initial = step("initial-identity", lambda: identity(ssh))
+            report["initial_state"] = initial
+            report["firmware_fingerprint"] = initial["firmware_prefix_sha256"]
+            if initial.get("dropins") != "":
+                raise IdentityError("transport experiment requires stock ac50.service")
+            prior = step("initial-runtime-state", lambda: parse_facts(ssh.fixed("collect")))
+            if any(prior.get(key) != "absent" for key in (
+                "hil_runtime", "active_sha256", "previous_sha256",
+            )):
+                raise IdentityError("an earlier HIL session requires explicit recovery")
+
+            print("[1/6] Building read-only transport artifact...", flush=True)
+            data, digest = step("build-transport", build_transport_artifact)
+            report["artifact_sha256"] = digest
+            step("pre-deploy-identity", lambda: identity(ssh))
+            print("[2/6] Deploying immutable artifact...", flush=True)
+            mutated = True
+            step("deploy", lambda: deploy_artifact(ssh, data, digest))
+            print("[3/6] Activating once...", flush=True)
+            report["activation"] = {"status": "running", "sha256": digest}
+            report["active_state"] = step(
+                "activate", lambda: activate_artifact(ssh, digest, initial)
+            )
+            report["activation"] = {"status": "pass", "sha256": digest}
+            step("bridge-ready", lambda: wait_bridge(ssh))
+
+            print("[4/6] OWNER TRANSPORT ACTIONS (observer never controls transport)", flush=True)
+            stopped = phase(
+                "stopped",
+                "Prepare a disposable looping one-bar sequence at 120 BPM, leave transport STOPPED, then press Enter: ",
+            )
+            if stopped[-1].get("running") != "0":
+                raise RemoteError("stopped baseline reported running")
+            playing = phase(
+                "play-and-loop",
+                "Start PLAY and let it loop; press Enter immediately (observation lasts 8 seconds): ",
+                8.0,
+            )
+            observed = [value for value in playing if value.get("valid") == "1"]
+            if not any(value.get("running") == "1" for value in observed):
+                raise RemoteError("play phase never reported running")
+            if len({value["tick"] for value in observed}) < 2:
+                raise RemoteError("play phase tick did not progress")
+            if not any(int(value["flags"], 16) & 0x04 for value in observed):
+                raise RemoteError("one-bar play phase did not observe a backward loop transition")
+
+            stopped_again = phase(
+                "stop",
+                "Press STOP, then press Enter: ",
+            )
+            if stopped_again[-1].get("running") != "0" or not (
+                int(stopped_again[-1]["flags"], 16) & 0x02
+            ):
+                raise RemoteError("stop transition was not observed")
+            continued = phase(
+                "continue",
+                "Press PLAY to continue, then press Enter: ",
+                3.0,
+            )
+            if not any(value.get("running") == "1" for value in continued):
+                raise RemoteError("continue phase never reported running")
+            phase(
+                "tempo-change",
+                "While playing, change tempo from 120 to 90 BPM, then press Enter: ",
+                4.0,
+            )
+            phase(
+                "sequence-change",
+                "Stop transport, select another disposable sequence, then press Enter: ",
+            )
+            report["assertions"] = {"passed": 6, "failed": 0}
+        except (EOFError, KeyboardInterrupt):
+            original_error = RunCycleError("transport experiment interrupted by operator")
+        except HilError as exc:
+            original_error = exc
+        finally:
+            if original_error is not None:
+                report["errors"].append({"phase": "transport", "message": str(original_error)})
+                report["assertions"] = {"passed": 0, "failed": 1}
+                if mutated:
+                    try:
+                        report["failure_snapshot"] = parse_transport_response(
+                            ssh.test_command("CLOCK QUERY")
+                        )
+                    except HilError as diagnostic_error:
+                        report["errors"].append({
+                            "phase": "diagnostics", "message": str(diagnostic_error),
+                        })
+            if mutated:
+                print("[5/6] Restoring stock...", flush=True)
+                try:
+                    report["final_state"] = step("restore-stock", lambda: restore_stock(ssh))
+                    report["restoration"] = {"status": "pass"}
+                except HilError as exc:
+                    restoration_error = exc
+                    report["restoration"] = {"status": "fail", "message": str(exc)}
+                    report["errors"].append({"phase": "restoration", "message": str(exc)})
+            report["finished_at"] = utc_now()
+            report["status"] = "pass" if original_error is None and restoration_error is None else "fail"
+            write_run_report(report_dir, report)
+
+        print("[6/6] Reporting...", flush=True)
+        print(f"Overall {str(report['status']).upper()}")
+        print(f"Artifact SHA-256: {report['artifact_sha256'] or 'none'}")
+        print(f"Restoration: {report['restoration']['status']}")
+        print(f"Report directory: {report_dir}")
+        if restoration_error is not None:
+            raise RunCycleError(
+                "RESTORATION FAILED; MPC MAY STILL BE RUNNING THE TRANSPORT OBSERVER. "
+                f"Original error: {original_error or 'none'}; restoration: {restoration_error}"
+            )
+        if original_error is not None:
+            raise RunCycleError(
+                f"transport experiment failed: {original_error}; stock restoration "
+                f"status: {report['restoration']['status']}"
+            )
+        return 0
+
+
 def run_command(args: argparse.Namespace, ssh: Ssh | None) -> int:
     if args.command == "build":
-        if args.native_m06a:
+        if args.transport_m06d:
+            build_transport_artifact()
+        elif args.native_m06a:
             build_native_batch_artifact()
         elif args.native_m05a:
             build_native_grid_artifact()
@@ -1778,7 +2020,9 @@ def run_command(args: argparse.Namespace, ssh: Ssh | None) -> int:
         print(json.dumps(identity(ssh), indent=2, sort_keys=True))
     elif args.command == "deploy":
         confirm(args.confirm); identity(ssh)
-        if args.native_m06a:
+        if args.transport_m06d:
+            artifact, sums = M06D_ARTIFACT, M06D_SUMS
+        elif args.native_m06a:
             artifact, sums = M06A_ARTIFACT, M06A_SUMS
         elif args.native_m05a:
             artifact, sums = M05A_ARTIFACT, M05A_SUMS
@@ -1816,6 +2060,8 @@ def run_command(args: argparse.Namespace, ssh: Ssh | None) -> int:
         return orchestrate_grid_experiment(args, ssh)
     elif args.command == "static-batch-experiment":
         return orchestrate_static_batch_experiment(args, ssh)
+    elif args.command == "transport-experiment":
+        return orchestrate_transport_experiment(args, ssh)
     elif args.command == "collect":
         identity(ssh, False)
         encoded = (json.dumps(parse_facts(ssh.fixed("collect")), indent=2, sort_keys=True) + "\n").encode()
@@ -1839,6 +2085,7 @@ def parser() -> argparse.ArgumentParser:
     build_mode.add_argument("--native-m04a", action="store_true")
     build_mode.add_argument("--native-m05a", action="store_true")
     build_mode.add_argument("--native-m06a", action="store_true")
+    build_mode.add_argument("--transport-m06d", action="store_true")
     sub.add_parser("status")
     deploy = sub.add_parser("deploy")
     deploy_mode = deploy.add_mutually_exclusive_group()
@@ -1846,6 +2093,7 @@ def parser() -> argparse.ArgumentParser:
     deploy_mode.add_argument("--native-m04a", action="store_true")
     deploy_mode.add_argument("--native-m05a", action="store_true")
     deploy_mode.add_argument("--native-m06a", action="store_true")
+    deploy_mode.add_argument("--transport-m06d", action="store_true")
     deploy.add_argument("--confirm")
     restart = sub.add_parser("restart"); restart.add_argument("--sha256", required=True); restart.add_argument("--confirm")
     rollback = sub.add_parser("rollback"); rollback.add_argument("--confirm")
@@ -1868,6 +2116,9 @@ def parser() -> argparse.ArgumentParser:
     batch = sub.add_parser("static-batch-experiment")
     batch.add_argument("--confirm")
     batch.add_argument("--confirm-batch")
+    transport = sub.add_parser("transport-experiment")
+    transport.add_argument("--confirm")
+    transport.add_argument("--confirm-transport")
     collect = sub.add_parser("collect"); collect.add_argument("--output")
     return result
 
@@ -1889,6 +2140,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command in (
             "restart", "rollback", "run", "native-experiment", "grid-experiment",
             "static-batch-experiment",
+            "transport-experiment",
         ):
             print(
                 f"recovery (explicit, never automatic): rerun with restore-stock --confirm {CONFIRM}",

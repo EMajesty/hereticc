@@ -105,6 +105,41 @@ class HilTests(unittest.TestCase):
         with self.assertRaises(hil.HilError):
             hil.Config.load(path)
 
+    def test_transport_response_is_strict_bounded_and_pointer_free(self):
+        valid = (
+            b"v=1 clock=observed valid=1 tick=960 running=1 observed_ms=42 "
+            b"callbacks=7 serial=7 transitions=1 flags=05 drops=0\n"
+        )
+        parsed = hil.parse_transport_response(valid)
+        self.assertEqual(parsed["tick"], "960")
+        self.assertEqual(parsed["flags"], "05")
+        self.assertEqual(
+            hil.parse_transport_response(b"v=1 clock=waiting\n"),
+            {"v": "1", "clock": "waiting"},
+        )
+        for invalid in (
+            valid + b"pointer=1234\n",
+            valid.replace(b"flags=05", b"flags=5"),
+            valid.replace(b"running=1", b"running=2"),
+            b"x" * 193,
+        ):
+            with self.assertRaises(hil.RemoteError):
+                hil.parse_transport_response(invalid)
+
+    def test_transport_experiment_has_distinct_confirmation_and_build_mode(self):
+        parsed = hil.parser().parse_args([
+            "transport-experiment", "--confirm", hil.CONFIRM,
+            "--confirm-transport", hil.TRANSPORT_CONFIRM,
+        ])
+        self.assertEqual(parsed.confirm_transport, hil.TRANSPORT_CONFIRM)
+        build = hil.parser().parse_args(["build", "--transport-m06d"])
+        self.assertTrue(build.transport_m06d)
+        bad = type("Args", (), {
+            "confirm": hil.CONFIRM, "confirm_transport": hil.CONFIRM,
+        })()
+        with self.assertRaises(hil.RunCycleError):
+            hil.orchestrate_transport_experiment(bad, mock.Mock(), lambda _: "")
+
     def test_ssh_is_strict_and_passwordless(self):
         runner = Runner([completed(identity_output())])
         ssh = hil.Ssh(self.config, runner)
@@ -1057,6 +1092,99 @@ class GridExperimentTests(unittest.TestCase):
         report = self.report()
         self.assertEqual(report["status"], "fail")
         self.assertEqual(report["restoration"]["status"], "fail")
+
+
+class TransportExperimentTests(unittest.TestCase):
+    class TransportSsh:
+        def fixed(self, name):
+            if name != "collect":
+                raise AssertionError(name)
+            return b"hil_runtime=absent\nactive_sha256=absent\nprevious_sha256=absent\n"
+
+        def test_command(self, command):
+            if command != "CLOCK QUERY":
+                raise AssertionError(command)
+            return b"v=1 clock=waiting\n"
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        root = Path(self.temp.name)
+        self.run_root = root / "runs"
+        self.run_lock = root / "run.lock"
+        self.args = type("Args", (), {
+            "confirm": hil.CONFIRM,
+            "confirm_transport": hil.TRANSPORT_CONFIRM,
+        })()
+        self.identity_facts = hil.parse_facts(identity_output())
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    @staticmethod
+    def sample(tick, running, flags="00"):
+        return {
+            "v": "1", "clock": "observed", "valid": "1",
+            "tick": str(tick), "running": str(running), "observed_ms": "42",
+            "callbacks": "7", "serial": "7", "transitions": "1",
+            "flags": flags, "drops": "0",
+        }
+
+    def patches(self, samples):
+        defaults = {
+            "identity": mock.Mock(return_value=dict(self.identity_facts)),
+            "build_transport_artifact": mock.Mock(return_value=(b"ELF", "f" * 64)),
+            "deploy_artifact": mock.Mock(return_value=None),
+            "activate_artifact": mock.Mock(return_value={
+                **self.identity_facts, "main_pid": "202", "dropins": hil.DROPIN,
+            }),
+            "wait_bridge": mock.Mock(return_value=None),
+            "restore_stock": mock.Mock(return_value={
+                **self.identity_facts, "main_pid": "303",
+            }),
+            "collect_transport_samples": mock.Mock(side_effect=samples),
+            "git_commit": mock.Mock(return_value="c" * 40),
+        }
+        stack = contextlib.ExitStack()
+        stack.enter_context(mock.patch.object(hil, "RUN_ROOT", self.run_root))
+        stack.enter_context(mock.patch.object(hil, "RUN_LOCK", self.run_lock))
+        for name, replacement in defaults.items():
+            stack.enter_context(mock.patch.object(hil, name, replacement))
+        return stack, defaults
+
+    def test_read_only_cycle_observes_transitions_and_restores(self):
+        samples = [
+            [self.sample(0, 0)],
+            [self.sample(0, 1, "01"), self.sample(960, 1, "01"), self.sample(0, 1, "05")],
+            [self.sample(0, 0, "07")],
+            [self.sample(100, 1, "07")],
+            [self.sample(200, 1, "07")],
+            [self.sample(0, 0, "07")],
+        ]
+        stack, patched = self.patches(samples)
+        with stack, contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                hil.orchestrate_transport_experiment(
+                    self.args, self.TransportSsh(), lambda _: "",
+                ),
+                0,
+            )
+        directory, = self.run_root.iterdir()
+        report = json.loads((directory / "report.json").read_text())
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["scope"], "read-only; no transport commands or native event edits")
+        patched["restore_stock"].assert_called_once()
+
+    def test_missing_loop_evidence_fails_and_restores(self):
+        samples = [
+            [self.sample(0, 0)],
+            [self.sample(0, 1), self.sample(960, 1)],
+        ]
+        stack, patched = self.patches(samples)
+        with stack, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(hil.RunCycleError):
+            hil.orchestrate_transport_experiment(
+                self.args, self.TransportSsh(), lambda _: "",
+            )
+        patched["restore_stock"].assert_called_once()
 
 
 class StaticBatchExperimentTests(unittest.TestCase):

@@ -87,6 +87,17 @@ fn static_batch_protocol_is_bounded_and_inert_before_context() {
     assert_eq!(apply(&mut ui, b"BATCH RETRY"), Err(Error::Unknown));
 }
 
+#[cfg(feature = "transport-observer")]
+#[test]
+fn transport_protocol_is_read_only_bounded_and_waits_for_callback() {
+    let mut ui = UiState::default();
+    let response = apply(&mut ui, b"CLOCK QUERY").expect("clock query");
+    assert_eq!(response.as_str(), "v=1 clock=waiting\n");
+    assert!(response.as_str().len() <= MAX_RESPONSE_BYTES);
+    assert_eq!(apply(&mut ui, b"CLOCK START"), Err(Error::Malformed));
+    assert_eq!(apply(&mut ui, b"CLOCK SET"), Err(Error::Malformed));
+}
+
 #[cfg(feature = "native-playable-grid")]
 #[test]
 fn playable_grid_diagnostics_are_bounded_and_pointer_free() {

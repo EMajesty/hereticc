@@ -1,0 +1,454 @@
+diff --git a/src/firmware.rs b/src/firmware.rs
+index ea21869..38c225c 100644
+--- a/src/firmware.rs
++++ b/src/firmware.rs
+@@ -72,7 +72,7 @@ const PACIASP: u32 = 0xd503_233f;
+ /// `bti c`, the landing pad at the start of an indirect target.
+ const BTI_C: u32 = 0xd503_245f;
+ 
+-// --- Hooks: the 22 sites the SDK patches, in install order. ---
++// --- Hooks: the sites the SDK patches, in install order. ---
+ 
+ pub(crate) const SIXTEEN_CTOR: Entry = hook(0x0154_5a50, PACIASP);
+ pub(crate) const SIXTEEN_PROC: Entry = hook(0x0214_72f0, PACIASP);
+@@ -100,6 +100,8 @@ pub(crate) const SAMPLE_SERVICE_DELETE: Entry = hook(0x01df_6ed0, PACIASP);
+ /// The two destructors from the active lighting sender's vtable.
+ pub(crate) const LIGHTING_DTOR: Entry = hook(0x0143_9e60, PACIASP);
+ pub(crate) const LIGHTING_DELETE: Entry = hook(0x0143_9fd0, PACIASP);
++/// Firmware 1.3.0.12 `NowPosition` timer entry. Added by NEUROGENIC M0.6d.
++pub(crate) const NOW_POSITION: Entry = hook(0x0210_9a90, PACIASP);
+ /// Vtable of the sender whose destructor hooks are installed above.
+ pub(crate) const LIGHTING_SENDER_VTABLE: Entry = data(0x06d8_fa60);
+ 
+@@ -185,7 +187,7 @@ pub(crate) const GUARDS: [Entry; 20] = [
+ ];
+ 
+-/// The 22 hook sites, in install order.
+-pub(crate) const HOOKS: [Entry; 22] = [
++/// The hook sites, in install order.
++pub(crate) const HOOKS: [Entry; 23] = [
+     SIXTEEN_CTOR,
+     SIXTEEN_PROC,
+     DATA_HOOK,
+@@ -208,6 +210,7 @@ pub(crate) const HOOKS: [Entry; 22] = [
+     SAMPLE_SERVICE_DELETE,
+     LIGHTING_DTOR,
+     LIGHTING_DELETE,
++    NOW_POSITION,
+ ];
+ 
+ /// Every entry with an instruction word, which the loader verifies.
+diff --git a/src/lib.rs b/src/lib.rs
+index 42f8f50..23ffad2 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -40,6 +40,7 @@ pub mod render;
+ mod sites;
+ pub mod state;
+ pub mod task;
++pub mod transport;
+ 
+ pub use event::{
+     AudioHooks, ButtonEvent, CcEvent, EncoderEvent, Flow, InputHooks, Mod, NoteEvent, PadAction,
+diff --git a/src/sites.rs b/src/sites.rs
+index c6fb76b..eae9bd4 100644
+--- a/src/sites.rs
++++ b/src/sites.rs
+@@ -62,10 +62,11 @@ pub(crate) struct Originals {
+     pub(crate) sample_service_delete: Option<unsafe extern "C" fn(usize)>,
+     pub(crate) lighting_dtor: Option<unsafe extern "C" fn(usize)>,
+     pub(crate) lighting_delete: Option<unsafe extern "C" fn(usize)>,
++    pub(crate) now_position: Option<unsafe extern "C" fn(usize)>,
+ }
+ 
+ /// The trampolines `hook::prepare` returned, in table order.
+-const SITES: usize = 22;
++const SITES: usize = 23;
+ 
+ impl Originals {
+     /// Type each prepared trampoline by the signature of its site.
+@@ -100,6 +101,7 @@ impl Originals {
+                 sample_service_delete: typed(trampolines[19]),
+                 lighting_dtor: typed(trampolines[20]),
+                 lighting_delete: typed(trampolines[21]),
++                now_position: typed(trampolines[22]),
+             }
+         }
+     }
+@@ -274,9 +276,26 @@ fn table() -> [Site; SITES] {
+             offset: crate::firmware::LIGHTING_DELETE.offset,
+             handler: lighting_delete as *const (),
+         },
++        Site {
++            offset: crate::firmware::NOW_POSITION.offset,
++            handler: now_position as *const (),
++        },
+     ]
+ }
+ 
++/// Forward the stock timer first, then publish a pointer-free observation.
++///
++/// # Safety
++/// The app supplies its live firmware-1.3.0.12 `NowPosition` object.
++unsafe extern "C" fn now_position(timer: usize) {
++    if let Some(forward) = originals().now_position {
++        // SAFETY: this is the displaced stock function for the same entry.
++        unsafe { forward(timer) };
++    }
++    // SAFETY: timer is borrowed only for this callback.
++    unsafe { crate::transport::observe(timer) };
++}
++
+ /// The AC50 per-pad lighting callback: apply the mod's override, then forward.
+ ///
+ /// The callback receives the sender, a pointer to the native `PadLight`
+@@ -838,6 +857,26 @@ fn install_paint(base: usize) -> bool {
+ mod tests {
+     use super::{notes_ready, table};
+ 
++    #[test]
++    fn now_position_forwards_the_stock_callback() {
++        use core::sync::atomic::{AtomicUsize, Ordering};
++        static CALLS: AtomicUsize = AtomicUsize::new(0);
++        unsafe extern "C" fn original(_timer: usize) {
++            CALLS.fetch_add(1, Ordering::Relaxed);
++        }
++        CALLS.store(0, Ordering::Relaxed);
++        // SAFETY: no installed hooks exist in host tests; restore the slot below.
++        unsafe {
++            super::ORIGINALS = Some(super::Originals {
++                now_position: Some(original),
++                ..super::Originals::default()
++            });
++            super::now_position(0);
++            super::ORIGINALS = None;
++        }
++        assert_eq!(CALLS.load(Ordering::Relaxed), 1);
++    }
++
+     #[test]
+     fn independent_pad_hook_completes_after_native_forwarding() {
+         use core::sync::atomic::{AtomicUsize, Ordering};
+@@ -885,7 +924,7 @@ mod tests {
+ 
+     #[test]
+     fn the_table_has_one_entry_per_site() {
+-        assert_eq!(table().len(), 22);
++        assert_eq!(table().len(), super::SITES);
+         assert!(!notes_ready());
+     }
+ }
+diff --git a/src/transport.rs b/src/transport.rs
+new file mode 100644
+index 0000000..e91e68b
+--- /dev/null
++++ b/src/transport.rs
+@@ -0,0 +1,308 @@
++//! Read-only stock transport observations for firmware 1.3.0.12.
++//!
++//! This module adapts the narrow `NowPosition` observer contract documented by
++//! Am MOD (MIT, revision 6cdc67276f43cd39f64871cb7e36782481244c65). It
++//! publishes copied scalar values only; callback-owned firmware pointers never
++//! leave the hook.
++
++use core::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
++
++use crate::{image, platform};
++
++const TIMER_VTABLE_OFFSET: usize = 0x06da_4588;
++const ENGINE_OFFSET: usize = 0x258;
++const TRANSPORT_OFFSET: usize = 0x768;
++const PLAYING_OFFSET: usize = 0x148;
++const IS_PLAYING_SLOT: usize = 0x18;
++const ENGINE_TICK_OFFSET: usize = 0x0211_3b10;
++const IMAGE_SPAN: usize = 0x1200_0000;
++
++/// Running changed from false to true.
++pub const DISCONTINUITY_STARTED: u32 = 1 << 0;
++/// Running changed from true to false.
++pub const DISCONTINUITY_STOPPED: u32 = 1 << 1;
++/// The native tick moved backwards while observations stayed valid.
++pub const DISCONTINUITY_BACKWARD: u32 = 1 << 2;
++/// The native tick changed while both observations reported stopped.
++pub const DISCONTINUITY_STOPPED_MOVE: u32 = 1 << 3;
++/// The latest callback did not satisfy the guarded object contract.
++pub const DISCONTINUITY_INVALID: u32 = 1 << 4;
++
++/// One coherent, pointer-free observation.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
++pub struct Snapshot {
++    /// Whether the latest callback passed every guard.
++    pub valid: bool,
++    /// Stock engine position in its native 960-PPQ tick domain.
++    pub tick: i64,
++    /// Whether the stock transport facade reported playing.
++    pub running: bool,
++    /// `CLOCK_MONOTONIC` milliseconds captured after the native queries.
++    pub observed_ms: i64,
++    /// Count of hook callbacks, including guarded failures.
++    pub callback_count: u64,
++    /// Count of valid published observations. This is not a stock sequence generation.
++    pub observation_serial: u64,
++    /// Count of start/stop transitions derived from consecutive valid observations.
++    pub transition_serial: u64,
++    /// Sticky indicators derived from valid observations since process startup.
++    pub discontinuities: u32,
++    /// Callbacks dropped because another observer invocation was active.
++    pub reentrant_drops: u64,
++}
++
++static WRITING: AtomicBool = AtomicBool::new(false);
++static VERSION: AtomicU64 = AtomicU64::new(0);
++static VALID: AtomicBool = AtomicBool::new(false);
++static TICK: AtomicI64 = AtomicI64::new(0);
++static RUNNING: AtomicBool = AtomicBool::new(false);
++static OBSERVED_MS: AtomicI64 = AtomicI64::new(0);
++static CALLBACKS: AtomicU64 = AtomicU64::new(0);
++static SERIAL: AtomicU64 = AtomicU64::new(0);
++static TRANSITIONS: AtomicU64 = AtomicU64::new(0);
++static FLAGS: AtomicU32 = AtomicU32::new(0);
++static REENTRANT_DROPS: AtomicU64 = AtomicU64::new(0);
++
++struct WriteGuard;
++
++impl Drop for WriteGuard {
++    fn drop(&mut self) {
++        WRITING.store(false, Ordering::Release);
++    }
++}
++
++fn image_address(base: usize, address: usize) -> bool {
++    base != 0 && (base..base.saturating_add(IMAGE_SPAN)).contains(&address)
++}
++
++fn publish(valid: bool, tick: i64, running: bool, flags: u32) {
++    let callbacks = CALLBACKS
++        .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
++            Some(value.saturating_add(1))
++        })
++        .unwrap_or(u64::MAX)
++        .saturating_add(1);
++    let previous_valid = VALID.load(Ordering::Relaxed);
++    let previous_tick = TICK.load(Ordering::Relaxed);
++    let previous_running = RUNNING.load(Ordering::Relaxed);
++    let mut derived = flags;
++    let serial = if valid {
++        if previous_valid {
++            if !previous_running && running {
++                derived |= DISCONTINUITY_STARTED;
++                TRANSITIONS.fetch_add(1, Ordering::Relaxed);
++            } else if previous_running && !running {
++                derived |= DISCONTINUITY_STOPPED;
++                TRANSITIONS.fetch_add(1, Ordering::Relaxed);
++            }
++            if tick < previous_tick {
++                derived |= DISCONTINUITY_BACKWARD;
++            } else if !previous_running && !running && tick != previous_tick {
++                derived |= DISCONTINUITY_STOPPED_MOVE;
++            }
++        }
++        SERIAL
++            .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
++                Some(value.saturating_add(1))
++            })
++            .unwrap_or(u64::MAX)
++            .saturating_add(1)
++    } else {
++        SERIAL.load(Ordering::Relaxed)
++    };
++
++    // AcqRel on the odd transition prevents the following field stores from
++    // becoming visible before readers can observe the in-progress version.
++    VERSION.fetch_add(1, Ordering::AcqRel);
++    VALID.store(valid, Ordering::Relaxed);
++    if valid {
++        TICK.store(tick, Ordering::Relaxed);
++        RUNNING.store(running, Ordering::Relaxed);
++    }
++    OBSERVED_MS.store(platform::clock::now_ms(), Ordering::Relaxed);
++    CALLBACKS.store(callbacks, Ordering::Relaxed);
++    SERIAL.store(serial, Ordering::Relaxed);
++    FLAGS.fetch_or(derived, Ordering::Relaxed);
++    VERSION.fetch_add(1, Ordering::Release);
++}
++
++/// Observe the live callback argument after the displaced stock callback ran.
++///
++/// # Safety
++///
++/// `timer` must be the live argument supplied at the verified `NowPosition`
++/// entry. The function borrows its object graph only for this call.
++pub(crate) unsafe fn observe(timer: usize) {
++    if WRITING
++        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
++        .is_err()
++    {
++        REENTRANT_DROPS.fetch_add(1, Ordering::Relaxed);
++        return;
++    }
++    let _release = WriteGuard;
++
++    let base = image::base();
++    // SAFETY: timer is the callback's live object; no pointer is retained.
++    let vtable = if timer == 0 {
++        0
++    } else {
++        // SAFETY: nonzero timer is the callback's live object.
++        unsafe { *(timer as *const usize) }
++    };
++    if vtable != base.wrapping_add(TIMER_VTABLE_OFFSET) {
++        publish(false, 0, false, DISCONTINUITY_INVALID);
++        return;
++    }
++    // SAFETY: exact timer vtable proves this firmware-specific object layout.
++    let engine = unsafe { *((timer + ENGINE_OFFSET) as *const usize) };
++    if engine == 0 {
++        publish(false, 0, false, DISCONTINUITY_INVALID);
++        return;
++    }
++    // SAFETY: engine belongs to the validated timer for this callback.
++    let engine_vtable = unsafe { *(engine as *const usize) };
++    if !image_address(base, engine_vtable) {
++        publish(false, 0, false, DISCONTINUITY_INVALID);
++        return;
++    }
++    // SAFETY: pinned firmware 1.3.0.12 getter and validated live engine.
++    let tick_getter: unsafe extern "C" fn(usize) -> i64 =
++        unsafe { core::mem::transmute(base + ENGINE_TICK_OFFSET) };
++    // SAFETY: pinned getter and live engine were established above.
++    let tick = unsafe { tick_getter(engine) };
++
++    // SAFETY: validated engine layout; all objects are callback-local borrows.
++    let transport = unsafe { *((engine + TRANSPORT_OFFSET) as *const usize) };
++    if transport == 0 {
++        publish(false, 0, false, DISCONTINUITY_INVALID);
++        return;
++    }
++    // SAFETY: transport belongs to the validated live engine.
++    let playing = unsafe { *((transport + PLAYING_OFFSET) as *const usize) };
++    if playing == 0 {
++        publish(false, 0, false, DISCONTINUITY_INVALID);
++        return;
++    }
++    // SAFETY: playing is nonzero and borrowed from the live transport.
++    let playing_vtable = unsafe { *(playing as *const usize) };
++    if !image_address(base, playing_vtable) {
++        publish(false, 0, false, DISCONTINUITY_INVALID);
++        return;
++    }
++    // SAFETY: playing_vtable is within the verified image.
++    let method = unsafe { *((playing_vtable + IS_PLAYING_SLOT) as *const usize) };
++    if !image_address(base, method) {
++        publish(false, 0, false, DISCONTINUITY_INVALID);
++        return;
++    }
++    // SAFETY: method is the verified isPlaying vtable slot in the image.
++    let is_playing: unsafe extern "C" fn(usize) -> u32 = unsafe { core::mem::transmute(method) };
++    // SAFETY: the method and its live receiver were validated above.
++    let running = unsafe { is_playing(playing) } & 1 != 0;
++    publish(true, tick, running, 0);
++}
++
++/// Read one coherent observation without locking the callback.
++#[must_use]
++pub fn snapshot() -> Option<Snapshot> {
++    for _ in 0..8 {
++        let before = VERSION.load(Ordering::Acquire);
++        if before & 1 != 0 {
++            core::hint::spin_loop();
++            continue;
++        }
++        let result = Snapshot {
++            valid: VALID.load(Ordering::Relaxed),
++            tick: TICK.load(Ordering::Relaxed),
++            running: RUNNING.load(Ordering::Relaxed),
++            observed_ms: OBSERVED_MS.load(Ordering::Relaxed),
++            callback_count: CALLBACKS.load(Ordering::Relaxed),
++            observation_serial: SERIAL.load(Ordering::Relaxed),
++            transition_serial: TRANSITIONS.load(Ordering::Relaxed),
++            discontinuities: FLAGS.load(Ordering::Relaxed),
++            reentrant_drops: REENTRANT_DROPS.load(Ordering::Relaxed),
++        };
++        let after = VERSION.load(Ordering::Acquire);
++        if before == after && after & 1 == 0 {
++            return (result.callback_count != 0).then_some(result);
++        }
++    }
++    None
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::sync::Mutex;
++
++    static TEST_LOCK: Mutex<()> = Mutex::new(());
++
++    fn reset() {
++        VERSION.store(0, Ordering::Relaxed);
++        VALID.store(false, Ordering::Relaxed);
++        TICK.store(0, Ordering::Relaxed);
++        RUNNING.store(false, Ordering::Relaxed);
++        OBSERVED_MS.store(0, Ordering::Relaxed);
++        CALLBACKS.store(0, Ordering::Relaxed);
++        SERIAL.store(0, Ordering::Relaxed);
++        TRANSITIONS.store(0, Ordering::Relaxed);
++        FLAGS.store(0, Ordering::Relaxed);
++        REENTRANT_DROPS.store(0, Ordering::Relaxed);
++    }
++
++    #[test]
++    fn progression_transitions_wrap_seek_and_invalid_are_explicit() {
++        let _guard = TEST_LOCK.lock().unwrap();
++        reset();
++        publish(true, 0, false, 0);
++        assert_eq!(snapshot().unwrap().observation_serial, 1);
++        publish(true, 10, true, 0);
++        assert_eq!(snapshot().unwrap().discontinuities, DISCONTINUITY_STARTED);
++        publish(true, 20, true, 0);
++        assert_eq!(snapshot().unwrap().discontinuities, DISCONTINUITY_STARTED);
++        publish(true, 2, true, 0);
++        assert_eq!(
++            snapshot().unwrap().discontinuities,
++            DISCONTINUITY_STARTED | DISCONTINUITY_BACKWARD
++        );
++        publish(true, 2, false, 0);
++        assert_eq!(
++            snapshot().unwrap().discontinuities,
++            DISCONTINUITY_STARTED | DISCONTINUITY_BACKWARD | DISCONTINUITY_STOPPED
++        );
++        publish(true, 42, false, 0);
++        assert_eq!(
++            snapshot().unwrap().discontinuities,
++            DISCONTINUITY_STARTED
++                | DISCONTINUITY_BACKWARD
++                | DISCONTINUITY_STOPPED
++                | DISCONTINUITY_STOPPED_MOVE
++        );
++        publish(false, 0, false, DISCONTINUITY_INVALID);
++        let invalid = snapshot().unwrap();
++        assert!(!invalid.valid);
++        assert_eq!(invalid.tick, 42);
++        assert_eq!(invalid.observation_serial, 6);
++        assert_eq!(invalid.callback_count, 7);
++    }
++
++    #[test]
++    fn concurrent_snapshot_reads_are_coherent() {
++        let _guard = TEST_LOCK.lock().unwrap();
++        reset();
++        let writer = std::thread::spawn(|| {
++            for tick in 0..10_000 {
++                publish(true, tick, tick & 1 != 0, 0);
++            }
++        });
++        for _ in 0..10_000 {
++            if let Some(value) = snapshot() {
++                assert!(value.callback_count >= value.observation_serial);
++                assert!(value.transition_serial <= value.observation_serial);
++            }
++        }
++        writer.join().unwrap();
++        assert_eq!(snapshot().unwrap().observation_serial, 10_000);
++    }
++}

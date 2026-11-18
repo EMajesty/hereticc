@@ -12,6 +12,7 @@ members = [
     "crates/neurogenic-host",
 ]
 resolver = "2"
+exclude = ["target/m06d/sdk"]
 
 [workspace.package]
 edition = "2024"

@@ -597,3 +597,13 @@ replace/stop the stock app and therefore do not satisfy NEUROGENIC's stock
 engine/effects goal. MINIMOD's live MIDI-to-pad route is input transformation,
 not independent scheduling, and its repository has no root license file at the
 pinned revision. See [M0.6c](M0-6C-UPSTREAM-CAPABILITIES.md).
+
+M0.6d adapts only Am MOD's pinned read-only `NowPosition` clock contract into
+the SDK startup hook transaction. Reinspection confirms entry `0x2109a90`,
+timer vtable `0x6da4588`, engine `+0x258`, tick getter `0x2113b10`, transport
+facade `+0x768`, playing interface `+0x148`, and `isPlaying` slot `+0x18`.
+The displaced callback runs first. The patch publishes copied scalar
+observations and no firmware pointers; its serial is observer-local and not a
+sequence identity. This is host/cross-build evidence until the guarded physical
+experiment passes. The stock queue horizon remains unknown. See
+[M0.6d](M0-6D-TRANSPORT-OBSERVER.md).
