@@ -584,3 +584,16 @@ NEUROGENIC contract. No reviewed source establishes the stock engine's queued
 event horizon, so position alone cannot make live editing safe. M0.6b stops
 before implementation and recommends a read-only transport-observer experiment.
 See [M0.6b](M0-6B-LIVE-WINDOW-FEASIBILITY.md).
+
+M0.6c audited the pinned SDK, Am MOD, MINIMOD, virtual MPC, MPC Sample
+Tracker, and MPC Sample Lab implementations. It found no upstream proof of a
+safe live event-edit horizon or callable prepared-sequence swap. It did find
+three concrete reuse points: adapt Am MOD's read-only `NowPosition` observer,
+consider its bounded bulk native command only after the verified per-event
+adapter needs replacement, and use the MIT-licensed virtual MPC for stock-app
+preflight. Am MOD's direct engine calls remain a high-coupling fallback with no
+stable voice handle or demonstrated sample-accurate scheduler. Tracker and Lab
+replace/stop the stock app and therefore do not satisfy NEUROGENIC's stock
+engine/effects goal. MINIMOD's live MIDI-to-pad route is input transformation,
+not independent scheduling, and its repository has no root license file at the
+pinned revision. See [M0.6c](M0-6C-UPSTREAM-CAPABILITIES.md).

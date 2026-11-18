@@ -315,3 +315,11 @@ the 960-PPQ engine tick and running state, but NEUROGENIC has not installed or
 physically validated that observer. The stock playback queue/prefetch horizon
 is also unknown. Live replacement therefore remains no-go; see
 [M0.6b](M0-6B-LIVE-WINDOW-FEASIBILITY.md).
+
+M0.6c adds no hardware result. Its pinned-source audit confirms that Am MOD's
+clock observer and direct-engine calls are private firmware evidence rather than
+SDK or NEUROGENIC device contracts. `virtual-mpc-sample` can replace physical
+package/UI/hook preflights, but its different audio buffering and possible
+software CPU emulation cannot establish queue horizon, jitter, latency, or
+physical voice behavior. Those remain explicit device gates; see
+[M0.6c](M0-6C-UPSTREAM-CAPABILITIES.md).

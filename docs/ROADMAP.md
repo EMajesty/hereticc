@@ -645,3 +645,18 @@ edit-ahead interval would be guessed. M0.6b therefore adds no live-edit artifact
 or HIL command. The smallest next experiment is a read-only, startup-installed
 transport observer; live replacement remains no-go. See
 [M0.6b live-window feasibility](M0-6B-LIVE-WINDOW-FEASIBILITY.md).
+
+### M0.6c — Upstream playback audit — complete
+
+The pinned ecosystem removes the need to rediscover a transport clock or build
+another emulator. Am MOD supplies a concrete private `NowPosition` observer,
+native bulk-command construction, and direct-engine lifecycle reference;
+`virtual-mpc-sample` can preflight stock-app hooks, UI, autorun, event presence,
+and coarse audio. No audited project establishes the stock event-consumption
+horizon or a callable safe prepared-sequence swap. Rolling live mutation remains
+no-go.
+
+The next implementation is a small read-only, upstream-compatible SDK transport
+observer, preflighted in the virtual MPC and physically tested without native
+edits. Direct voices remain a fallback, not the baseline. See
+[M0.6c upstream capabilities](M0-6C-UPSTREAM-CAPABILITIES.md).
