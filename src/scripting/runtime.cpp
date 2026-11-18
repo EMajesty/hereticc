@@ -1,0 +1,3 @@
+#include "neurogenic/scripting/runtime.hpp"
+#include <sstream>
+namespace neurogenic { bool ScriptRuntime::execute(const std::string&s,std::string&e) noexcept { try { Pattern p{}; std::istringstream in(s); std::string token; if(!(in>>token)||token!="pattern")throw std::runtime_error("expected: pattern <16-character mask>");std::string mask;in>>mask;if(mask.size()!=16)throw std::runtime_error("pattern mask must have 16 characters");for(std::size_t i=0;i<16;++i){if(mask[i]!='x'&&mask[i]!='.')throw std::runtime_error("mask uses only x and .");p.steps[i].enabled=mask[i]=='x';p.steps[i].note=60;}p.revision=1;submit_(p);return true;}catch(const std::exception&x){e=x.what();return false;} } }

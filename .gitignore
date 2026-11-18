@@ -1,6 +1,11 @@
-/target/
+/build*/
 /.direnv/
-/device/m03b-a/build/
-/device/m03b-a/target/
-/device/m03b-b0/build/
-/device/m03b-b0/target/
+/.nix-*/
+/.rustc_info.json
+/.cargo-cache/
+/.cache/
+/target/
+device/**/build/
+device/**/target/
+*.wav
+compile_commands.json

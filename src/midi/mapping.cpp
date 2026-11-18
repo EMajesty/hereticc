@@ -1,0 +1,2 @@
+#include "neurogenic/midi/mapping.hpp"
+namespace neurogenic { void MidiMapper::map_button(std::uint8_t c,std::uint8_t n,std::string id,Action a){buttons_[static_cast<std::uint16_t>((c<<8)|n)]={std::move(id),std::move(a)};} bool MidiMapper::receive(const MidiMessage&m){if((m.status&0xF0)!=0x90||m.data2==0)return false;auto it=buttons_.find(static_cast<std::uint16_t>(((m.status&15)<<8)|m.data1));if(it==buttons_.end())return false;it->second.action();return true;} }

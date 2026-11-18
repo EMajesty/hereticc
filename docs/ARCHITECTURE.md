@@ -1,164 +1,27 @@
 # Architecture
 
-## Status and recommendation
-
-M0.2a implements the hardware-independent `neurogenic-core` subset. Subsequent
-milestones physically validated SDK UI/input integration and firmware-1.3.0.12
-native stock-sequence insertion, observation, exact removal, and audible stock
-playback. There is still no production playback-window materializer, MIDI
-backend, effects engine, or final project format.
-
-The M0.6 decision is a hybrid with one source of truth: NEUROGENIC owns musical
-state and higher-level scheduling; a bounded adapter materializes audio events
-into disposable stock sequence data so the stock transport/audio engine plays
-them; a later NEUROGENIC MIDI backend consumes the same timeline. See
-[M0.6 playback architecture](M0-6-PLAYBACK-ARCHITECTURE.md).
-
-Why:
-
-- Sequencer correctness—event ordering, polymeter, transitions, locks, and persistence—can be specified and tested without undocumented firmware state.
-- [`mpc-sample-sdk`](https://github.com/ioma8/mpc-sample-sdk) is Rust/MIT, checks firmware fingerprints, exposes typed input/drawing/sample/slice/audio/lighting access, and supports reversible SD deployment.
-- Its public surface does not prove a sample-accurate direct stock-engine voice
-  trigger. The verified stock-sequence command path avoids making that unknown
-  call the primary scheduler boundary.
-- Am MOD demonstrates deep stock-app sequencing edits, but its patch set is broad, firmware-specific, and much harder to isolate. MINIMOD is a useful SDK example but is a feature collection rather than a sequencer foundation. Sample Lab and MPCTRACKER replace the stock application and therefore conflict with the preservation goal.
-
-## Component boundaries
+The control thread owns files, projects, scripts, mappings, and editable state.
+It compiles edits into bounded pattern snapshots. The audio thread consumes
+only fixed-size events and sample memory prepared in advance.
 
 ```text
-control/UI/MIDI input
-        |
-        v
-device adapter  <---->  project adapter / persistence
-        |
-        v
-sequencer core -----> scheduled semantic events -----> playback adapters
-        ^                                                   |
-        |                                                   v
- transport clock                              stock sequence cache / MIDI
-        |
-        +------ control events ------> effects control plane
-                                             |
-                                             v
-                                      audio routing/DSP adapter
+CLI/UI -> command API -> project / Lua / MIDI mapping
+                         | boundary-safe Pattern snapshot
+                         v
+musical scheduler -> frame-offset events -> sample voice -> DSP -> backend
+                                                    \-> offline WAV
 ```
 
-### `neurogenic-core`
+- `core`: stable command identifiers and application-domain boundary.
+- `sequencer`: integer frame clock, deterministic ordering, next-bar swaps.
+- `audio`: prepared sample voices, offline renderer, future backend interface.
+- `midi`: timestamped messages and stable action mappings; simulated input is
+  always available.
+- `scripting`: versioned `neurogenic.v1` API boundary. The fallback parser lets
+  host tests run without Lua; the native sol2 binding remains to be completed.
+- `dsp`: allocation-free effect interface and first gain stage.
+- `project`: deliberately tiny versioned format; not a promised final schema.
 
-Pure Rust domain logic with no firmware addresses, UI objects, ALSA handles, filesystem access, or wall-clock calls.
-
-Responsibilities:
-
-- tracks, patterns, scenes, songs, events, locks, and deterministic IDs;
-- integer musical time and independent pattern wrapping;
-- transition planning and look-ahead scheduling;
-- tracker command state and event precedence;
-- immutable snapshots or bounded commands suitable for a real-time consumer;
-- versioned, platform-neutral project representation.
-
-The core accepts explicit time/transport input and emits semantic events such as note start/stop, sample offset, slice selection, parameter change, and scene commit. It must not know how the stock firmware represents samples or voices.
-
-Effects are not part of event generation. The core may schedule typed parameter intents and performance engagement boundaries, but an effects control plane resolves them into immutable/bounded parameter updates for an audio adapter. Audio never flows through the sequencer core.
-
-M0.2 implements the first part of this boundary. Persistent parameter addresses use logical scopes/owners, optional processor slots, and symbolic parameter IDs. The scheduler carries absolute/relative intents but does not implement lock lifetimes, smoothing, modulation composition, or DSP.
-
-### Scheduler runtime
-
-Owns the active snapshot, converts musical positions to the integration clock, and emits events into preallocated bounded queues. It must define overload behavior explicitly; dropping diagnostics is preferable to blocking audio, while musical-event overflow must be visible and testable.
-
-No allocation, file I/O, drawing, logging, or blocking synchronization is permitted in a real-time audio callback. Project edits are prepared off the real-time path and swapped at a safe boundary.
-
-### Current allocation and real-time boundary
-
-The M0.2a scheduler is intentionally host-oriented:
-
-- project construction, validation, encoding, and decoding allocate;
-- `Scheduler::new` validates the editable project;
-- each `schedule` call clones scheduler state transactionally, allocates occurrence/event vectors, sorts them, and returns a new `Vec`;
-- a capacity limit produces an error and leaves scheduler state unchanged, but it does not prevent temporary allocation before the check;
-- the dependency-free codec allocates strings and collections and is never an audio-thread operation; it bounds encoded bytes, collections, identifiers, event totals, and an estimated decoded-allocation budget before allocating from untrusted declarations.
-
-Therefore no current public scheduling operation is claimed real-time safe. A future boundary should compile a validated project into an immutable, canonically ordered snapshot and schedule into caller-owned preallocated storage. That work must preserve the M0.2 half-open interval and ordering semantics; it does not require changing the persistent model.
-
-### `neurogenic-host`
-
-The host adapter is a test oracle and integration-shape prototype, not a device implementation. It consumes already ordered `ScheduledEvent` batches, transactionally tracks active voices by runtime token, records parameter addresses and scene commits, rejects duplicate tokens/unmatched releases/order violations, and emits a deterministic human-readable trace. The included demonstration uses two audible polymetric tracks and an explicit scene boundary without audio, MIDI, clocks, sleeping, or firmware access.
-
-### Device adapter
-
-Potentially backed by `mpc-sample-sdk`, behind NEUROGENIC-owned traits. Responsibilities include:
-
-- intercepting or forwarding controls;
-- obtaining a monotonic transport position;
-- mapping stable NEUROGENIC sample references to live firmware objects;
-- applying scheduled triggers and parameter changes;
-- drawing screens and restoring native pad lights;
-- detecting supported firmware and failing closed.
-
-Firmware pointers, offsets, unsafe calls, and thread-affinity rules stay inside this boundary. A host fake implements the same traits.
-
-The future contract is specified in [Device adapter contract](ADAPTER.md). In particular, tick-to-frame conversion belongs at the transport/adapter boundary; it must use checked rational or fixed-point arithmetic and must not change semantic event ordering.
-
-### Audio playback materializer
-
-The verified initial boundary is native stock sequence data, not direct voice
-calls. A playback-window compiler emits bounded native-note requests for a
-dedicated disposable stock target. The adapter owns canonical receipts and
-context generations; the stock sequencer schedules voices and preserves stock
-routing/effects. Live window replacement, edit horizon, and batch/Undo behavior
-remain gates. A separate mixer is not an implicit fallback.
-
-### Effects control plane and audio adapter
-
-The logical mixer has sixteen stereo track paths, two insert slots per track, two stereo send/return buses, two stereo master insert slots, and independent performance-FX stages. This is a platform-neutral target, not evidence that the stock application exposes those buses.
-
-The control plane owns effect descriptors, parameter addresses, modulation composition, routing snapshots, bypass transitions, tail policy, and performance gestures. It consumes sequencer parameter events, UI gestures, macros, and MIDI control without generating notes or changing transport.
-
-The audio adapter maps that graph onto one of three separately evaluated backends:
-
-- stock effect objects/routing, if safe live interfaces can be established;
-- custom stereo-master processing at a confirmed replaceable final-output point;
-- custom per-track processing only if isolated pre-sum track audio is available with defined ownership and latency.
-
-An output callback that can add samples to the final mix does not by itself provide replace-in-place master processing or isolated tracks. Logical tracks must never be equated with stock audio buses without measurement. See [Effects](EFFECTS.md).
-
-### UI adapter
-
-Grid and tracker views are projections of the same event model. UI state such as cursor, selection, and temporary audition is separate from saved musical state. Input ownership must be page-scoped; events not owned by NEUROGENIC are forwarded to the stock application.
-
-The proposed renderer consumes immutable view frames and emits bounded rectangles/text; it never receives firmware pointers or owns sequencer state. The initial device backend may target only the verified Sample-page post-paint scope. Full-screen coverage, repaint budget, child/dialog ordering, typography, and restoration must pass M0.3b before a complete UI is authorized. See [UI architecture](UI.md).
-
-### Persistence adapter
-
-NEUROGENIC data should use a versioned sidecar on the SD card until safe round-trip storage inside stock projects is demonstrated. Store logical references and metadata, never raw firmware addresses. Writes use a temporary file, flush, and atomic rename where the filesystem permits. Unknown future fields must survive load/save where practical.
-
-## Integration proof required before device architecture is frozen
-
-A minimal, non-release spike must establish:
-
-1. pad/button/encoder/knob interception and correct forwarding/consumption;
-2. custom paint and full restoration of native pad lighting;
-3. bounded native event materialization through the stock engine, including
-   velocity, overlap, pad/sample mapping, duration behavior, and effects routing;
-4. stock transport correlation, a measured safe edit-ahead horizon, and timing
-   behavior under UI load;
-5. behavior while the stock transport and sequencer are running;
-6. safe project/sample changes without stale object access;
-7. inert behavior on unsupported firmware and stock boot after SD removal.
-8. whether the audio tap is additive-only or permits safe in-place master replacement without double audio;
-9. whether sixteen isolated stereo track paths and two feedback-safe send returns exist or must be custom-built;
-10. stock effect creation, real-time processing, parameter, tail, latency, and destruction contracts.
-
-If bounded materialization cannot be made safe, compare whole-sequence
-double-buffering with a separately validated direct-voice contract. A replacement
-application requires an explicit architecture decision; it is not an automatic
-fallback.
-
-## Principal risks
-
-- Firmware 1.3.0.12 is currently the only verified target in the reviewed projects.
-- Reverse-engineered object layouts may change across firmware and during page/project lifetimes.
-- A UI/event hook is not evidence of sample-accurate scheduling.
-- Stock-engine triggering may not expose every voice parameter needed for locks and tracker commands.
-- Long operations in the stock application may stall UI-driven callbacks.
-- SD autorun is reversible but unofficial; recovery from an unbootable device is not verified by the reviewed projects.
+No callback operation performs I/O, locks, allocation, logging, or Lua work.
+The current single trigger mailbox is bounded but can coalesce triggers; a
+fixed-capacity SPSC command queue is the next real-time hardening step.
