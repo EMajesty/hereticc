@@ -77,6 +77,7 @@ The core currently implements integer musical time, validated sixteen-track proj
 - [M0.5d DATA and redraw](docs/M0-5D-DATA-AND-REDRAW.md) — encoder normalization and complete presentation redraw candidate
 - [M0.6 playback architecture](docs/M0-6-PLAYBACK-ARCHITECTURE.md) — independent sequencer ownership and stock-engine playback decision
 - [M0.6a static materialization](docs/M0-6A-STATIC-MATERIALIZATION.md) — bounded playback-window compiler and guarded batch experiment
+- [M0.6b live-window feasibility](docs/M0-6B-LIVE-WINDOW-FEASIBILITY.md) — transport-clock evidence and fail-closed replacement decision
 - [Roadmap](docs/ROADMAP.md) — milestones and acceptance criteria
 - [Safety](docs/SAFETY.md) — development, deployment, and recovery rules
 - [Device adapter contract](docs/ADAPTER.md) — future clock, voice, capacity, and recovery boundary

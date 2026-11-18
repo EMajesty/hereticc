@@ -305,9 +305,13 @@ transport-correlated MIDI timing, arbitrary direct voice control, or release
 behavior across stock pad modes. Those remain explicit M0.6 gates; see
 [M0.6 playback architecture](M0-6-PLAYBACK-ARCHITECTURE.md).
 
-M0.6a prepares, but has not physically tested, an eight-event static batch over
-two mapped pads. It reuses the physically verified Step UI-thread command path
-and comparator one operation per paint. Multi-event reliability, overlap,
-off-grid playback, exact full-batch cleanup, and Undo-history impact remain
-unknown until the guarded experiment in
-[M0.6a](M0-6A-STATIC-MATERIALIZATION.md) is owner-operated.
+M0.6a physically passed an eight-event A01/A02 static batch on firmware
+1.3.0.12: materialization, audible stock playback, exact cleanup, and stock
+restoration succeeded. Timing/jitter and Undo-history impact were not measured.
+
+M0.6b found no transport-position API in the pinned SDK or existing Step-paint
+adapter. Pinned Am MOD source uses an additional native timer-entry hook to copy
+the 960-PPQ engine tick and running state, but NEUROGENIC has not installed or
+physically validated that observer. The stock playback queue/prefetch horizon
+is also unknown. Live replacement therefore remains no-go; see
+[M0.6b](M0-6B-LIVE-WINDOW-FEASIBILITY.md).

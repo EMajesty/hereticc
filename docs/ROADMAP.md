@@ -621,7 +621,7 @@ unique receipts, multiple pads, overlap, off-grid ticks, stock playback, exact
 cleanup, and restoration before any live rolling-window work. See
 [M0.6 playback architecture](M0-6-PLAYBACK-ARCHITECTURE.md).
 
-### M0.6a — Static materialization — host implementation complete
+### M0.6a — Static materialization — physically confirmed
 
 The compiler and fixed-capacity batch coordinator are implemented and host
 tested. A distinct volatile HIL artifact compiles eight events across two
@@ -629,7 +629,19 @@ logical tracks/pads, including two off-grid positions and an overlap, then
 advances one native boundary per verified Step paint. Per-event evidence allows
 exact cleanup of only uniquely observed receipts after partial failure.
 
-The owner-operated experiment has not run. Static stock playback, full batch
-cleanup, and Undo-history behavior remain physical gates. Rolling windows remain
-out of scope until this experiment passes. See
-[M0.6a static materialization](M0-6A-STATIC-MATERIALIZATION.md).
+The owner-operated firmware-1.3.0.12 experiment passed: all eight A01/A02
+events were uniquely materialized, played audibly, removed, and followed by
+stock restoration. Timing/jitter and Undo-stack behavior were not measured.
+See [M0.6a static materialization](M0-6A-STATIC-MATERIALIZATION.md).
+
+### M0.6b — Live window replacement — research stop
+
+Pinned Am MOD source identifies a plausible native 960-PPQ engine tick, but it
+requires an additional firmware entry hook not exposed by SDK v0.7.1 or the
+existing verified Step-paint context. More importantly, no inspected source or
+physical result establishes how far ahead the playback engine queues events.
+Without both a fresh exact-context playhead and a measured queue horizon, any
+edit-ahead interval would be guessed. M0.6b therefore adds no live-edit artifact
+or HIL command. The smallest next experiment is a read-only, startup-installed
+transport observer; live replacement remains no-go. See
+[M0.6b live-window feasibility](M0-6B-LIVE-WINDOW-FEASIBILITY.md).

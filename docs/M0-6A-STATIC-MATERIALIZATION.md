@@ -3,9 +3,11 @@
 ## Scope and status
 
 M0.6a implements a host-tested compiler, fixed-capacity native batch coordinator,
-and a guarded one-command physical experiment. No hardware experiment has been
-run in this milestone. Static materialization is therefore **ready for an owner-
-operated test, not physically validated**.
+and a guarded one-command physical experiment. The owner subsequently ran that
+experiment on firmware 1.3.0.12: all eight A01/A02 events were materialized,
+played audibly through stock transport, removed, and followed by successful
+stock restoration. Static materialization is therefore **physically confirmed
+for this bounded batch**. Timing and jitter were not objectively measured.
 
 NEUROGENIC remains authoritative. Native tag-3 notes are disposable cache
 entries in a fresh unsaved stock sequence. This milestone does not implement
@@ -152,5 +154,7 @@ These identify this host build only and do not constitute physical validation.
   runs.
 - Cleanup and ownership behavior across Program/track/sequence changes.
 
-Only after static insertion, playback, exact cleanup, and restoration pass may
-M0.6b test one future-window replacement while transport runs.
+Static insertion, playback, exact cleanup, and restoration passed. M0.6b's
+source review nevertheless found no current NEUROGENIC transport-position API
+or verified playback-engine queue horizon, so live replacement remains no-go;
+see [M0.6b](M0-6B-LIVE-WINDOW-FEASIBILITY.md).

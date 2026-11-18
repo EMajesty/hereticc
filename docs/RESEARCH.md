@@ -569,6 +569,18 @@ See [M0.6 playback architecture](M0-6-PLAYBACK-ARCHITECTURE.md).
 M0.6a implements the host side of that decision without adding new firmware
 assumptions: existing scheduler output is compiled into pointer-free audio
 requests, and the already verified single-event command/comparator/removal
-boundary is sequenced one operation per Step paint. The eight-event artifact and
-runner are host/QEMU candidates only until the guarded owner experiment runs.
+boundary is sequenced one operation per Step paint. The guarded owner experiment
+subsequently passed on firmware 1.3.0.12 for eight A01/A02 events, audible stock
+playback, exact cleanup, and restoration. It did not measure timing or jitter.
 See [M0.6a static materialization](M0-6A-STATIC-MATERIALIZATION.md).
+
+M0.6b inspected the exact pinned SDK and Am MOD revisions for a live replacement
+clock. SDK v0.7.1 exposes no stock transport tick. Am MOD observes one by adding
+a firmware-specific NowPosition entry hook (`0x2109a90`), validating its timer
+vtable (`0x6da4588`), borrowing engine offset `0x258` during the callback, and
+calling tick getter `0x2113b10`; the running state comes from the transport
+facade. This is source-supported upstream evidence, not an installed
+NEUROGENIC contract. No reviewed source establishes the stock engine's queued
+event horizon, so position alone cannot make live editing safe. M0.6b stops
+before implementation and recommends a read-only transport-observer experiment.
+See [M0.6b](M0-6B-LIVE-WINDOW-FEASIBILITY.md).
