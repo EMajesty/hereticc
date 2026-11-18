@@ -10,10 +10,10 @@
 #include <iostream>
 #include <string>
 #include <thread>
-namespace {std::atomic<bool> running{true};void stop(int){running=false;}void usage(){std::cout<<"usage: neurogenic [--audio NAME] [--midi NAME] [--script FILE] [--list-devices] SAMPLE.wav\n";}}
+namespace {std::atomic<bool> running{true};void stop(int){running=false;}void usage(){std::cout<<"usage: neurogenic [--headless] [--audio NAME] [--midi NAME] [--script FILE] [--list-devices] SAMPLE.wav\n";}}
 int main(int argc,char**argv){
- try{std::string wav,audio_name,midi_name,script="examples/generate.lua";bool list=false;for(int i=1;i<argc;++i){std::string arg=argv[i];if(arg=="--audio"&&i+1<argc)audio_name=argv[++i];else if(arg=="--midi"&&i+1<argc)midi_name=argv[++i];else if(arg=="--script"&&i+1<argc)script=argv[++i];else if(arg=="--list-devices")list=true;else if(arg=="--help"){usage();return 0;}else if(!arg.empty()&&arg[0]!='-')wav=arg;else{usage();return 2;}}
-  neurogenic::AudioEngine engine;neurogenic::MidiMapper mapper;neurogenic::AudioDevice audio(engine);neurogenic::MidiInput midi(mapper);
+ try{std::string wav,audio_name,midi_name,script="examples/generate.lua";bool list=false,headless=false;for(int i=1;i<argc;++i){std::string arg=argv[i];if(arg=="--audio"&&i+1<argc)audio_name=argv[++i];else if(arg=="--midi"&&i+1<argc)midi_name=argv[++i];else if(arg=="--script"&&i+1<argc)script=argv[++i];else if(arg=="--list-devices")list=true;else if(arg=="--headless")headless=true;else if(arg=="--help"){usage();return 0;}else if(!arg.empty()&&arg[0]!='-')wav=arg;else{usage();return 2;}}
+  neurogenic::AudioEngine engine;neurogenic::MidiMapper mapper;neurogenic::AudioDevice audio(engine,headless);neurogenic::MidiInput midi(mapper);
   if(list){std::cout<<"Audio backend: "<<audio.backend()<<"\nAudio outputs:\n";std::size_t index=0;for(const auto& name:audio.outputs())std::cout<<"  ["<<index++<<"] "<<name<<'\n';if(index==0)std::cout<<"  (none discovered)\n";std::cout<<"MIDI backend: "<<midi.backend()<<"\nMIDI inputs:\n";index=0;for(const auto& name:midi.inputs())std::cout<<"  ["<<index++<<"] "<<name<<'\n';if(index==0)std::cout<<"  (none discovered)\n";if(wav.empty())return 0;}
   if(wav.empty()){usage();return 2;}auto sample=neurogenic::load_wav(wav);if(sample.sample_rate!=48000)std::cerr<<"warning: sample rate is "<<sample.sample_rate<<" Hz; resampling is not implemented (use 48000 Hz)\n";engine.set_sample(std::move(sample));
   neurogenic::ScriptRuntime lua([&](auto pattern){return engine.queue_pattern(pattern);},[&]{return engine.frame_position();});

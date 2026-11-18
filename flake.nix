@@ -16,7 +16,13 @@
       neurogenic = pkgs.stdenv.mkDerivation {
         pname = "neurogenic";
         version = "0.1.0";
-        src = self;
+        src = pkgs.lib.cleanSourceWith {
+          src = self;
+          filter = path: type:
+            let name = baseNameOf path;
+            in !(builtins.elem name [ "result" "results" ]
+              || (type == "directory" && name == "build"));
+        };
         nativeBuildInputs = with pkgs; [ cmake ninja pkg-config ];
         buildInputs = with pkgs; [ alsa-lib ];
         cmakeFlags = [

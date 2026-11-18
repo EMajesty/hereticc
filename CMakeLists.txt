@@ -27,6 +27,11 @@ target_link_libraries(neurogenic_live PUBLIC neurogenic_engine)
 if(NEUROGENIC_FETCH_DEPENDENCIES)
   target_compile_definitions(neurogenic_live PRIVATE NEUROGENIC_HAS_MINIAUDIO NEUROGENIC_HAS_LIBREMIDI)
   target_link_libraries(neurogenic_live PRIVATE neurogenic_miniaudio libremidi)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # Retain ALSA as an ELF dependency so Nix records alsa-lib in RUNPATH.
+    target_compile_definitions(neurogenic_live PRIVATE NEUROGENIC_HAS_ALSA)
+    target_link_libraries(neurogenic_live PUBLIC ALSA::ALSA)
+  endif()
 endif()
 
 add_executable(neurogenic apps/neurogenic.cpp)
@@ -39,4 +44,9 @@ if(NEUROGENIC_BUILD_TESTS)
   add_executable(neurogenic_tests tests/tests.cpp)
   target_link_libraries(neurogenic_tests PRIVATE neurogenic_engine)
   add_test(NAME neurogenic_tests COMMAND neurogenic_tests)
+  if(NEUROGENIC_FETCH_DEPENDENCIES AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_test(NAME neurogenic_alsa_runtime_link COMMAND ${CMAKE_COMMAND}
+      -DNEUROGENIC_EXECUTABLE=$<TARGET_FILE:neurogenic>
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyAlsaRuntime.cmake)
+  endif()
 endif()

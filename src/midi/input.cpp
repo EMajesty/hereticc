@@ -2,6 +2,9 @@
 #ifdef NEUROGENIC_HAS_LIBREMIDI
 #include <libremidi/libremidi.hpp>
 #endif
+#ifdef NEUROGENIC_HAS_ALSA
+#include <alsa/asoundlib.h>
+#endif
 #include <algorithm>
 namespace neurogenic {
 namespace {
@@ -25,7 +28,13 @@ MidiInput::MidiInput(MidiMapper& m):impl_(std::make_unique<Impl>(m)){}
 MidiInput::~MidiInput()=default;
 std::string MidiInput::backend() const{
 #ifdef NEUROGENIC_HAS_LIBREMIDI
-const auto api=impl_->observer.get_current_api();if(api==libremidi::API::DUMMY)return alsa_compiled()?"ALSA sequencer compiled, but unavailable at runtime":"not compiled (ALSA sequencer backend missing)";return std::string(libremidi::get_api_display_name(api));
+const auto api=impl_->observer.get_current_api();if(api==libremidi::API::DUMMY){if(!alsa_compiled())return "not compiled (ALSA sequencer backend missing)";
+#ifdef NEUROGENIC_HAS_ALSA
+return "ALSA sequencer compiled and libasound "+std::string(snd_asoundlib_version())+" linked, but unavailable";
+#else
+return "ALSA sequencer compiled, but runtime library unavailable";
+#endif
+}return std::string(libremidi::get_api_display_name(api));
 #else
 return "not compiled (configure with NEUROGENIC_FETCH_DEPENDENCIES=ON)";
 #endif

@@ -3,20 +3,27 @@
 #ifdef NEUROGENIC_HAS_MINIAUDIO
 #include <miniaudio.h>
 #endif
+#ifdef NEUROGENIC_HAS_ALSA
+#include <alsa/asoundlib.h>
+#endif
 #include <algorithm>
 #include <array>
 namespace neurogenic {
 struct AudioDevice::Impl {
   AudioEngine& engine;
+  bool force_null{};
 #ifdef NEUROGENIC_HAS_MINIAUDIO
   ma_context context{};ma_device device{};bool context_ready{},device_ready{};
   static void callback(ma_device* device,void* output,const void*,ma_uint32 count){auto& self=*static_cast<Impl*>(device->pUserData);auto* out=static_cast<float*>(output);std::array<float,1024> left{},right{};ma_uint32 done=0;while(done<count){auto n=std::min<ma_uint32>(1024,count-done);self.engine.process({left.data(),n},{right.data(),n});for(ma_uint32 i=0;i<n;++i){out[(done+i)*2]=left[i];out[(done+i)*2+1]=right[i];}done+=n;}}
 #endif
-  explicit Impl(AudioEngine& e):engine(e){}
+  explicit Impl(AudioEngine& e,bool null_backend):engine(e),force_null(null_backend){}
 };
-AudioDevice::AudioDevice(AudioEngine& e):impl_(std::make_unique<Impl>(e)){
+AudioDevice::AudioDevice(AudioEngine& e,bool force_null):impl_(std::make_unique<Impl>(e,force_null)){
 #ifdef NEUROGENIC_HAS_MINIAUDIO
-  impl_->context_ready=ma_context_init(nullptr,0,nullptr,&impl_->context)==MA_SUCCESS;
+  const ma_backend requested=ma_backend_null;
+  impl_->context_ready=ma_context_init(force_null?&requested:nullptr,force_null?1U:0U,nullptr,&impl_->context)==MA_SUCCESS;
+#else
+  (void)force_null;
 #endif
 }
 AudioDevice::~AudioDevice(){stop();
@@ -26,7 +33,19 @@ if(impl_->context_ready)ma_context_uninit(&impl_->context);
 }
 std::string AudioDevice::backend() const{
 #ifdef NEUROGENIC_HAS_MINIAUDIO
-if(!impl_->context_ready)return "compiled, but no backend could be initialized";if(impl_->context.backend==ma_backend_null){ma_backend enabled[MA_BACKEND_COUNT]{};size_t count{};if(ma_get_enabled_backends(enabled,MA_BACKEND_COUNT,&count)==MA_SUCCESS&&std::find(enabled,enabled+count,ma_backend_alsa)!=enabled+count)return "Null (ALSA compiled, unavailable at runtime)";}return ma_get_backend_name(impl_->context.backend);
+if(!impl_->context_ready)return "compiled, but no backend could be initialized";if(impl_->context.backend==ma_backend_null){
+#ifdef NEUROGENIC_HAS_ALSA
+if(impl_->force_null)return "Null (explicit headless selection; ALSA "+std::string(snd_asoundlib_version())+" linked)";
+#else
+if(impl_->force_null)return "Null (explicit headless selection)";
+#endif
+ma_backend enabled[MA_BACKEND_COUNT]{};size_t count{};if(ma_get_enabled_backends(enabled,MA_BACKEND_COUNT,&count)==MA_SUCCESS&&std::find(enabled,enabled+count,ma_backend_alsa)!=enabled+count){
+#ifdef NEUROGENIC_HAS_ALSA
+return "Null (ALSA "+std::string(snd_asoundlib_version())+" linked, but backend unavailable)";
+#else
+return "Null (ALSA compiled, but runtime library unavailable)";
+#endif
+}}return ma_get_backend_name(impl_->context.backend);
 #else
 return "not compiled (configure with NEUROGENIC_FETCH_DEPENDENCIES=ON)";
 #endif

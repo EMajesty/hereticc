@@ -22,6 +22,7 @@ cmake --preset dev
 cmake --build --preset dev
 ctest --preset dev
 ./build/dev/neurogenic --list-devices
+./build/dev/neurogenic --headless --list-devices
 ./build/dev/neurogenic path/to/48000Hz-pcm16.wav
 ```
 
@@ -51,19 +52,25 @@ which queues a randomized pattern for the next bar. Other note-on messages
 trigger the sample. Ctrl-C stops playback. If MIDI is absent, audio continues;
 an audio initialization failure exits with a diagnostic.
 
+`--headless` explicitly selects miniaudio's null backend. It is intended for
+CI and diagnostic enumeration without an audio device, not normal playback.
+
 The dependency-free build remains useful for core/offline development, but live
 audio, MIDI, and genuine Lua require `NEUROGENIC_FETCH_DEPENDENCIES=ON`.
 
 ### Linux audio and MIDI troubleshooting
 
 `--list-devices` reports the selected miniaudio and libremidi backends. A Nix
-shell supplies headers and libraries at build time; it does not start host
+shell supplies headers and libraries at build time. The executable retains a
+direct `libasound` dependency so Nix records its store path in ELF RUNPATH; no
+manual `LD_LIBRARY_PATH` is required. Nix does not start host
 audio services, create `/dev/snd` devices, grant permissions, or expose devices
 inside containers. On a PipeWire desktop, NEUROGENIC uses PipeWire's ALSA
 compatibility devices; PipeWire itself is not a build dependency.
 
-- `Null (ALSA compiled, unavailable at runtime)` means native support was built
-  but ALSA/PipeWire was inaccessible, as is normal in headless CI.
+- A null-backend diagnostic reports whether ALSA was linked but unavailable.
+  Use `--headless` when null audio is intentional; otherwise check host audio
+  services, device access, and the complete diagnostic.
 - `ALSA sequencer compiled, but unavailable` commonly means `/dev/snd/seq` is
   absent or inaccessible. Check the `snd_seq` kernel module and user permissions.
 - `(none discovered)` with an active backend means the backend works but has no
@@ -71,9 +78,10 @@ compatibility devices; PipeWire itself is not a build dependency.
 - An open error names the backend and distinguishes discovery from failure to
   open or start the selected device.
 
-GitHub Actions runs `nix flake check`, `nix build`, and a headless enumeration
-smoke test. It verifies compilation, ALSA backend inclusion, deterministic
-tests, and graceful device absence, not physical hardware compatibility.
+GitHub Actions runs `nix flake check`, `nix build`, and an explicit headless
+enumeration smoke test. It verifies compilation, a resolvable retained ALSA
+runtime dependency, deterministic tests, and graceful device absence, not
+physical hardware compatibility.
 
 See [architecture](docs/ARCHITECTURE.md), [dependencies](docs/DEPENDENCIES.md),
 [Lua API](docs/LUA.md), and [controller mappings](docs/CONTROLLERS.md).

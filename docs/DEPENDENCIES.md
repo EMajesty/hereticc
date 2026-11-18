@@ -30,4 +30,7 @@ The Nix shell/package supplies `alsa-lib` headers and libraries. miniaudio uses
 its native ALSA backend, while libremidi uses ALSA sequencer; JACK and direct
 PipeWire backends remain disabled and non-mandatory. PipeWire hosts normally
 expose ALSA compatibility endpoints at runtime. Build inputs do not guarantee
-that a host service is running or that `/dev/snd` is accessible.
+that a host service is running or that `/dev/snd` is accessible. Both adapters
+load ALSA by soname, so the Linux live adapter also retains a direct ALSA ELF
+dependency. This lets Nix record the pinned store path in RUNPATH while using
+the normal system loader paths on non-Nix Linux.
