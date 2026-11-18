@@ -6,6 +6,8 @@
 /.cache/
 /target/
 /result
+/samples/*
+!/samples/.gitkeep
 device/**/build/
 device/**/target/
 *.wav
