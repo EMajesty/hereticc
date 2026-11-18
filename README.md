@@ -9,6 +9,11 @@ This is foundation software, not a DAW or a finished groovebox. The engine does
 not assume a UI, controller, or hardware layout. Linux x86_64 is the initial
 host; portable C++ and narrow backend interfaces keep AArch64 viable.
 
+The sequencing foundation uses a UI-independent 960-PPQ timeline with stable
+events, arbitrary pattern lengths, independent tracks, mute state, duration
+notes, and deterministic sample-accurate loop scheduling. The 16-step Lua API
+is retained as a compatibility workflow rather than the fundamental data model.
+
 ## Build and run
 
 ### Nix development environment
@@ -100,7 +105,7 @@ enumeration smoke test. It verifies compilation, a resolvable retained ALSA
 runtime dependency, deterministic tests, and graceful device absence, not
 physical hardware compatibility.
 
-See [architecture](docs/ARCHITECTURE.md), [dependencies](docs/DEPENDENCIES.md),
+See [architecture](docs/ARCHITECTURE.md), [musical timeline](docs/TIMELINE.md), [dependencies](docs/DEPENDENCIES.md),
 [Lua API](docs/LUA.md), and [controller mappings](docs/CONTROLLERS.md).
 
 ## License

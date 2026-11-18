@@ -6,14 +6,17 @@ only fixed-size events and sample memory prepared in advance.
 
 ```text
 CLI/UI -> command API -> project / Lua / MIDI mapping
-                         | boundary-safe Pattern snapshot
+                         | compiled, bounded PlaybackPlan snapshot
                          v
-musical scheduler -> frame-offset events -> bounded voice pool -> DSP -> backend
+timeline scheduler -> frame-offset events -> bounded voice pool -> DSP -> backend
                                                     \-> offline WAV
 ```
 
 - `core`: stable command identifiers and application-domain boundary.
-- `sequencer`: integer frame clock, deterministic ordering, next-bar swaps.
+- `timeline`: UI-independent tick events, tracks, arbitrary loops, transport
+  metadata, compilation, and sample-accurate playback.
+- `sequencer`: the legacy 16-step compatibility scheduler and adapter, including
+  next-bar Lua pattern swaps.
 - `audio`: prepared sample voices, miniaudio playback adapter, and offline renderer.
 - `midi`: timestamped messages, stable action mappings, simulated input, and a
   libremidi adapter. MIDI timing does not drive the musical clock.
@@ -51,6 +54,14 @@ closes the MIDI producer, then drains and joins the dispatcher. Mapping setup
 belongs to the control thread before dispatch starts. That dispatcher is the
 sole producer for the audio trigger queue; the audio callback is its sole
 consumer. The callback never executes Lua or MIDI code.
+
+Editable timelines own strings and vectors on the control side. `compile_timeline`
+validates stable identifiers and converts note durations into explicit on/off
+events in a bounded `PlaybackPlan` (32 tracks and 512 compiled events in this
+initial real-time implementation). The control thread is the sole plan-queue
+producer; the audio callback is its sole consumer. The callback schedules into
+fixed storage and drops excess events with a counter. These are real-time
+capacities, not musical-data or UI limits. See [TIMELINE.md](TIMELINE.md).
 
 Sample-slot memory and note mappings are installed before processing begins and remain immutable for
 the lifetime of live processing. Attempts to replace it after the first audio

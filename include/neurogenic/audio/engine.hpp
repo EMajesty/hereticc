@@ -3,10 +3,12 @@
 #include "neurogenic/core/spsc_queue.hpp"
 #include "neurogenic/dsp/purest_gain.hpp"
 #include "neurogenic/sequencer/scheduler.hpp"
+#include "neurogenic/timeline/playback.hpp"
 #include <array>
 #include <atomic>
 #include <filesystem>
 #include <span>
+#include <string>
 #include <vector>
 namespace neurogenic {
 class AudioEngine {
@@ -21,6 +23,7 @@ public:
   [[nodiscard]] std::size_t sample_slot_count() const noexcept{return samples_.size();}
   void trigger(std::uint8_t note, float velocity,std::uint32_t frame_offset=0) noexcept;
   bool queue_pattern(const Pattern& pattern) noexcept;
+  bool queue_timeline(const Timeline&,std::string& error);
   void process(std::span<float> left, std::span<float> right) noexcept;
   void render_wav(const std::filesystem::path&, std::uint64_t frames);
   [[nodiscard]] std::uint64_t frame_position() const noexcept { return published_frame_.load(std::memory_order_acquire); }
@@ -28,17 +31,21 @@ public:
   [[nodiscard]] std::uint64_t dropped_patterns() const noexcept { return dropped_patterns_.load(); }
   [[nodiscard]] std::uint64_t stolen_voices() const noexcept { return stolen_voices_.load(); }
   [[nodiscard]] std::uint64_t missing_slot_triggers() const noexcept{return missing_slot_triggers_.load();}
+  [[nodiscard]] std::uint64_t dropped_timelines() const noexcept{return dropped_timelines_.load();}
+  [[nodiscard]] std::uint64_t dropped_timeline_events() const noexcept{return dropped_timeline_events_.load();}
   [[nodiscard]] std::size_t voice_capacity() const noexcept { return voices_.size(); }
 private:
   struct Trigger { std::uint8_t note{}; float velocity{}; std::uint32_t frame_offset{}; std::uint64_t order{}; };
-  struct Voice { std::size_t sample_index{},cursor{};float gain{};std::uint64_t age{};bool active{}; };
+  struct Voice { std::size_t sample_index{},cursor{};float gain{};std::uint64_t age{};TrackId track{};EventId event{};std::uint8_t pitch{};bool timeline_owned{},active{}; };
   struct SampleSlot { SampleSlotId id;Sample sample; };
   [[nodiscard]] std::size_t find_slot(SampleSlotId id) const noexcept;
-  void start_voice(std::uint8_t note,float velocity) noexcept;
-  std::uint32_t rate_; Scheduler scheduler_; PurestGain effect_;
+  void start_voice(std::uint8_t note,float velocity,TrackId track=0,EventId event=0,bool timeline_owned=false) noexcept;
+  void stop_timeline_voice(TrackId,EventId) noexcept;
+  std::uint32_t rate_; Scheduler scheduler_;TimelineScheduler timeline_scheduler_; PurestGain effect_;
   SpscQueue<Trigger,65> triggers_;
   SpscQueue<Pattern,9> patterns_;
-  std::atomic<std::uint64_t> dropped_triggers_{},dropped_patterns_{},published_frame_{},next_order_{},stolen_voices_{},missing_slot_triggers_{};
+  SpscQueue<PlaybackPlan,4> timelines_;
+  std::atomic<std::uint64_t> dropped_triggers_{},dropped_patterns_{},dropped_timelines_{},dropped_timeline_events_{},published_frame_{},next_order_{},stolen_voices_{},missing_slot_triggers_{};
   std::vector<SampleSlot> samples_;
   std::array<SampleSlotId,128> note_slots_{};
   std::array<std::size_t,128> note_sample_indices_{};

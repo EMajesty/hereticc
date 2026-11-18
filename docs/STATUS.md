@@ -48,5 +48,19 @@ arguments while preserving positional single-WAV behavior. Host tests cover
 multi-slot playback, same-slot polyphony, missing mappings, cross-slot stealing,
 sequencer and MIDI selection, WAV rejection, Lua, offline rendering, timing,
 and bounded queue overload.
+
+Task 007 adds a UI-independent 960-PPQ musical timeline with stable track/event
+identifiers, arbitrary per-track loop lengths, duration and explicit note
+events, parameter-event representation, mute state, tempo/time-signature
+metadata, and deterministic absolute tick-to-frame scheduling. Editable vectors
+are compiled on the control thread into bounded callback-safe plans. The audio
+engine plays multiple timeline tracks through existing sample slots and stops
+track-owned voices on note-off. The original Lua/16-step scheduler remains a
+next-bar compatibility lane and has an explicit general-timeline adapter.
+Host tests cover multiple tracks, simultaneous ordering, arbitrary lengths,
+mute, loop boundaries, tempo conversion, long-run variable-buffer timing,
+duration note-off, sample slots, and legacy patterns. Parameter destinations,
+tempo maps, arrangement, recording, and quantized timeline-plan replacement
+remain future work.
 Latency under load, hotplug, ARM64, and controller-specific behavior also remain
 untested.
