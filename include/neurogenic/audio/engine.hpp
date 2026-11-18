@@ -12,8 +12,13 @@ namespace neurogenic {
 class AudioEngine {
 public:
   static constexpr std::size_t default_voice_capacity=32;
+  static constexpr std::size_t default_note_bank_size=16;
   explicit AudioEngine(std::uint32_t rate=48000,std::size_t voice_capacity=default_voice_capacity);
-  void set_sample(Sample sample); // control thread only
+  void set_sample(Sample sample); // compatibility: slot 0, mapped from every note
+  void set_sample_slot(SampleSlotId id,Sample sample);
+  [[nodiscard]] bool map_note_to_slot(std::uint8_t note,SampleSlotId id) noexcept;
+  [[nodiscard]] bool has_sample_slot(SampleSlotId id) const noexcept;
+  [[nodiscard]] std::size_t sample_slot_count() const noexcept{return samples_.size();}
   void trigger(std::uint8_t note, float velocity,std::uint32_t frame_offset=0) noexcept;
   bool queue_pattern(const Pattern& pattern) noexcept;
   void process(std::span<float> left, std::span<float> right) noexcept;
@@ -22,15 +27,21 @@ public:
   [[nodiscard]] std::uint64_t dropped_triggers() const noexcept { return dropped_triggers_.load(); }
   [[nodiscard]] std::uint64_t dropped_patterns() const noexcept { return dropped_patterns_.load(); }
   [[nodiscard]] std::uint64_t stolen_voices() const noexcept { return stolen_voices_.load(); }
+  [[nodiscard]] std::uint64_t missing_slot_triggers() const noexcept{return missing_slot_triggers_.load();}
   [[nodiscard]] std::size_t voice_capacity() const noexcept { return voices_.size(); }
 private:
   struct Trigger { std::uint8_t note{}; float velocity{}; std::uint32_t frame_offset{}; std::uint64_t order{}; };
-  struct Voice { std::size_t cursor{};float gain{};std::uint64_t age{};bool active{}; };
-  void start_voice(float velocity) noexcept;
-  std::uint32_t rate_; Sample sample_; Scheduler scheduler_; PurestGain effect_;
+  struct Voice { std::size_t sample_index{},cursor{};float gain{};std::uint64_t age{};bool active{}; };
+  struct SampleSlot { SampleSlotId id;Sample sample; };
+  [[nodiscard]] std::size_t find_slot(SampleSlotId id) const noexcept;
+  void start_voice(std::uint8_t note,float velocity) noexcept;
+  std::uint32_t rate_; Scheduler scheduler_; PurestGain effect_;
   SpscQueue<Trigger,65> triggers_;
   SpscQueue<Pattern,9> patterns_;
-  std::atomic<std::uint64_t> dropped_triggers_{},dropped_patterns_{},published_frame_{},next_order_{},stolen_voices_{};
+  std::atomic<std::uint64_t> dropped_triggers_{},dropped_patterns_{},published_frame_{},next_order_{},stolen_voices_{},missing_slot_triggers_{};
+  std::vector<SampleSlot> samples_;
+  std::array<SampleSlotId,128> note_slots_{};
+  std::array<std::size_t,128> note_sample_indices_{};
   std::vector<Voice> voices_;
   std::array<Trigger,64> pending_triggers_{};
   std::size_t pending_trigger_count_{};

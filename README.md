@@ -46,6 +46,8 @@ ctest --preset dev
 ./build/dev/neurogenic --list-devices
 ./build/dev/neurogenic --audio "DEVICE NAME" --midi "PORT NAME" \
   --script examples/generate.lua path/to/48000Hz-pcm16.wav
+./build/dev/neurogenic --slot 0=kick.wav --slot 1=snare.wav \
+  --slot 2=hihat.wav --map 52=2
 ```
 
 Omit `--audio` or `--midi` to select the first/default device. Selectors are
@@ -55,7 +57,14 @@ which queues a randomized pattern for the next bar. Other note-on messages
 trigger the sample. Ctrl-C stops playback. If MIDI is absent, audio continues;
 an audio initialization failure exits with a diagnostic.
 
-The engine provides 32 polyphonic sample voices by default. Embedders may set a
+The positional WAV form remains a compatibility mode: it installs slot 0 and
+maps every note to it. Multi-sample mode uses repeatable `--slot ID=FILE`
+assignments. Stable slot IDs are unsigned integers and are not limited to 16;
+the initial bank policy maps notes 36–51 to slots 0–15. Use repeatable
+`--map NOTE=ID` assignments for slots or controller layouts outside that bank.
+All files must currently be non-empty mono or stereo PCM16 WAV at 48 kHz.
+
+The engine provides 32 polyphonic sample voices shared across all slots by default. Embedders may set a
 different fixed capacity when constructing `AudioEngine`; exhaustion steals the
 oldest active voice deterministically. MIDI transport callbacks only enqueue
 messages. Controller actions and Lua run on a dedicated control thread.

@@ -39,5 +39,14 @@ tests cover overlap, retriggering, simultaneous events, carried offsets, voice
 and queue exhaustion, threaded dispatch, draining shutdown, variable buffer
 sizes, and offline rendering. Sample replacement during live processing remains
 intentionally unsupported; stop and rebuild the engine to load another sample.
+
+Task 006 replaces the single-sample renderer with dynamically sized stable
+sample slots. MIDI and sequencer notes share a configurable mapping, initially
+notes 36–51 to slots 0–15, and voices retain immutable per-slot sample
+references. The CLI accepts repeatable `--slot ID=FILE` and `--map NOTE=ID`
+arguments while preserving positional single-WAV behavior. Host tests cover
+multi-slot playback, same-slot polyphony, missing mappings, cross-slot stealing,
+sequencer and MIDI selection, WAV rejection, Lua, offline rendering, timing,
+and bounded queue overload.
 Latency under load, hotplug, ARM64, and controller-specific behavior also remain
 untested.

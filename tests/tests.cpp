@@ -82,6 +82,55 @@ void test_polyphony_and_events(){
   check(rejected,"sample replacement raced processing");
 }
 
+void test_sample_slots(){
+  using namespace neurogenic;
+  std::array<float,8> left{},right{};
+  AudioEngine engine(48000,8);
+  engine.set_sample_slot(SampleSlotId{0},constant_sample(8,0.25F));
+  engine.set_sample_slot(SampleSlotId{1},constant_sample(8,0.5F));
+  check(engine.sample_slot_count()==2&&engine.has_sample_slot(SampleSlotId{1}),"sample slot installation");
+  engine.trigger(36,1);engine.trigger(37,1);engine.process(left,right);
+  near(left[0],0.6F,"different notes did not select different samples");
+
+  AudioEngine same(48000,4);same.set_sample_slot(SampleSlotId{0},constant_sample(4,0.25F));
+  same.trigger(36,1);same.trigger(36,1);same.process(left,right);near(left[0],0.4F,"same-slot polyphony");
+
+  AudioEngine missing;missing.set_sample_slot(SampleSlotId{0},constant_sample(4));missing.trigger(37,1);missing.trigger(52,1);
+  missing.process(left,right);near(left[0],0,"missing slots produced audio");check(missing.missing_slot_triggers()==2,"missing slot counter");
+  check(!missing.map_note_to_slot(52,SampleSlotId{999}),"invalid slot mapping accepted");
+
+  AudioEngine arbitrary;arbitrary.set_sample_slot(SampleSlotId{1000},constant_sample(4,0.75F));
+  check(arbitrary.map_note_to_slot(52,SampleSlotId{1000}),"arbitrary slot mapping rejected");
+  arbitrary.trigger(52,1);arbitrary.process(left,right);near(left[0],0.6F,"arbitrary slot did not play");
+
+  AudioEngine stealing(48000,2);stealing.set_sample_slot(SampleSlotId{0},constant_sample(8,0.25F));
+  stealing.set_sample_slot(SampleSlotId{1},constant_sample(8,0.5F));stealing.set_sample_slot(SampleSlotId{2},constant_sample(8,1.0F));
+  stealing.trigger(36,1);stealing.trigger(37,1);stealing.trigger(38,1);stealing.process(left,right);
+  near(left[0],1.2F,"voice stealing across samples");check(stealing.stolen_voices()==1,"cross-sample steal counter");
+
+  AudioEngine sequenced;sequenced.set_sample_slot(SampleSlotId{1},constant_sample(8,0.5F));
+  Pattern pattern;pattern.steps[0]={true,37,1};pattern.revision=1;check(sequenced.queue_pattern(pattern),"sequencer slot pattern queue");
+  sequenced.process(left,right);near(left[0],0.4F,"sequencer note did not select slot");
+
+  AudioEngine midi_engine; midi_engine.set_sample_slot(SampleSlotId{1},constant_sample(8,0.5F));MidiMapper mapper;
+  mapper.set_note_handler([&](auto note,auto velocity){midi_engine.trigger(note,velocity);});
+  check(mapper.receive({0x90,37,127,0}),"slot MIDI enqueue");check(mapper.dispatch_pending()==1,"slot MIDI dispatch");
+  midi_engine.process(left,right);near(left[0],0.4F,"MIDI note did not select slot");
+
+  bool invalid_sample=false;try{AudioEngine invalid;invalid.set_sample_slot(SampleSlotId{0},{44100,1,{1.0F}});}catch(const std::invalid_argument&){invalid_sample=true;}
+  check(invalid_sample,"mismatched sample rate accepted");
+  bool invalid_id=false;try{AudioEngine invalid;invalid.set_sample_slot(invalid_sample_slot,constant_sample(1));}catch(const std::invalid_argument&){invalid_id=true;}
+  check(invalid_id,"reserved sample slot identifier accepted");
+  check(!AudioEngine{}.map_note_to_slot(36,SampleSlotId{0}),"unloaded default slot mapped");
+
+  const auto invalid_path=std::filesystem::temp_directory_path()/"neurogenic-invalid.wav";
+  {std::ofstream invalid(invalid_path,std::ios::binary);invalid<<"not a wave";}
+  bool invalid_wav=false;try{(void)load_wav(invalid_path);}catch(const std::runtime_error&){invalid_wav=true;}
+  std::filesystem::remove(invalid_path);check(invalid_wav,"invalid WAV accepted");
+  bool missing_wav=false;try{(void)load_wav(invalid_path);}catch(const std::runtime_error&){missing_wav=true;}
+  check(missing_wav,"missing WAV accepted");
+}
+
 void test_midi_control_dispatch(){
   using namespace neurogenic;
   MidiMapper mapper;std::atomic<int> notes{},actions{};std::thread::id action_thread;
@@ -125,6 +174,6 @@ void test_lua_and_offline(){
 }
 
 int main(){
-  try{test_queue_and_scheduler();test_polyphony_and_events();test_midi_control_dispatch();test_lua_and_offline();std::cout<<"all tests passed\n";return 0;}
+  try{test_queue_and_scheduler();test_polyphony_and_events();test_sample_slots();test_midi_control_dispatch();test_lua_and_offline();std::cout<<"all tests passed\n";return 0;}
   catch(const std::exception& error){std::cerr<<"TEST FAILURE: "<<error.what()<<'\n';return 1;}
 }

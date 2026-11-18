@@ -29,6 +29,13 @@ fixed 64-event staging area, orders triggers by frame offset and enqueue order,
 and carries future offsets into later buffers. At equal offsets, external
 control events precede sequencer events.
 
+Sample slots use stable 32-bit identifiers. Slot storage is dynamically sized;
+16 is only the initial note-bank policy, mapping MIDI/sequencer notes 36–51 to
+slots 0–15. Embedders can install any number of slots and map any note before
+processing starts. The positional single-WAV compatibility API maps all notes
+to slot 0. Each voice stores the resolved immutable sample index, so callback
+lookup performs no string work, allocation, locking, decoding, or I/O.
+
 The voice pool is allocated when `AudioEngine` is constructed (32 voices by
 default, configurable by the embedding application). Allocation chooses the
 lowest-index idle voice. If all voices are active, it steals the oldest-started
@@ -45,7 +52,9 @@ belongs to the control thread before dispatch starts. That dispatcher is the
 sole producer for the audio trigger queue; the audio callback is its sole
 consumer. The callback never executes Lua or MIDI code.
 
-Sample memory is installed before processing begins and remains immutable for
+Sample-slot memory and note mappings are installed before processing begins and remain immutable for
 the lifetime of live processing. Attempts to replace it after the first audio
 buffer are rejected, avoiding concurrent vector mutation or reclamation in the
-real-time callback.
+real-time callback. The install API is a distinct preparation boundary so a
+future snapshot-based asynchronous replacement mechanism can preserve the
+rendering interface.

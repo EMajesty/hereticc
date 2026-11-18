@@ -2,18 +2,45 @@
 #include <algorithm>
 #include <cstdint>
 #include <fstream>
+#include <limits>
 #include <stdexcept>
 
 namespace neurogenic {
 AudioEngine::AudioEngine(std::uint32_t rate,std::size_t voice_capacity)
     :rate_(rate),scheduler_(rate,120.0),voices_(voice_capacity){
   if(voice_capacity==0)throw std::invalid_argument("voice capacity must be positive");
+  note_slots_.fill(invalid_sample_slot);note_sample_indices_.fill(std::numeric_limits<std::size_t>::max());
+  for(std::size_t i=0;i<default_note_bank_size;++i)note_slots_[36+i]=SampleSlotId{static_cast<std::uint32_t>(i)};
 }
 
 void AudioEngine::set_sample(Sample sample){
-  if(processing_started_.load(std::memory_order_acquire))
-    throw std::logic_error("sample must be installed before audio processing starts");
-  sample_=std::move(sample);
+  set_sample_slot(SampleSlotId{0},std::move(sample));
+  note_slots_.fill(SampleSlotId{0});note_sample_indices_.fill(find_slot(SampleSlotId{0}));
+}
+
+std::size_t AudioEngine::find_slot(SampleSlotId id) const noexcept{
+  for(std::size_t i=0;i<samples_.size();++i)if(samples_[i].id==id)return i;
+  return std::numeric_limits<std::size_t>::max();
+}
+
+bool AudioEngine::has_sample_slot(SampleSlotId id) const noexcept{return find_slot(id)!=std::numeric_limits<std::size_t>::max();}
+
+void AudioEngine::set_sample_slot(SampleSlotId id,Sample sample){
+  if(id==invalid_sample_slot)throw std::invalid_argument("invalid sample slot identifier");
+  if(processing_started_.load(std::memory_order_acquire))throw std::logic_error("sample slots must be installed before audio processing starts");
+  if(sample.sample_rate!=rate_)throw std::invalid_argument("sample rate does not match engine rate (resampling is not implemented)");
+  if((sample.channels!=1&&sample.channels!=2)||sample.interleaved.empty()||sample.interleaved.size()%sample.channels!=0)
+    throw std::invalid_argument("sample must contain non-empty mono or stereo interleaved audio");
+  auto index=find_slot(id);
+  if(index==std::numeric_limits<std::size_t>::max()){index=samples_.size();samples_.push_back({id,std::move(sample)});}
+  else samples_[index].sample=std::move(sample);
+  for(std::size_t note=0;note<note_slots_.size();++note)if(note_slots_[note]==id)note_sample_indices_[note]=index;
+}
+
+bool AudioEngine::map_note_to_slot(std::uint8_t note,SampleSlotId id) noexcept{
+  if(processing_started_.load(std::memory_order_acquire))return false;
+  const auto index=find_slot(id);if(index==std::numeric_limits<std::size_t>::max())return false;
+  note_slots_[note]=id;note_sample_indices_[note]=index;return true;
 }
 
 void AudioEngine::trigger(std::uint8_t note,float velocity,std::uint32_t frame_offset) noexcept {
@@ -27,7 +54,9 @@ bool AudioEngine::queue_pattern(const Pattern& pattern) noexcept {
   return true;
 }
 
-void AudioEngine::start_voice(float velocity) noexcept {
+void AudioEngine::start_voice(std::uint8_t note,float velocity) noexcept {
+  const auto sample_index=note_sample_indices_[note];
+  if(sample_index==std::numeric_limits<std::size_t>::max()){missing_slot_triggers_.fetch_add(1,std::memory_order_relaxed);return;}
   auto selected=voices_.size();
   for(std::size_t i=0;i<voices_.size();++i)if(!voices_[i].active){selected=i;break;}
   if(selected==voices_.size()){
@@ -36,7 +65,7 @@ void AudioEngine::start_voice(float velocity) noexcept {
       if(voices_[i].age<voices_[selected].age)selected=i;
     stolen_voices_.fetch_add(1,std::memory_order_relaxed);
   }
-  voices_[selected]={0,velocity,next_voice_age_++,true};
+  voices_[selected]={sample_index,0,velocity,next_voice_age_++,true};
 }
 
 void AudioEngine::process(std::span<float> left,std::span<float> right) noexcept {
@@ -66,16 +95,17 @@ void AudioEngine::process(std::span<float> left,std::span<float> right) noexcept
 
   for(std::size_t frame=0;frame<frames;++frame){
     while(external_index<pending_trigger_count_&&pending_triggers_[external_index].frame_offset==frame)
-      start_voice(pending_triggers_[external_index++].velocity);
+      {const auto& event=pending_triggers_[external_index++];start_voice(event.note,event.velocity);}
     while(scheduled_index<scheduled_count&&scheduled[scheduled_index].frame==frame)
-      start_voice(scheduled[scheduled_index++].velocity);
+      {const auto& event=scheduled[scheduled_index++];start_voice(event.note,event.velocity);}
     for(auto& voice:voices_){
       if(!voice.active)continue;
-      if(!sample_.channels||voice.cursor+sample_.channels>sample_.interleaved.size()){voice.active=false;continue;}
-      left[frame]+=sample_.interleaved[voice.cursor]*voice.gain;
-      right[frame]+=sample_.interleaved[voice.cursor+(sample_.channels>1?1:0)]*voice.gain;
-      voice.cursor+=sample_.channels;
-      if(voice.cursor>=sample_.interleaved.size())voice.active=false;
+      const auto& sample=samples_[voice.sample_index].sample;
+      if(voice.cursor+sample.channels>sample.interleaved.size()){voice.active=false;continue;}
+      left[frame]+=sample.interleaved[voice.cursor]*voice.gain;
+      right[frame]+=sample.interleaved[voice.cursor+(sample.channels>1?1:0)]*voice.gain;
+      voice.cursor+=sample.channels;
+      if(voice.cursor>=sample.interleaved.size())voice.active=false;
     }
   }
 
