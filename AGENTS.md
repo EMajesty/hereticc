@@ -2,6 +2,9 @@
 
 - Use C++20 and CMake. Keep engine state independent of UI and hardware.
 - Keep file I/O, allocation, locks, logging, Lua, and blocking work out of audio callbacks.
+- Publish live samples as immutable bounded versions. Audio callbacks may mark
+  versions retired but must never destroy them; reclamation belongs to a
+  non-audio thread, and active voices must retain valid old sample data.
 - Use integer musical time and deterministic offline tests.
 - Put audio/MIDI/platform details behind narrow adapters.
 - Preserve dependency pins, licenses, notices, and stable external identifiers.

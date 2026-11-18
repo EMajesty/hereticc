@@ -1,4 +1,5 @@
 #include "neurogenic/audio/engine.hpp"
+#include "neurogenic/audio/sample_manager.hpp"
 #include "neurogenic/core/control_dispatcher.hpp"
 #include "neurogenic/core/spsc_queue.hpp"
 #include "neurogenic/midi/mapping.hpp"
@@ -7,8 +8,10 @@
 #include "neurogenic/timeline/playback.hpp"
 #include "neurogenic/timeline/io.hpp"
 #include <array>
+#include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <future>
@@ -25,6 +28,15 @@ void near(float actual,float expected,const char* message){if(std::fabs(actual-e
 
 neurogenic::Sample constant_sample(std::size_t frames,float value=1.0F){
   return {48000,1,std::vector<float>(frames,value)};
+}
+
+void write_pcm16_wav(const std::filesystem::path& path,std::uint32_t rate,std::uint16_t channels,const std::vector<float>& values){
+  std::ofstream output(path,std::ios::binary);const auto bytes=static_cast<std::uint32_t>(values.size()*2);auto write16=[&](std::uint16_t value){output.write(reinterpret_cast<const char*>(&value),2);};auto write32=[&](std::uint32_t value){output.write(reinterpret_cast<const char*>(&value),4);};
+  output.write("RIFF",4);write32(36+bytes);output.write("WAVEfmt ",8);write32(16);write16(1);write16(channels);write32(rate);write32(rate*channels*2);write16(channels*2);write16(16);output.write("data",4);write32(bytes);for(const auto value:values){const auto pcm=static_cast<std::int16_t>(std::clamp(value,-1.0F,1.0F)*32767);output.write(reinterpret_cast<const char*>(&pcm),2);}
+}
+
+void write_wav_payload(const std::filesystem::path& path,std::uint16_t format,std::uint16_t bits,const std::vector<char>& payload){
+  std::ofstream output(path,std::ios::binary);auto write16=[&](std::uint16_t value){output.write(reinterpret_cast<const char*>(&value),2);};auto write32=[&](std::uint32_t value){output.write(reinterpret_cast<const char*>(&value),4);};const auto bytes=static_cast<std::uint32_t>(payload.size());output.write("RIFF",4);write32(36+bytes);output.write("WAVEfmt ",8);write32(16);write16(format);write16(1);write32(48000);write32(48000*bits/8);write16(bits/8);write16(bits);output.write("data",4);write32(bytes);output.write(payload.data(),payload.size());
 }
 
 void test_queue_and_scheduler(){
@@ -82,8 +94,37 @@ void test_polyphony_and_events(){
   std::size_t elapsed{};for(auto size:{1U,3U,5U,7U}){variable.process({left.data(),size},{right.data(),size});for(std::size_t i=0;i<size;++i)if(elapsed+i==12)near(left[i],0.8F,"variable callback event offset");elapsed+=size;}
 
   Pattern invalid;invalid.steps[0].velocity=2;check(!overflow.queue_pattern(invalid),"invalid pattern accepted");
-  bool rejected=false;try{overflow.set_sample(constant_sample(1));}catch(const std::logic_error&){rejected=true;}
-  check(rejected,"sample replacement raced processing");
+  overflow.set_sample(constant_sample(1));overflow.process({left.data(),1},{right.data(),1});
+}
+
+void test_live_sample_management_and_resampling(){
+  using namespace neurogenic;std::array<float,16> left{},right{};
+  AudioEngine live(48000,8);live.set_sample_slot(SampleSlotId{0},constant_sample(6,0.25F));live.trigger(36,1);live.process({left.data(),1},{right.data(),1});near(left[0],0.2F,"initial live sample");
+  check(live.publish_sample_slot(SampleSlotId{0},constant_sample(4,0.5F)),"live replacement publication");live.trigger(36,1);live.process({left.data(),1},{right.data(),1});near(left[0],0.6F,"old voice did not survive replacement");
+  check(live.unload_sample_slot(SampleSlotId{0}),"live unload publication");live.trigger(36,1);live.process({left.data(),1},{right.data(),1});near(left[0],0.6F,"active voices did not survive unload");check(live.missing_slot_triggers()==1,"unloaded slot accepted a new trigger");
+  live.process({left.data(),8},{right.data(),8});live.reclaim_sample_versions();check(live.reclaimed_sample_versions()>=2,"retired live samples were not reclaimed");
+
+  AudioEngine independent(48000,8);independent.set_sample_slot(SampleSlotId{0},constant_sample(8,0.25F));independent.set_sample_slot(SampleSlotId{1},constant_sample(8,0.5F));independent.process({left.data(),1},{right.data(),1});check(independent.publish_sample_slot(SampleSlotId{0},constant_sample(8,1.0F)),"independent slot replacement");independent.trigger(36,1);independent.trigger(37,1);independent.process({left.data(),1},{right.data(),1});near(left[0],1.2F,"independent slots changed together");
+
+  WindowedSincConverter converter;Sample mono{44100,1,std::vector<float>(441,0.25F)};auto up=prepare_sample(mono,48000,converter);check(up.sample_rate==48000&&up.channels==1&&up.frames()==480,"44.1 kHz conversion duration");
+  auto unchanged=prepare_sample(mono,44100,converter);check(unchanged.interleaved==mono.interleaved,"matching-rate sample was unnecessarily changed");
+  Sample stereo{96000,2,std::vector<float>(1920)};for(std::size_t i=0;i<960;++i){stereo.interleaved[i*2]=0.25F;stereo.interleaved[i*2+1]=-0.5F;}auto down=prepare_sample(stereo,48000,converter);check(down.channels==2&&down.frames()==480,"96 kHz stereo conversion duration");near(down.interleaved[200],0.25F,"resampler left channel");near(down.interleaved[201],-0.5F,"resampler right channel");
+  Sample tone{44100,1,std::vector<float>(4410)};constexpr double pi=3.141592653589793;for(std::size_t i=0;i<tone.frames();++i)tone.interleaved[i]=static_cast<float>(std::sin(2*pi*1000*i/44100.0));auto converted=prepare_sample(tone,48000,converter);std::size_t crossings{};for(std::size_t i=1;i<converted.frames();++i)if(converted.interleaved[i-1]<=0&&converted.interleaved[i]>0)++crossings;check(crossings>=99&&crossings<=101,"resampling did not preserve pitch");
+  bool bad_rate=false;try{(void)prepare_sample({0,1,{1}},48000,converter);}catch(const std::invalid_argument&){bad_rate=true;}check(bad_rate,"invalid source rate accepted");
+
+  const auto base=std::filesystem::temp_directory_path();const auto wav44=base/"neurogenic-live-44100.wav";const auto wav96=base/"neurogenic-live-96000.wav";const auto invalid=base/"neurogenic-live-invalid.wav";
+  write_pcm16_wav(wav44,44100,1,std::vector<float>(441,0.25F));write_pcm16_wav(wav96,96000,2,std::vector<float>(1920,0.5F));{std::ofstream broken(invalid);broken<<"invalid";}
+  const auto pcm24=base/"neurogenic-pcm24.wav";const auto pcm32=base/"neurogenic-pcm32.wav";const auto float32=base/"neurogenic-float32.wav";write_wav_payload(pcm24,1,24,{0,0,0x40});std::int32_t pcm32_value=1073741824;std::vector<char> pcm32_bytes(4);std::memcpy(pcm32_bytes.data(),&pcm32_value,4);write_wav_payload(pcm32,1,32,pcm32_bytes);float float_value=0.25F;std::vector<char> float_bytes(4);std::memcpy(float_bytes.data(),&float_value,4);write_wav_payload(float32,3,32,float_bytes);near(decode_wav(pcm24).interleaved[0],0.5F,"PCM24 decoding");near(decode_wav(pcm32).interleaved[0],0.5F,"PCM32 decoding");near(decode_wav(float32).interleaved[0],0.25F,"float32 decoding");
+  AudioEngine managed(48000,8);SampleManager manager(managed,16);check(manager.load(SampleSlotId{2},wav44),"sample load command");manager.wait_idle();auto state=manager.status(SampleSlotId{2});check(state.state==SampleSlotLoadState::loaded&&state.has_sample&&state.source_sample_rate==44100&&state.engine_sample_rate==48000&&state.frames==480,"loaded slot state");check(managed.map_note_to_slot(52,SampleSlotId{2}),"managed slot mapping");managed.trigger(52,1);managed.process({left.data(),1},{right.data(),1});near(left[0],0.2F,"managed resampled playback");
+  check(manager.replace(SampleSlotId{2},wav96),"replace command");manager.wait_idle();managed.trigger(52,1);managed.process({left.data(),1},{right.data(),1});check(manager.status(SampleSlotId{2}).channels==2,"stereo replacement state");
+  check(manager.load(SampleSlotId{2},invalid),"failed load command submission");manager.wait_idle();state=manager.status(SampleSlotId{2});check(state.state==SampleSlotLoadState::error&&state.has_sample&&state.source_path==wav96,"failed load did not preserve previous sample state");managed.trigger(52,1);managed.process({left.data(),1},{right.data(),1});check(left[0]!=0,"failed load replaced active sample");
+  check(manager.unload(SampleSlotId{2}),"unload command");manager.wait_idle();state=manager.status(SampleSlotId{2});check(state.state==SampleSlotLoadState::empty&&!state.has_sample,"unload state");
+
+  AudioEngine rapid(48000,4,512,8);for(int i=0;i<100;++i){check(rapid.publish_sample_slot(SampleSlotId{0},constant_sample(2,static_cast<float>(i+1)/100)),"rapid replacement publication");rapid.process({left.data(),1},{right.data(),1});rapid.reclaim_sample_versions();}check(rapid.reclaimed_sample_versions()>=99,"rapid replacements leaked versions");
+
+  AudioEngine concurrent(48000,8);SampleManager concurrent_manager(concurrent,32);std::atomic<bool> rendering{true};std::thread audio([&]{std::array<float,17> l{},r{};while(rendering.load())concurrent.process(l,r);});for(int i=0;i<20;++i)check(concurrent_manager.load(SampleSlotId{static_cast<std::uint32_t>(i%2)},i%2?wav44:wav96),"concurrent sample command");concurrent_manager.wait_idle();rendering=false;audio.join();concurrent_manager.shutdown();const auto concurrent_states=concurrent_manager.states();check(concurrent_states.size()==2&&concurrent_states[0].has_sample&&concurrent_states[1].has_sample,"concurrent command state");
+  AudioEngine shutdown_engine;SampleManager shutdown_manager(shutdown_engine,4);check(shutdown_manager.load(SampleSlotId{0},wav44),"pending shutdown command");shutdown_manager.shutdown();check(shutdown_manager.status(SampleSlotId{0}).has_sample,"shutdown did not drain pending sample command");
+  std::filesystem::remove(wav44);std::filesystem::remove(wav96);std::filesystem::remove(invalid);std::filesystem::remove(pcm24);std::filesystem::remove(pcm32);std::filesystem::remove(float32);
 }
 
 void test_sample_slots(){
@@ -318,6 +359,6 @@ void test_lua_and_offline(){
 }
 
 int main(){
-  try{test_queue_and_scheduler();test_polyphony_and_events();test_sample_slots();test_timeline_and_tracks();test_transport_integration_and_timeline_io();test_midi_control_dispatch();test_lua_and_offline();std::cout<<"all tests passed\n";return 0;}
+  try{test_queue_and_scheduler();test_polyphony_and_events();test_sample_slots();test_live_sample_management_and_resampling();test_timeline_and_tracks();test_transport_integration_and_timeline_io();test_midi_control_dispatch();test_lua_and_offline();std::cout<<"all tests passed\n";return 0;}
   catch(const std::exception& error){std::cerr<<"TEST FAILURE: "<<error.what()<<'\n';return 1;}
 }

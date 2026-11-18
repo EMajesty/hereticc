@@ -1,6 +1,6 @@
 # Implementation status
 
-Implemented and host-tested: PCM16 WAV loading, mono/stereo sample playback,
+Implemented and host-tested: PCM16/24/32 and float32 WAV loading, mono/stereo sample playback,
 miniaudio callback output, device enumeration/selection, libremidi input
 enumeration/selection, MIDI note/action dispatch, genuine Lua 5.4 execution,
 validated versioned pattern APIs, sample-accurate frame offsets, rational
@@ -86,3 +86,15 @@ stolen owners, dense backlogs, and deferred cleanup. The offline benchmark is
 documented in `docs/BENCHMARKS.md`; it is not hardware real-time evidence.
 Latency under load, hotplug, ARM64, and controller-specific behavior also remain
 untested.
+
+Task 010 adds live load, replacement, and unload through the asynchronous
+hardware-independent `SampleManager` command/state boundary. Immutable sample
+versions allow existing voices to finish while new triggers resolve the new
+slot contents; callback-side work is bounded and reclamation remains on the
+control thread. Host tests cover active-voice replacement/unload, independent
+slots, rapid reclamation, failure preservation, concurrent playback/loading,
+shutdown, PCM decoding, mono/stereo conversion, 44.1/96 kHz duration and pitch,
+and observable state. WAV support now includes PCM16/24/32 and float32 with
+preparation-time windowed-sinc conversion. Streaming decode, non-WAV formats,
+mastering-grade selectable resampler profiles, hardware listening tests, and
+sample-management Lua/MIDI bindings remain future work.

@@ -21,7 +21,7 @@ include(cmake/Dependencies.cmake)
 find_package(Threads REQUIRED)
 
 add_library(neurogenic_engine
-  src/audio/engine.cpp src/audio/sample.cpp src/core/command.cpp src/core/control_dispatcher.cpp
+  src/audio/engine.cpp src/audio/sample.cpp src/audio/sample_manager.cpp src/core/command.cpp src/core/control_dispatcher.cpp
   src/dsp/purest_gain.cpp src/midi/mapping.cpp src/project/project.cpp
   src/sequencer/scheduler.cpp src/sequencer/pattern_adapter.cpp src/scripting/runtime.cpp src/timeline/io.cpp src/timeline/playback.cpp)
 target_include_directories(neurogenic_engine PUBLIC include)

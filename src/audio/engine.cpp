@@ -6,10 +6,10 @@
 #include <stdexcept>
 
 namespace neurogenic {
-AudioEngine::AudioEngine(std::uint32_t rate,std::size_t voice_capacity,std::size_t event_staging_capacity)
-    :rate_(rate),scheduler_(rate,120.0),timeline_scheduler_(rate),voices_(voice_capacity),legacy_events_(event_staging_capacity),timeline_events_(event_staging_capacity){
-  if(rate==0||voice_capacity==0||event_staging_capacity==0)throw std::invalid_argument("sample rate, voice capacity, and event staging capacity must be positive");
-  note_slots_.fill(invalid_sample_slot);note_sample_indices_.fill(std::numeric_limits<std::size_t>::max());
+AudioEngine::AudioEngine(std::uint32_t rate,std::size_t voice_capacity,std::size_t event_staging_capacity,std::size_t sample_version_capacity)
+    :rate_(rate),scheduler_(rate,120.0),timeline_scheduler_(rate),sample_updates_(sample_version_capacity+1),sample_versions_(std::make_unique<SampleVersion[]>(sample_version_capacity)),sample_version_capacity_(sample_version_capacity),voices_(voice_capacity),legacy_events_(event_staging_capacity),timeline_events_(event_staging_capacity){
+  if(rate==0||voice_capacity==0||event_staging_capacity==0||sample_version_capacity==0)throw std::invalid_argument("sample rate and all bounded capacities must be positive");
+  note_slots_.fill(invalid_sample_slot);
   for(std::size_t i=0;i<default_note_bank_size;++i)note_slots_[36+i]=SampleSlotId{static_cast<std::uint32_t>(i)};
 }
 
@@ -17,32 +17,43 @@ AudioEngine::~AudioEngine()=default;
 
 void AudioEngine::set_sample(Sample sample){
   set_sample_slot(SampleSlotId{0},std::move(sample));
-  note_slots_.fill(SampleSlotId{0});note_sample_indices_.fill(find_slot(SampleSlotId{0}));
+  note_slots_.fill(SampleSlotId{0});
 }
 
-std::size_t AudioEngine::find_slot(SampleSlotId id) const noexcept{
-  for(std::size_t i=0;i<samples_.size();++i)if(samples_[i].id==id)return i;
+std::size_t AudioEngine::find_active_sample(SampleSlotId id) const noexcept{
+  for(std::size_t i=0;i<sample_version_capacity_;++i)if(sample_versions_[i].id.load(std::memory_order_acquire)==id.value&&sample_versions_[i].state.load(std::memory_order_acquire)==SampleVersionState::active)return i;
   return std::numeric_limits<std::size_t>::max();
 }
 
-bool AudioEngine::has_sample_slot(SampleSlotId id) const noexcept{return find_slot(id)!=std::numeric_limits<std::size_t>::max();}
+bool AudioEngine::has_sample_slot(SampleSlotId id) const noexcept{for(std::size_t i=0;i<sample_version_capacity_;++i){const auto state=sample_versions_[i].state.load(std::memory_order_acquire);if(sample_versions_[i].id.load(std::memory_order_acquire)==id.value&&(state==SampleVersionState::queued||state==SampleVersionState::active))return true;}return false;}
+
+std::size_t AudioEngine::sample_slot_count() const noexcept{std::size_t count{};for(std::size_t i=0;i<sample_version_capacity_;++i){const auto state=sample_versions_[i].state.load(std::memory_order_acquire);if(state!=SampleVersionState::queued&&state!=SampleVersionState::active)continue;const auto id=sample_versions_[i].id.load(std::memory_order_acquire);bool seen=false;for(std::size_t j=0;j<i;++j){const auto prior=sample_versions_[j].state.load(std::memory_order_acquire);if(sample_versions_[j].id.load(std::memory_order_acquire)==id&&(prior==SampleVersionState::queued||prior==SampleVersionState::active)){seen=true;break;}}if(!seen)++count;}return count;}
 
 void AudioEngine::set_sample_slot(SampleSlotId id,Sample sample){
   if(id==invalid_sample_slot)throw std::invalid_argument("invalid sample slot identifier");
-  if(processing_started_.load(std::memory_order_acquire))throw std::logic_error("sample slots must be installed before audio processing starts");
-  if(sample.sample_rate!=rate_)throw std::invalid_argument("sample rate does not match engine rate (resampling is not implemented)");
+  if(sample.sample_rate!=rate_)throw std::invalid_argument("prepared sample rate does not match engine rate; use load_wav(path, engine.sample_rate()) or SampleManager");
   if((sample.channels!=1&&sample.channels!=2)||sample.interleaved.empty()||sample.interleaved.size()%sample.channels!=0)
     throw std::invalid_argument("sample must contain non-empty mono or stereo interleaved audio");
-  auto index=find_slot(id);
-  if(index==std::numeric_limits<std::size_t>::max()){index=samples_.size();samples_.push_back({id,std::move(sample)});}
-  else samples_[index].sample=std::move(sample);
-  for(std::size_t note=0;note<note_slots_.size();++note)if(note_slots_[note]==id)note_sample_indices_[note]=index;
+  if(!publish_sample_slot(id,std::move(sample)))throw std::runtime_error("sample update capacity is exhausted");
 }
 
+void AudioEngine::reclaim_sample_versions() noexcept{for(std::size_t i=0;i<sample_version_capacity_;++i)if(sample_versions_[i].state.load(std::memory_order_acquire)==SampleVersionState::retired){sample_versions_[i].sample.reset();sample_versions_[i].id.store(invalid_sample_slot.value,std::memory_order_release);sample_versions_[i].state.store(SampleVersionState::free,std::memory_order_release);reclaimed_sample_versions_.fetch_add(1,std::memory_order_relaxed);}}
+
+bool AudioEngine::publish_sample_slot(SampleSlotId id,Sample sample) noexcept{
+  if(id==invalid_sample_slot||sample.sample_rate!=rate_||(sample.channels!=1&&sample.channels!=2)||sample.interleaved.empty()||sample.interleaved.size()%sample.channels!=0)return false;
+  reclaim_sample_versions();std::size_t version=sample_version_capacity_;for(std::size_t i=0;i<sample_version_capacity_;++i)if(sample_versions_[i].state.load(std::memory_order_acquire)==SampleVersionState::free){version=i;break;}
+  if(version==sample_version_capacity_){dropped_sample_updates_.fetch_add(1,std::memory_order_relaxed);return false;}
+  try{sample_versions_[version].sample=std::make_unique<const Sample>(std::move(sample));}catch(...){return false;}
+  sample_versions_[version].id.store(id.value,std::memory_order_release);sample_versions_[version].state.store(SampleVersionState::queued,std::memory_order_release);
+  if(!sample_updates_.push({SampleUpdate::Type::install,id,version})){sample_versions_[version].state.store(SampleVersionState::free,std::memory_order_release);sample_versions_[version].sample.reset();sample_versions_[version].id.store(invalid_sample_slot.value,std::memory_order_release);dropped_sample_updates_.fetch_add(1,std::memory_order_relaxed);return false;}
+  return true;
+}
+
+bool AudioEngine::unload_sample_slot(SampleSlotId id) noexcept{if(id==invalid_sample_slot||!sample_updates_.push({SampleUpdate::Type::unload,id,0})){dropped_sample_updates_.fetch_add(1,std::memory_order_relaxed);return false;}return true;}
+
 bool AudioEngine::map_note_to_slot(std::uint8_t note,SampleSlotId id) noexcept{
-  if(processing_started_.load(std::memory_order_acquire))return false;
-  const auto index=find_slot(id);if(index==std::numeric_limits<std::size_t>::max())return false;
-  note_slots_[note]=id;note_sample_indices_[note]=index;return true;
+  if(processing_started_.load(std::memory_order_acquire)||!has_sample_slot(id))return false;
+  note_slots_[note]=id;return true;
 }
 
 void AudioEngine::trigger(std::uint8_t note,float velocity,std::uint32_t frame_offset) noexcept {
@@ -71,7 +82,7 @@ void AudioEngine::stop() noexcept{if(!transport_commands_.push(TransportCommand:
 void AudioEngine::restart() noexcept{if(!transport_commands_.push(TransportCommand::restart))dropped_transport_commands_.fetch_add(1,std::memory_order_relaxed);}
 
 void AudioEngine::start_voice(std::uint8_t note,float velocity,TrackId track,EventId event,std::uint64_t occurrence,bool timeline_owned) noexcept {
-  const auto sample_index=note_sample_indices_[note];
+  const auto sample_index=find_active_sample(note_slots_[note]);
   if(sample_index==std::numeric_limits<std::size_t>::max()){missing_slot_triggers_.fetch_add(1,std::memory_order_relaxed);return;}
   auto selected=voices_.size();
   for(std::size_t i=0;i<voices_.size();++i)if(!voices_[i].active){selected=i;break;}
@@ -81,7 +92,7 @@ void AudioEngine::start_voice(std::uint8_t note,float velocity,TrackId track,Eve
       if(voices_[i].age<voices_[selected].age)selected=i;
     stolen_voices_.fetch_add(1,std::memory_order_relaxed);
   }
-  voices_[selected]={sample_index,0,velocity,next_voice_age_++,track,event,occurrence,note,timeline_owned,true};
+  voices_[selected]={sample_versions_[sample_index].sample.get(),sample_index,0,velocity,next_voice_age_++,track,event,occurrence,note,timeline_owned,true};
 }
 
 void AudioEngine::stop_timeline_voice(TrackId track,EventId event,std::uint64_t occurrence) noexcept{
@@ -94,6 +105,12 @@ void AudioEngine::process(std::span<float> left,std::span<float> right) noexcept
   processing_started_.store(true,std::memory_order_release);
   const auto frames=std::min(left.size(),right.size());
   std::fill(left.begin(),left.end(),0);std::fill(right.begin(),right.end(),0);
+
+  SampleUpdate sample_update;
+  while(sample_updates_.pop(sample_update)){
+    for(std::size_t i=0;i<sample_version_capacity_;++i)if(sample_versions_[i].id.load(std::memory_order_acquire)==sample_update.id.value&&sample_versions_[i].state.load(std::memory_order_acquire)==SampleVersionState::active)sample_versions_[i].state.store(SampleVersionState::retiring,std::memory_order_release);
+    if(sample_update.type==SampleUpdate::Type::install)sample_versions_[sample_update.version].state.store(SampleVersionState::active,std::memory_order_release);
+  }
 
   Pattern pattern;
   while(patterns_.pop(pattern))scheduler_.request_pattern(pattern);
@@ -143,7 +160,7 @@ void AudioEngine::process(std::span<float> left,std::span<float> right) noexcept
     }
     for(auto& voice:voices_){
       if(!voice.active)continue;
-      const auto& sample=samples_[voice.sample_index].sample;
+      const auto& sample=*voice.sample;
       if(voice.cursor+sample.channels>sample.interleaved.size()){voice.active=false;continue;}
       left[frame]+=sample.interleaved[voice.cursor]*voice.gain;
       right[frame]+=sample.interleaved[voice.cursor+(sample.channels>1?1:0)]*voice.gain;
@@ -158,6 +175,7 @@ void AudioEngine::process(std::span<float> left,std::span<float> right) noexcept
     pending_triggers_[i].frame_offset-=static_cast<std::uint32_t>(frames);
   }
   pending_trigger_count_=remaining;
+  for(std::size_t version=0;version<sample_version_capacity_;++version)if(sample_versions_[version].state.load(std::memory_order_acquire)==SampleVersionState::retiring){bool referenced=false;for(const auto& voice:voices_)if(voice.active&&voice.sample_version==version){referenced=true;break;}if(!referenced)sample_versions_[version].state.store(SampleVersionState::retired,std::memory_order_release);}
   if(transport_playing_){
     if(frames>std::numeric_limits<std::uint64_t>::max()-transport_frame_){transport_frame_=std::numeric_limits<std::uint64_t>::max();transport_playing_=false;stop_voices();}
     else transport_frame_+=frames;

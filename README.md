@@ -32,7 +32,8 @@ ctest --preset sanitize
 ./build/dev/neurogenic_benchmark
 ./build/dev/neurogenic --list-devices
 ./build/dev/neurogenic --headless --list-devices
-./build/dev/neurogenic path/to/48000Hz-pcm16.wav
+./build/dev/neurogenic path/to/sample.wav
+./build/dev/neurogenic --interactive
 ```
 
 With direnv installed, run `direnv allow` once; `.envrc` enters the same flake
@@ -51,7 +52,7 @@ cmake --build --preset dev
 ctest --preset dev
 ./build/dev/neurogenic --list-devices
 ./build/dev/neurogenic --audio "DEVICE NAME" --midi "PORT NAME" \
-  --script examples/generate.lua path/to/48000Hz-pcm16.wav
+  --script examples/generate.lua path/to/sample.wav
 ./build/dev/neurogenic --slot 0=kick.wav --slot 1=snare.wav \
   --slot 2=hihat.wav --map 52=2
 ./build/dev/neurogenic --timeline examples/multitrack.ngt \
@@ -70,7 +71,15 @@ maps every note to it. Multi-sample mode uses repeatable `--slot ID=FILE`
 assignments. Stable slot IDs are unsigned integers and are not limited to 16;
 the initial bank policy maps notes 36–51 to slots 0–15. Use repeatable
 `--map NOTE=ID` assignments for slots or controller layouts outside that bank.
-All files must currently be non-empty mono or stereo PCM16 WAV at 48 kHz.
+WAV input supports mono/stereo PCM16, PCM24, PCM32, and float32. Common source
+rates are converted to the 48 kHz engine rate during loading; matching-rate
+files bypass conversion.
+
+`--interactive` may start without a sample and accepts `load ID FILE`,
+`replace ID FILE`, `unload ID`, `status [ID]`, and `quit` on standard input.
+Loading and windowed-sinc conversion run on a preparation worker while audio
+continues. Existing voices finish on their old immutable sample after replace
+or unload. See [live sample management](docs/SAMPLES.md).
 
 `--timeline` loads the versioned, line-oriented `NEUROGENIC_TIMELINE 1`
 interchange format before audio starts. It carries transport metadata, stable
@@ -120,7 +129,7 @@ enumeration smoke test. It verifies compilation, a resolvable retained ALSA
 runtime dependency, deterministic tests, and graceful device absence, not
 physical hardware compatibility.
 
-See [architecture](docs/ARCHITECTURE.md), [musical timeline](docs/TIMELINE.md), [dependencies](docs/DEPENDENCIES.md),
+See [architecture](docs/ARCHITECTURE.md), [live sample management](docs/SAMPLES.md), [musical timeline](docs/TIMELINE.md), [dependencies](docs/DEPENDENCIES.md),
 [benchmarks](docs/BENCHMARKS.md), [Lua API](docs/LUA.md), and [controller mappings](docs/CONTROLLERS.md).
 
 ## License

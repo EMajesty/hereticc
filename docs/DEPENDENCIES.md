@@ -12,6 +12,14 @@ CMake, so sandboxed package builds do not download during compilation.
 | sol2 | v3.5.0 | C++/Lua binding | MIT |
 | Airwindows | upstream review required | DSP collection | MIT |
 
+Sample-rate conversion is currently original NEUROGENIC code: a replaceable
+32-tap Hann-windowed sinc preparation-time converter. It adds no dependency and
+is covered by the repository MIT license. miniaudio's converter and
+libsamplerate were evaluated, but using either would couple the dependency-free
+engine target to a live-backend library or add another package for this initial
+offline preparation path. The `SampleRateConverter` interface keeps a future
+quality/performance replacement localized.
+
 Airwindows has no small conventional library target and its repository is very
 large. This foundation therefore does not fetch or vendor it. `PurestGain`
 provides the stable `airwindows.purest_gain.v1` integration point and a small

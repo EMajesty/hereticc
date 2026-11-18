@@ -5,7 +5,7 @@ immutable compiled timeline plans. The audio thread consumes only plan pointers,
 bounded event staging, and sample memory prepared in advance.
 
 ```text
-CLI/UI -> command API -> project / Lua / MIDI mapping
+CLI/UI -> command API -> project / Lua / MIDI mapping / sample manager
                          | compiled, bounded PlaybackPlan snapshot
                          v
 authoritative transport -> scheduler frame range -> bounded voice pool -> DSP -> backend
@@ -32,11 +32,12 @@ fixed 64-event staging area, orders triggers by frame offset and enqueue order,
 and carries future offsets into later buffers. At equal offsets, external
 control events precede sequencer events.
 
-Sample slots use stable 32-bit identifiers. Slot storage is dynamically sized;
-16 is only the initial note-bank policy, mapping MIDI/sequencer notes 36–51 to
+Sample slots use stable 32-bit identifiers. The musical slot namespace is not
+limited to a fixed bank; 16 is only the initial note-bank policy, mapping
+MIDI/sequencer notes 36–51 to
 slots 0–15. Embedders can install any number of slots and map any note before
 processing starts. The positional single-WAV compatibility API maps all notes
-to slot 0. Each voice stores the resolved immutable sample index, so callback
+to slot 0. Each voice stores the resolved immutable sample-version pointer and index, so callback
 lookup performs no string work, allocation, locking, decoding, or I/O.
 
 The voice pool is allocated when `AudioEngine` is constructed (32 voices by
@@ -85,9 +86,12 @@ resumes, and restart cleans voices and returns to zero. Timeline replacement
 preserves position and cleans timeline-owned voices. Plan destruction and final
 reclamation happen only after the audio device has stopped.
 
-Sample-slot memory and note mappings are installed before processing begins and remain immutable for
-the lifetime of live processing. Attempts to replace it after the first audio
-buffer are rejected, avoiding concurrent vector mutation or reclamation in the
-real-time callback. The install API is a distinct preparation boundary so a
-future snapshot-based asynchronous replacement mechanism can preserve the
-rendering interface.
+`SampleManager` owns a bounded asynchronous command queue and one preparation
+worker. WAV I/O, decoding, resampling, allocation, status locking, and errors
+remain on that worker/control side. It publishes immutable samples through a
+bounded version pool. The callback swaps stable-slot resolution, lets voices
+retain old versions, and only marks unreferenced versions retired. Destruction
+and pool reuse occur on the control side. Unload follows the same rule: new
+triggers see an empty slot while existing voices finish. Publication overload
+is rejected and counted rather than blocking or freeing memory in the callback.
+See [SAMPLES.md](SAMPLES.md).
