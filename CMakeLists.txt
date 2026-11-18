@@ -6,15 +6,27 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 option(NEUROGENIC_FETCH_DEPENDENCIES "Fetch pinned audio, MIDI, Lua and sol2 dependencies" OFF)
 option(NEUROGENIC_BUILD_TESTS "Build tests" ON)
+option(NEUROGENIC_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+
+if(NEUROGENIC_ENABLE_SANITIZERS)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address,undefined)
+  else()
+    message(FATAL_ERROR "NEUROGENIC_ENABLE_SANITIZERS requires GCC or Clang")
+  endif()
+endif()
 
 include(cmake/Dependencies.cmake)
+find_package(Threads REQUIRED)
 
 add_library(neurogenic_engine
-  src/audio/engine.cpp src/audio/sample.cpp src/core/command.cpp
+  src/audio/engine.cpp src/audio/sample.cpp src/core/command.cpp src/core/control_dispatcher.cpp
   src/dsp/purest_gain.cpp src/midi/mapping.cpp src/project/project.cpp
   src/sequencer/scheduler.cpp src/scripting/runtime.cpp)
 target_include_directories(neurogenic_engine PUBLIC include)
 target_compile_options(neurogenic_engine PRIVATE -Wall -Wextra -Wpedantic)
+target_link_libraries(neurogenic_engine PUBLIC Threads::Threads)
 
 if(NEUROGENIC_FETCH_DEPENDENCIES)
   target_compile_definitions(neurogenic_engine PRIVATE NEUROGENIC_HAS_MINIAUDIO PUBLIC NEUROGENIC_HAS_LUA)

@@ -12,8 +12,23 @@
         "NEUROGENIC_FETCH_DEPENDENCIES": "ON",
         "NEUROGENIC_BUILD_TESTS": "ON"
       }
+    },
+    {
+      "name": "sanitize",
+      "inherits": "dev",
+      "displayName": "NEUROGENIC ASan and UBSan build",
+      "binaryDir": "${sourceDir}/build/sanitize",
+      "cacheVariables": {
+        "NEUROGENIC_ENABLE_SANITIZERS": "ON"
+      }
     }
   ],
-  "buildPresets": [{ "name": "dev", "configurePreset": "dev" }],
-  "testPresets": [{ "name": "dev", "configurePreset": "dev", "output": { "outputOnFailure": true } }]
+  "buildPresets": [
+    { "name": "dev", "configurePreset": "dev" },
+    { "name": "sanitize", "configurePreset": "sanitize" }
+  ],
+  "testPresets": [
+    { "name": "dev", "configurePreset": "dev", "output": { "outputOnFailure": true } },
+    { "name": "sanitize", "configurePreset": "sanitize", "output": { "outputOnFailure": true } }
+  ]
 }

@@ -2,15 +2,105 @@
 #include <algorithm>
 #include <cstdint>
 #include <fstream>
+#include <stdexcept>
+
 namespace neurogenic {
-AudioEngine::AudioEngine(std::uint32_t rate):rate_(rate),scheduler_(rate,120.0){}
-void AudioEngine::set_sample(Sample s){ sample_=std::move(s); cursor_=sample_.interleaved.size(); }
-void AudioEngine::trigger(std::uint8_t note,float velocity) noexcept { if(!triggers_.push({note,velocity}))dropped_triggers_.fetch_add(1,std::memory_order_relaxed); }
-bool AudioEngine::queue_pattern(const Pattern& pattern) noexcept { if(!valid_pattern(pattern))return false;if(!patterns_.push(pattern)){dropped_patterns_.fetch_add(1,std::memory_order_relaxed);return false;}return true; }
-void AudioEngine::process(std::span<float> l,std::span<float> r) noexcept {
- std::fill(l.begin(),l.end(),0); std::fill(r.begin(),r.end(),0); Pattern pattern;while(patterns_.pop(pattern))scheduler_.request_pattern(pattern);std::array<ScheduledEvent,64> events{}; auto n=scheduler_.schedule(static_cast<std::uint32_t>(l.size()),events);published_frame_.store(scheduler_.frame_position(),std::memory_order_release);std::size_t ei=0;Trigger trigger;const bool has_trigger=triggers_.pop(trigger);
- for(std::size_t i=0;i<l.size();++i){ if(i==0&&has_trigger){cursor_=0;voice_gain_=trigger.velocity;} while(ei<n&&events[ei].frame==i){cursor_=0;voice_gain_=events[ei++].velocity;}
-   if(sample_.channels && cursor_+sample_.channels<=sample_.interleaved.size()){ l[i]=sample_.interleaved[cursor_]*voice_gain_; r[i]=sample_.interleaved[cursor_+(sample_.channels>1?1:0)]*voice_gain_; cursor_+=sample_.channels; }} effect_.process(l,r);
+AudioEngine::AudioEngine(std::uint32_t rate,std::size_t voice_capacity)
+    :rate_(rate),scheduler_(rate,120.0),voices_(voice_capacity){
+  if(voice_capacity==0)throw std::invalid_argument("voice capacity must be positive");
 }
-void AudioEngine::render_wav(const std::filesystem::path& path,std::uint64_t frames){ std::ofstream o(path,std::ios::binary); auto w16=[&](std::uint16_t v){o.write(reinterpret_cast<char*>(&v),2);}; auto w32=[&](std::uint32_t v){o.write(reinterpret_cast<char*>(&v),4);}; o.write("RIFF",4);w32(36+frames*4);o.write("WAVEfmt ",8);w32(16);w16(1);w16(2);w32(rate_);w32(rate_*4);w16(4);w16(16);o.write("data",4);w32(frames*4); std::array<float,256> l{},r{}; for(std::uint64_t done=0;done<frames;){auto count=std::min<std::uint64_t>(l.size(),frames-done);process({l.data(),count},{r.data(),count});for(std::size_t i=0;i<count;++i){auto cv=[](float x){return static_cast<std::int16_t>(std::clamp(x,-1.0F,1.0F)*32767);};auto a=cv(l[i]),b=cv(r[i]);o.write(reinterpret_cast<char*>(&a),2);o.write(reinterpret_cast<char*>(&b),2);}done+=count;}}
+
+void AudioEngine::set_sample(Sample sample){
+  if(processing_started_.load(std::memory_order_acquire))
+    throw std::logic_error("sample must be installed before audio processing starts");
+  sample_=std::move(sample);
+}
+
+void AudioEngine::trigger(std::uint8_t note,float velocity,std::uint32_t frame_offset) noexcept {
+  const Trigger event{note,velocity,frame_offset,next_order_.fetch_add(1,std::memory_order_relaxed)};
+  if(!triggers_.push(event))dropped_triggers_.fetch_add(1,std::memory_order_relaxed);
+}
+
+bool AudioEngine::queue_pattern(const Pattern& pattern) noexcept {
+  if(!valid_pattern(pattern))return false;
+  if(!patterns_.push(pattern)){dropped_patterns_.fetch_add(1,std::memory_order_relaxed);return false;}
+  return true;
+}
+
+void AudioEngine::start_voice(float velocity) noexcept {
+  auto selected=voices_.size();
+  for(std::size_t i=0;i<voices_.size();++i)if(!voices_[i].active){selected=i;break;}
+  if(selected==voices_.size()){
+    selected=0;
+    for(std::size_t i=1;i<voices_.size();++i)
+      if(voices_[i].age<voices_[selected].age)selected=i;
+    stolen_voices_.fetch_add(1,std::memory_order_relaxed);
+  }
+  voices_[selected]={0,velocity,next_voice_age_++,true};
+}
+
+void AudioEngine::process(std::span<float> left,std::span<float> right) noexcept {
+  processing_started_.store(true,std::memory_order_release);
+  const auto frames=std::min(left.size(),right.size());
+  std::fill(left.begin(),left.end(),0);std::fill(right.begin(),right.end(),0);
+
+  Pattern pattern;
+  while(patterns_.pop(pattern))scheduler_.request_pattern(pattern);
+
+  Trigger incoming;
+  while(pending_trigger_count_<pending_triggers_.size()&&triggers_.pop(incoming))
+    pending_triggers_[pending_trigger_count_++]=incoming;
+  for(std::size_t i=1;i<pending_trigger_count_;++i){
+    auto value=pending_triggers_[i];auto j=i;
+    while(j>0&&(pending_triggers_[j-1].frame_offset>value.frame_offset||
+          (pending_triggers_[j-1].frame_offset==value.frame_offset&&pending_triggers_[j-1].order>value.order))){
+      pending_triggers_[j]=pending_triggers_[j-1];--j;
+    }
+    pending_triggers_[j]=value;
+  }
+
+  std::array<ScheduledEvent,64> scheduled{};
+  const auto scheduled_count=scheduler_.schedule(static_cast<std::uint32_t>(frames),scheduled);
+  published_frame_.store(scheduler_.frame_position(),std::memory_order_release);
+  std::size_t external_index{},scheduled_index{};
+
+  for(std::size_t frame=0;frame<frames;++frame){
+    while(external_index<pending_trigger_count_&&pending_triggers_[external_index].frame_offset==frame)
+      start_voice(pending_triggers_[external_index++].velocity);
+    while(scheduled_index<scheduled_count&&scheduled[scheduled_index].frame==frame)
+      start_voice(scheduled[scheduled_index++].velocity);
+    for(auto& voice:voices_){
+      if(!voice.active)continue;
+      if(!sample_.channels||voice.cursor+sample_.channels>sample_.interleaved.size()){voice.active=false;continue;}
+      left[frame]+=sample_.interleaved[voice.cursor]*voice.gain;
+      right[frame]+=sample_.interleaved[voice.cursor+(sample_.channels>1?1:0)]*voice.gain;
+      voice.cursor+=sample_.channels;
+      if(voice.cursor>=sample_.interleaved.size())voice.active=false;
+    }
+  }
+
+  const auto remaining=pending_trigger_count_-external_index;
+  for(std::size_t i=0;i<remaining;++i){
+    pending_triggers_[i]=pending_triggers_[external_index+i];
+    pending_triggers_[i].frame_offset-=static_cast<std::uint32_t>(frames);
+  }
+  pending_trigger_count_=remaining;
+  effect_.process(left.first(frames),right.first(frames));
+}
+
+void AudioEngine::render_wav(const std::filesystem::path& path,std::uint64_t frames){
+  std::ofstream output(path,std::ios::binary);
+  auto write16=[&](std::uint16_t value){output.write(reinterpret_cast<char*>(&value),2);};
+  auto write32=[&](std::uint32_t value){output.write(reinterpret_cast<char*>(&value),4);};
+  output.write("RIFF",4);write32(36+frames*4);output.write("WAVEfmt ",8);write32(16);write16(1);write16(2);
+  write32(rate_);write32(rate_*4);write16(4);write16(16);output.write("data",4);write32(frames*4);
+  std::array<float,256> left{},right{};
+  for(std::uint64_t done=0;done<frames;){
+    const auto count=std::min<std::uint64_t>(left.size(),frames-done);process({left.data(),count},{right.data(),count});
+    for(std::size_t i=0;i<count;++i){
+      auto convert=[](float value){return static_cast<std::int16_t>(std::clamp(value,-1.0F,1.0F)*32767);};
+      auto l=convert(left[i]),r=convert(right[i]);output.write(reinterpret_cast<char*>(&l),2);output.write(reinterpret_cast<char*>(&r),2);
+    }done+=count;
+  }
+}
 }

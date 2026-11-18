@@ -5,6 +5,8 @@ It installs Nix, uses the committed `flake.lock`, evaluates/builds the flake,
 runs the CTest suite through the package check phase, and performs
 `neurogenic --headless --list-devices` as a headless smoke test. The Linux
 CTest suite also checks that `libasound` resolves with `LD_LIBRARY_PATH` unset.
+CI additionally builds and runs the dependency-enabled test suite with GCC
+AddressSanitizer and UndefinedBehaviorSanitizer.
 
 CI requires no audio device, MIDI port, or repository secret. The smoke test
 uses null audio explicitly and may report unavailable MIDI or no devices. It

@@ -21,6 +21,9 @@ nix develop
 cmake --preset dev
 cmake --build --preset dev
 ctest --preset dev
+cmake --preset sanitize
+cmake --build --preset sanitize
+ctest --preset sanitize
 ./build/dev/neurogenic --list-devices
 ./build/dev/neurogenic --headless --list-devices
 ./build/dev/neurogenic path/to/48000Hz-pcm16.wav
@@ -51,6 +54,11 @@ the numeric index or a case-sensitive name substring printed by `--list-devices`
 which queues a randomized pattern for the next bar. Other note-on messages
 trigger the sample. Ctrl-C stops playback. If MIDI is absent, audio continues;
 an audio initialization failure exits with a diagnostic.
+
+The engine provides 32 polyphonic sample voices by default. Embedders may set a
+different fixed capacity when constructing `AudioEngine`; exhaustion steals the
+oldest active voice deterministically. MIDI transport callbacks only enqueue
+messages. Controller actions and Lua run on a dedicated control thread.
 
 `--headless` explicitly selects miniaudio's null backend. It is intended for
 CI and diagnostic enumeration without an audio device, not normal playback.

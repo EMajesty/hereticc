@@ -31,5 +31,13 @@ executables enumerated PipeWire-compatible ALSA outputs, SSL 12 audio/MIDI, and
 an A-Series MIDI keyboard without environment changes. Enumeration is verified;
 audio playback and MIDI event delivery on physical hardware were not tested.
 `--headless` explicitly requests null audio for CI.
+
+Task 005 adds bounded configurable sample polyphony, deterministic oldest-voice
+stealing, complete burst consumption with frame-offset ordering, and a dedicated
+control dispatcher that isolates MIDI callbacks from mappings and Lua. Host
+tests cover overlap, retriggering, simultaneous events, carried offsets, voice
+and queue exhaustion, threaded dispatch, draining shutdown, variable buffer
+sizes, and offline rendering. Sample replacement during live processing remains
+intentionally unsupported; stop and rebuild the engine to load another sample.
 Latency under load, hotplug, ARM64, and controller-specific behavior also remain
 untested.

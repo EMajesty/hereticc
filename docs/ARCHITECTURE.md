@@ -8,7 +8,7 @@ only fixed-size events and sample memory prepared in advance.
 CLI/UI -> command API -> project / Lua / MIDI mapping
                          | boundary-safe Pattern snapshot
                          v
-musical scheduler -> frame-offset events -> sample voice -> DSP -> backend
+musical scheduler -> frame-offset events -> bounded voice pool -> DSP -> backend
                                                     \-> offline WAV
 ```
 
@@ -22,7 +22,30 @@ musical scheduler -> frame-offset events -> sample voice -> DSP -> backend
 - `project`: deliberately tiny versioned format; not a promised final schema.
 
 No callback operation performs I/O, locks, allocation, logging, or Lua work.
-Trigger and pattern snapshots cross into audio through bounded SPSC queues.
-Overflow drops the newest item and increments an atomic diagnostic counter.
-The audio callback drains pattern snapshots, consumes trigger commands, and
-schedules events into fixed stack storage. It never executes Lua or MIDI code.
+Pattern snapshots and control-thread triggers cross into audio through bounded
+SPSC queues. The producer drops the newest item on overflow and increments an
+atomic diagnostic counter. Each callback drains every trigger that fits its
+fixed 64-event staging area, orders triggers by frame offset and enqueue order,
+and carries future offsets into later buffers. At equal offsets, external
+control events precede sequencer events.
+
+The voice pool is allocated when `AudioEngine` is constructed (32 voices by
+default, configurable by the embedding application). Allocation chooses the
+lowest-index idle voice. If all voices are active, it steals the oldest-started
+voice, with the lowest index breaking ties. Retriggering therefore never resets
+an unrelated voice unless the configured pool is exhausted. The stolen-voice
+counter exposes that overload condition.
+
+The live MIDI callback validates note-on messages and pushes them to a 256-item
+SPSC inbox; it does not call mappings, the engine, Lua, logging, or filesystem
+code. A dedicated `ControlDispatcher` thread drains that inbox, invokes note
+and action mappings, and drains accepted events before shutdown. Shutdown first
+closes the MIDI producer, then drains and joins the dispatcher. Mapping setup
+belongs to the control thread before dispatch starts. That dispatcher is the
+sole producer for the audio trigger queue; the audio callback is its sole
+consumer. The callback never executes Lua or MIDI code.
+
+Sample memory is installed before processing begins and remains immutable for
+the lifetime of live processing. Attempts to replace it after the first audio
+buffer are rejected, avoiding concurrent vector mutation or reclamation in the
+real-time callback.

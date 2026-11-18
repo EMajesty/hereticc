@@ -1,2 +1,28 @@
 #include "neurogenic/midi/mapping.hpp"
-namespace neurogenic { void MidiMapper::map_button(std::uint8_t c,std::uint8_t n,std::string id,Action a){buttons_[static_cast<std::uint16_t>((c<<8)|n)]={std::move(id),std::move(a)};} bool MidiMapper::receive(const MidiMessage&m){if((m.status&0xF0)!=0x90||m.data2==0)return false;if(note_handler_)note_handler_(m.data1,m.data2/127.0F);auto it=buttons_.find(static_cast<std::uint16_t>(((m.status&15)<<8)|m.data1));if(it!=buttons_.end())it->second.action();return true;} }
+
+namespace neurogenic {
+void MidiMapper::map_button(std::uint8_t channel,std::uint8_t note,std::string id,Action action){
+  buttons_[static_cast<std::uint16_t>((channel<<8)|note)]={std::move(id),std::move(action)};
+}
+
+bool MidiMapper::receive(const MidiMessage& message) noexcept {
+  if((message.status&0xF0)!=0x90||message.data2==0)return false;
+  if(!inbox_.push(message)){dropped_.fetch_add(1,std::memory_order_relaxed);return false;}
+  sequence_.fetch_add(1,std::memory_order_release);
+  sequence_.notify_one();
+  return true;
+}
+
+bool MidiMapper::dispatch_one(){
+  MidiMessage message;
+  if(!inbox_.pop(message))return false;
+  if(note_handler_)note_handler_(message.data1,message.data2/127.0F);
+  const auto key=static_cast<std::uint16_t>(((message.status&15)<<8)|message.data1);
+  if(auto it=buttons_.find(key);it!=buttons_.end())it->second.action();
+  return true;
+}
+
+std::size_t MidiMapper::dispatch_pending(){
+  std::size_t count{};while(dispatch_one())++count;return count;
+}
+}

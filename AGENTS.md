@@ -11,3 +11,9 @@
 - Before committing build, backend, or Nix changes, run the dependency-enabled
   preset build and CTest suite, `nix build`, `nix flake check`, and the explicit
   headless device-enumeration smoke test. Report any command that was not run.
+- For every behavioral bug fix, add a deterministic regression test. Before any
+  commit, run the dependency-enabled build and CTest suite plus the ASan/UBSan
+  preset where supported. Fix known failures; never knowingly commit one.
+- Run `nix build`, `nix flake check`, and the headless smoke test before every
+  commit that changes C++, CMake, dependencies, adapters, Nix, or CI. Only defer
+  tests requiring physical hardware or subjective listening, and document them.
