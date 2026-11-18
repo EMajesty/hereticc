@@ -73,5 +73,16 @@ application playback without C++. Compiled plans no longer impose 32-track or
 512-event musical limits; callback staging remains configurable and observable.
 MIDI clock, tempo maps, beat-continuous live tempo changes, and physical-device
 playback verification remain future work.
+
+Task 009 replaces the fallible retired-plan queue with four control-owned plan
+slots; audio only publishes state transitions and never frees plans. Per-track
+cursors and a preallocated next-event heap remove full-pattern callback scans.
+Voice ownership now includes track, target note-on ID, and loop occurrence, so
+overlap, loop crossing, stealing, stop/restart, mute, and replacement cannot
+release unrelated voices. Staging overflow defers events instead of discarding
+note-offs and reports callback overruns. Host regression and leak-sanitizer
+tests cover rapid replacement/reclamation, saturation, exact explicit targets,
+stolen owners, dense backlogs, and deferred cleanup. The offline benchmark is
+documented in `docs/BENCHMARKS.md`; it is not hardware real-time evidence.
 Latency under load, hotplug, ARM64, and controller-specific behavior also remain
 untested.

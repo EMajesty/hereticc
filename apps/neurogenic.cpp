@@ -106,7 +106,7 @@ int main(int argc,char** argv){
     std::cout<<"Playing "<<engine.sample_slot_count()<<" sample slot(s). MIDI note 36 runs "<<script<<". Press Ctrl-C to stop.\n";
     while(running.load())std::this_thread::sleep_for(std::chrono::milliseconds(100));
     audio.stop();midi.close();dispatcher.stop();
-    std::cout<<"Stopped. dropped MIDI="<<mapper.dropped_messages()<<", triggers="<<engine.dropped_triggers()<<", patterns="<<engine.dropped_patterns()<<", timelines="<<engine.dropped_timelines()<<", timeline events="<<engine.dropped_timeline_events()<<", legacy events="<<engine.dropped_legacy_events()<<", transport commands="<<engine.dropped_transport_commands()<<", missing slots="<<engine.missing_slot_triggers()<<", stolen voices="<<engine.stolen_voices()<<'\n';
+    std::cout<<"Stopped. dropped MIDI="<<mapper.dropped_messages()<<", triggers="<<engine.dropped_triggers()<<", patterns="<<engine.dropped_patterns()<<", timelines="<<engine.dropped_timelines()<<", timeline overruns="<<engine.timeline_event_overruns()<<", legacy events="<<engine.dropped_legacy_events()<<", transport commands="<<engine.dropped_transport_commands()<<", missing slots="<<engine.missing_slot_triggers()<<", stolen voices="<<engine.stolen_voices()<<'\n';
     return 0;
   }catch(const std::exception& error){std::cerr<<"error: "<<error.what()<<'\n';return 1;}
 }

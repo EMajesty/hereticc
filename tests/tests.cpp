@@ -143,13 +143,13 @@ void test_timeline_and_tracks(){
   Track first;first.id=10;first.pattern.length=960;
   first.pattern.events.push_back({2,0,MusicalEventType::note_on,36,1,0,0,0});
   first.pattern.events.push_back({1,0,MusicalEventType::note_on,38,0.25F,0,0,0});
-  first.pattern.events.push_back({4,480,MusicalEventType::note_off,36,0,0,0,0});
+  first.pattern.events.push_back({4,480,MusicalEventType::note_off,36,0,0,0,0,2});
   first.pattern.events.push_back({5,240,MusicalEventType::parameter,0,0,0,77,0.75F});
   timeline.tracks={second,first};
 
   PlaybackPlan plan;std::string error;check(compile_timeline(timeline,plan,error),"timeline compilation");
   check(plan.tracks.size()==2&&plan.events.size()==6,"compiled timeline dimensions");
-  TimelineScheduler scheduler(48000);scheduler.set_plan(&plan);
+  TimelineScheduler scheduler(48000);scheduler.set_plan(&plan,0);
   check(scheduler.frame_at_tick(960)==24000,"tempo-to-frame conversion");
   std::array<TimelineScheduledEvent,32> events{};auto count=scheduler.schedule(0,1,events);
   check(count==3,"simultaneous multi-track events");
@@ -157,7 +157,7 @@ void test_timeline_and_tracks(){
 
   Timeline variable;Track odd;odd.id=1;odd.pattern.length=721;
   odd.pattern.events.push_back({1,0,MusicalEventType::note_on,36,1,0,0,0});variable.tracks.push_back(odd);
-  check(compile_timeline(variable,plan,error),"arbitrary pattern length compilation");scheduler=TimelineScheduler(44100);scheduler.set_plan(&plan);
+  check(compile_timeline(variable,plan,error),"arbitrary pattern length compilation");scheduler=TimelineScheduler(44100);scheduler.set_plan(&plan,0);
   std::uint64_t absolute{};std::vector<std::uint64_t> observed;
   for(std::size_t call=0;observed.size()<20;++call){
     const auto frames=static_cast<std::uint32_t>((call*37)%509+1);count=scheduler.schedule(absolute,frames,events);
@@ -170,12 +170,12 @@ void test_timeline_and_tracks(){
   }
 
   Timeline muted=variable;muted.tracks[0].muted=true;check(compile_timeline(muted,plan,error),"muted timeline compilation");
-  scheduler=TimelineScheduler(48000);scheduler.set_plan(&plan);check(scheduler.schedule(0,48000,events)==0,"muted track produced events");
+  scheduler=TimelineScheduler(48000);scheduler.set_plan(&plan,0);check(scheduler.schedule(0,48000,events)==0,"muted track produced events");
 
   Timeline boundary;Track looping;looping.id=9;looping.pattern.length=960;
   looping.pattern.events={{1,959,MusicalEventType::note_on,36,1,0,0,0},{2,0,MusicalEventType::note_on,37,1,0,0,0}};
   boundary.tracks.push_back(looping);check(compile_timeline(boundary,plan,error),"loop boundary compilation");
-  scheduler=TimelineScheduler(48000);scheduler.set_plan(&plan);count=scheduler.schedule(0,24001,events);
+  scheduler=TimelineScheduler(48000);scheduler.set_plan(&plan,0);count=scheduler.schedule(0,24001,events);
   check(count==3&&events[0].pitch==37&&events[1].pitch==36&&events[2].pitch==37&&events[2].frame==24000,"loop boundary scheduling");
 
   Timeline invalid=boundary;invalid.tracks[0].pattern.events[1].id=1;
@@ -188,6 +188,9 @@ void test_timeline_and_tracks(){
   one_track.pattern.events.push_back({1,0,MusicalEventType::note_on,36,1,0,0,0});one.tracks.push_back(one_track);
   check(plan_queue.queue_timeline(one,error)&&plan_queue.queue_timeline(one,error)&&plan_queue.queue_timeline(one,error),"timeline queue usable capacity");
   check(!plan_queue.queue_timeline(one,error)&&plan_queue.dropped_timelines()==1,"timeline queue overflow behavior");
+  AudioEngine reclamation;check(reclamation.queue_timeline(one,error),"initial reclamation plan");std::array<float,1> reclaim_left{},reclaim_right{};reclamation.process(reclaim_left,reclaim_right);
+  for(int i=0;i<100;++i){check(reclamation.queue_timeline(one,error),"rapid replacement queue");reclamation.process(reclaim_left,reclaim_right);}
+  check(reclamation.queue_timeline(one,error)&&reclamation.reclaimed_timeline_plans()>=99,"retired plans were not reclaimed on control thread");
 
   AudioEngine engine(48000,8);engine.set_sample_slot(SampleSlotId{0},constant_sample(30000,0.25F));
   engine.set_sample_slot(SampleSlotId{1},constant_sample(30000,0.5F));
@@ -230,19 +233,26 @@ void test_transport_integration_and_timeline_io(){
 
   Timeline crossing;Track short_loop;short_loop.id=8;short_loop.pattern.length=480;
   short_loop.pattern.events.push_back({99,0,MusicalEventType::note,36,1,720,0,0});crossing.tracks.push_back(short_loop);
-  PlaybackPlan crossing_plan;check(compile_timeline(crossing,crossing_plan,error),"cross-loop duration compilation");TimelineScheduler crossing_scheduler(48000);crossing_scheduler.set_plan(&crossing_plan);
+  PlaybackPlan crossing_plan;check(compile_timeline(crossing,crossing_plan,error),"cross-loop duration compilation");TimelineScheduler crossing_scheduler(48000);crossing_scheduler.set_plan(&crossing_plan,0);
   std::array<TimelineScheduledEvent,16> scheduled{};const auto crossing_count=crossing_scheduler.schedule(0,30001,scheduled);
   check(crossing_count==5&&scheduled[0].type==MusicalEventType::note_on&&scheduled[1].frame==12000&&scheduled[2].type==MusicalEventType::note_off&&scheduled[2].frame==18000,"cross-loop note scheduling");
   Timeline tiny;Track tiny_track;tiny_track.id=1;tiny_track.pattern.length=1;tiny_track.pattern.events.push_back({1,0,MusicalEventType::note_on,36,1,0,0,0});tiny.tracks.push_back(tiny_track);
-  PlaybackPlan tiny_plan;check(compile_timeline(tiny,tiny_plan,error),"one-tick loop compilation");TimelineScheduler tiny_scheduler(48000);tiny_scheduler.set_plan(&tiny_plan);check(tiny_scheduler.schedule(0,100,scheduled)==4,"one-tick loop scheduling");
+  PlaybackPlan tiny_plan;check(compile_timeline(tiny,tiny_plan,error),"one-tick loop compilation");TimelineScheduler tiny_scheduler(48000);tiny_scheduler.set_plan(&tiny_plan,0);check(tiny_scheduler.schedule(0,100,scheduled)==4,"one-tick loop scheduling");
 
   AudioEngine edges(48000,2);edges.set_sample_slot(SampleSlotId{0},constant_sample(100));Timeline edge_timeline;Track edge_track;edge_track.id=5;edge_track.pattern.length=960;
-  edge_track.pattern.events={{1,0,MusicalEventType::note_on,36,1,0,0,0},{2,1,MusicalEventType::note_off,36,0,0,0,0}};edge_timeline.tracks.push_back(edge_track);
-  check(edges.queue_timeline(edge_timeline,error),"explicit note edges queue");std::array<float,26> edge_left{},edge_right{};edges.process(edge_left,edge_right);near(edge_left[0],0.8F,"explicit note-on missing");near(edge_left[25],0,"explicit note-off did not match pitch");
+  edge_track.pattern.events={{1,0,MusicalEventType::note_on,36,1,0,0,0},{2,1,MusicalEventType::note_off,36,0,0,0,0,1}};edge_timeline.tracks.push_back(edge_track);
+  check(edges.queue_timeline(edge_timeline,error),"explicit note edges queue");std::array<float,26> edge_left{},edge_right{};edges.process(edge_left,edge_right);near(edge_left[0],0.8F,"explicit note-on missing");near(edge_left[25],0,"explicit note-off did not match target");
+  auto invalid_edges=edge_timeline;invalid_edges.tracks[0].pattern.events[1].target_event_id=0;PlaybackPlan invalid_edge_plan;check(!compile_timeline(invalid_edges,invalid_edge_plan,error),"untargeted explicit note-off accepted");
+
+  AudioEngine stolen(48000,1);stolen.set_sample_slot(SampleSlotId{0},constant_sample(100));Timeline stolen_timeline;Track stolen_track;stolen_track.id=1;stolen_track.pattern.length=960;
+  stolen_track.pattern.events={{1,0,MusicalEventType::note,36,0.5F,1,0,0},{2,0,MusicalEventType::note,36,1,2,0,0}};stolen_timeline.tracks.push_back(stolen_track);check(stolen.queue_timeline(stolen_timeline,error),"stolen voice timeline queue");stolen.process(edge_left,edge_right);near(edge_left[25],0.8F,"note-off for stolen voice stopped unrelated owner");
 
   AudioEngine overflow(48000,4,2);overflow.set_sample_slot(SampleSlotId{0},constant_sample(2));Timeline burst;Track burst_track;burst_track.id=1;burst_track.pattern.length=960;
   for(std::uint64_t id=1;id<=5;++id)burst_track.pattern.events.push_back({id,0,MusicalEventType::note_on,36,1,0,0,0});burst.tracks.push_back(burst_track);
-  check(overflow.queue_timeline(burst,error),"staging overflow timeline queue");overflow.process(left,right);check(overflow.dropped_timeline_events()==3,"timeline staging overflow counter");
+  check(overflow.queue_timeline(burst,error),"staging overflow timeline queue");overflow.process(left,right);check(overflow.dropped_timeline_events()==1,"timeline staging deferral counter");overflow.process(left,right);overflow.process(left,right);check(overflow.dropped_timeline_events()==2,"dense backlog diagnostics");
+
+  AudioEngine cleanup(48000,2,1);cleanup.set_sample_slot(SampleSlotId{0},constant_sample(100));Timeline cleanup_timeline;Track cleanup_track;cleanup_track.id=1;cleanup_track.pattern.length=960;cleanup_track.pattern.events.push_back({1,0,MusicalEventType::note,36,1,1,0,0});cleanup_timeline.tracks.push_back(cleanup_track);
+  check(cleanup.queue_timeline(cleanup_timeline,error),"cleanup overflow queue");cleanup.process(edge_left,edge_right);near(edge_left[25],0.8F,"deferred note-off ended voice without delivery");cleanup.process({left.data(),1},{right.data(),1});near(left[0],0,"deferred note-off left a stuck voice");
 
   AudioEngine shared(48000,8);shared.set_sample_slot(SampleSlotId{0},constant_sample(2,0.25F));shared.set_sample_slot(SampleSlotId{1},constant_sample(2,0.5F));
   Timeline slow;slow.transport.microseconds_per_quarter=1'000'000;Track slow_track;slow_track.id=1;slow_track.pattern.length=3840;slow_track.pattern.events.push_back({1,960,MusicalEventType::note_on,37,1,0,0,0});slow.tracks.push_back(slow_track);
@@ -255,12 +265,14 @@ void test_transport_integration_and_timeline_io(){
   check(tempo_change.queue_timeline(changed,error),"tempo transition plan");tempo_change.process({left.data(),1},{right.data(),1});near(left[0],0.8F,"tempo transition did not use authoritative position");
 
   Timeline large;Track large_track;large_track.id=1;large_track.pattern.length=std::numeric_limits<MusicalTick>::max();large_track.pattern.events.push_back({1,std::numeric_limits<MusicalTick>::max()-1,MusicalEventType::note_on,36,1,0,0,0});large.tracks.push_back(large_track);
-  PlaybackPlan large_plan;check(compile_timeline(large,large_plan,error),"large-position compilation");TimelineScheduler large_scheduler(192000);large_scheduler.set_plan(&large_plan);check(large_scheduler.frame_at_tick(std::numeric_limits<MusicalTick>::max()-1)==std::numeric_limits<std::uint64_t>::max(),"large position did not saturate safely");
+  PlaybackPlan large_plan;check(compile_timeline(large,large_plan,error),"large-position compilation");TimelineScheduler large_scheduler(192000);large_scheduler.set_plan(&large_plan,0);check(large_scheduler.frame_at_tick(std::numeric_limits<MusicalTick>::max()-1)==std::numeric_limits<std::uint64_t>::max(),"large position did not saturate safely");
 
   const auto path=std::filesystem::temp_directory_path()/"neurogenic-timeline-test.ngt";save_timeline(timeline,path);auto loaded=load_timeline(path);std::filesystem::remove(path);
   check(loaded.tracks.size()==1&&loaded.tracks[0].pattern.events[0].duration==1920&&loaded.tracks[0].id==1,"timeline file round trip");
   const auto invalid_path=std::filesystem::temp_directory_path()/"neurogenic-invalid-timeline.ngt";{std::ofstream invalid(invalid_path);invalid<<"NEUROGENIC_TIMELINE 99\n";}
   bool rejected=false;try{(void)load_timeline(invalid_path);}catch(const std::runtime_error&){rejected=true;}std::filesystem::remove(invalid_path);check(rejected,"unsupported timeline version accepted");
+  const auto legacy_path=std::filesystem::temp_directory_path()/"neurogenic-legacy-note-off.ngt";{std::ofstream legacy_file(legacy_path);legacy_file<<"NEUROGENIC_TIMELINE 1\ntransport 500000 4 4\ntrack 1 960 0 \"legacy\"\nnote_on 1 10 0 36 1\nnote_off 1 11 120 36 0\n";}
+  auto legacy_loaded=load_timeline(legacy_path);std::filesystem::remove(legacy_path);check(legacy_loaded.tracks[0].pattern.events[1].target_event_id==10,"legacy note-off target resolution");
 }
 
 void test_midi_control_dispatch(){

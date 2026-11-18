@@ -19,6 +19,7 @@ struct MusicalEvent {
   MusicalTick duration{};
   std::uint32_t parameter_id{};
   float value{};
+  EventId target_event_id{};
 };
 struct MusicalPattern { MusicalTick length{ticks_per_quarter*4};std::vector<MusicalEvent> events; };
 struct Track { TrackId id{};std::string name;bool muted{};MusicalPattern pattern; };

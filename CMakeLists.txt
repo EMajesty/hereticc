@@ -56,6 +56,8 @@ if(NEUROGENIC_BUILD_TESTS)
   add_executable(neurogenic_tests tests/tests.cpp)
   target_link_libraries(neurogenic_tests PRIVATE neurogenic_engine)
   add_test(NAME neurogenic_tests COMMAND neurogenic_tests)
+  add_executable(neurogenic_benchmark benchmarks/timeline_benchmark.cpp)
+  target_link_libraries(neurogenic_benchmark PRIVATE neurogenic_engine)
   if(NEUROGENIC_FETCH_DEPENDENCIES AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_test(NAME neurogenic_alsa_runtime_link COMMAND ${CMAKE_COMMAND}
       -DNEUROGENIC_EXECUTABLE=$<TARGET_FILE:neurogenic>

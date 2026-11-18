@@ -7,6 +7,7 @@
 #include <array>
 #include <atomic>
 #include <filesystem>
+#include <memory>
 #include <span>
 #include <string>
 #include <vector>
@@ -38,33 +39,38 @@ public:
   [[nodiscard]] std::uint64_t missing_slot_triggers() const noexcept{return missing_slot_triggers_.load();}
   [[nodiscard]] std::uint64_t dropped_timelines() const noexcept{return dropped_timelines_.load();}
   [[nodiscard]] std::uint64_t dropped_timeline_events() const noexcept{return dropped_timeline_events_.load();}
+  [[nodiscard]] std::uint64_t timeline_event_overruns() const noexcept{return dropped_timeline_events_.load();}
   [[nodiscard]] std::uint64_t dropped_legacy_events() const noexcept{return dropped_legacy_events_.load();}
   [[nodiscard]] std::uint64_t dropped_transport_commands() const noexcept{return dropped_transport_commands_.load();}
+  [[nodiscard]] std::uint64_t reclaimed_timeline_plans() const noexcept{return reclaimed_timeline_plans_.load();}
   [[nodiscard]] std::size_t voice_capacity() const noexcept { return voices_.size(); }
 private:
   struct Trigger { std::uint8_t note{}; float velocity{}; std::uint32_t frame_offset{}; std::uint64_t order{}; };
-  struct Voice { std::size_t sample_index{},cursor{};float gain{};std::uint64_t age{};TrackId track{};EventId event{};std::uint8_t pitch{};bool timeline_owned{},active{}; };
+  struct Voice { std::size_t sample_index{},cursor{};float gain{};std::uint64_t age{};TrackId track{};EventId event{};std::uint64_t occurrence{};std::uint8_t pitch{};bool timeline_owned{},active{}; };
   struct SampleSlot { SampleSlotId id;Sample sample; };
+  enum class PlanState:std::uint8_t{free,queued,active,retired};
+  struct PlanSlot {std::atomic<PlanState> state{PlanState::free};std::unique_ptr<PlaybackPlan> plan;};
   enum class TransportCommand:std::uint8_t{play,stop,restart};
   [[nodiscard]] std::size_t find_slot(SampleSlotId id) const noexcept;
-  void start_voice(std::uint8_t note,float velocity,TrackId track=0,EventId event=0,bool timeline_owned=false) noexcept;
-  void stop_timeline_voice(TrackId,EventId,std::uint8_t pitch) noexcept;
+  void start_voice(std::uint8_t note,float velocity,TrackId track=0,EventId event=0,std::uint64_t occurrence=0,bool timeline_owned=false) noexcept;
+  void stop_timeline_voice(TrackId,EventId,std::uint64_t occurrence) noexcept;
   void stop_voices(bool timeline_only=false) noexcept;
   void reclaim_retired_plans() noexcept;
   std::uint32_t rate_; Scheduler scheduler_;TimelineScheduler timeline_scheduler_; PurestGain effect_;
   SpscQueue<Trigger,65> triggers_;
   SpscQueue<Pattern,9> patterns_;
-  SpscQueue<PlaybackPlan*,4> timelines_;
-  SpscQueue<PlaybackPlan*,8> retired_timelines_;
+  static constexpr std::size_t timeline_plan_slot_count=4;
+  SpscQueue<std::uint8_t,4> timelines_;
+  std::array<PlanSlot,timeline_plan_slot_count> timeline_plans_{};
   SpscQueue<TransportCommand,16> transport_commands_;
-  std::atomic<std::uint64_t> dropped_triggers_{},dropped_patterns_{},dropped_timelines_{},dropped_timeline_events_{},dropped_legacy_events_{},dropped_transport_commands_{},published_frame_{},next_order_{},stolen_voices_{},missing_slot_triggers_{};
+  std::atomic<std::uint64_t> dropped_triggers_{},dropped_patterns_{},dropped_timelines_{},dropped_timeline_events_{},dropped_legacy_events_{},dropped_transport_commands_{},reclaimed_timeline_plans_{},published_frame_{},next_order_{},stolen_voices_{},missing_slot_triggers_{};
   std::vector<SampleSlot> samples_;
   std::array<SampleSlotId,128> note_slots_{};
   std::array<std::size_t,128> note_sample_indices_{};
   std::vector<Voice> voices_;
   std::vector<ScheduledEvent> legacy_events_;
   std::vector<TimelineScheduledEvent> timeline_events_;
-  PlaybackPlan* active_timeline_{};
+  int active_timeline_slot_{-1};
   std::array<Trigger,64> pending_triggers_{};
   std::size_t pending_trigger_count_{};
   std::uint64_t next_voice_age_{};

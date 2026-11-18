@@ -57,12 +57,26 @@ consumer. The callback never executes Lua or MIDI code.
 
 Editable timelines own strings and vectors on the control side. `compile_timeline`
 validates stable identifiers and converts note durations into explicit on/off
-events in an immutable, preparation-time-allocated `PlaybackPlan`. There is no
-fixed track or compiled-event count. The control thread is the sole plan-queue
-producer and reclaims plans returned by the audio thread; the callback only
-exchanges pointers. Scheduling uses a configurable preallocated staging buffer
-(512 events by default). Overflow retains the earliest deterministic events and
-increments a counter. See [TIMELINE.md](TIMELINE.md).
+events in a preparation-time-allocated `PlaybackPlan`. There is no fixed track
+or compiled-event count. Four control-owned plan slots have atomic
+free/queued/active/retired states. The callback only changes states and pointers;
+the control thread alone destroys retired plans, so queue saturation cannot
+leak a plan or invoke a destructor in real time. Scheduling uses a configurable
+preallocated staging buffer (512 events by default). Overflow defers the next
+event without advancing its cursor and increments an overrun counter. See
+[TIMELINE.md](TIMELINE.md).
+
+Each compiled track has audio-owned cursor state, and a preparation-time-sized heap contains
+one next-event entry per audible track. A continuous callback visits the heap
+root and due events rather than scanning the pattern. Steady-state scheduling is
+`O(D (log T + log D) + 1)`, where `T` is playing tracks and `D` is dispatched
+events; stored events far from the playhead do not add callback work. Seek,
+restart, and plan activation rebuild cursors in `O(T log E + T)`.
+
+Timeline voices are owned by `(track ID, note-on event ID, loop occurrence)`.
+Generated duration note-offs preserve that token across loop boundaries.
+Explicit note-offs name a target note-on ID. Voice stealing removes only the
+selected voice; its later note-off finds no owner and cannot stop another voice.
 
 `AudioEngine` owns the authoritative transport frame and play state. Both the
 timeline and 16-step compatibility schedulers receive the same frame range and

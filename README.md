@@ -29,6 +29,7 @@ ctest --preset dev
 cmake --preset sanitize
 cmake --build --preset sanitize
 ctest --preset sanitize
+./build/dev/neurogenic_benchmark
 ./build/dev/neurogenic --list-devices
 ./build/dev/neurogenic --headless --list-devices
 ./build/dev/neurogenic path/to/48000Hz-pcm16.wav
@@ -120,7 +121,7 @@ runtime dependency, deterministic tests, and graceful device absence, not
 physical hardware compatibility.
 
 See [architecture](docs/ARCHITECTURE.md), [musical timeline](docs/TIMELINE.md), [dependencies](docs/DEPENDENCIES.md),
-[Lua API](docs/LUA.md), and [controller mappings](docs/CONTROLLERS.md).
+[benchmarks](docs/BENCHMARKS.md), [Lua API](docs/LUA.md), and [controller mappings](docs/CONTROLLERS.md).
 
 ## License
 

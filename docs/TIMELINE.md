@@ -16,14 +16,16 @@ At equal frame positions playback orders by track ID, note-off before note-on
 within a track, then event ID.
 
 On the control thread, `compile_timeline` validates IDs, ranges and lengths,
-expands duration notes into on/off pairs, and produces immutable dynamically
-sized data. Plan allocation and reclamation remain on the control thread. The
-audio thread accepts plan pointers through a bounded SPSC queue and performs
-only integer scheduling, preallocated-buffer sorting, voice updates, and
-rendering. It does not allocate, free, lock, perform I/O, or execute Lua. The
-configurable callback staging capacity defaults to 512 events; overflow retains
-the earliest deterministic events and increments a counter. Plan-queue
-exhaustion rejects the newest plan explicitly.
+expands duration notes into on/off pairs, and produces dynamically sized data
+with audio-owned cursor storage. Plan allocation and reclamation remain on the control thread. The
+audio thread accepts plan-slot indices through a bounded SPSC queue and performs
+only integer scheduling, preallocated heap/buffer operations, voice updates,
+and rendering. It does not allocate, free, lock, perform I/O, or execute Lua.
+The configurable callback staging capacity defaults to 512 events. If full,
+the earliest undispatched cursor remains pending and is delivered at frame zero
+of a later callback; the overrun counter records the timing degradation. No
+note-off is silently discarded. Plan-slot exhaustion rejects the newest plan.
+Retired slots are destroyed only by the control thread or after audio shutdown.
 
 Tick-to-frame conversion evaluates the absolute rational position:
 
@@ -35,8 +37,10 @@ round(tick * sample_rate * microseconds_per_quarter
 It never accumulates a rounded frames-per-step value, so loop and callback
 boundaries do not introduce cumulative drift. Each track's pattern length is
 its loop period. Note durations may cross a loop boundary; their generated
-note-off remains attached to the originating track and stable event ID. When
-loop iterations overlap, note-off stops the oldest matching occurrence only.
+note-off remains attached to the originating track, stable note-on ID, and loop
+occurrence. Overlapping same-pitch instances therefore remain independent.
+Voice stealing makes a later note-off a no-op if its exact owner no longer
+exists; there is no pitch-based fallback.
 
 ## Version 1 interchange
 
@@ -50,7 +54,7 @@ transport MICROSECONDS_PER_QUARTER NUMERATOR DENOMINATOR
 track TRACK_ID LENGTH_TICKS MUTED_0_OR_1 "NAME"
 note TRACK_ID EVENT_ID TICK PITCH VELOCITY DURATION_TICKS
 note_on TRACK_ID EVENT_ID TICK PITCH VELOCITY
-note_off TRACK_ID EVENT_ID TICK PITCH VELOCITY
+note_off TRACK_ID EVENT_ID TICK PITCH VELOCITY TARGET_NOTE_ON_ID
 parameter TRACK_ID EVENT_ID TICK PARAMETER_ID VALUE
 ```
 
@@ -58,6 +62,13 @@ Tracks precede their events. IDs are positive and unique in their scope, and
 event positions fall within the owning pattern. Sample assignments remain
 separate application configuration. `examples/multitrack.ngt` is a complete
 three-track example selecting slots through notes 36, 37, and 38.
+
+An explicit `note_off` has its own stable event ID and must name the stable ID
+of its corresponding `note_on`. Duration notes generate this relationship
+automatically. For compatibility, a version 1 file may omit the final target
+only when exactly one preceding, not-yet-targeted note-on has the same pitch;
+the loader resolves it before compilation. Ambiguous or unknown note-offs are
+rejected, and saved files always include the explicit target.
 
 ## Transport behavior
 
