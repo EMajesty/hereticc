@@ -273,6 +273,31 @@ class HilTests(unittest.TestCase):
             shell_program.index("device/m05a/scripts/build.sh"),
         )
 
+    def test_m06a_mode_is_fixed_and_builds_after_abi_fixture(self):
+        build = hil.parser().parse_args(["build", "--native-m06a"])
+        deploy = hil.parser().parse_args([
+            "deploy", "--native-m06a", "--confirm", hil.CONFIRM,
+        ])
+        self.assertTrue(build.native_m06a)
+        self.assertTrue(deploy.native_m06a)
+        self.assertEqual(
+            hil.M06A_ARTIFACT,
+            hil.ROOT / "target/m06a/build/neurogenic-m06a-native-batch.so",
+        )
+        completed = mock.Mock(returncode=0)
+        with mock.patch.object(hil.subprocess, "run", return_value=completed) as run:
+            with mock.patch.object(
+                hil, "read_reviewed_artifact", return_value=(b"batch", "c" * 64)
+            ):
+                self.assertEqual(hil.build_native_batch_artifact(), (b"batch", "c" * 64))
+        shell_program = run.call_args.args[0][-1]
+        self.assertLess(
+            shell_program.index("verify-native-abi.sh"),
+            shell_program.index("device/m06a/scripts/build.sh"),
+        )
+        with self.assertRaises(SystemExit):
+            hil.parser().parse_args(["deploy", "--native-m05a", "--native-m06a"])
+
     def test_only_fixed_operations_are_exposed(self):
         ssh = hil.Ssh(self.config, Runner([]))
         with self.assertRaises(hil.HilError):
@@ -1032,6 +1057,121 @@ class GridExperimentTests(unittest.TestCase):
         report = self.report()
         self.assertEqual(report["status"], "fail")
         self.assertEqual(report["restoration"]["status"], "fail")
+
+
+class StaticBatchExperimentTests(unittest.TestCase):
+    class BatchSsh:
+        def __init__(self, responses=None):
+            self.responses = list(responses or [
+                b"v=2 native=idle context=ready action_accepted=1 command_accepted=0 event_observed=0 event_removed=0 paint_after_arm=0 diagnostic=not_reached\n",
+                b"v=1 batch=inserting action_accepted=1 total=8 accepted=0 verified=0 removed=0 unverified=0 paints=0 diagnostic=waiting_for_paint\n",
+                b"v=1 batch=ready action_accepted=1 total=8 accepted=8 verified=8 removed=0 unverified=0 paints=16 diagnostic=all_verified\n",
+                b"v=1 batch=cleaning action_accepted=1 total=8 accepted=8 verified=8 removed=0 unverified=0 paints=16 diagnostic=cleanup_requested\n",
+                b"v=1 batch=cleaned action_accepted=1 total=8 accepted=8 verified=8 removed=8 unverified=0 paints=32 diagnostic=all_absent\n",
+            ])
+            self.commands = []
+
+        def test_command(self, command):
+            self.commands.append(command)
+            if not self.responses:
+                raise AssertionError("unexpected static batch command")
+            return self.responses.pop(0)
+
+        def fixed(self, _name):
+            return b"hil_runtime=absent\nactive_sha256=absent\nprevious_sha256=absent\n"
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        root = Path(self.temp.name)
+        self.run_root = root / "runs"
+        self.run_lock = root / "run.lock"
+        self.args = type("Args", (), {
+            "confirm": hil.CONFIRM, "confirm_batch": hil.BATCH_CONFIRM,
+        })()
+        self.identity_facts = hil.parse_facts(identity_output())
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def patches(self, **overrides):
+        defaults = {
+            "identity": mock.Mock(return_value=dict(self.identity_facts)),
+            "build_native_batch_artifact": mock.Mock(return_value=(b"ELF", "f" * 64)),
+            "deploy_artifact": mock.Mock(return_value=None),
+            "activate_artifact": mock.Mock(return_value={
+                **self.identity_facts, "main_pid": "202", "dropins": hil.DROPIN,
+            }),
+            "wait_bridge": mock.Mock(return_value=None),
+            "restore_stock": mock.Mock(return_value={
+                **self.identity_facts, "main_pid": "303",
+            }),
+            "git_commit": mock.Mock(return_value="c" * 40),
+        }
+        defaults.update(overrides)
+        stack = contextlib.ExitStack()
+        stack.enter_context(mock.patch.object(hil, "RUN_ROOT", self.run_root))
+        stack.enter_context(mock.patch.object(hil, "RUN_LOCK", self.run_lock))
+        for name, replacement in defaults.items():
+            stack.enter_context(mock.patch.object(hil, name, replacement))
+        return stack, defaults
+
+    def report(self):
+        directory, = self.run_root.iterdir()
+        return json.loads((directory / "report.json").read_text())
+
+    def test_batch_response_is_strict_and_consistent(self):
+        valid = self.BatchSsh().responses[2]
+        parsed = hil.parse_batch_response(valid)
+        self.assertEqual(parsed["verified"], "8")
+        with self.assertRaises(hil.RemoteError):
+            hil.parse_batch_response(valid.replace(b"verified=8", b"verified=9"))
+        with self.assertRaises(hil.RemoteError):
+            hil.parse_batch_response(valid + b"extra=1\n")
+
+    def test_success_verifies_owner_feedback_cleans_and_restores(self):
+        ssh = self.BatchSsh()
+        stack, patched = self.patches()
+        with stack, contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                hil.orchestrate_static_batch_experiment(self.args, ssh, lambda _: "PASS"),
+                0,
+            )
+        report = self.report()
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["verified_batch"]["verified"], "8")
+        self.assertEqual(report["cleanup_batch"]["removed"], "8")
+        self.assertFalse(report["subjective_playback"]["timing_accuracy_measured"])
+        patched["restore_stock"].assert_called_once()
+
+    def test_partial_failure_is_reported_and_stock_is_restored(self):
+        ssh = self.BatchSsh(responses=[
+            self.BatchSsh().responses[0],
+            self.BatchSsh().responses[1],
+            b"v=1 batch=failed action_accepted=1 total=8 accepted=3 verified=2 removed=0 unverified=1 paints=6 diagnostic=ambiguous_ownership\n",
+            b"v=1 batch=failed action_accepted=1 total=8 accepted=3 verified=2 removed=0 unverified=1 paints=6 diagnostic=ambiguous_ownership\n",
+            b"v=1 batch=cleaning action_accepted=1 total=8 accepted=3 verified=2 removed=0 unverified=1 paints=6 diagnostic=cleanup_requested\n",
+            b"v=1 batch=dirty action_accepted=1 total=8 accepted=3 verified=2 removed=2 unverified=1 paints=10 diagnostic=ambiguous_ownership\n",
+        ])
+        stack, patched = self.patches()
+        with stack, contextlib.redirect_stdout(io.StringIO()), self.assertRaises(hil.RunCycleError):
+            hil.orchestrate_static_batch_experiment(self.args, ssh, lambda _: "PASS")
+        report = self.report()
+        self.assertEqual(report["failure_batch"]["unverified"], "1")
+        self.assertEqual(report["partial_cleanup"]["removed"], "2")
+        self.assertEqual(report["restoration"]["status"], "pass")
+        patched["restore_stock"].assert_called_once()
+
+    def test_distinct_confirmation_and_parser_command(self):
+        parsed = hil.parser().parse_args([
+            "static-batch-experiment", "--confirm", hil.CONFIRM,
+            "--confirm-batch", hil.BATCH_CONFIRM,
+        ])
+        self.assertEqual(parsed.confirm_batch, hil.BATCH_CONFIRM)
+        bad = type("Args", (), {
+            "confirm": hil.CONFIRM, "confirm_batch": hil.CONFIRM,
+        })()
+        with self.assertRaises(hil.RunCycleError):
+            hil.orchestrate_static_batch_experiment(bad, mock.Mock(), lambda _: "PASS")
 
 
 if __name__ == "__main__":

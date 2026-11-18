@@ -71,6 +71,14 @@ fn invalid_pad_step_velocity_and_sequence_bounds_fail_before_adapter() {
         StockNoteRequest::from_grid_step(0, 0, 0),
         Err(RequestError::VelocityOutOfRange)
     );
+    assert_eq!(
+        StockNoteRequest::from_absolute(0, -1, 240, 100),
+        Err(RequestError::TickOutOfRange)
+    );
+    assert_eq!(
+        StockNoteRequest::from_absolute(0, 973, 0, 100),
+        Err(RequestError::DurationOutOfRange)
+    );
     let request = StockNoteRequest::from_grid_step(0, 15, 127).expect("request");
     assert_eq!(
         request.resolve(36, 0),
@@ -78,6 +86,12 @@ fn invalid_pad_step_velocity_and_sequence_bounds_fail_before_adapter() {
     );
     assert_eq!(
         request.resolve(36, 15 * 240),
+        Err(RequestError::OutsideSequence)
+    );
+    assert_eq!(
+        StockNoteRequest::from_absolute(1, 3857, 240, 100)
+            .unwrap()
+            .resolve(37, 4096),
         Err(RequestError::OutsideSequence)
     );
 }

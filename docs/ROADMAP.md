@@ -620,3 +620,16 @@ static two-bar native batch experiment. The hardware experiment must verify
 unique receipts, multiple pads, overlap, off-grid ticks, stock playback, exact
 cleanup, and restoration before any live rolling-window work. See
 [M0.6 playback architecture](M0-6-PLAYBACK-ARCHITECTURE.md).
+
+### M0.6a — Static materialization — host implementation complete
+
+The compiler and fixed-capacity batch coordinator are implemented and host
+tested. A distinct volatile HIL artifact compiles eight events across two
+logical tracks/pads, including two off-grid positions and an overlap, then
+advances one native boundary per verified Step paint. Per-event evidence allows
+exact cleanup of only uniquely observed receipts after partial failure.
+
+The owner-operated experiment has not run. Static stock playback, full batch
+cleanup, and Undo-history behavior remain physical gates. Rolling windows remain
+out of scope until this experiment passes. See
+[M0.6a static materialization](M0-6A-STATIC-MATERIALIZATION.md).

@@ -101,7 +101,7 @@ impl Drop for OperationGuard<'_> {
     }
 }
 
-fn monotonic_ns() -> Option<u64> {
+pub(crate) fn monotonic_ns() -> Option<u64> {
     let mut value = libc::timespec {
         tv_sec: 0,
         tv_nsec: 0,
@@ -131,7 +131,10 @@ const fn expiry_diagnostic(paint_generation: u64, armed_generation: u64) -> Diag
     }
 }
 
-#[cfg_attr(feature = "native-playable-grid", allow(dead_code))]
+#[cfg_attr(
+    any(feature = "native-playable-grid", feature = "native-static-batch"),
+    allow(dead_code)
+)]
 fn claim_status(status: &AtomicU8, expected: Status, claimed: Status) -> bool {
     status
         .compare_exchange(
@@ -280,6 +283,13 @@ pub fn context_ready() -> bool {
     };
     let last = LAST_CONTEXT_NS.load(Ordering::Acquire);
     last != 0 && now.saturating_sub(last) <= CONTEXT_LEASE_NS
+}
+
+#[cfg(feature = "native-static-batch")]
+pub(crate) fn current_context_identity() -> Option<NativeContextIdentity> {
+    *CURRENT_CONTEXT
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
 }
 
 pub fn command_accepted() -> bool {
@@ -438,7 +448,10 @@ pub fn install() -> bool {
     true
 }
 
-#[cfg_attr(feature = "native-playable-grid", allow(dead_code))]
+#[cfg_attr(
+    any(feature = "native-playable-grid", feature = "native-static-batch"),
+    allow(dead_code)
+)]
 fn insert_one(port: &mut NativeStockSequencePort<'_>) {
     let Ok(request) = StockNoteRequest::from_grid_step(0, 0, 100) else {
         DIAGNOSTIC.store(Diagnostic::RequestRejected as u8, Ordering::Release);
@@ -467,7 +480,10 @@ fn insert_one(port: &mut NativeStockSequencePort<'_>) {
     }
 }
 
-#[cfg_attr(feature = "native-playable-grid", allow(dead_code))]
+#[cfg_attr(
+    any(feature = "native-playable-grid", feature = "native-static-batch"),
+    allow(dead_code)
+)]
 fn observe_existing(port: &mut NativeStockSequencePort<'_>) -> bool {
     let mut receipt = RECEIPT.lock().unwrap_or_else(PoisonError::into_inner);
     let Some(existing) = receipt.as_mut() else {
@@ -508,6 +524,7 @@ fn observe_existing(port: &mut NativeStockSequencePort<'_>) -> bool {
 /// Called only by the stock firmware with its live Step screen and graphics
 /// objects on the owning UI thread.
 #[unsafe(no_mangle)]
+#[allow(clippy::too_many_lines)]
 pub unsafe extern "C" fn neurogenic_m04a_step_paint(screen: usize, graphics: usize) {
     let original: unsafe extern "C" fn(usize, usize) =
         unsafe { core::mem::transmute(mpc_sample_sdk::image::base() + STOCK_STEP_PAINT) };
@@ -557,7 +574,15 @@ pub unsafe extern "C" fn neurogenic_m04a_step_paint(screen: usize, graphics: usi
         unsafe { crate::native_grid_runtime::on_step_paint(screen, graphics) };
     }
 
-    #[cfg(not(feature = "native-playable-grid"))]
+    #[cfg(feature = "native-static-batch")]
+    {
+        crate::native_batch_experiment::on_step_paint(&mut port, current_context, now);
+    }
+
+    #[cfg(all(
+        not(feature = "native-playable-grid"),
+        not(feature = "native-static-batch")
+    ))]
     if REMOVE.swap(false, Ordering::AcqRel) {
         if !within_deadline(now, REMOVE_DEADLINE_NS.load(Ordering::Acquire)) {
             set_state(Status::Expired, Diagnostic::ExpiredAfterPaint);
@@ -578,34 +603,55 @@ pub unsafe extern "C" fn neurogenic_m04a_step_paint(screen: usize, graphics: usi
         return;
     }
 
-    #[cfg(not(feature = "native-playable-grid"))]
+    #[cfg(all(
+        not(feature = "native-playable-grid"),
+        not(feature = "native-static-batch")
+    ))]
     if observe_existing(&mut port) {
         return;
     }
-    #[cfg(not(feature = "native-playable-grid"))]
+    #[cfg(all(
+        not(feature = "native-playable-grid"),
+        not(feature = "native-static-batch")
+    ))]
     if !ARMED.swap(false, Ordering::AcqRel) {
         return;
     }
-    #[cfg(not(feature = "native-playable-grid"))]
+    #[cfg(all(
+        not(feature = "native-playable-grid"),
+        not(feature = "native-static-batch")
+    ))]
     if !within_deadline(now, ARM_DEADLINE_NS.load(Ordering::Acquire)) {
         set_state(Status::Expired, Diagnostic::ExpiredAfterPaint);
         return;
     }
-    #[cfg(not(feature = "native-playable-grid"))]
+    #[cfg(all(
+        not(feature = "native-playable-grid"),
+        not(feature = "native-static-batch")
+    ))]
     let armed_context = ARMED_CONTEXT
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .take();
-    #[cfg(not(feature = "native-playable-grid"))]
+    #[cfg(all(
+        not(feature = "native-playable-grid"),
+        not(feature = "native-static-batch")
+    ))]
     if armed_context != Some(current_context) {
         set_state(Status::Rejected, Diagnostic::ContextChanged);
         return;
     }
-    #[cfg(not(feature = "native-playable-grid"))]
+    #[cfg(all(
+        not(feature = "native-playable-grid"),
+        not(feature = "native-static-batch")
+    ))]
     if !claim_status(&STATUS, Status::Armed, Status::Inserting) {
         return;
     }
-    #[cfg(not(feature = "native-playable-grid"))]
+    #[cfg(all(
+        not(feature = "native-playable-grid"),
+        not(feature = "native-static-batch")
+    ))]
     insert_one(&mut port);
 }
 

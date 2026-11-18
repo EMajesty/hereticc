@@ -54,6 +54,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "neurogenic-device-native-batch-hil"
+version = "0.1.0"
+dependencies = [
+ "mpc-sample-sdk",
+ "neurogenic-device",
+]
+
+[[package]]
 name = "neurogenic-device-native-grid"
 version = "0.1.0"
 dependencies = [

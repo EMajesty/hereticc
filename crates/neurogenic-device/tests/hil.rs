@@ -74,6 +74,19 @@ fn native_experiment_commands_are_bounded_and_inert_until_install() {
     assert_eq!(apply(&mut ui, b"NATIVE EXEC"), Err(Error::Unknown));
 }
 
+#[cfg(feature = "native-static-batch")]
+#[test]
+fn static_batch_protocol_is_bounded_and_inert_before_context() {
+    let mut ui = UiState::default();
+    let status = apply(&mut ui, b"BATCH STATUS").unwrap();
+    assert!(status.as_str().contains("batch=idle"));
+    assert!(status.as_str().contains("total=0"));
+    assert!(status.as_str().len() <= MAX_RESPONSE_BYTES);
+    let arm = apply(&mut ui, b"BATCH ARM").unwrap();
+    assert!(arm.as_str().contains("action_accepted=0"));
+    assert_eq!(apply(&mut ui, b"BATCH RETRY"), Err(Error::Unknown));
+}
+
 #[cfg(feature = "native-playable-grid")]
 #[test]
 fn playable_grid_diagnostics_are_bounded_and_pointer_free() {

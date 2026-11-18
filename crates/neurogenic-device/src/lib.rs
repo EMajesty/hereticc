@@ -3,6 +3,10 @@
 #[cfg(feature = "hil-test-interface")]
 pub mod hil;
 #[cfg(feature = "native-sequence-adapter")]
+pub mod native_batch;
+#[cfg(feature = "native-static-batch")]
+pub mod native_batch_experiment;
+#[cfg(feature = "native-sequence-adapter")]
 pub mod native_grid;
 #[cfg(feature = "native-playable-grid")]
 mod native_grid_runtime;
@@ -215,6 +219,8 @@ impl Mod for NeurogenicDevice {
             not(feature = "native-playable-grid")
         ))]
         let _ = native_sequence_experiment::install();
+        #[cfg(feature = "native-static-batch")]
+        native_batch_experiment::reset();
         #[cfg(feature = "native-playable-grid")]
         {
             let registered =

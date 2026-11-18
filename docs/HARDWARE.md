@@ -304,3 +304,10 @@ It does not establish safe live batch replacement, a minimum edit-ahead horizon,
 transport-correlated MIDI timing, arbitrary direct voice control, or release
 behavior across stock pad modes. Those remain explicit M0.6 gates; see
 [M0.6 playback architecture](M0-6-PLAYBACK-ARCHITECTURE.md).
+
+M0.6a prepares, but has not physically tested, an eight-event static batch over
+two mapped pads. It reuses the physically verified Step UI-thread command path
+and comparator one operation per paint. Multi-event reliability, overlap,
+off-grid playback, exact full-batch cleanup, and Undo-history impact remain
+unknown until the guarded experiment in
+[M0.6a](M0-6A-STATIC-MATERIALIZATION.md) is owner-operated.

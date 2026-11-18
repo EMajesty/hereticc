@@ -9,6 +9,7 @@ pub mod grid;
 pub mod id;
 pub mod model;
 pub mod parameter;
+pub mod playback_window;
 pub mod scheduler;
 pub mod time;
 
@@ -20,6 +21,10 @@ pub use parameter::{
     MAX_PARAMETER_ID_BYTES, MacroId, ParameterAddress, ParameterChange, ParameterEvent,
     ParameterId, ParameterIntent, ParameterOwner, ParameterScope, PerformanceEffectId,
     ProcessorSlot, SendId,
+};
+pub use playback_window::{
+    AudioMaterializationRequest, FORMAT_V1_DEFAULT_VELOCITY, MaterializationIdentity,
+    PlaybackWindow, PlaybackWindowCompiler, PlaybackWindowLimits,
 };
 pub use scheduler::{EventKind, SceneTransition, SceneVoicePolicy, ScheduledEvent, Scheduler};
 pub use time::{MusicalTime, PPQN, PatternLength, PatternTick, TickInterval};

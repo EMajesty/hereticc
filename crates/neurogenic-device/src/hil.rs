@@ -186,6 +186,50 @@ fn native_scan_response() -> Response {
     response
 }
 
+#[cfg(feature = "native-static-batch")]
+fn native_batch_response(action: &str) -> Response {
+    use crate::native_batch_experiment::{self, BatchDiagnostic, BatchExperimentState};
+    let accepted = match action {
+        "ARM" => native_batch_experiment::arm(),
+        "CLEANUP" => native_batch_experiment::request_cleanup(),
+        "STATUS" => true,
+        _ => false,
+    };
+    let snapshot = native_batch_experiment::snapshot();
+    let state = match snapshot.state {
+        BatchExperimentState::Idle => "idle",
+        BatchExperimentState::Inserting => "inserting",
+        BatchExperimentState::Ready => "ready",
+        BatchExperimentState::Cleaning => "cleaning",
+        BatchExperimentState::Cleaned => "cleaned",
+        BatchExperimentState::Failed => "failed",
+        BatchExperimentState::Dirty => "dirty",
+        BatchExperimentState::Expired => "expired",
+    };
+    let diagnostic = match snapshot.diagnostic {
+        BatchDiagnostic::NotStarted => "not_started",
+        BatchDiagnostic::WaitingForPaint => "waiting_for_paint",
+        BatchDiagnostic::Progress => "progress",
+        BatchDiagnostic::AllEventsVerified => "all_verified",
+        BatchDiagnostic::CleanupRequested => "cleanup_requested",
+        BatchDiagnostic::AllEventsAbsent => "all_absent",
+        BatchDiagnostic::ContextChanged => "context_changed",
+        BatchDiagnostic::DeadlineExpired => "deadline_expired",
+        BatchDiagnostic::NativeFailure => "native_failure",
+        BatchDiagnostic::AmbiguousOwnership => "ambiguous_ownership",
+    };
+    let counts = snapshot.counts;
+    let mut response = Response::new();
+    writeln!(
+        response,
+        "v=1 batch={state} action_accepted={} total={} accepted={} verified={} removed={} unverified={} paints={} diagnostic={diagnostic}",
+        u8::from(accepted), counts.total, counts.accepted, counts.verified,
+        counts.removed, counts.unverified_accepted, snapshot.paints.min(999),
+    )
+    .expect("native batch response fits");
+    response
+}
+
 #[cfg(feature = "native-playable-grid")]
 fn native_grid_response() -> Response {
     let snapshot = crate::native_grid_runtime::diagnostic_snapshot();
@@ -231,6 +275,14 @@ pub fn apply(ui: &mut UiState, input: &[u8]) -> Result<Response, Error> {
         .trim_end_matches(['\r', '\n']);
     if text.is_empty() {
         return Err(Error::Empty);
+    }
+
+    #[cfg(feature = "native-static-batch")]
+    if let Some(action) = text.strip_prefix("BATCH ") {
+        if matches!(action, "ARM" | "STATUS" | "CLEANUP") {
+            return Ok(native_batch_response(action));
+        }
+        return Err(Error::Unknown);
     }
 
     #[cfg(feature = "native-sequence-adapter")]

@@ -23,6 +23,10 @@ pub enum RequestError {
     StepOutOfRange,
     /// Stock note velocity must be in the MIDI range 1 through 127.
     VelocityOutOfRange,
+    /// Absolute stock tick must be nonnegative.
+    TickOutOfRange,
+    /// Native note duration must be positive.
+    DurationOutOfRange,
     /// The editor overlay is not currently open.
     EditorClosed,
     /// The selected NEUROGENIC step is not active.
@@ -81,10 +85,40 @@ impl StockNoteRequest {
             return Err(RequestError::VelocityOutOfRange);
         }
         let tick = i64::from(step) * GRID_STEP_TICKS_I64;
+        Self::from_absolute(physical_pad, tick, GRID_STEP_TICKS_I64, velocity)
+    }
+
+    /// Construct one pointer-free absolute native request.
+    ///
+    /// This supports off-grid playback-cache positions without treating them as
+    /// UI steps. Live Program resolution remains inside the callback adapter.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an invalid physical pad, negative tick, nonpositive duration, or
+    /// velocity outside 1 through 127.
+    pub const fn from_absolute(
+        physical_pad: u8,
+        tick: i64,
+        duration: i64,
+        velocity: u8,
+    ) -> Result<Self, RequestError> {
+        if physical_pad >= PROTOTYPE_CELLS {
+            return Err(RequestError::PadOutOfRange);
+        }
+        if tick < 0 {
+            return Err(RequestError::TickOutOfRange);
+        }
+        if duration <= 0 {
+            return Err(RequestError::DurationOutOfRange);
+        }
+        if velocity == 0 || velocity > 127 {
+            return Err(RequestError::VelocityOutOfRange);
+        }
         Ok(Self {
             physical_pad,
             tick,
-            duration: GRID_STEP_TICKS_I64,
+            duration,
             velocity,
         })
     }
@@ -127,7 +161,10 @@ impl StockNoteRequest {
         if sequence_length <= 0 {
             return Err(RequestError::InvalidSequenceLength);
         }
-        if self.tick < 0 || self.tick >= sequence_length {
+        let Some(end) = self.tick.checked_add(self.duration) else {
+            return Err(RequestError::OutsideSequence);
+        };
+        if self.tick < 0 || self.tick >= sequence_length || end > sequence_length {
             return Err(RequestError::OutsideSequence);
         }
         Ok(NativeTag3ConstructorArgs {

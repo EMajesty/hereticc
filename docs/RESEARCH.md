@@ -565,3 +565,10 @@ bounded disposable stock-sequence cache for audio. A separate future MIDI port
 shares the timeline. Static multi-event materialization, live replacement,
 editing horizon, Undo behavior, and MIDI clock correlation remain unverified.
 See [M0.6 playback architecture](M0-6-PLAYBACK-ARCHITECTURE.md).
+
+M0.6a implements the host side of that decision without adding new firmware
+assumptions: existing scheduler output is compiled into pointer-free audio
+requests, and the already verified single-event command/comparator/removal
+boundary is sequenced one operation per Step paint. The eight-event artifact and
+runner are host/QEMU candidates only until the guarded owner experiment runs.
+See [M0.6a static materialization](M0-6A-STATIC-MATERIALIZATION.md).
