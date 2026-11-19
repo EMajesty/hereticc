@@ -140,3 +140,9 @@ numbers and rejects newest commands on overflow. Controller adapters resolve
 capability profiles into those commands, and revision-tagged feedback flows
 back without a controller directly touching engine state. See
 [CONTROLLERS.md](CONTROLLERS.md).
+
+The optional `neurogenic_gui` target is another client of this facade.
+`GuiModel` converts snapshots to logical draw commands and input to semantic
+commands; the SDL3 adapter only owns windowing, events and rendering. It never
+accesses real-time playback structures. X/Y dragging is coalesced to a bounded
+125 Hz command rate. Headless operation does not depend on SDL3.

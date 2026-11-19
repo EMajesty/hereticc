@@ -9,7 +9,7 @@ enum class FeedbackType:std::uint8_t{rgb_led,single_led,text_display,parameter_v
 struct ControlCapability {std::string id,label;ControlType type{};std::vector<FeedbackType> feedback;};
 struct ControllerCapabilities {std::string controller_id,name;std::vector<ControlCapability> controls;bool touchscreen{};};
 struct ControlBinding {std::string control_id,action_id,parameter_id,feedback_id,label;bool shift{},select{},absolute{};};
-struct ControllerProfile {ControllerCapabilities capabilities;std::vector<ControlBinding> bindings;};
+struct ControllerProfile {ControllerCapabilities capabilities;std::vector<ControlBinding> bindings;bool fallback_to_base{true};};
 struct ControllerInput {std::string control_id;double value{},secondary{};bool pressed{};std::uint64_t sequence{};};
 struct ResolvedInput {std::optional<ApplicationCommand> action;std::string parameter_id;std::optional<ApplicationValue> parameter_value;double relative_steps{};};
 struct FeedbackMessage {std::string destination;ApplicationValue value;std::string origin;std::uint64_t state_revision{};};

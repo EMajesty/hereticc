@@ -145,7 +145,11 @@ performed here.
 
 ## Current limitations
 
-There is no GUI, device firmware, MIDI learn, project persistence for profiles,
+An unbound Shift or Select layer falls back to its base binding by default;
+profiles can disable this with `fallback_to_base`. Step selection and step
+toggling remain distinct semantic actions.
+
+There is no device firmware, MIDI learn, project persistence for profiles,
 state-delta subscription, undo history, full step editor, modulation matrix,
 scale engine, slicing or pitch shifting. The profile files are validated
 examples, not a commitment to a particular master-controller layout.

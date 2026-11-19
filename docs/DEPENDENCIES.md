@@ -10,6 +10,7 @@ CMake, so sandboxed package builds do not download during compilation.
 | libremidi | v5.4.2 | native MIDI backend | BSD-2-Clause and MIT |
 | Lua | 5.4.8 + SHA-256 | scripting VM | MIT |
 | sol2 | v3.5.0 | C++/Lua binding | MIT |
+| SDL3 | 3.4.10 from pinned nixpkgs | optional window, input and 2D rendering | zlib |
 | Airwindows | upstream review required | DSP collection | MIT |
 
 Sample-rate conversion is currently original NEUROGENIC code: a replaceable

@@ -40,7 +40,12 @@ ctest --preset sanitize
 ./build/dev/neurogenic --headless --list-devices
 ./build/dev/neurogenic path/to/sample.wav
 ./build/dev/neurogenic --interactive
+./build/dev/neurogenic --gui --headless
+./build/dev/neurogenic --fullscreen --slot 0=samples/kick.wav
 ```
+
+The SDL3 graphical frontend is optional; omit `--gui` for the existing CLI or
+headless application. See [docs/GUI.md](docs/GUI.md) for controls and scaling.
 
 With direnv installed, run `direnv allow` once; `.envrc` enters the same flake
 shell. Build the installable package with `nix build`, run it with

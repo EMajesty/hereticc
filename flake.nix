@@ -13,7 +13,7 @@
     let
       supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
-      packageFor = pkgs: runTests: pkgs.stdenv.mkDerivation {
+      packageFor = pkgs: runTests: withGuiBackend: pkgs.stdenv.mkDerivation {
         pname = "neurogenic";
         version = "0.1.0";
         src = pkgs.lib.cleanSourceWith {
@@ -24,10 +24,11 @@
               || (type == "directory" && name == "build"));
         };
         nativeBuildInputs = with pkgs; [ cmake ninja pkg-config ];
-        buildInputs = with pkgs; [ alsa-lib ];
+        buildInputs = with pkgs; [ alsa-lib ] ++ pkgs.lib.optional withGuiBackend pkgs.sdl3;
         cmakeFlags = [
           "-DNEUROGENIC_FETCH_DEPENDENCIES=ON"
           "-DNEUROGENIC_BUILD_TESTS=${if runTests then "ON" else "OFF"}"
+          "-DNEUROGENIC_ENABLE_GUI=${if withGuiBackend then "ON" else "OFF"}"
           "-DFETCHCONTENT_FULLY_DISCONNECTED=ON"
           "-DFETCHCONTENT_SOURCE_DIR_MINIAUDIO=${miniaudio}"
           "-DFETCHCONTENT_SOURCE_DIR_LIBREMIDI=${libremidi}"
@@ -38,7 +39,7 @@
         checkPhase = "ctest --output-on-failure";
       };
       nativePackages = forAllSystems (system:
-        packageFor (import nixpkgs { inherit system; }) true);
+        packageFor (import nixpkgs { inherit system; }) true true);
     in {
       packages = forAllSystems (system: { default = nativePackages.${system}; });
       checks = forAllSystems (system:
@@ -47,7 +48,10 @@
           build-and-test = nativePackages.${system};
         } // nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
           # Compilation-only evidence: this binary is not executed on the x86 host.
-          aarch64-cross-compile = packageFor pkgs.pkgsCross.aarch64-multiplatform false;
+          # The renderer-independent GUI model is cross-compiled; native ARM
+          # builds enable SDL3. Avoid cross-building SDL3's entire multimedia
+          # closure solely for a compilation-only CI check.
+          aarch64-cross-compile = packageFor pkgs.pkgsCross.aarch64-multiplatform false false;
         });
       apps = forAllSystems (system: {
         default = {

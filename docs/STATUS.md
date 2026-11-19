@@ -1,5 +1,12 @@
 # Implementation status
 
+Task 013 adds an optional SDL3 graphical client with a resolution-independent
+1024 × 600 logical layout, sequencer, sample-slot, parameter and X/Y views,
+fullscreen mode, state-revision synchronization, keyboard/mouse/touch input,
+and offscreen initialization tests. Step mutation, graphical text entry,
+waveform editing and DSP parameter bindings remain unavailable. Physical HDMI
+and touchscreen behavior has not been hardware-tested.
+
 Implemented and host-tested: PCM16/24/32 and float32 WAV loading, mono/stereo sample playback,
 miniaudio callback output, device enumeration/selection, libremidi input
 enumeration/selection, MIDI note/action dispatch, genuine Lua 5.4 execution,

@@ -56,6 +56,7 @@ private:bool valid_value(const ParameterDescriptor&,const ApplicationValue&,std:
 enum class PadMode:std::uint8_t{step,pad,levels,notes};
 enum class Modifier:std::uint8_t{shift,select};
 struct ModifierState {bool shift{},select{},shift_latched{},select_latched{};};
+struct TrackSummary {TrackId id{};std::string name;bool muted{};MusicalTick pattern_length{};std::vector<MusicalTick> event_ticks;};
 struct ApplicationState {
   std::uint64_t revision{};
   bool playing{};std::uint64_t transport_frame{};
@@ -65,6 +66,7 @@ struct ApplicationState {
   PadMode pad_mode{PadMode::step};std::string parameter_page{"main"},focused_element{"transport"};
   ModifierState modifiers;std::vector<std::string> available_actions;
   std::vector<ParameterDescriptor> parameters;
+  std::vector<TrackSummary> tracks;
   std::vector<SampleSlotStatus> sample_slots;std::uint64_t timeline_revision{};
 };
 struct ApplicationCommand {std::string action_id;std::map<std::string,ApplicationValue> arguments;std::string source_id;std::uint64_t source_sequence{};};

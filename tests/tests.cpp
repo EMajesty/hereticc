@@ -1,4 +1,5 @@
 #include "neurogenic/application/control.hpp"
+#include "neurogenic/ui/gui.hpp"
 #include "neurogenic/application/controller.hpp"
 #include "neurogenic/audio/engine.hpp"
 #include "neurogenic/audio/sample_manager.hpp"
@@ -377,6 +378,7 @@ void test_application_control_and_controllers(){
   auto full=full_performance_profile(),minimal=minimal_controller_profile(),midi=generic_midi_profile();check(validate_profile(full,actions,error)&&validate_profile(minimal,actions,error)&&validate_profile(midi,actions,error),"built-in controller profile validation");check(full.capabilities.controls.size()>=36&&minimal.capabilities.controls.size()>=4,"controller capabilities missing");
   ControllerMapper midi_mapper(midi,actions,error);check(midi_mapper.valid(),error.c_str());auto absolute=midi_mapper.resolve({"fader.1",0.75,0,true,1},{},error);check(absolute.parameter_value&&std::fabs(std::get<double>(*absolute.parameter_value)-0.75)<0.0001,"absolute fader mapping");auto relative=midi_mapper.resolve({"encoder.1",-2,0,true,2},{},error);check(relative.parameter_id=="transport.tempo"&&relative.relative_steps==-2,"relative encoder mapping");
   ControllerProfile shifted;shifted.capabilities={"shift.test","Shift test",{{"button","Button",ControlType::momentary_button,{}}},false};ControlBinding base;base.control_id="button";base.action_id="transport.play.v1";ControlBinding layer=base;layer.action_id="transport.stop.v1";layer.shift=true;shifted.bindings={base,layer};ControllerMapper shifted_mapper(shifted,actions,error);check(shifted_mapper.resolve({"button",1,0,true,1},{},error).action->action_id=="transport.play.v1","base layer resolution");ModifierState shift;shift.shift=true;check(shifted_mapper.resolve({"button",1,0,true,2},shift,error).action->action_id=="transport.stop.v1","shift layer resolution");
+  shifted.bindings={base};ControllerMapper fallback_mapper(shifted,actions,error);check(fallback_mapper.resolve({"button",1,0,true,3},shift,error).action->action_id=="transport.play.v1","unbound shift fallback");shifted.fallback_to_base=false;ControllerMapper strict_mapper(shifted,actions,error);check(!strict_mapper.resolve({"button",1,0,true,4},shift,error).action,"disabled shift fallback");
 
   PerformanceGrid grid;grid.set_step_page(3);check(grid.press(2).type==GridEventType::select_step&&grid.press(2).index==50,"paged step selection");check(grid.press(2,true).type==GridEventType::toggle_step,"step editing semantics");grid.set_mode(PadMode::pad);check(grid.press(4).type==GridEventType::trigger_pad&&grid.press(4).slot==SampleSlotId{4},"pad semantics");grid.set_mode(PadMode::levels);grid.set_selected_slot(SampleSlotId{9});check(grid.press(15).type==GridEventType::trigger_level&&grid.press(15).velocity==127&&grid.press(15).slot==SampleSlotId{9},"16-level semantics");grid.set_mode(PadMode::notes);grid.set_root_note(60);check(grid.press(15).note==75,"16-note semantics");
 
@@ -389,6 +391,19 @@ void test_application_control_and_controllers(){
   std::vector<std::thread> producers;for(int producer=0;producer<4;++producer)producers.emplace_back([&application,producer]{for(int i=0;i<10;++i)check(application.submit({"step.select.v1",{{"step",std::int64_t{producer*10+i}}},"thread",static_cast<std::uint64_t>(i)}),"concurrent command submission");});for(auto& thread:producers)thread.join();const auto results=application.dispatch_pending();check(results.size()==40&&std::is_sorted(results.begin(),results.end(),[](const auto& a,const auto& b){return a.sequence<b.sequence;}),"deterministic concurrent command ordering");const auto state=application.snapshot();check(state.revision>=44&&state.timeline_revision==timeline.snapshot().revision&&!state.available_actions.empty(),"application state revision consistency");
   ControllerMapper full_mapper(full,actions,error);const auto feedback=full_mapper.feedback(state,"controller.input");check(!feedback.empty()&&feedback.front().state_revision==state.revision,"controller feedback generation");const auto filtered=full_mapper.feedback(state,"led.play");check(std::none_of(filtered.begin(),filtered.end(),[](const auto& item){return item.destination=="led.play";}),"feedback loop suppression");ApplicationService bounded(engine,timeline,samples,2);check(bounded.submit({"navigation.confirm.v1"})&&bounded.submit({"navigation.cancel.v1"})&&!bounded.submit({"navigation.focus-next.v1"})&&bounded.rejected_commands()==1,"application queue backpressure");samples.shutdown();
   check(std::any_of(feedback.begin(),feedback.end(),[](const auto& item){return item.destination=="parameter.display.0"&&std::holds_alternative<double>(item.value);}),"parameter value feedback");
+}
+
+void test_gui_model(){
+  using namespace neurogenic;
+  AudioEngine engine;Timeline initial;initial.tracks={{1,"kick",false,{3840,{{1,0,MusicalEventType::note,36,1,120,0,0,0}}}},{2,"hat",true,{1920,{}}}};
+  TimelineService timeline([&](const Timeline& value,std::string& error){return engine.queue_timeline(value,error);},initial);SampleManager samples(engine);ApplicationService application(engine,timeline,samples);GuiModel gui(application);
+  const auto small=gui.layout(1024,600),large=gui.layout(1920,1080);check(small.scale==1&&small.content.w>0&&small.grid.size()==16,"1024x600 GUI layout");check(large.scale>1.0F&&large.content.x+large.content.w<=1920,"scaled GUI layout");
+  const auto& first=gui.frame(1024,600);check(first.state_revision==application.snapshot().revision&&!first.commands.empty(),"GUI state synchronization");
+  check(gui.input({GuiInput::Type::key_down,GuiKey::space},1024,600),"keyboard transport input");(void)application.dispatch_pending();check(application.snapshot().playing,"GUI semantic transport command");
+  check(gui.input({GuiInput::Type::key_down,GuiKey::number,5},1024,600),"number step selection");(void)application.dispatch_pending();check(application.snapshot().selected_step==4,"GUI step selection");
+  GuiInput click;click.type=GuiInput::Type::pointer_down;click.x=small.tabs[3].x+2;click.y=small.tabs[3].y+2;check(gui.input(click,1024,600)&&gui.view()==GuiView::xy,"mouse view selection");
+  GuiInput touch;touch.type=GuiInput::Type::touch_down;touch.x=small.content.x+240;touch.y=small.content.y+240;touch.timestamp_ms=20;check(gui.input(touch,1024,600),"touch-equivalent X/Y input");(void)application.dispatch_pending();check(std::get<double>(application.parameters().get("performance.xy.x")->current_value)>0,"X/Y application integration");
+  std::string error;const auto folder=std::filesystem::temp_directory_path()/"neurogenic-gui-browser";std::filesystem::create_directories(folder);write_pcm16_wav(folder/"sample.wav",48000,1,{0,0});{std::ofstream ignored(folder/"ignored.txt");ignored<<"x";}const auto entries=gui.browse(folder,error);check(error.empty()&&entries.size()==1&&entries[0].path().extension()==".wav","sample browser filtering");std::filesystem::remove_all(folder);samples.shutdown();
 }
 
 void test_lua_and_offline(){
@@ -423,6 +438,6 @@ void test_lua_and_offline(){
 }
 
 int main(){
-  try{test_queue_and_scheduler();test_polyphony_and_events();test_sample_slots();test_live_sample_management_and_resampling();test_timeline_and_tracks();test_transport_integration_and_timeline_io();test_midi_control_dispatch();test_timeline_editing_and_generation();test_application_control_and_controllers();test_lua_and_offline();std::cout<<"all tests passed\n";return 0;}
+  try{test_queue_and_scheduler();test_polyphony_and_events();test_sample_slots();test_live_sample_management_and_resampling();test_timeline_and_tracks();test_transport_integration_and_timeline_io();test_midi_control_dispatch();test_timeline_editing_and_generation();test_application_control_and_controllers();test_gui_model();test_lua_and_offline();std::cout<<"all tests passed\n";return 0;}
   catch(const std::exception& error){std::cerr<<"TEST FAILURE: "<<error.what()<<'\n';return 1;}
 }

@@ -1,0 +1,21 @@
+#include "neurogenic/ui/gui.hpp"
+#ifdef NEUROGENIC_HAS_SDL3
+#include <SDL3/SDL.h>
+#endif
+#include <chrono>
+
+namespace neurogenic {
+#ifdef NEUROGENIC_HAS_SDL3
+namespace {
+void color(SDL_Renderer* renderer,UiColor value){struct C{Uint8 r,g,b;};static constexpr C colors[]={{10,13,18},{22,27,35},{225,232,240},{112,124,140},{0,210,190},{37,69,82},{255,82,100},{86,91,103}};const auto c=colors[static_cast<std::size_t>(value)];SDL_SetRenderDrawColor(renderer,c.r,c.g,c.b,255);}
+GuiKey key(SDL_Keycode value,int& number){if(value==SDLK_LEFT)return GuiKey::left;if(value==SDLK_RIGHT)return GuiKey::right;if(value==SDLK_UP)return GuiKey::up;if(value==SDLK_DOWN)return GuiKey::down;if(value==SDLK_RETURN||value==SDLK_KP_ENTER)return GuiKey::enter;if(value==SDLK_ESCAPE||value==SDLK_BACKSPACE)return GuiKey::escape;if(value==SDLK_TAB)return GuiKey::tab;if(value==SDLK_SPACE)return GuiKey::space;if(value==SDLK_LSHIFT||value==SDLK_RSHIFT)return GuiKey::shift;if(value>=SDLK_1&&value<=SDLK_9){number=static_cast<int>(value-SDLK_0);return GuiKey::number;}number=0;return GuiKey::tab;}
+}
+bool gui_available() noexcept{return true;}
+int run_gui(ApplicationService& application,const GuiOptions& options,std::string& error){if(!SDL_Init(SDL_INIT_VIDEO|SDL_INIT_EVENTS)){error=SDL_GetError();return 1;}SDL_Window* window{};SDL_Renderer* renderer{};const auto flags=static_cast<SDL_WindowFlags>(SDL_WINDOW_RESIZABLE|SDL_WINDOW_HIGH_PIXEL_DENSITY|(options.fullscreen?SDL_WINDOW_FULLSCREEN:0));if(!SDL_CreateWindowAndRenderer("NEUROGENIC",options.width,options.height,flags,&window,&renderer)){error=SDL_GetError();SDL_Quit();return 1;}SDL_SetWindowMinimumSize(window,1024,600);GuiModel model(application);bool running=true;std::uint32_t frames{};while(running){SDL_Event event;while(SDL_PollEvent(&event)){int width{},height{};SDL_GetWindowSize(window,&width,&height);GuiInput input;input.timestamp_ms=event.common.timestamp;if(event.type==SDL_EVENT_QUIT)running=false;else if(event.type==SDL_EVENT_KEY_DOWN||event.type==SDL_EVENT_KEY_UP){int number{};input.type=event.type==SDL_EVENT_KEY_DOWN?GuiInput::Type::key_down:GuiInput::Type::key_up;input.key=key(event.key.key,number);input.number=number;if(event.key.key==SDLK_Q&&(event.key.mod&SDL_KMOD_CTRL))running=false;else model.input(input,width,height);}else if(event.type==SDL_EVENT_MOUSE_BUTTON_DOWN||event.type==SDL_EVENT_MOUSE_BUTTON_UP){input.type=event.type==SDL_EVENT_MOUSE_BUTTON_DOWN?GuiInput::Type::pointer_down:GuiInput::Type::pointer_up;input.x=event.button.x;input.y=event.button.y;model.input(input,width,height);}else if(event.type==SDL_EVENT_MOUSE_MOTION){input.type=GuiInput::Type::pointer_move;input.x=event.motion.x;input.y=event.motion.y;model.input(input,width,height);}else if(event.type==SDL_EVENT_FINGER_DOWN||event.type==SDL_EVENT_FINGER_UP||event.type==SDL_EVENT_FINGER_MOTION){input.type=event.type==SDL_EVENT_FINGER_DOWN?GuiInput::Type::touch_down:event.type==SDL_EVENT_FINGER_UP?GuiInput::Type::touch_up:GuiInput::Type::touch_move;input.x=event.tfinger.x*width;input.y=event.tfinger.y*height;model.input(input,width,height);}}
+    (void)application.dispatch_pending();int width{},height{};SDL_GetWindowSize(window,&width,&height);const auto& frame=model.frame(width,height);color(renderer,UiColor::background);SDL_RenderClear(renderer);for(const auto& item:frame.commands){color(renderer,item.color);if(item.type==DrawCommand::Type::rectangle){SDL_FRect rect{item.rect.x,item.rect.y,item.rect.w,item.rect.h};SDL_RenderFillRect(renderer,&rect);}else if(item.type==DrawCommand::Type::text){SDL_SetRenderScale(renderer,std::max(1.0F,frame.layout.scale),std::max(1.0F,frame.layout.scale));SDL_RenderDebugText(renderer,item.rect.x/std::max(1.0F,frame.layout.scale),item.rect.y/std::max(1.0F,frame.layout.scale),item.text.c_str());SDL_SetRenderScale(renderer,1,1);}}SDL_RenderPresent(renderer);if(options.max_frames&&++frames>=options.max_frames)running=false;else SDL_Delay(16);}
+  SDL_DestroyRenderer(renderer);SDL_DestroyWindow(window);SDL_Quit();error.clear();return 0;}
+#else
+bool gui_available() noexcept{return false;}
+int run_gui(ApplicationService&,const GuiOptions&,std::string& error){error="GUI support was not built (SDL3 not found or NEUROGENIC_ENABLE_GUI=OFF)";return 1;}
+#endif
+}
