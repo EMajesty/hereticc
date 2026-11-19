@@ -183,6 +183,12 @@ Slice clients use stable `slice.select.v1`, `slice.create.v1`,
 depend on physical MIDI IDs or the step editor, and an assigned slice overrides
 the default 36–51 sample-bank mapping. A data wheel can select a slice and
 adjust its numeric boundaries without touch; bindings remain profile policy.
+Expressive playback uses `pad.select.v1`, `pad.playback-mode-set.v1`, choke,
+pitch/fine, gain, reverse and envelope actions plus `pad.trigger.v1` and
+`pad.release.v1`. PAD targets the selected assignment, 16 LEVELS supplies
+sixteen velocities to that pad, and 16 NOTES supplies chromatic playback-rate
+offsets relative to its configurable layout root (C4/60 is unity). A mapping may bind these to encoders/buttons or use the same
+focus/data-wheel navigation; the core contains no physical layout.
 Trigger editing uses stable actions `step.probability-set.v1`,
 `step.condition-set.v1`, `step.ratchet-set.v1`, and `step.trigger-reset.v1`.
 Fill adapters use `performance.fill-set.v1` on press/release for momentary

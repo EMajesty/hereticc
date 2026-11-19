@@ -105,7 +105,30 @@ mapping takes precedence; clearing it restores the note-to-slot fallback. STEP
 events retain velocity, probability, conditions and ratchets. Preview uses the
 existing voice pool and stops preview-owned voices without stopping transport.
 
-`NEUROGENIC_SLICES 1` is a sidecar format for metadata, pad assignments and
-external sample paths; PCM is never embedded. Missing references fail clearly.
-Automatic project integration, choke groups, stretching and pitch shifting are
-not implemented.
+`NEUROGENIC_SLICES 2` is a backward-compatible sidecar format for metadata,
+pad assignments, playback settings and external sample paths; PCM is never
+embedded. Version-one files load with compatibility defaults. Missing
+references fail clearly.
+
+## Expressive pad playback
+
+Each pad has immutable, callback-published playback settings independent of a
+physical controller. One-shot ignores note-off and runs to its boundary. Gate
+enters the configured release on note-off. Toggle starts on the first note-on
+and releases on the next; a further note-on after release begins retriggers it.
+Retriggering otherwise creates another bounded voice, so unrelated voices are
+not cut off. Timeline note duration only releases Gate voices.
+
+Choke group 0 disables choking; groups 1–16 stop older group members before the
+new simultaneous trigger is allocated. Immediate choke is deterministic and a
+short-release choke uses the victim voice's envelope release. Playback-rate
+pitch combines ±48 semitones, ±100 cents and a transient trigger offset; it
+therefore changes duration and is not time stretching. Linear interpolation is
+used for fractional positions. Reverse starts at `end_frame - 1` and stops at
+`start_frame`, including slice bounds.
+
+The per-voice ADSR uses seconds for attack/decay/release and a normalized
+sustain level. Gain is 0–4 before the existing output stage. Defaults preserve
+one-shot drum behavior: zero attack/decay/release, sustain one, unity gain,
+forward playback and no choke. Old voices retain their immutable sample and
+their copied settings across replacement/unload; only new triggers see updates.

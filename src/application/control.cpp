@@ -203,9 +203,35 @@ ActionRegistry::ActionRegistry() {
     add(action("slice.preview.v1", "Preview slice", "Samples"));
     add(action("sample.preview.v1", "Preview sample", "Samples"));
     add(action("slice.preview-stop.v1", "Stop preview", "Samples"));
-    add(action(
-        "pad.trigger.v1", "Trigger performance pad", "Performance",
-        {{"pad", ValueType::integer}, {"velocity", ValueType::real, false}}));
+    add(action("pad.trigger.v1", "Trigger performance pad", "Performance",
+               {{"pad", ValueType::integer},
+                {"velocity", ValueType::real, false},
+                {"pitch_offset", ValueType::real, false}}));
+    add(action("pad.release.v1", "Release performance pad", "Performance",
+               {{"pad", ValueType::integer}}));
+    add(action("pad.select.v1", "Select performance pad", "Performance",
+               {{"pad", ValueType::integer}}));
+    add(action("pad.property-select.v1", "Select pad property", "Samples",
+               {{"property", ValueType::text}}));
+    add(action("pad.playback-mode-set.v1", "Set pad playback mode", "Samples",
+               {{"mode", ValueType::text}}));
+    add(action("pad.choke-group-set.v1", "Set pad choke group", "Samples",
+               {{"group", ValueType::integer}}));
+    add(action("pad.choke-release-set.v1", "Set pad choke release", "Samples",
+               {{"release", ValueType::boolean}}));
+    add(action("pad.pitch-set.v1", "Set pad pitch", "Samples",
+               {{"semitones", ValueType::real}}));
+    add(action("pad.fine-set.v1", "Set pad fine tuning", "Samples",
+               {{"cents", ValueType::real}}));
+    add(action("pad.gain-set.v1", "Set pad gain", "Samples",
+               {{"gain", ValueType::real}}));
+    add(action("pad.reverse-set.v1", "Set pad reverse", "Samples",
+               {{"reverse", ValueType::boolean}}));
+    add(action("pad.envelope-set.v1", "Set pad amplitude envelope", "Samples",
+               {{"attack", ValueType::real},
+                {"decay", ValueType::real},
+                {"sustain", ValueType::real},
+                {"release", ValueType::real}}));
     add(action("edit.undo.v1", "Undo", "Editing"));
     add(action("edit.redo.v1", "Redo", "Editing"));
     add(action("edit.group-begin.v1", "Begin grouped edit", "Editing"));
@@ -674,6 +700,63 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                                   static_cast<TriggerCondition>(next)))},
                 {"n", static_cast<std::int64_t>(event.condition_n)},
                 {"m", static_cast<std::int64_t>(event.condition_m)}};
+        }
+        return execute_locked(edit, sequence);
+    }
+    if (command.action_id == "navigation.adjust.v1" &&
+        before.focused_element == "pad-playback") {
+        const auto delta = *argument<double>(command, "steps");
+        const auto &p = before.selected_pad_settings;
+        ApplicationCommand edit;
+        if (before.selected_pad_property == "mode") {
+            const auto next = static_cast<SamplePlaybackMode>(
+                (static_cast<int>(p.mode) + (delta < 0 ? 2 : 1)) % 3);
+            edit.action_id = "pad.playback-mode-set.v1";
+            edit.arguments = {
+                {"mode", std::string(sample_playback_mode_name(next))}};
+        } else if (before.selected_pad_property == "choke") {
+            edit.action_id = "pad.choke-group-set.v1";
+            edit.arguments = {
+                {"group", static_cast<std::int64_t>(std::clamp<int>(
+                              p.choke_group + (delta < 0 ? -1 : 1), 0, 16))}};
+        } else if (before.selected_pad_property == "pitch") {
+            edit.action_id = "pad.pitch-set.v1";
+            edit.arguments = {
+                {"semitones", static_cast<double>(p.semitones + delta)}};
+        } else if (before.selected_pad_property == "fine") {
+            edit.action_id = "pad.fine-set.v1";
+            edit.arguments = {
+                {"cents", static_cast<double>(p.fine_cents + delta)}};
+        } else if (before.selected_pad_property == "gain") {
+            edit.action_id = "pad.gain-set.v1";
+            edit.arguments = {
+                {"gain",
+                 static_cast<double>(std::clamp(
+                     p.gain + static_cast<float>(delta * 0.05), 0.0F, 4.0F))}};
+        } else if (before.selected_pad_property == "reverse") {
+            edit.action_id = "pad.reverse-set.v1";
+            edit.arguments = {{"reverse", !p.reverse}};
+        } else {
+            auto attack = p.attack_seconds;
+            auto decay = p.decay_seconds;
+            auto sustain = p.sustain;
+            auto release = p.release_seconds;
+            if (before.selected_pad_property == "attack")
+                attack =
+                    std::max(0.0F, attack + static_cast<float>(delta * .01));
+            else if (before.selected_pad_property == "decay")
+                decay = std::max(0.0F, decay + static_cast<float>(delta * .01));
+            else if (before.selected_pad_property == "sustain")
+                sustain = std::clamp(sustain + static_cast<float>(delta * .01),
+                                     0.0F, 1.0F);
+            else
+                release =
+                    std::max(0.0F, release + static_cast<float>(delta * .01));
+            edit.action_id = "pad.envelope-set.v1";
+            edit.arguments = {{"attack", static_cast<double>(attack)},
+                              {"decay", static_cast<double>(decay)},
+                              {"sustain", static_cast<double>(sustain)},
+                              {"release", static_cast<double>(release)}};
         }
         return execute_locked(edit, sequence);
     }
@@ -1294,7 +1377,8 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             }
         } else if (command.action_id.rfind("slice.", 0) == 0 ||
                    command.action_id == "sample.preview.v1" ||
-                   command.action_id == "pad.trigger.v1") {
+                   (command.action_id.rfind("pad.", 0) == 0 &&
+                    command.action_id != "pad.mode-select.v1")) {
             auto refresh_slices = [&] {
                 const auto value =
                     slices_.snapshot(state_.selected_sample_slot);
@@ -1303,6 +1387,9 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 state_.sample_rate = value.sample_rate;
                 state_.sample_channels = value.channels;
                 state_.slice_pad_assignments = value.pad_assignments;
+                state_.pad_settings = value.pad_settings;
+                state_.selected_pad_settings =
+                    value.pad_settings[state_.selected_pad];
                 state_.waveform_peaks = value.waveform;
                 state_.slices.clear();
                 for (const auto &slice : value.slices)
@@ -1433,17 +1520,95 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                                            error);
             } else if (command.action_id == "slice.preview-stop.v1") {
                 slices_.stop_preview();
+            } else if (command.action_id == "pad.select.v1") {
+                const auto pad = *argument<std::int64_t>(command, "pad");
+                if (pad < 0 || pad >= 16)
+                    error = "pad index must be 0..15";
+                else
+                    state_.selected_pad = static_cast<std::size_t>(pad);
+            } else if (command.action_id == "pad.property-select.v1") {
+                static constexpr std::string_view properties[]{
+                    "mode",    "choke",  "pitch", "fine",    "gain",
+                    "reverse", "attack", "decay", "sustain", "release"};
+                const auto &property =
+                    *argument<std::string>(command, "property");
+                if (std::find(properties, properties + 10, property) ==
+                    properties + 10)
+                    error = "unknown pad playback property";
+                else {
+                    state_.selected_pad_property = property;
+                    state_.focused_element = "pad-playback";
+                }
             } else if (command.action_id == "pad.trigger.v1") {
                 const auto pad = *argument<std::int64_t>(command, "pad");
                 double velocity = 1.0;
+                double pitch_offset = 0.0;
                 if (const auto found = command.arguments.find("velocity");
                     found != command.arguments.end())
                     velocity = std::get<double>(found->second);
-                if (pad < 0 || pad >= 16 || velocity < 0 || velocity > 1)
+                if (const auto found = command.arguments.find("pitch_offset");
+                    found != command.arguments.end())
+                    pitch_offset = std::get<double>(found->second);
+                if (pad < 0 || pad >= 16 || velocity < 0 || velocity > 1 ||
+                    pitch_offset < -96 || pitch_offset > 96)
                     error = "pad or velocity is outside its range";
-                else
-                    engine_.trigger(static_cast<std::uint8_t>(36 + pad),
-                                    static_cast<float>(velocity));
+                else if (!engine_.trigger_pad(
+                             static_cast<std::uint8_t>(36 + pad),
+                             static_cast<float>(velocity), true,
+                             static_cast<float>(pitch_offset)))
+                    error = "pad trigger queue is full";
+            } else if (command.action_id == "pad.release.v1") {
+                const auto pad = *argument<std::int64_t>(command, "pad");
+                if (pad < 0 || pad >= 16)
+                    error = "pad index must be 0..15";
+                else if (!engine_.trigger_pad(
+                             static_cast<std::uint8_t>(36 + pad), 0, false))
+                    error = "pad release queue is full";
+            } else {
+                auto settings = state_.pad_settings[state_.selected_pad];
+                if (command.action_id == "pad.playback-mode-set.v1") {
+                    const auto mode = parse_sample_playback_mode(
+                        *argument<std::string>(command, "mode"));
+                    if (!mode)
+                        error = "unknown sample playback mode";
+                    else
+                        settings.mode = *mode;
+                } else if (command.action_id == "pad.choke-group-set.v1") {
+                    const auto group =
+                        *argument<std::int64_t>(command, "group");
+                    if (group < 0 || group > 16)
+                        error = "choke group must be 0..16";
+                    else
+                        settings.choke_group = static_cast<std::uint8_t>(group);
+                } else if (command.action_id == "pad.choke-release-set.v1")
+                    settings.choke_release =
+                        *argument<bool>(command, "release");
+                else if (command.action_id == "pad.pitch-set.v1")
+                    settings.semitones = static_cast<float>(
+                        *argument<double>(command, "semitones"));
+                else if (command.action_id == "pad.fine-set.v1")
+                    settings.fine_cents =
+                        static_cast<float>(*argument<double>(command, "cents"));
+                else if (command.action_id == "pad.gain-set.v1")
+                    settings.gain =
+                        static_cast<float>(*argument<double>(command, "gain"));
+                else if (command.action_id == "pad.reverse-set.v1")
+                    settings.reverse = *argument<bool>(command, "reverse");
+                else if (command.action_id == "pad.envelope-set.v1") {
+                    settings.attack_seconds = static_cast<float>(
+                        *argument<double>(command, "attack"));
+                    settings.decay_seconds =
+                        static_cast<float>(*argument<double>(command, "decay"));
+                    settings.sustain = static_cast<float>(
+                        *argument<double>(command, "sustain"));
+                    settings.release_seconds = static_cast<float>(
+                        *argument<double>(command, "release"));
+                } else
+                    error = "unsupported pad action";
+                if (error.empty())
+                    (void)slices_.set_pad_settings(
+                        state_.selected_sample_slot, state_.selected_pad,
+                        state_.slice_revision, settings, error);
             }
             if (error.empty()) {
                 refresh_slices();
@@ -1475,15 +1640,15 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 changed_locked();
         } else if (command.action_id == "navigation.focus-next.v1" ||
                    command.action_id == "navigation.focus-previous.v1") {
-            static constexpr std::string_view focus[]{"transport", "tracks",
-                                                      "samples", "parameters"};
-            auto found = std::find(focus, focus + 4, state_.focused_element);
-            std::size_t index = found == focus + 4
+            static constexpr std::string_view focus[]{
+                "transport", "tracks", "samples", "pad-playback", "parameters"};
+            auto found = std::find(focus, focus + 5, state_.focused_element);
+            std::size_t index = found == focus + 5
                                     ? 0
                                     : static_cast<std::size_t>(found - focus);
             index = command.action_id == "navigation.focus-next.v1"
-                        ? (index + 1) % 4
-                        : (index + 3) % 4;
+                        ? (index + 1) % 5
+                        : (index + 4) % 5;
             state_.focused_element = focus[index];
             changed_locked();
         } else if (command.action_id == "navigation.confirm.v1") {
@@ -1522,12 +1687,25 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                                                 found - destinations.begin() +
                                                 1)) %
                                      destinations.size()];
+            } else if (state_.focused_element == "pad-playback") {
+                static constexpr std::string_view properties[]{
+                    "mode",    "choke",  "pitch", "fine",    "gain",
+                    "reverse", "attack", "decay", "sustain", "release"};
+                const auto found = std::find(properties, properties + 10,
+                                             state_.selected_pad_property);
+                const auto index =
+                    found == properties + 10
+                        ? 0
+                        : (static_cast<std::size_t>(found - properties) + 1) %
+                              10;
+                state_.selected_pad_property = properties[index];
             } else
                 state_.focused_element += ".confirmed";
             changed_locked();
         } else if (command.action_id == "navigation.cancel.v1") {
             state_.focused_element =
-                state_.focused_element == "step-locks" ? "step-properties"
+                state_.focused_element == "pad-playback" ? "samples"
+                : state_.focused_element == "step-locks" ? "step-properties"
                 : state_.focused_element == "step-properties" ? "steps"
                 : state_.focused_element == "steps"           ? "tracks"
                                                               : "transport";
@@ -1719,6 +1897,9 @@ void ApplicationService::synchronize_locked() const {
     state_.sample_rate = slice_state.sample_rate;
     state_.sample_channels = slice_state.channels;
     state_.slice_pad_assignments = slice_state.pad_assignments;
+    state_.pad_settings = slice_state.pad_settings;
+    state_.selected_pad_settings =
+        slice_state.pad_settings[state_.selected_pad];
     state_.waveform_peaks = std::move(slice_state.waveform);
     state_.slices.clear();
     state_.slices.reserve(slice_state.slices.size());

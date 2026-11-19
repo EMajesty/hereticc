@@ -6,10 +6,15 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace neurogenic {
 using SliceId = std::uint64_t;
+[[nodiscard]] const char *
+    sample_playback_mode_name(SamplePlaybackMode) noexcept;
+[[nodiscard]] std::optional<SamplePlaybackMode>
+    parse_sample_playback_mode(std::string_view) noexcept;
 
 struct SampleSlice {
     SliceId id{};
@@ -39,6 +44,7 @@ struct SliceSnapshot {
     std::uint16_t channels{};
     std::vector<SampleSlice> slices;
     std::array<std::optional<SliceId>, 16> pad_assignments;
+    std::array<SamplePlaybackSettings, 16> pad_settings;
     std::vector<WaveformPeak> waveform;
 };
 
@@ -67,6 +73,9 @@ class SliceService {
                     std::string &error);
     bool clear_pad(std::size_t pad, std::uint64_t expected_revision,
                    std::string &error);
+    bool set_pad_settings(SampleSlotId context_slot, std::size_t pad,
+                          std::uint64_t expected_revision,
+                          SamplePlaybackSettings, std::string &error);
     bool preview(SliceId, float velocity, std::string &error);
     bool preview_full(SampleSlotId, float velocity, std::string &error);
     void stop_preview() noexcept;
@@ -91,13 +100,15 @@ class SliceService {
     mutable std::mutex mutex_;
     std::map<std::uint32_t, SlotState> slots_;
     std::array<std::optional<SliceId>, 16> pads_{};
+    std::array<SamplePlaybackSettings, 16> pad_settings_{};
     SliceId next_id_{1};
 };
 
 struct SliceProject {
-    static constexpr unsigned version = 1;
+    static constexpr unsigned version = 2;
     std::vector<SampleSlice> slices;
     std::array<std::optional<SliceId>, 16> pads{};
+    std::array<SamplePlaybackSettings, 16> pad_settings{};
     std::map<std::uint32_t, std::filesystem::path> sample_paths;
 };
 void save_slice_project(const SliceProject &, const std::filesystem::path &);

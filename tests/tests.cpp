@@ -23,6 +23,7 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -769,6 +770,33 @@ void test_sample_slicing() {
          {{"slice_id",
            static_cast<std::int64_t>(application.snapshot().slices[0].id)}}});
     check(result.accepted, "slice application selection");
+    check(application.execute({"pad.select.v1", {{"pad", std::int64_t{3}}}})
+              .accepted,
+          "pad selection action");
+    check(application
+                  .execute({"pad.playback-mode-set.v1",
+                            {{"mode", std::string{"gate"}}}})
+                  .accepted &&
+              application.execute({"pad.pitch-set.v1", {{"semitones", 7.0}}})
+                  .accepted &&
+              application.execute({"pad.gain-set.v1", {{"gain", 1.25}}})
+                  .accepted &&
+              application.execute({"pad.reverse-set.v1", {{"reverse", true}}})
+                  .accepted,
+          "pad playback setting actions");
+    auto application_state = application.snapshot();
+    check(application_state.selected_pad == 3 &&
+              application_state.selected_pad_settings.mode ==
+                  SamplePlaybackMode::gate &&
+              application_state.selected_pad_settings.semitones == 7 &&
+              application_state.selected_pad_settings.gain == 1.25F &&
+              application_state.selected_pad_settings.reverse,
+          "pad playback observable state");
+    check(
+        !application
+             .execute({"pad.choke-group-set.v1", {{"group", std::int64_t{17}}}})
+             .accepted,
+        "invalid pad playback setting accepted");
     GuiModel gui(application);
     check(gui.input({GuiInput::Type::key_down, GuiKey::tab}, 1920, 1200),
           "slice GUI view navigation");
@@ -797,12 +825,31 @@ void test_sample_slicing() {
     project.slices.push_back(
         {42, SampleSlotId{0}, 1, 1, 0, 100, "Persisted", 60, 0.8F});
     project.pads[3] = 42;
+    project.pad_settings[3].mode = SamplePlaybackMode::toggle;
+    project.pad_settings[3].choke_group = 4;
+    project.pad_settings[3].semitones = -5;
+    project.pad_settings[3].reverse = true;
     const auto project_path = base / "neurogenic-slices.project";
     save_slice_project(project, project_path);
     const auto restored = load_slice_project(project_path);
     check(restored.slices.size() == 1 && restored.slices[0].id == 42 &&
-              restored.pads[3] == 42,
+              restored.pads[3] == 42 &&
+              restored.pad_settings[3].mode == SamplePlaybackMode::toggle &&
+              restored.pad_settings[3].choke_group == 4 &&
+              restored.pad_settings[3].reverse,
           "slice persistence round trip");
+    const auto legacy_path = base / "neurogenic-slices-v1.project";
+    {
+        std::ofstream legacy(legacy_path);
+        legacy << "NEUROGENIC_SLICES 1\n"
+               << "sample 0 " << std::quoted(wav.string()) << "\n"
+               << "slice 7 0 1 0 20 1 -1 \"Legacy\"\n"
+               << "pad 0 7\n";
+    }
+    const auto legacy = load_slice_project(legacy_path);
+    check(legacy.slices.size() == 1 && legacy.pads[0] == 7 &&
+              legacy.pad_settings[0] == SamplePlaybackSettings{},
+          "version-one slice sidecar compatibility");
     std::filesystem::remove(wav);
     bool missing = false;
     try {
@@ -812,6 +859,123 @@ void test_sample_slicing() {
     }
     check(missing, "missing slice sample reference accepted");
     std::filesystem::remove(project_path);
+    std::filesystem::remove(legacy_path);
+}
+
+void test_expressive_sample_playback() {
+    using namespace neurogenic;
+    auto make_engine = [] {
+        auto engine = std::make_unique<AudioEngine>(48000, 8);
+        Sample sample;
+        sample.sample_rate = 48000;
+        sample.channels = 1;
+        sample.interleaved.resize(1024);
+        for (std::size_t i = 0; i < sample.frames(); ++i)
+            sample.interleaved[i] = static_cast<float>(i % 8) / 8.0F;
+        engine->set_sample(std::move(sample));
+        std::array<float, 1> left{}, right{};
+        engine->process({left.data(), 0}, {right.data(), 0});
+        return engine;
+    };
+    auto configure = [](AudioEngine &engine, std::uint8_t note,
+                        SamplePlaybackSettings settings) {
+        check(engine.configure_note_playback(note, settings),
+              "sample playback settings queue");
+        std::array<float, 1> left{}, right{};
+        engine.process({left.data(), 0}, {right.data(), 0});
+    };
+    std::array<float, 16> left{}, right{};
+    auto engine = make_engine();
+    SamplePlaybackSettings settings;
+    settings.mode = SamplePlaybackMode::one_shot;
+    configure(*engine, 36, settings);
+    check(engine->trigger_pad(36, 1, true), "one-shot trigger");
+    engine->process({left.data(), 2}, {right.data(), 2});
+    check(engine->trigger_pad(36, 0, false), "one-shot release command");
+    engine->process({left.data(), 2}, {right.data(), 2});
+    check(left[0] != 0, "one-shot was stopped by note-off");
+
+    engine = make_engine();
+    settings.mode = SamplePlaybackMode::gate;
+    settings.release_seconds = 0;
+    configure(*engine, 36, settings);
+    check(engine->trigger_pad(36, 1), "gate trigger");
+    engine->process({left.data(), 2}, {right.data(), 2});
+    check(engine->trigger_pad(36, 0, false), "gate release");
+    engine->process({left.data(), 2}, {right.data(), 2});
+    check(left[0] == 0, "gate note-off did not stop voice");
+
+    engine = make_engine();
+    settings.mode = SamplePlaybackMode::toggle;
+    configure(*engine, 36, settings);
+    check(engine->trigger_pad(36, 1) && engine->trigger_pad(36, 1),
+          "toggle commands");
+    engine->process({left.data(), 1}, {right.data(), 1});
+    check(engine->active_voice_count() == 0,
+          "second toggle trigger did not stop voice");
+
+    engine = make_engine();
+    settings.mode = SamplePlaybackMode::one_shot;
+    settings.choke_group = 1;
+    settings.choke_release = false;
+    configure(*engine, 36, settings);
+    configure(*engine, 37, settings);
+    check(engine->trigger_pad(36, 1) && engine->trigger_pad(37, 1),
+          "simultaneous choke commands");
+    engine->process({left.data(), 1}, {right.data(), 1});
+    check(engine->active_voice_count() == 1, "simultaneous choke ordering");
+
+    engine = make_engine();
+    settings.choke_release = true;
+    settings.release_seconds = 0.01F;
+    configure(*engine, 36, settings);
+    configure(*engine, 37, settings);
+    check(engine->trigger_pad(36, 1), "release choke first trigger");
+    engine->process({left.data(), 1}, {right.data(), 1});
+    check(engine->trigger_pad(37, 1), "release choke second trigger");
+    engine->process({left.data(), 1}, {right.data(), 1});
+    check(engine->active_voice_count() == 2,
+          "short-release choke stopped victim immediately");
+
+    engine = make_engine();
+    settings = {};
+    settings.semitones = 12;
+    configure(*engine, 36, settings);
+    check(engine->trigger_pad(36, 1), "pitched trigger");
+    engine->process({left.data(), 3}, {right.data(), 3});
+    near(left[1], 0.2F, "octave playback increment");
+    engine = make_engine();
+    settings.semitones = 0;
+    settings.fine_cents = 50;
+    configure(*engine, 37, settings);
+    check(engine->trigger_pad(37, 1), "fine-tuned trigger");
+    engine->process({left.data(), 3}, {right.data(), 3});
+    check(left[2] > left[1], "fractional interpolation");
+
+    engine = make_engine();
+    settings = {};
+    settings.reverse = true;
+    configure(*engine, 36, settings);
+    check(engine->trigger_pad(36, 1), "reverse trigger");
+    engine->process({left.data(), 2}, {right.data(), 2});
+    near(left[0], 0.7F, "reverse end boundary");
+    near(left[1], 0.6F, "reverse direction");
+
+    engine = make_engine();
+    settings = {};
+    settings.mode = SamplePlaybackMode::gate;
+    settings.attack_seconds = 2.0F / 48000.0F;
+    settings.decay_seconds = 2.0F / 48000.0F;
+    settings.sustain = 0.5F;
+    settings.release_seconds = 2.0F / 48000.0F;
+    settings.gain = 0.5F;
+    configure(*engine, 36, settings);
+    check(engine->trigger_pad(36, 0.5F), "enveloped trigger");
+    engine->process({left.data(), 4}, {right.data(), 4});
+    check(left[0] == 0 && left[2] > left[1], "ADSR attack stage");
+    check(engine->trigger_pad(36, 0, false), "ADSR release command");
+    engine->process({left.data(), 3}, {right.data(), 3});
+    check(engine->active_voice_count() == 0, "ADSR release stage");
 }
 
 void test_sample_slots() {
@@ -1712,7 +1876,11 @@ void test_application_control_and_controllers() {
           "16-level semantics");
     grid.set_mode(PadMode::notes);
     grid.set_root_note(60);
-    check(grid.press(15).note == 75, "16-note semantics");
+    check(grid.press(15).note == 36 && grid.press(15).pitch_offset == 15,
+          "16-note semantics");
+    grid.set_root_note(48);
+    check(grid.press(0).pitch_offset == -12,
+          "16-note root/octave control semantics");
     grid.set_mode(PadMode::step);
     grid.set_step_page(3);
     const auto select_command = grid_application_command(grid.press(2, true));
@@ -2924,6 +3092,7 @@ int main() {
         test_sample_slots();
         test_live_sample_management_and_resampling();
         test_sample_slicing();
+        test_expressive_sample_playback();
         test_timeline_and_tracks();
         test_transport_integration_and_timeline_io();
         test_midi_control_dispatch();

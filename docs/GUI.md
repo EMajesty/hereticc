@@ -102,6 +102,12 @@ stops preview, and Shift+Escape deletes. Number keys 1–16 assign the selected
 slice to a pad; Shift+number selects sample slots 0–15. Hit tests use drawable coordinates and responsive scaling at
 1920×1200, 1024×800 and 1024×600.
 
+The contextual Samples inspector exposes the selected pad's assignment,
+One-shot/Gate/Toggle mode, choke group, semitone and cent tuning, gain, reverse,
+and ADSR. Pointer rows dispatch semantic actions. Non-touch clients focus
+`pad-playback`, use relative navigation to adjust the selected property, and
+press Enter to cycle properties; the GUI contains no playback implementation.
+
 Edits publish at the next audio callback as complete validated plans. A final
 partial step is available when its start tick lies inside a non-grid-aligned
 pattern. Drag-painting and boundary-quantized publication are not implemented.

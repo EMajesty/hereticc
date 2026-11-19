@@ -16,6 +16,19 @@
 #include <string>
 #include <vector>
 namespace neurogenic {
+enum class SamplePlaybackMode : std::uint8_t { one_shot, gate, toggle };
+struct SamplePlaybackSettings {
+    SamplePlaybackMode mode{SamplePlaybackMode::one_shot};
+    std::uint8_t choke_group{};
+    bool choke_release{true};
+    float semitones{}, fine_cents{}, gain{1.0F};
+    std::int16_t root_note{-1};
+    bool reverse{};
+    float attack_seconds{}, decay_seconds{}, sustain{1.0F};
+    float release_seconds{0.005F};
+    friend bool operator==(const SamplePlaybackSettings &,
+                           const SamplePlaybackSettings &) = default;
+};
 class AudioEngine {
   public:
     static constexpr std::size_t default_voice_capacity = 32;
@@ -53,6 +66,10 @@ class AudioEngine {
     [[nodiscard]] std::uint32_t sample_rate() const noexcept { return rate_; }
     void trigger(std::uint8_t note, float velocity,
                  std::uint32_t frame_offset = 0) noexcept;
+    [[nodiscard]] bool trigger_pad(std::uint8_t note, float velocity,
+                                   bool note_on = true,
+                                   float pitch_offset = 0.0F,
+                                   std::uint32_t frame_offset = 0) noexcept;
     [[nodiscard]] bool trigger_slice(SampleSlotId, std::uint64_t publication,
                                      std::uint64_t start_frame,
                                      std::uint64_t end_frame, float slice_gain,
@@ -63,8 +80,11 @@ class AudioEngine {
                                          std::uint64_t publication,
                                          std::uint64_t start_frame,
                                          std::uint64_t end_frame,
-                                         float gain = 1.0F) noexcept;
+                                         float gain = 1.0F,
+                                         SamplePlaybackSettings = {}) noexcept;
     [[nodiscard]] bool clear_note_slice(std::uint8_t note) noexcept;
+    [[nodiscard]] bool configure_note_playback(std::uint8_t note,
+                                               SamplePlaybackSettings) noexcept;
     void trigger_synth(std::uint8_t note, float velocity,
                        bool note_on = true) noexcept;
     [[nodiscard]] bool set_synth_parameter(SynthParameter, float) noexcept;
@@ -160,7 +180,8 @@ class AudioEngine {
         SampleSlotId slot{invalid_sample_slot};
         std::uint64_t publication{}, start_frame{}, end_frame{};
         float slice_gain{1.0F};
-        bool sliced{}, stop_previews{};
+        float pitch_offset{};
+        bool sliced{}, stop_previews{}, note_on{true}, pad_event{};
     };
     struct SynthTrigger {
         std::uint8_t note{};
@@ -175,14 +196,26 @@ class AudioEngine {
     };
     struct Voice {
         const Sample *sample{};
-        std::size_t sample_version{}, cursor{}, end_cursor{};
-        float gain{};
+        std::size_t sample_version{};
+        double position{}, increment{1.0};
+        std::uint64_t start_frame{}, end_frame{};
+        float gain{}, envelope_level{1.0F};
+        enum class EnvelopeStage : std::uint8_t {
+            attack,
+            decay,
+            sustain,
+            release
+        } envelope_stage{EnvelopeStage::sustain};
+        float attack_step{}, decay_step{}, release_step{}, release_samples{1},
+            sustain{1.0F};
         std::uint64_t age{};
         TrackId track{};
         EventId event{};
         std::uint64_t occurrence{};
         std::uint8_t pitch{};
-        bool timeline_owned{}, preview{}, active{};
+        std::uint8_t trigger_note{}, choke_group{};
+        SamplePlaybackMode mode{SamplePlaybackMode::one_shot};
+        bool choke_release{}, reverse{}, timeline_owned{}, preview{}, active{};
     };
     enum class SampleVersionState : std::uint8_t {
         free,
@@ -201,9 +234,12 @@ class AudioEngine {
         SampleSlotId slot{invalid_sample_slot};
         std::uint64_t publication{}, start_frame{}, end_frame{};
         float gain{1.0F};
+        SamplePlaybackSettings playback;
         bool enabled{};
     };
     struct SliceMapCommand {
+        enum class Type : std::uint8_t { map, clear, settings };
+        Type type{Type::map};
         std::uint8_t note{};
         SliceTarget target;
     };
@@ -259,10 +295,14 @@ class AudioEngine {
     void start_voice(std::uint8_t note, float velocity, TrackId track = 0,
                      EventId event = 0, std::uint64_t occurrence = 0,
                      bool timeline_owned = false,
-                     const SliceTarget *slice = nullptr,
-                     bool preview = false) noexcept;
+                     const SliceTarget *slice = nullptr, bool preview = false,
+                     float pitch_offset = 0.0F) noexcept;
     void stop_timeline_voice(TrackId, EventId,
                              std::uint64_t occurrence) noexcept;
+    void release_note(std::uint8_t, TrackId = 0, EventId = 0,
+                      std::uint64_t occurrence = 0,
+                      bool timeline_owned = false) noexcept;
+    void release_voice(Voice &, bool immediate = false) noexcept;
     void stop_voices(bool timeline_only = false) noexcept;
     void reclaim_retired_plans() noexcept;
     void reclaim_sample_versions_unlocked() noexcept;

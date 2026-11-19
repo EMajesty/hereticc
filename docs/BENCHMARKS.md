@@ -100,3 +100,13 @@ limits nor physical-device latency.
 On the 2026-11-19 Ryzen 7 7800X3D Debug run, the three slice playback cases
 averaged about 21.1, 29.7 and 48.9 µs per 256-frame buffer; four-second waveform
 peaks and transient analysis took about 0.14 and 0.74 ms respectively.
+
+Task 022 adds `pitched_slice_voices_16`, `pitched_slice_voices_32`,
+`reverse_slice_playback`, `choke_heavy_sample_playback` and
+`gate_release_envelopes`. They measure callback playback only; setup and
+callback-queue publication are outside the timed region. Results are offline
+regression measurements, not physical Pi 5, N150 or XRUN claims.
+On the 2026-11-19 Ryzen 7 7800X3D Debug run, these averaged about 19.2, 26.6,
+19.7, 13.5 and 23.3 µs per 256-frame buffer respectively. The comparable
+16/32-voice legacy slice cases measured 25.1/36.1 µs in the same run; workload
+lifetimes differ, so this is regression context rather than a claimed speedup.

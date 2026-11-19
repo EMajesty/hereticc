@@ -381,6 +381,46 @@ void slice_playback_case(std::string name, std::size_t voices,
                    .count() /
                iterations);
 }
+void expressive_sample_case(std::string name, std::size_t voices,
+                            neurogenic::SamplePlaybackSettings settings,
+                            bool release_each_buffer = false) {
+    neurogenic::AudioEngine engine(48000, 64);
+    std::uint64_t publication{};
+    auto source =
+        std::make_shared<const neurogenic::Sample>(sample(48000, 16384));
+    if (!engine.publish_sample_slot(neurogenic::SampleSlotId{0}, source,
+                                    &publication))
+        throw std::runtime_error("expressive sample publication failed");
+    for (std::size_t pad = 0; pad < 16; ++pad)
+        if (!engine.map_note_to_slice(static_cast<std::uint8_t>(36 + pad),
+                                      neurogenic::SampleSlotId{0}, publication,
+                                      pad * 128, 8192 + pad * 128, 1.0F,
+                                      settings))
+            throw std::runtime_error("expressive sample mapping failed");
+    std::vector<float> left(256), right(256);
+    engine.process({left.data(), 0}, {right.data(), 0});
+    const auto begin = Clock::now();
+    for (std::size_t i = 0; i < iterations; ++i) {
+        if (i % 32 == 0)
+            for (std::size_t voice = 0; voice < voices; ++voice)
+                if (!engine.trigger_pad(
+                        static_cast<std::uint8_t>(36 + voice % 16), 0.75F, true,
+                        static_cast<float>(voice % 12)))
+                    break;
+        if (release_each_buffer)
+            for (std::size_t pad = 0; pad < 16; ++pad)
+                if (!engine.trigger_pad(static_cast<std::uint8_t>(36 + pad), 0,
+                                        false))
+                    break;
+        engine.process(left, right);
+        checksum += left[0] != 0;
+    }
+    result(std::move(name), 48000, 256,
+           std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
+                                                                begin)
+                   .count() /
+               iterations);
+}
 void slice_analysis_cases() {
     auto source = sample(48000, 48000 * 4);
     for (std::size_t frame = 0; frame < source.frames(); frame += 6000)
@@ -454,6 +494,20 @@ int main() {
     slice_playback_case("slice_triggers_16", 16, false);
     slice_playback_case("slice_voices_32_overlapping", 32, false);
     slice_playback_case("slice_rapid_retrigger", 16, true);
+    neurogenic::SamplePlaybackSettings expressive;
+    expressive.semitones = 3;
+    expressive.fine_cents = 17;
+    expressive_sample_case("pitched_slice_voices_16", 16, expressive);
+    expressive_sample_case("pitched_slice_voices_32", 32, expressive);
+    expressive.reverse = true;
+    expressive_sample_case("reverse_slice_playback", 16, expressive);
+    expressive = {};
+    expressive.choke_group = 1;
+    expressive_sample_case("choke_heavy_sample_playback", 16, expressive);
+    expressive = {};
+    expressive.mode = neurogenic::SamplePlaybackMode::gate;
+    expressive.release_seconds = 0.01F;
+    expressive_sample_case("gate_release_envelopes", 16, expressive, true);
     slice_analysis_cases();
     gui_case(1920, 1200);
     gui_case(1024, 800);

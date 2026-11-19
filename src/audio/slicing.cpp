@@ -7,6 +7,27 @@
 #include <stdexcept>
 
 namespace neurogenic {
+const char *sample_playback_mode_name(SamplePlaybackMode mode) noexcept {
+    switch (mode) {
+    case SamplePlaybackMode::one_shot:
+        return "one-shot";
+    case SamplePlaybackMode::gate:
+        return "gate";
+    case SamplePlaybackMode::toggle:
+        return "toggle";
+    }
+    return "unknown";
+}
+std::optional<SamplePlaybackMode>
+parse_sample_playback_mode(std::string_view value) noexcept {
+    if (value == "one-shot")
+        return SamplePlaybackMode::one_shot;
+    if (value == "gate")
+        return SamplePlaybackMode::gate;
+    if (value == "toggle")
+        return SamplePlaybackMode::toggle;
+    return std::nullopt;
+}
 std::vector<WaveformPeak> build_waveform_peaks(const Sample &sample,
                                                std::size_t count) {
     if ((sample.channels != 1 && sample.channels != 2) ||
@@ -65,6 +86,22 @@ std::vector<std::uint64_t> detect_transient_frames(const Sample &sample,
             starts.push_back(frame);
     return starts;
 }
+namespace {
+bool valid_playback_settings(const SamplePlaybackSettings &value) {
+    return value.choke_group <= 16 && std::isfinite(value.semitones) &&
+           value.semitones >= -48 && value.semitones <= 48 &&
+           std::isfinite(value.fine_cents) && value.fine_cents >= -100 &&
+           value.fine_cents <= 100 && std::isfinite(value.gain) &&
+           value.gain >= 0 && value.gain <= 4 && value.root_note >= -1 &&
+           value.root_note <= 127 && std::isfinite(value.attack_seconds) &&
+           value.attack_seconds >= 0 && value.attack_seconds <= 30 &&
+           std::isfinite(value.decay_seconds) && value.decay_seconds >= 0 &&
+           value.decay_seconds <= 30 && std::isfinite(value.sustain) &&
+           value.sustain >= 0 && value.sustain <= 1 &&
+           std::isfinite(value.release_seconds) && value.release_seconds >= 0 &&
+           value.release_seconds <= 30;
+}
+} // namespace
 
 SliceService::SliceService(AudioEngine &engine, SampleManager &samples)
     : engine_(engine), samples_(samples) {}
@@ -109,6 +146,7 @@ SliceSnapshot SliceService::snapshot(SampleSlotId id) {
             slot.channels,
             slot.slices,
             pads_,
+            pad_settings_,
             slot.waveform};
 }
 
@@ -383,11 +421,11 @@ bool SliceService::publish_pad_locked(std::size_t pad, const SampleSlice *slice,
         return false;
     }
     const auto note = static_cast<std::uint8_t>(36 + pad);
-    const auto ok = slice
-                        ? engine_.map_note_to_slice(
-                              note, slice->slot, slice->sample_publication,
-                              slice->start_frame, slice->end_frame, slice->gain)
-                        : engine_.clear_note_slice(note);
+    const auto ok = slice ? engine_.map_note_to_slice(
+                                note, slice->slot, slice->sample_publication,
+                                slice->start_frame, slice->end_frame,
+                                slice->gain, pad_settings_[pad])
+                          : engine_.clear_note_slice(note);
     if (!ok) {
         error = "slice mapping queue is full";
         return false;
@@ -435,6 +473,39 @@ bool SliceService::clear_pad(std::size_t pad, std::uint64_t expected,
         return false;
     pads_[pad].reset();
     ++slots_[slot_id.value].revision;
+    error.clear();
+    return true;
+}
+bool SliceService::set_pad_settings(SampleSlotId context_slot, std::size_t pad,
+                                    std::uint64_t expected,
+                                    SamplePlaybackSettings settings,
+                                    std::string &error) {
+    std::lock_guard lock(mutex_);
+    synchronize_locked(context_slot);
+    if (pad >= pad_settings_.size()) {
+        error = "pad index must be 0..15";
+        return false;
+    }
+    if (!valid_revision_locked(context_slot, expected, error))
+        return false;
+    if (!valid_playback_settings(settings)) {
+        error = "pad playback settings are outside supported ranges";
+        return false;
+    }
+    const auto previous = pad_settings_[pad];
+    pad_settings_[pad] = settings;
+    const auto *slice = pads_[pad] ? find_locked(*pads_[pad]) : nullptr;
+    const auto published =
+        slice ? publish_pad_locked(pad, slice, error)
+              : engine_.configure_note_playback(
+                    static_cast<std::uint8_t>(36 + pad), settings);
+    if (!published) {
+        pad_settings_[pad] = previous;
+        if (error.empty())
+            error = "pad settings queue is full";
+        return false;
+    }
+    ++slots_[context_slot.value].revision;
     error.clear();
     return true;
 }
@@ -496,13 +567,25 @@ void save_slice_project(const SliceProject &project,
     for (std::size_t pad = 0; pad < project.pads.size(); ++pad)
         if (project.pads[pad])
             out << "pad " << pad << ' ' << *project.pads[pad] << '\n';
+    for (std::size_t pad = 0; pad < project.pad_settings.size(); ++pad) {
+        const auto &s = project.pad_settings[pad];
+        if (s == SamplePlaybackSettings{})
+            continue;
+        out << "playback " << pad << ' ' << static_cast<unsigned>(s.mode) << ' '
+            << static_cast<unsigned>(s.choke_group) << ' '
+            << (s.choke_release ? 1 : 0) << ' ' << s.semitones << ' '
+            << s.fine_cents << ' ' << s.gain << ' ' << s.root_note << ' '
+            << (s.reverse ? 1 : 0) << ' ' << s.attack_seconds << ' '
+            << s.decay_seconds << ' ' << s.sustain << ' ' << s.release_seconds
+            << '\n';
+    }
 }
 SliceProject load_slice_project(const std::filesystem::path &path) {
     std::ifstream in(path);
     std::string magic;
     unsigned version{};
     if (!(in >> magic >> version) || magic != "NEUROGENIC_SLICES" ||
-        version != SliceProject::version)
+        (version != 1 && version != SliceProject::version))
         throw std::runtime_error("unsupported slice project format");
     SliceProject result;
     std::string kind;
@@ -534,6 +617,26 @@ SliceProject load_slice_project(const std::filesystem::path &path) {
             if (!(in >> pad >> id) || pad >= result.pads.size())
                 throw std::runtime_error("invalid pad record");
             result.pads[pad] = id;
+        } else if (kind == "playback" && version >= 2) {
+            std::size_t pad{};
+            unsigned mode{}, group{}, choke_release{}, reverse{};
+            SamplePlaybackSettings settings;
+            if (!(in >> pad >> mode >> group >> choke_release >>
+                  settings.semitones >> settings.fine_cents >> settings.gain >>
+                  settings.root_note >> reverse >> settings.attack_seconds >>
+                  settings.decay_seconds >> settings.sustain >>
+                  settings.release_seconds) ||
+                pad >= result.pad_settings.size() || mode > 2 || group > 16 ||
+                choke_release > 1 || reverse > 1) {
+                throw std::runtime_error("invalid pad playback record");
+            }
+            settings.mode = static_cast<SamplePlaybackMode>(mode);
+            settings.choke_group = static_cast<std::uint8_t>(group);
+            settings.choke_release = choke_release != 0;
+            settings.reverse = reverse != 0;
+            if (!valid_playback_settings(settings))
+                throw std::runtime_error("invalid pad playback settings");
+            result.pad_settings[pad] = settings;
         } else
             throw std::runtime_error("unknown slice project record");
     }

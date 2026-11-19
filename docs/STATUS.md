@@ -1,5 +1,13 @@
 # Implementation status
 
+Task 022 makes pads and slices expressive instruments with one-shot, Gate and
+Toggle modes, deterministic choke groups, fractional playback-rate pitch,
+reverse boundaries, gain and bounded per-voice ADSR. Settings are revisioned in
+`SliceService`, published through bounded callback queues, exposed through
+semantic actions/application snapshots, rendered in the Samples inspector and
+persisted in backward-compatible slice sidecars. Pitch changes duration; there
+is no time stretching, choke curve editor or physical-controller verification.
+
 Task 021 adds revisioned stable slices, deterministic equal/transient slicing,
 callback-safe version/boundary playback, semantic pad mapping, preview
 ownership, cached waveform peaks, GUI marker editing, Lua adapters, sidecar

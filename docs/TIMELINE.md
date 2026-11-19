@@ -205,6 +205,10 @@ not interpolate or restore values automatically.
 
 Slice sequencing adds no second musical event type. Pad assignments resolve
 notes 36–51 to immutable sample-version/frame ranges before voice creation, so
+One-shot ignores the scheduled note-off, Gate enters its release at the note
+duration, and Toggle responds to successive semantic note-ons. Probability,
+conditions and ratchets decide/schedule those note-ons before the sample voice
+applies its copied pad settings. Parameter automation remains independent.
 duration notes preserve scheduler ordering, velocity, probability, conditions,
 ratchets and ownership. Without an assignment, existing slot mapping applies.
 

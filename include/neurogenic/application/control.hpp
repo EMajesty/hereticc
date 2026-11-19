@@ -138,6 +138,10 @@ struct ApplicationState {
     TrackId selected_track{};
     SampleSlotId selected_sample_slot{};
     SliceId selected_slice{};
+    std::size_t selected_pad{};
+    SamplePlaybackSettings selected_pad_settings;
+    std::string selected_pad_property{"gain"};
+    std::array<SamplePlaybackSettings, 16> pad_settings{};
     std::uint64_t slice_revision{}, sample_frames{};
     std::uint32_t sample_rate{};
     std::uint16_t sample_channels{};

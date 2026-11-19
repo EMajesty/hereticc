@@ -41,6 +41,11 @@ the original note-to-slot mapping remains the fallback. Select or drag markers,
 press Enter to audition, Shift+Enter for 16 equal divisions, number keys to
 assign pads, and Escape to stop preview. See
 [sample slicing](docs/SAMPLES.md#sample-slicing).
+Pads and slices now support one-shot, Gate and Toggle playback, 16 choke groups,
+playback-rate semitone/cent tuning, gain, reverse and per-voice ADSR. The Samples
+inspector and the same semantic application actions expose these controls; PAD,
+16 LEVELS and 16 NOTES respectively trigger the selected assignment, apply
+sixteen velocities, or apply chromatic playback-rate offsets.
 
 ## Build and run
 

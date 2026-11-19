@@ -362,7 +362,7 @@ ControllerProfile generic_midi_profile() {
 
 GridEvent PerformanceGrid::press(std::size_t pad, bool select_only) const {
     if (pad >= 16)
-        return {GridEventType::unsupported, {}, 0, 0, {},
+        return {GridEventType::unsupported, {}, 0, 0, {}, 0,
                 "grid index must be 0..15"};
     switch (mode_) {
     case PadMode::step:
@@ -372,6 +372,7 @@ GridEvent PerformanceGrid::press(std::size_t pad, bool select_only) const {
                 0,
                 0,
                 {},
+                0,
                 {}};
     case PadMode::pad:
         return {GridEventType::trigger_pad,
@@ -379,17 +380,18 @@ GridEvent PerformanceGrid::press(std::size_t pad, bool select_only) const {
                 static_cast<std::uint8_t>(36 + pad),
                 127,
                 SampleSlotId{static_cast<std::uint32_t>(pad)},
+                0,
                 "assigned slices take precedence over the default sample "
                 "slot mapping"};
     case PadMode::levels:
         return {GridEventType::trigger_level,
-                pad,
-                0,
+                selected_pad_,
+                static_cast<std::uint8_t>(36 + selected_pad_),
                 static_cast<std::uint8_t>(
                     std::min<std::size_t>(127, (pad + 1) * 8)),
                 slot_,
-                "velocity semantics are defined; pitch-shifted instrument "
-                "playback is not implemented"};
+                0,
+                "sixteen velocity levels target the selected pad"};
     case PadMode::notes:
         if (root_ > 112)
             return {GridEventType::unsupported,
@@ -397,14 +399,16 @@ GridEvent PerformanceGrid::press(std::size_t pad, bool select_only) const {
                     0,
                     0,
                     {},
+                    0,
                     "16-note layout exceeds MIDI note range"};
         return {GridEventType::trigger_note,
-                pad,
-                static_cast<std::uint8_t>(root_ + pad),
+                selected_pad_,
+                static_cast<std::uint8_t>(36 + selected_pad_),
                 127,
                 slot_,
-                "chromatic semantics are defined; pitched sample playback is "
-                "not implemented"};
+                static_cast<float>(static_cast<int>(root_) - 60 +
+                                   static_cast<int>(pad)),
+                "chromatic playback-rate layout targets the selected pad"};
     }
     return {};
 }
@@ -419,12 +423,17 @@ grid_application_command(const GridEvent &event, std::string source_id,
         command.action_id = "step.toggle.v1";
     else if (event.type == GridEventType::select_step)
         command.action_id = "step.event-select.v1";
-    else if (event.type == GridEventType::trigger_pad) {
+    else if (event.type == GridEventType::trigger_pad ||
+             event.type == GridEventType::trigger_level ||
+             event.type == GridEventType::trigger_note) {
         command.action_id = "pad.trigger.v1";
         command.arguments.emplace("pad",
                                   static_cast<std::int64_t>(event.index));
         command.arguments.emplace("velocity",
                                   static_cast<double>(event.velocity) / 127.0);
+        if (event.pitch_offset != 0)
+            command.arguments.emplace("pitch_offset",
+                                      static_cast<double>(event.pitch_offset));
         return command;
     } else
         return std::nullopt;

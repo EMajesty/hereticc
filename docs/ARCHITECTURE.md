@@ -192,6 +192,12 @@ Sample chopping follows the same ownership boundary. `SliceService` edits
 revisioned metadata on the control thread, `SampleManager` retains the
 callback-acknowledged immutable PCM, and `AudioEngine` receives numeric
 version/boundary commands. Voices store their chosen sample version and end
+frame plus a copied pad playback snapshot. Fractional forward/reverse cursors,
+ADSR, pitch/gain, playback mode and choke metadata are entirely bounded voice
+state. Choking scans only the configured voice pool; callback publication uses
+fixed-capacity queues, and old voices keep their sample/settings across live
+replacement. `ApplicationService` validates semantic pad actions through
+`SliceService`; GUI and controller adapters never mutate voices.
 cursor; replacement cannot redirect or invalidate them. Waveform and transient
 preparation never enters the callback.
 

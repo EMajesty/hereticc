@@ -440,12 +440,42 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
         if (l.inspector_visible) {
             text({l.parameters.x + 12 * l.scale, l.parameters.y + 12 * l.scale,
                   l.parameters.w - 24 * l.scale, 28 * l.scale},
-                 UiColor::accent, "SLICE TOOLS");
-            text({l.parameters.x + 12 * l.scale, l.parameters.y + 52 * l.scale,
-                  l.parameters.w - 24 * l.scale, 120 * l.scale},
-                 UiColor::text,
-                 "E: preview\nShift+E: equal 16\nDelete: Back\nArrows: select "
-                 "/ boundaries\nPads: notes 36..51");
+                 UiColor::accent, "PAD PLAYBACK");
+            const auto &p = state.selected_pad_settings;
+            const std::string values[]{
+                "PAD " + std::to_string(state.selected_pad + 1) + " / " +
+                    sample_playback_mode_name(p.mode),
+                "CHOKE " + std::to_string(p.choke_group) +
+                    (p.choke_release ? " release" : " immediate"),
+                "PITCH " + std::to_string(p.semitones) + " st",
+                "FINE " + std::to_string(p.fine_cents) + " ct",
+                "GAIN " + std::to_string(p.gain),
+                std::string("REVERSE ") + (p.reverse ? "ON" : "OFF"),
+                "ATTACK " + std::to_string(p.attack_seconds) + " s",
+                "DECAY " + std::to_string(p.decay_seconds) + " s",
+                "SUSTAIN " + std::to_string(p.sustain),
+                "RELEASE " + std::to_string(p.release_seconds) + " s"};
+            static constexpr std::string_view properties[]{
+                "mode",    "choke",  "pitch", "fine",    "gain",
+                "reverse", "attack", "decay", "sustain", "release"};
+            for (std::size_t i = 0; i < 10; ++i) {
+                UiRect row{l.parameters.x + 12 * l.scale,
+                           l.parameters.y + (48 + i * 40) * l.scale,
+                           l.parameters.w - 24 * l.scale, 32 * l.scale};
+                rect(row, state.focused_element == "pad-playback" &&
+                                  state.selected_pad_property == properties[i]
+                              ? UiColor::selected
+                              : UiColor::background);
+                text(row, UiColor::text, values[i]);
+            }
+            const auto assigned =
+                state.slice_pad_assignments[state.selected_pad];
+            text({l.parameters.x + 12 * l.scale,
+                  l.parameters.y + l.parameters.h - 42 * l.scale,
+                  l.parameters.w - 24 * l.scale, 30 * l.scale},
+                 assigned ? UiColor::accent : UiColor::muted,
+                 assigned ? "SLICE " + std::to_string(*assigned)
+                          : "DEFAULT SLOT MAPPING");
         }
     } else if (view_ == GuiView::parameters) {
         text({l.content.x + 12, l.content.y + 8, l.content.w, 28 * l.scale},
@@ -785,10 +815,19 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
             }
             if (input.key == GuiKey::number && input.number >= 1 &&
                 input.number <= 16) {
-                submit(command(
-                    shift_ ? "sample.slot-select.v1" : "slice.pad-assign.v1",
-                    {{shift_ ? "slot_id" : "pad",
-                      static_cast<std::int64_t>(input.number - 1)}}));
+                if (shift_)
+                    submit(command("sample.slot-select.v1",
+                                   {{"slot_id", static_cast<std::int64_t>(
+                                                    input.number - 1)}}));
+                else {
+                    submit(command("pad.select.v1",
+                                   {{"pad", static_cast<std::int64_t>(
+                                                input.number - 1)}}));
+                    if (state.selected_slice != 0)
+                        submit(command("slice.pad-assign.v1",
+                                       {{"pad", static_cast<std::int64_t>(
+                                                    input.number - 1)}}));
+                }
                 return true;
             }
         }
@@ -1006,6 +1045,79 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
             }
         }
         if (view_ == GuiView::samples) {
+            if (l.inspector_visible) {
+                for (std::size_t i = 0; i < 10; ++i) {
+                    UiRect row{l.parameters.x + 12 * l.scale,
+                               l.parameters.y + (48 + i * 40) * l.scale,
+                               l.parameters.w - 24 * l.scale, 32 * l.scale};
+                    if (!row.contains(input.x, input.y))
+                        continue;
+                    const auto &p = state.selected_pad_settings;
+                    static constexpr const char *properties[]{
+                        "mode",    "choke",  "pitch", "fine",    "gain",
+                        "reverse", "attack", "decay", "sustain", "release"};
+                    submit(command("pad.property-select.v1",
+                                   {{"property", std::string(properties[i])}}));
+                    if (i == 0) {
+                        const auto next = static_cast<SamplePlaybackMode>(
+                            (static_cast<unsigned>(p.mode) + 1) % 3);
+                        submit(command(
+                            "pad.playback-mode-set.v1",
+                            {{"mode",
+                              std::string(sample_playback_mode_name(next))}}));
+                    } else if (i == 1) {
+                        if (shift_)
+                            submit(command("pad.choke-release-set.v1",
+                                           {{"release", !p.choke_release}}));
+                        else
+                            submit(command(
+                                "pad.choke-group-set.v1",
+                                {{"group", static_cast<std::int64_t>(
+                                               (p.choke_group + 1) % 17)}}));
+                    } else if (i == 2)
+                        submit(
+                            command("pad.pitch-set.v1",
+                                    {{"semitones",
+                                      static_cast<double>(
+                                          p.semitones + (shift_ ? -1 : 1))}}));
+                    else if (i == 3)
+                        submit(command("pad.fine-set.v1",
+                                       {{"cents", static_cast<double>(
+                                                      p.fine_cents +
+                                                      (shift_ ? -1 : 1))}}));
+                    else if (i == 4)
+                        submit(command(
+                            "pad.gain-set.v1",
+                            {{"gain", static_cast<double>(std::clamp(
+                                          p.gain + (shift_ ? -0.05F : 0.05F),
+                                          0.0F, 4.0F))}}));
+                    else if (i == 5)
+                        submit(command("pad.reverse-set.v1",
+                                       {{"reverse", !p.reverse}}));
+                    else {
+                        auto attack = p.attack_seconds;
+                        auto decay = p.decay_seconds;
+                        auto sustain = p.sustain;
+                        auto release = p.release_seconds;
+                        const auto delta = shift_ ? -0.01F : 0.01F;
+                        if (i == 6)
+                            attack = std::max(0.0F, attack + delta);
+                        else if (i == 7)
+                            decay = std::max(0.0F, decay + delta);
+                        else if (i == 8)
+                            sustain = std::clamp(sustain + delta, 0.0F, 1.0F);
+                        else
+                            release = std::max(0.0F, release + delta);
+                        submit(command(
+                            "pad.envelope-set.v1",
+                            {{"attack", static_cast<double>(attack)},
+                             {"decay", static_cast<double>(decay)},
+                             {"sustain", static_cast<double>(sustain)},
+                             {"release", static_cast<double>(release)}}));
+                    }
+                    return true;
+                }
+            }
             const UiRect wave{l.content.x + 16 * l.scale,
                               l.content.y + 46 * l.scale,
                               l.content.w - 32 * l.scale,
