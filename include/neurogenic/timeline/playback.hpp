@@ -16,6 +16,10 @@ struct PlaybackEvent {
     std::uint32_t parameter_target{};
     float value{};
     std::uint64_t first_cycle{};
+    float trigger_probability{1.0F};
+    TriggerCondition trigger_condition{TriggerCondition::always};
+    std::uint16_t condition_n{1}, condition_m{1};
+    std::uint8_t ratchet_index{};
 };
 struct PlaybackTrack {
     TrackId id{};
@@ -24,12 +28,17 @@ struct PlaybackTrack {
     std::uint64_t cursor_cycle{};
     bool muted{};
     std::uint32_t instrument{};
+    bool previous_trigger_fired{};
+    EventId decision_event{};
+    std::uint64_t decision_occurrence{};
+    bool decision_fired{};
 };
 struct PlaybackPlan {
     TransportMetadata transport{};
     std::vector<PlaybackTrack> tracks;
     std::vector<PlaybackEvent> events;
     std::vector<std::size_t> scheduler_heap;
+    std::uint64_t generation_seed{};
 };
 bool compile_timeline(const Timeline &, PlaybackPlan &, std::string &error);
 
@@ -51,6 +60,7 @@ class TimelineScheduler {
     explicit TimelineScheduler(std::uint32_t sample_rate)
         : sample_rate_(sample_rate) {}
     void set_plan(PlaybackPlan *plan, std::uint64_t start_frame) noexcept;
+    void set_fill(bool active) noexcept { fill_active_ = active; }
     std::size_t schedule(std::uint64_t start_frame, std::uint32_t frames,
                          std::span<TimelineScheduledEvent>) noexcept;
     [[nodiscard]] std::uint64_t dropped_events() const noexcept {
@@ -71,5 +81,6 @@ class TimelineScheduler {
     std::uint32_t sample_rate_{};
     PlaybackPlan *plan_{};
     std::uint64_t expected_frame_{}, dropped_events_{};
+    bool fill_active_{};
 };
 } // namespace neurogenic

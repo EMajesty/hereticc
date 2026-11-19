@@ -184,3 +184,8 @@ and normalized X/Y interaction. Three example controller profiles are parsed
 and host-tested. GUI rendering, controller firmware, MIDI learn, undo history,
 state subscriptions, complete step editing, scale layouts, slicing, pitched
 sample playback and modulation routing remain future work.
+Task 020 implements serialized deterministic note probability, nine trigger
+conditions, momentary/latched Fill, and 1-8 ratchets with application actions,
+Lua fields, Undo/Redo, GUI indicators, tests, and benchmark scenarios. Advanced
+ratchet curves, conditional parameter locks, and graphical automation editing
+remain out of scope.

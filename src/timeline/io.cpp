@@ -27,7 +27,7 @@ Timeline load_timeline(const std::filesystem::path &path) {
     std::string magic;
     unsigned version{};
     if (!(input >> magic >> version) || magic != "NEUROGENIC_TIMELINE" ||
-        version != timeline_file_version)
+        (version == 0 || version > timeline_file_version))
         throw std::runtime_error("unsupported timeline format");
     std::string ignored;
     std::getline(input, ignored);
@@ -46,6 +46,10 @@ Timeline load_timeline(const std::filesystem::path &path) {
                       timeline.transport.time_signature_numerator >>
                       timeline.transport.time_signature_denominator))
                     throw std::runtime_error("invalid transport");
+                require_end(line);
+            } else if (kind == "seed") {
+                if (!(line >> timeline.generation_seed))
+                    throw std::runtime_error("invalid generation seed");
                 require_end(line);
             } else if (kind == "track") {
                 Track track;
@@ -70,6 +74,19 @@ Timeline load_timeline(const std::filesystem::path &path) {
                     pitch > 127)
                     throw std::runtime_error("invalid note");
                 event.pitch = static_cast<std::uint8_t>(pitch);
+                if (version >= 2) {
+                    unsigned condition{}, ratchets{};
+                    if (!(line >> event.trigger_probability >> condition >>
+                          event.condition_n >> event.condition_m >> ratchets) ||
+                        condition > static_cast<unsigned>(
+                                        TriggerCondition::fill_inactive) ||
+                        ratchets > 255)
+                        throw std::runtime_error(
+                            "invalid note trigger properties");
+                    event.trigger_condition =
+                        static_cast<TriggerCondition>(condition);
+                    event.ratchet_count = static_cast<std::uint8_t>(ratchets);
+                }
                 require_end(line);
                 find_track(timeline, track).pattern.events.push_back(event);
             } else if (kind == "note_on" || kind == "note_off") {
@@ -152,7 +169,8 @@ void save_timeline(const Timeline &timeline,
     output << "NEUROGENIC_TIMELINE " << timeline_file_version << "\ntransport "
            << timeline.transport.microseconds_per_quarter << ' '
            << timeline.transport.time_signature_numerator << ' '
-           << timeline.transport.time_signature_denominator << '\n';
+           << timeline.transport.time_signature_denominator << "\nseed "
+           << timeline.generation_seed << '\n';
     for (const auto &track : timeline.tracks) {
         output << "track " << track.id << ' ' << track.pattern.length << ' '
                << (track.muted ? 1 : 0) << ' ' << std::quoted(track.name) << ' '
@@ -161,7 +179,11 @@ void save_timeline(const Timeline &timeline,
             if (event.type == MusicalEventType::note)
                 output << "note " << track.id << ' ' << event.id << ' '
                        << event.tick << ' ' << unsigned(event.pitch) << ' '
-                       << event.velocity << ' ' << event.duration << '\n';
+                       << event.velocity << ' ' << event.duration << ' '
+                       << event.trigger_probability << ' '
+                       << static_cast<unsigned>(event.trigger_condition) << ' '
+                       << event.condition_n << ' ' << event.condition_m << ' '
+                       << unsigned(event.ratchet_count) << '\n';
             else if (event.type == MusicalEventType::note_on ||
                      event.type == MusicalEventType::note_off) {
                 output << (event.type == MusicalEventType::note_on

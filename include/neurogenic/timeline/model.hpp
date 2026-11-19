@@ -30,6 +30,17 @@ enum class MusicalEventType : std::uint8_t {
     note_off,
     parameter
 };
+enum class TriggerCondition : std::uint8_t {
+    always,
+    first_loop,
+    not_first_loop,
+    every_nth_loop,
+    n_of_m,
+    previous_fired,
+    previous_not_fired,
+    fill_active,
+    fill_inactive
+};
 struct MusicalEvent {
     EventId id{};
     MusicalTick tick{};
@@ -41,6 +52,10 @@ struct MusicalEvent {
     float value{};
     EventId target_event_id{};
     std::string parameter_destination;
+    float trigger_probability{1.0F};
+    TriggerCondition trigger_condition{TriggerCondition::always};
+    std::uint16_t condition_n{1}, condition_m{1};
+    std::uint8_t ratchet_count{1};
 };
 struct MusicalPattern {
     MusicalTick length{ticks_per_quarter * 4};
@@ -61,5 +76,6 @@ struct TransportMetadata {
 struct Timeline {
     TransportMetadata transport;
     std::vector<Track> tracks;
+    std::uint64_t generation_seed{};
 };
 } // namespace neurogenic

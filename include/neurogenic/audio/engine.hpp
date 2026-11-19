@@ -60,6 +60,7 @@ class AudioEngine {
     void play() noexcept;
     void stop() noexcept;
     void restart() noexcept;
+    [[nodiscard]] bool set_fill(bool active) noexcept;
     void process(std::span<float> left, std::span<float> right) noexcept;
     void render_wav(const std::filesystem::path &, std::uint64_t frames);
     [[nodiscard]] std::uint64_t frame_position() const noexcept {
@@ -67,6 +68,9 @@ class AudioEngine {
     }
     [[nodiscard]] bool playing() const noexcept {
         return published_playing_.load(std::memory_order_acquire);
+    }
+    [[nodiscard]] bool fill_active() const noexcept {
+        return published_fill_.load(std::memory_order_acquire);
     }
     [[nodiscard]] std::uint64_t dropped_triggers() const noexcept {
         return dropped_triggers_.load();
@@ -213,7 +217,13 @@ class AudioEngine {
         std::atomic<PlanState> state{PlanState::free};
         std::unique_ptr<PlaybackPlan> plan;
     };
-    enum class TransportCommand : std::uint8_t { play, stop, restart };
+    enum class TransportCommand : std::uint8_t {
+        play,
+        stop,
+        restart,
+        fill_on,
+        fill_off
+    };
     [[nodiscard]] std::size_t
     find_active_sample(SampleSlotId id) const noexcept;
     void start_voice(std::uint8_t note, float velocity, TrackId track = 0,
@@ -261,6 +271,7 @@ class AudioEngine {
     bool transport_playing_{true};
     std::atomic<bool> processing_started_{};
     std::atomic<bool> published_playing_{true};
+    std::atomic<bool> published_fill_{};
     CallbackMonitor callback_monitor_;
     std::atomic<std::uint32_t> buffer_frames_{};
     std::atomic<std::uint64_t> instrument_nanoseconds_{}, effect_nanoseconds_{};

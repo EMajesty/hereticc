@@ -173,6 +173,12 @@ profiles can disable this with `fallback_to_base`. Step selection and step
 toggling remain distinct semantic actions.
 
 There is no device firmware, MIDI learn, project persistence for note targets
-or profiles, state-delta subscription, parameter locks, modulation matrix,
+or profiles, state-delta subscription, modulation matrix,
 scale engine, slicing or pitch shifting. The profile files are validated
 examples, not a commitment to a particular master-controller layout.
+Trigger editing uses stable actions `step.probability-set.v1`,
+`step.condition-set.v1`, `step.ratchet-set.v1`, and `step.trigger-reset.v1`.
+Fill adapters use `performance.fill-set.v1` on press/release for momentary
+operation or `performance.fill-latch.v1` for a latch. This supports a held step
+plus encoder and a focus-driven data-wheel workflow without assigning physical
+controls in the core.

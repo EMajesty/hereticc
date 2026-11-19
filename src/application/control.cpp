@@ -69,6 +69,35 @@ bool publish_dsp_parameter(AudioEngine &engine, ParameterRegistry &parameters,
         return engine.set_delay_parameter(DelayParameter::mix, value);
     return true;
 }
+std::optional<TriggerCondition>
+parse_trigger_condition(std::string_view value) {
+    if (value == "always")
+        return TriggerCondition::always;
+    if (value == "first")
+        return TriggerCondition::first_loop;
+    if (value == "not-first")
+        return TriggerCondition::not_first_loop;
+    if (value == "every-n")
+        return TriggerCondition::every_nth_loop;
+    if (value == "n-of-m")
+        return TriggerCondition::n_of_m;
+    if (value == "previous-fired")
+        return TriggerCondition::previous_fired;
+    if (value == "previous-not-fired")
+        return TriggerCondition::previous_not_fired;
+    if (value == "fill")
+        return TriggerCondition::fill_active;
+    if (value == "not-fill")
+        return TriggerCondition::fill_inactive;
+    return std::nullopt;
+}
+std::string_view trigger_condition_name(TriggerCondition value) {
+    static constexpr std::string_view names[]{
+        "always",  "first",          "not-first",          "every-n",
+        "n-of-m",  "previous-fired", "previous-not-fired", "fill",
+        "not-fill"};
+    return names[static_cast<std::size_t>(value)];
+}
 } // namespace
 
 ActionRegistry::ActionRegistry() {
@@ -118,6 +147,22 @@ ActionRegistry::ActionRegistry() {
     add(action("step.lock-remove.v1", "Remove parameter lock", "Sequencer",
                {{"parameter_id", ValueType::text}}));
     add(action("step.locks-clear.v1", "Clear step locks", "Sequencer"));
+    add(action("step.probability-set.v1", "Set trigger probability",
+               "Sequencer", {{"probability", ValueType::real}}));
+    add(action("step.condition-set.v1", "Set trigger condition", "Sequencer",
+               {{"condition", ValueType::text},
+                {"n", ValueType::integer, false},
+                {"m", ValueType::integer, false}}));
+    add(action("step.ratchet-set.v1", "Set ratchet count", "Sequencer",
+               {{"count", ValueType::integer}}));
+    add(action("step.trigger-reset.v1", "Reset trigger properties",
+               "Sequencer"));
+    add(action("performance.fill-set.v1", "Set momentary Fill", "Performance",
+               {{"active", ValueType::boolean}}));
+    add(action("performance.fill-latch.v1", "Toggle latched Fill",
+               "Performance"));
+    add(action("timeline.seed-set.v1", "Set deterministic seed", "Generation",
+               {{"seed", ValueType::integer}}));
     add(action("step.page-next.v1", "Next step page", "Sequencer"));
     add(action("step.page-previous.v1", "Previous step page", "Sequencer"));
     add(action("step.resolution-set.v1", "Set step resolution", "Sequencer",
@@ -571,13 +616,35 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             edit.arguments = {
                 {"pitch", static_cast<std::int64_t>(std::clamp<int>(
                               event.pitch + (delta < 0 ? -1 : 1), 0, 127))}};
-        } else {
+        } else if (before.selected_step_property == "timing") {
             edit.action_id = "step.timing-offset-set.v1";
             edit.arguments = {
                 {"offset_ticks",
                  static_cast<std::int64_t>(std::clamp<MusicalTick>(
                      event.timing_offset + static_cast<MusicalTick>(delta) * 10,
                      -before.step_ticks + 1, before.step_ticks - 1))}};
+        } else if (before.selected_step_property == "probability") {
+            edit.action_id = "step.probability-set.v1";
+            edit.arguments = {
+                {"probability",
+                 std::clamp(static_cast<double>(event.trigger_probability) +
+                                delta * 0.05,
+                            0.0, 1.0)}};
+        } else if (before.selected_step_property == "ratchet") {
+            edit.action_id = "step.ratchet-set.v1";
+            edit.arguments = {
+                {"count",
+                 static_cast<std::int64_t>(std::clamp<int>(
+                     event.ratchet_count + (delta < 0 ? -1 : 1), 1, 8))}};
+        } else {
+            const auto current = static_cast<int>(event.trigger_condition);
+            const auto next = (current + (delta < 0 ? 8 : 1)) % 9;
+            edit.action_id = "step.condition-set.v1";
+            edit.arguments = {
+                {"condition", std::string(trigger_condition_name(
+                                  static_cast<TriggerCondition>(next)))},
+                {"n", static_cast<std::int64_t>(event.condition_n)},
+                {"m", static_cast<std::int64_t>(event.condition_m)}};
         }
         return execute_locked(edit, sequence);
     }
@@ -751,10 +818,115 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     changed_locked();
                 }
             }
+        } else if (command.action_id == "performance.fill-set.v1" ||
+                   command.action_id == "performance.fill-latch.v1") {
+            const auto previous_latched = state_.fill_latched;
+            const auto previous_momentary = fill_momentary_;
+            if (command.action_id == "performance.fill-latch.v1") {
+                state_.fill_latched = !state_.fill_latched;
+            } else {
+                fill_momentary_ = *argument<bool>(command, "active");
+            }
+            state_.fill_active = fill_momentary_ || state_.fill_latched;
+            if (!engine_.set_fill(state_.fill_active)) {
+                state_.fill_latched = previous_latched;
+                fill_momentary_ = previous_momentary;
+                state_.fill_active = fill_momentary_ || state_.fill_latched;
+                error = "transport command queue is full";
+            } else
+                changed_locked();
+        } else if (command.action_id == "timeline.seed-set.v1") {
+            const auto value = *argument<std::int64_t>(command, "seed");
+            if (value < 0)
+                error = "generation seed must be nonnegative";
+            else {
+                auto transaction =
+                    edit_group_ ? *edit_group_ : timeline_.edit();
+                transaction.set_generation_seed(
+                    static_cast<std::uint64_t>(value));
+                if (edit_group_)
+                    edit_group_ = std::move(transaction);
+                else if (!timeline_.commit(
+                             std::move(transaction),
+                             TimelineCommitPolicy::next_audio_callback,
+                             error)) {
+                }
+                if (error.empty())
+                    changed_locked();
+            }
+        } else if (command.action_id == "step.probability-set.v1" ||
+                   command.action_id == "step.condition-set.v1" ||
+                   command.action_id == "step.ratchet-set.v1" ||
+                   command.action_id == "step.trigger-reset.v1") {
+            if (!selected_event_id_)
+                error = "no note event is selected";
+            else {
+                auto transaction =
+                    edit_group_ ? *edit_group_ : timeline_.edit();
+                auto *track = transaction.find_track(state_.selected_track);
+                MusicalEvent *event = nullptr;
+                if (track)
+                    for (auto &candidate : track->pattern.events)
+                        if (candidate.id == *selected_event_id_ &&
+                            candidate.type == MusicalEventType::note) {
+                            event = &candidate;
+                            break;
+                        }
+                if (!event)
+                    error = "selected note event no longer exists";
+                else if (command.action_id == "step.probability-set.v1") {
+                    const auto value =
+                        *argument<double>(command, "probability");
+                    if (!std::isfinite(value) || value < 0 || value > 1)
+                        error = "trigger probability must be 0..1";
+                    else
+                        event->trigger_probability = static_cast<float>(value);
+                } else if (command.action_id == "step.ratchet-set.v1") {
+                    const auto value =
+                        *argument<std::int64_t>(command, "count");
+                    if (value < 1 || value > 8)
+                        error = "ratchet count must be 1..8";
+                    else
+                        event->ratchet_count = static_cast<std::uint8_t>(value);
+                } else if (command.action_id == "step.condition-set.v1") {
+                    const auto condition = parse_trigger_condition(
+                        *argument<std::string>(command, "condition"));
+                    const auto n_arg = argument<std::int64_t>(command, "n");
+                    const auto m_arg = argument<std::int64_t>(command, "m");
+                    const auto n = n_arg ? *n_arg : 1;
+                    const auto m = m_arg ? *m_arg : n;
+                    if (!condition)
+                        error = "unknown trigger condition";
+                    else if (n < 1 || m < 1 || n > m || m > 65535)
+                        error = "condition cycles require 1 <= n <= m <= 65535";
+                    else {
+                        event->trigger_condition = *condition;
+                        event->condition_n = static_cast<std::uint16_t>(n);
+                        event->condition_m = static_cast<std::uint16_t>(m);
+                    }
+                } else {
+                    event->trigger_probability = 1.0F;
+                    event->trigger_condition = TriggerCondition::always;
+                    event->condition_n = event->condition_m = 1;
+                    event->ratchet_count = 1;
+                }
+                if (error.empty()) {
+                    if (edit_group_)
+                        edit_group_ = std::move(transaction);
+                    else
+                        timeline_.commit(
+                            std::move(transaction),
+                            TimelineCommitPolicy::next_audio_callback, error);
+                    if (error.empty())
+                        changed_locked();
+                }
+            }
         } else if (command.action_id == "step.property-select.v1") {
             const auto &property = *argument<std::string>(command, "property");
             if (property != "velocity" && property != "duration" &&
-                property != "pitch" && property != "timing")
+                property != "pitch" && property != "timing" &&
+                property != "probability" && property != "condition" &&
+                property != "ratchet")
                 error = "unknown step property";
             else {
                 state_.selected_step_property = property;
@@ -1134,15 +1306,16 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 state_.focused_element = "steps";
             else if (state_.focused_element == "step-properties") {
                 static constexpr std::string_view properties[]{
-                    "velocity", "duration", "pitch", "timing"};
-                const auto found = std::find(properties, properties + 4,
+                    "velocity",    "duration",  "pitch",  "timing",
+                    "probability", "condition", "ratchet"};
+                const auto found = std::find(properties, properties + 7,
                                              state_.selected_step_property);
                 const auto index =
-                    found == properties + 4
+                    found == properties + 7
                         ? 0
                         : (static_cast<std::size_t>(found - properties) + 1) %
-                              4;
-                if (state_.selected_step_property == "timing")
+                              7;
+                if (state_.selected_step_property == "ratchet")
                     state_.focused_element = "step-locks";
                 else
                     state_.selected_step_property = properties[index];
@@ -1361,6 +1534,7 @@ void ApplicationService::synchronize_locked() const {
     if (state_.selected_track == 0 && !timeline.timeline.tracks.empty())
         state_.selected_track = timeline.timeline.tracks.front().id;
     state_.tracks.clear();
+    state_.generation_seed = timeline.generation_seed;
     std::size_t index{};
     for (const auto &track : timeline.timeline.tracks) {
         const auto fallback =
@@ -1422,7 +1596,12 @@ void ApplicationService::synchronize_locked() const {
                                        selected->velocity,
                                        selected->duration,
                                        index_at_step,
-                                       events_at_step};
+                                       events_at_step,
+                                       selected->trigger_probability,
+                                       selected->trigger_condition,
+                                       selected->condition_n,
+                                       selected->condition_m,
+                                       selected->ratchet_count};
             } else
                 selected_event_id_.reset();
         }

@@ -34,10 +34,59 @@ bool valid_event(const MusicalEvent &event) noexcept {
     return event.id != 0 && event.tick >= 0 && event.pitch <= 127 &&
            std::isfinite(event.velocity) && event.velocity >= 0 &&
            event.velocity <= 1 && std::isfinite(event.value) &&
+           std::isfinite(event.trigger_probability) &&
+           event.trigger_probability >= 0 && event.trigger_probability <= 1 &&
+           event.condition_n > 0 && event.condition_m > 0 &&
+           event.condition_n <= event.condition_m && event.ratchet_count > 0 &&
+           event.ratchet_count <= 8 &&
            (event.type != MusicalEventType::note ||
-            (event.duration > 0 &&
+            (event.duration >= event.ratchet_count &&
              event.duration <=
                  std::numeric_limits<MusicalTick>::max() - event.tick));
+}
+std::uint64_t mix(std::uint64_t value) noexcept {
+    value += 0x9e3779b97f4a7c15ULL;
+    value = (value ^ (value >> 30U)) * 0xbf58476d1ce4e5b9ULL;
+    value = (value ^ (value >> 27U)) * 0x94d049bb133111ebULL;
+    return value ^ (value >> 31U);
+}
+bool probability_fires(std::uint64_t seed, TrackId track, EventId event,
+                       std::uint64_t loop, float probability) noexcept {
+    if (probability <= 0)
+        return false;
+    if (probability >= 1)
+        return true;
+    const auto random = mix(seed ^ mix(track) ^ mix(event) ^ mix(loop));
+    // A float is a binary fraction, so scaling it by 2^32 produces an exact
+    // integer threshold on every supported IEEE-754 host.
+    const auto threshold = static_cast<std::uint64_t>(
+        static_cast<double>(probability) * 4'294'967'296.0);
+    return (random >> 32U) < threshold;
+}
+bool condition_fires(TriggerCondition condition, std::uint64_t loop,
+                     std::uint16_t n, std::uint16_t m, bool previous,
+                     bool fill) noexcept {
+    switch (condition) {
+    case TriggerCondition::always:
+        return true;
+    case TriggerCondition::first_loop:
+        return loop == 0;
+    case TriggerCondition::not_first_loop:
+        return loop != 0;
+    case TriggerCondition::every_nth_loop:
+        return loop % n == static_cast<std::uint64_t>(n - 1U);
+    case TriggerCondition::n_of_m:
+        return loop % m < n;
+    case TriggerCondition::previous_fired:
+        return previous;
+    case TriggerCondition::previous_not_fired:
+        return !previous;
+    case TriggerCondition::fill_active:
+        return fill;
+    case TriggerCondition::fill_inactive:
+        return !fill;
+    }
+    return false;
 }
 } // namespace
 
@@ -51,12 +100,15 @@ bool compile_timeline(const Timeline &timeline, PlaybackPlan &output,
     }
     PlaybackPlan plan;
     plan.transport = timeline.transport;
+    plan.generation_seed = timeline.generation_seed;
     plan.tracks.reserve(timeline.tracks.size());
     std::size_t compiled_events{};
     for (const auto &track : timeline.tracks)
         for (const auto &event : track.pattern.events) {
             const auto addition =
-                event.type == MusicalEventType::note ? 2U : 1U;
+                event.type == MusicalEventType::note
+                    ? static_cast<unsigned>(event.ratchet_count) * 2U
+                    : 1U;
             if (addition >
                 std::numeric_limits<std::size_t>::max() - compiled_events) {
                 error = "timeline is too large to compile";
@@ -80,12 +132,17 @@ bool compile_timeline(const Timeline &timeline, PlaybackPlan &output,
         auto append = [&](MusicalTick raw_tick, EventId id, EventId target,
                           MusicalEventType type, std::uint8_t pitch,
                           std::uint32_t parameter,
-                          std::uint32_t parameter_target, float value) {
+                          std::uint32_t parameter_target, float value,
+                          float probability = 1.0F,
+                          TriggerCondition condition = TriggerCondition::always,
+                          std::uint16_t n = 1, std::uint16_t m = 1,
+                          std::uint8_t ratchet = 0) {
             const auto length = track.pattern.length;
             plan.events.push_back(
                 {raw_tick % length, id, target, type, pitch, parameter,
                  parameter_target, value,
-                 static_cast<std::uint64_t>(raw_tick / length)});
+                 static_cast<std::uint64_t>(raw_tick / length), probability,
+                 condition, n, m, ratchet});
         };
         for (std::size_t index = 0; index < track.pattern.events.size();
              ++index) {
@@ -100,11 +157,21 @@ bool compile_timeline(const Timeline &timeline, PlaybackPlan &output,
                     return false;
                 }
             if (event.type == MusicalEventType::note) {
-                append(event.tick, event.id, event.id,
-                       MusicalEventType::note_on, event.pitch, 0, 0,
-                       event.velocity);
-                append(event.tick + event.duration, event.id, event.id,
-                       MusicalEventType::note_off, event.pitch, 0, 0, 0);
+                for (std::uint8_t ratchet = 0; ratchet < event.ratchet_count;
+                     ++ratchet) {
+                    const auto begin = event.tick + event.duration * ratchet /
+                                                        event.ratchet_count;
+                    const auto end = event.tick + event.duration *
+                                                      (ratchet + 1) /
+                                                      event.ratchet_count;
+                    append(begin, event.id, event.id, MusicalEventType::note_on,
+                           event.pitch, 0, 0, event.velocity,
+                           event.trigger_probability, event.trigger_condition,
+                           event.condition_n, event.condition_m, ratchet);
+                    append(end, event.id, event.id, MusicalEventType::note_off,
+                           event.pitch, 0, 0, 0, 1.0F, TriggerCondition::always,
+                           1, 1, ratchet);
+                }
             } else {
                 if (event.type == MusicalEventType::note_off) {
                     if (event.target_event_id == 0) {
@@ -179,7 +246,8 @@ bool compile_timeline(const Timeline &timeline, PlaybackPlan &output,
         }
         plan.tracks.push_back({track.id, track.pattern.length, begin,
                                plan.events.size() - begin, 0, 0, track.muted,
-                               stable_id(track.instrument_id)});
+                               stable_id(track.instrument_id), false, 0, 0,
+                               false});
     }
     output = std::move(plan);
     error.clear();
@@ -250,6 +318,8 @@ void TimelineScheduler::seek(std::uint64_t start) noexcept {
          plan_->transport.microseconds_per_quarter);
     for (std::size_t index = 0; index < plan_->tracks.size(); ++index) {
         auto &track = plan_->tracks[index];
+        track.previous_trigger_fired = false;
+        track.decision_event = 0;
         if (track.muted || track.event_count == 0)
             continue;
         const auto cycle = approximate_tick / track.length;
@@ -321,21 +391,43 @@ TimelineScheduler::schedule(std::uint64_t start, std::uint32_t frames,
         }
         const auto valid_occurrence = track.cursor_cycle >= event.first_cycle;
         if (valid_occurrence) {
+            const auto occurrence = track.cursor_cycle - event.first_cycle;
+            bool emit = true;
+            if (event.type == MusicalEventType::note_on) {
+                if (event.ratchet_index != 0 &&
+                    track.decision_event == event.id &&
+                    track.decision_occurrence == occurrence)
+                    emit = track.decision_fired;
+                else {
+                    emit = condition_fires(event.trigger_condition, occurrence,
+                                           event.condition_n, event.condition_m,
+                                           track.previous_trigger_fired,
+                                           fill_active_) &&
+                           probability_fires(plan_->generation_seed, track.id,
+                                             event.id, occurrence,
+                                             event.trigger_probability);
+                    track.decision_event = event.id;
+                    track.decision_occurrence = occurrence;
+                    track.decision_fired = emit;
+                    track.previous_trigger_fired = emit;
+                }
+            }
             const auto offset =
                 absolute_frame <= start
                     ? 0
                     : static_cast<std::uint32_t>(absolute_frame - start);
-            output[count++] = {offset,
-                               track.id,
-                               event.id,
-                               event.target_event_id,
-                               track.cursor_cycle - event.first_cycle,
-                               event.type,
-                               event.pitch,
-                               event.parameter_id,
-                               event.parameter_target,
-                               event.value,
-                               track.instrument};
+            if (emit)
+                output[count++] = {offset,
+                                   track.id,
+                                   event.id,
+                                   event.target_event_id,
+                                   occurrence * 8U + event.ratchet_index,
+                                   event.type,
+                                   event.pitch,
+                                   event.parameter_id,
+                                   event.parameter_target,
+                                   event.value,
+                                   track.instrument};
         }
         std::pop_heap(plan_->scheduler_heap.begin(),
                       plan_->scheduler_heap.end(), after);

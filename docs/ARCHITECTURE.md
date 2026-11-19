@@ -203,3 +203,7 @@ does no string lookup and dispatches bounded due events to the preallocated
 synth or master delay before simultaneous note-ons. Application lock actions,
 GUI, controllers and Lua all call `TimelineTransaction` rather than duplicating
 destination validation or maintaining another pattern model.
+Trigger probability and conditions are immutable compiled-plan metadata.
+Scheduling uses a stateless integer hash rather than a callback RNG, and Fill
+crosses into the audio thread through the bounded transport queue. Ratchets are
+expanded at preparation time; the callback performs no allocation or lookup.

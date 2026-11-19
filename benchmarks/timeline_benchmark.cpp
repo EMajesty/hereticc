@@ -216,6 +216,54 @@ void publication_case() {
                    .count() /
                iterations);
 }
+void expressive_case(std::string name, std::uint8_t ratchets,
+                     neurogenic::TriggerCondition condition) {
+    neurogenic::Timeline source;
+    source.generation_seed = 42;
+    neurogenic::Track track;
+    track.id = 1;
+    track.pattern.length = 960;
+    for (std::size_t i = 0; i < 64; ++i) {
+        neurogenic::MusicalEvent event;
+        event.id = i + 1;
+        event.tick = static_cast<neurogenic::MusicalTick>(i * 15);
+        event.type = neurogenic::MusicalEventType::note;
+        event.pitch = static_cast<std::uint8_t>(36 + i % 8);
+        event.velocity = 0.7F;
+        event.duration = 15;
+        event.trigger_probability = 0.65F;
+        event.trigger_condition = condition;
+        event.condition_n = 2;
+        event.condition_m = 3;
+        event.ratchet_count = ratchets;
+        track.pattern.events.push_back(event);
+    }
+    source.tracks.push_back(std::move(track));
+    neurogenic::PlaybackPlan plan;
+    std::string error;
+    const auto preparation = Clock::now();
+    if (!neurogenic::compile_timeline(source, plan, error))
+        throw std::runtime_error(error);
+    const auto prep_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                             Clock::now() - preparation)
+                             .count();
+    neurogenic::TimelineScheduler scheduler(48000);
+    scheduler.set_plan(&plan, 0);
+    scheduler.set_fill(true);
+    std::vector<neurogenic::TimelineScheduledEvent> output(1024);
+    std::uint64_t frame{};
+    const auto begin = Clock::now();
+    for (std::size_t i = 0; i < iterations; ++i) {
+        checksum += scheduler.schedule(frame, 256, output);
+        frame += 256;
+    }
+    result(std::move(name), 48000, 256,
+           std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
+                                                                begin)
+                   .count() /
+               iterations,
+           prep_ns);
+}
 void automation_case(std::string name, std::size_t locks, bool mixed = false) {
     neurogenic::Timeline source;
     neurogenic::Track track;
@@ -344,6 +392,10 @@ int main() {
     effect_case(true);
     mixed_case();
     dense_case();
+    expressive_case("probability_conditions", 1,
+                    neurogenic::TriggerCondition::n_of_m);
+    expressive_case("maximum_ratchets_fill", 8,
+                    neurogenic::TriggerCondition::fill_active);
     publication_case();
     automation_case("parameter_locks_sparse", 4);
     automation_case("parameter_locks_dense", 256);

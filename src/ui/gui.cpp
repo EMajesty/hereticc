@@ -336,6 +336,17 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
                                            MusicalEventType::parameter &&
                                        event.tick == tick;
                             });
+            const bool expressive =
+                valid &&
+                std::any_of(track->events.begin(), track->events.end(),
+                            [&](const MusicalEvent &event) {
+                                return event.type == MusicalEventType::note &&
+                                       event.tick == tick &&
+                                       (event.trigger_probability < 1.0F ||
+                                        event.trigger_condition !=
+                                            TriggerCondition::always ||
+                                        event.ratchet_count > 1);
+                            });
             UiColor color =
                 !valid   ? UiColor::unavailable
                 : active ? UiColor::accent
@@ -346,7 +357,7 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
             text(l.grid[i],
                  step == playhead ? UiColor::selected : UiColor::text,
                  std::to_string(step + 1) + (locked ? " L" : "") +
-                     (step == playhead ? " >" : ""));
+                     (expressive ? " *" : "") + (step == playhead ? " >" : ""));
         }
     } else if (view_ == GuiView::samples) {
         text({l.content.x + 12, l.content.y + 8, l.content.w, 28 * l.scale},
@@ -515,19 +526,27 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
                           : UiColor::background);
             text(row, UiColor::text, values[i]);
         }
-        text({l.parameters.x + 12 * l.scale, l.parameters.y + 300 * l.scale,
-              l.parameters.w - 24 * l.scale, 70 * l.scale},
-             UiColor::muted,
-             "Event " + std::to_string(event.event_id) + "  " +
-                 std::to_string(event.index_at_step + 1) + "/" +
-                 std::to_string(event.events_at_step) +
-                 "\nEnter cycles property\nUp/Down adjusts");
+        text(
+            {l.parameters.x + 12 * l.scale, l.parameters.y + 300 * l.scale,
+             l.parameters.w - 24 * l.scale, 70 * l.scale},
+            UiColor::muted,
+            "Event " + std::to_string(event.event_id) + "  " +
+                std::to_string(event.index_at_step + 1) + "/" +
+                std::to_string(event.events_at_step) + "\nP " +
+                std::to_string(event.trigger_probability * 100.0F) +
+                "%  Cond " +
+                std::to_string(static_cast<unsigned>(event.trigger_condition)) +
+                "  " + std::to_string(event.condition_n) + "/" +
+                std::to_string(event.condition_m) + "  Ratchet " +
+                std::to_string(event.ratchet_count) +
+                "\nEnter cycles property\nUp/Down adjusts");
     } else
         text({l.parameters.x + 12 * l.scale, l.parameters.y + 100 * l.scale,
               l.parameters.w - 24 * l.scale, 90 * l.scale},
              UiColor::muted,
              "Select + step to inspect\nan existing note event.");
-    std::string locks = "LOCKS";
+    std::string locks = std::string("FILL ") +
+                        (state.fill_active ? "ACTIVE" : "OFF") + "\nLOCKS";
     for (const auto &lock : state.selected_step_locks)
         locks += "\n" + lock.parameter_id + " = " + std::to_string(lock.value);
     if (state.selected_step_locks.empty())

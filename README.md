@@ -200,6 +200,10 @@ device absence; it does not verify physical ARM audio/MIDI hardware.
 See [architecture](docs/ARCHITECTURE.md), [live sample management](docs/SAMPLES.md), [musical timeline](docs/TIMELINE.md), [dependencies](docs/DEPENDENCIES.md),
 [benchmarks](docs/BENCHMARKS.md), [Lua API](docs/LUA.md), and [controller mappings](docs/CONTROLLERS.md).
 
+Notes support deterministic probability, loop and Fill conditions, and 1-8
+evenly spaced ratchets. These properties live in the timeline, participate in
+Undo/Redo, and are available through semantic actions and Lua.
+
 ## License
 
 Original NEUROGENIC contributions are MIT-licensed. Dependencies retain their

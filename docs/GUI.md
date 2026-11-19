@@ -93,5 +93,9 @@ remain unverified.
 
 Edits publish at the next audio callback as complete validated plans. A final
 partial step is available when its start tick lies inside a non-grid-aligned
-pattern. Parameter locks, drag-painting and boundary-quantized publication are
-not implemented.
+pattern. Drag-painting and boundary-quantized publication are not implemented.
+
+Expressive steps are marked with `*`. The inspector reports probability,
+condition/cycle values, ratchet count, and global Fill state. Semantic actions
+provide editing today; richer pointer widgets remain future work. All properties
+remain reachable through non-touch controller navigation.

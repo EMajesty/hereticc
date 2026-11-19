@@ -2437,6 +2437,175 @@ void test_parameter_locks_and_automation() {
     rejected_samples.shutdown();
 }
 
+void test_probability_conditions_and_ratchets() {
+    using namespace neurogenic;
+    auto make = [](TriggerCondition condition = TriggerCondition::always,
+                   float probability = 1.0F, std::uint8_t ratchets = 1) {
+        Timeline value;
+        value.generation_seed = 12345;
+        Track track;
+        track.id = 7;
+        track.pattern.length = 960;
+        MusicalEvent event{11, 0, MusicalEventType::note, 36, 1, 960};
+        event.trigger_condition = condition;
+        event.trigger_probability = probability;
+        event.ratchet_count = ratchets;
+        track.pattern.events.push_back(event);
+        value.tracks.push_back(track);
+        return value;
+    };
+    auto note_ons = [](const Timeline &timeline, bool fill = false,
+                       std::uint32_t frames = 120001) {
+        PlaybackPlan plan;
+        std::string error;
+        check(compile_timeline(timeline, plan, error), error.c_str());
+        TimelineScheduler scheduler(48000);
+        scheduler.set_plan(&plan, 0);
+        scheduler.set_fill(fill);
+        std::array<TimelineScheduledEvent, 128> events{};
+        const auto count = scheduler.schedule(0, frames, events);
+        std::vector<TimelineScheduledEvent> result;
+        for (std::size_t i = 0; i < count; ++i)
+            if (events[i].type == MusicalEventType::note_on)
+                result.push_back(events[i]);
+        return result;
+    };
+    check(note_ons(make(TriggerCondition::always, 0)).empty(),
+          "zero probability fired");
+    check(note_ons(make()).size() == 6, "full probability did not fire");
+    check(note_ons(make(TriggerCondition::first_loop)).size() == 1 &&
+              note_ons(make(TriggerCondition::not_first_loop)).size() == 5,
+          "first-loop trigger conditions");
+    auto every = make(TriggerCondition::every_nth_loop);
+    every.tracks[0].pattern.events[0].condition_n = 2;
+    every.tracks[0].pattern.events[0].condition_m = 2;
+    check(note_ons(every).size() == 3, "every-N trigger condition");
+    auto n_of_m = make(TriggerCondition::n_of_m);
+    n_of_m.tracks[0].pattern.events[0].condition_n = 2;
+    n_of_m.tracks[0].pattern.events[0].condition_m = 3;
+    check(note_ons(n_of_m).size() == 4, "N-of-M trigger condition");
+    check(note_ons(make(TriggerCondition::fill_active), false).empty() &&
+              note_ons(make(TriggerCondition::fill_active), true).size() == 6,
+          "Fill condition sampling");
+    const auto ratchets =
+        note_ons(make(TriggerCondition::always, 1, 4), false, 24000);
+    check(ratchets.size() == 4 && ratchets[0].frame == 0 &&
+              ratchets[1].frame == 6000 && ratchets[2].frame == 12000 &&
+              ratchets[3].frame == 18000 && ratchets[0].occurrence == 0 &&
+              ratchets[3].occurrence == 3,
+          "ratchet timing and unique ownership");
+    const auto random_a = note_ons(make(TriggerCondition::always, 0.5F));
+    const auto random_b = note_ons(make(TriggerCondition::always, 0.5F));
+    check(random_a.size() == random_b.size() &&
+              std::equal(random_a.begin(), random_a.end(), random_b.begin(),
+                         [](const auto &a, const auto &b) {
+                             return a.frame == b.frame;
+                         }),
+          "probability seed reproducibility");
+    auto with_unrelated_track = make(TriggerCondition::always, 0.5F);
+    Track unrelated;
+    unrelated.id = 99;
+    unrelated.pattern.length = 480;
+    unrelated.pattern.events.push_back(
+        {91, 0, MusicalEventType::note, 40, 1, 120});
+    with_unrelated_track.tracks.push_back(std::move(unrelated));
+    const auto combined = note_ons(with_unrelated_track);
+    std::vector<std::uint32_t> original_frames;
+    for (const auto &event : combined)
+        if (event.track == 7)
+            original_frames.push_back(event.frame);
+    check(original_frames.size() == random_a.size() &&
+              std::equal(original_frames.begin(), original_frames.end(),
+                         random_a.begin(),
+                         [](auto frame, const auto &event) {
+                             return frame == event.frame;
+                         }),
+          "probability changed with unrelated track activity");
+
+    auto previous = make();
+    previous.tracks[0].pattern.events[0].trigger_probability = 0;
+    MusicalEvent second{12, 240, MusicalEventType::note, 38, 1, 120};
+    second.trigger_condition = TriggerCondition::previous_not_fired;
+    previous.tracks[0].pattern.events.push_back(second);
+    const auto previous_events = note_ons(previous, false, 24000);
+    check(previous_events.size() == 1 && previous_events[0].id == 12,
+          "previous-trigger condition");
+    auto lock_interaction = make(TriggerCondition::always, 0);
+    MusicalEvent parameter;
+    parameter.id = 13;
+    parameter.tick = 0;
+    parameter.type = MusicalEventType::parameter;
+    parameter.parameter_destination = "effect.delay.mix";
+    parameter.value = 0.5F;
+    lock_interaction.tracks[0].pattern.events.push_back(parameter);
+    PlaybackPlan lock_plan;
+    std::string lock_error;
+    check(compile_timeline(lock_interaction, lock_plan, lock_error),
+          lock_error.c_str());
+    TimelineScheduler lock_scheduler(48000);
+    lock_scheduler.set_plan(&lock_plan, 0);
+    std::array<TimelineScheduledEvent, 8> lock_events{};
+    const auto lock_count = lock_scheduler.schedule(0, 1, lock_events);
+    check(lock_count == 1 && lock_events[0].type == MusicalEventType::parameter,
+          "conditional note suppressed independent parameter automation");
+
+    AudioEngine engine;
+    auto editable = make();
+    TimelineService service(
+        [&](const Timeline &value, std::string &error) {
+            return engine.queue_timeline(value, error);
+        },
+        editable);
+    SampleManager samples(engine);
+    ApplicationService app(engine, service, samples);
+    check(app.execute({"step.event-select.v1", {{"step", std::int64_t{0}}}})
+                  .accepted &&
+              app.execute({"step.probability-set.v1", {{"probability", 0.25}}})
+                  .accepted &&
+              app.execute({"step.condition-set.v1",
+                           {{"condition", std::string("n-of-m")},
+                            {"n", std::int64_t{2}},
+                            {"m", std::int64_t{5}}}})
+                  .accepted &&
+              app.execute({"step.ratchet-set.v1", {{"count", std::int64_t{3}}}})
+                  .accepted,
+          "semantic trigger editing actions");
+    auto state = app.snapshot();
+    check(state.selected_event &&
+              std::abs(state.selected_event->trigger_probability - 0.25F) <
+                  0.001F &&
+              state.selected_event->condition_n == 2 &&
+              state.selected_event->condition_m == 5 &&
+              state.selected_event->ratchet_count == 3,
+          "observable trigger metadata");
+    std::array<float, 1> fill_left{}, fill_right{};
+    engine.process(fill_left, fill_right);
+    check(app.execute({"edit.undo.v1"}).accepted, "trigger Undo action");
+    check(
+        service.snapshot().timeline.tracks[0].pattern.events[0].ratchet_count ==
+            1,
+        "trigger Undo state");
+    check(app.execute({"performance.fill-set.v1", {{"active", true}}}).accepted,
+          "Fill action");
+    check(app.snapshot().fill_active, "observable Fill state");
+    engine.process(fill_left, fill_right);
+    samples.shutdown();
+
+    const auto path = std::filesystem::temp_directory_path() /
+                      "neurogenic-trigger-roundtrip.ngt";
+    auto serialized = make(TriggerCondition::fill_inactive, 0.75F, 4);
+    save_timeline(serialized, path);
+    const auto loaded = load_timeline(path);
+    std::filesystem::remove(path);
+    const auto &loaded_event = loaded.tracks[0].pattern.events[0];
+    check(loaded.generation_seed == serialized.generation_seed &&
+              loaded_event.trigger_condition ==
+                  TriggerCondition::fill_inactive &&
+              loaded_event.ratchet_count == 4 &&
+              std::abs(loaded_event.trigger_probability - 0.75F) < 0.001F,
+          "trigger serialization round trip");
+}
+
 void test_lua_and_offline() {
     using namespace neurogenic;
     bool submitted = false;
@@ -2491,6 +2660,21 @@ void test_lua_and_offline() {
               timeline_state.timeline.tracks.size() == 2 &&
               timeline_state.timeline.tracks[1].pattern.length == 720,
           "Lua multitrack generation");
+    check(lua.execute(
+              "local p=neurogenic.v1.timeline.current(); local t=p:track(1); "
+              "t:add_note{tick=480,pitch=42,velocity=.6,duration=120,"
+              "probability=.4,condition='every-n',condition_n=2,"
+              "condition_m=2,ratchets=3}; p:commit()",
+              error),
+          error.c_str());
+    timeline_state = timeline.snapshot();
+    const auto &lua_trigger =
+        timeline_state.timeline.tracks[0].pattern.events.back();
+    check(std::abs(lua_trigger.trigger_probability - 0.4F) < 0.001F &&
+              lua_trigger.trigger_condition ==
+                  TriggerCondition::every_nth_loop &&
+              lua_trigger.ratchet_count == 3,
+          "Lua trigger property adapter");
     const auto preserved = timeline_state.timeline.tracks[1].pattern.events;
     check(
         lua.execute("local p=neurogenic.v1.timeline.current(); local "
@@ -2618,6 +2802,7 @@ int main() {
         test_interactive_step_sequencer();
         test_undo_redo_and_step_properties();
         test_parameter_locks_and_automation();
+        test_probability_conditions_and_ratchets();
         test_gui_model();
         test_lua_and_offline();
         std::cout << "all tests passed\n";

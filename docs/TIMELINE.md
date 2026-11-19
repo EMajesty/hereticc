@@ -178,3 +178,32 @@ Application adapters use stable semantic action IDs
 `timeline.discard.v1`, and `timeline.query.v1`. These identify controller/UI
 intent; parameters and selection context belong to the calling adapter and the
 shared C++ service, not to a physical control layout or Lua script.
+## Expressive trigger behavior
+
+Each duration note stores a probability (`0.0..1.0`), condition, cycle values,
+and ratchet count (`1..8`). Defaults are 100%, `always`, `1/1`, and one hit.
+Decisions are a pure hash of the serialized timeline seed, track ID, event ID,
+and zero-based loop occurrence. They are therefore repeatable across callback
+sizes and x86-64/AArch64, and unrelated tracks do not consume shared RNG state.
+Restart begins again at loop zero; publishing a replacement uses that plan's
+seed at the current transport position.
+
+Conditions have these precise meanings:
+
+- `first`: loop occurrence zero; `not-first`: every later occurrence.
+- `every-n`: occurrences N, 2N, ... when counted musically from one.
+- `n-of-m`: the first N occurrences in each repeating M-loop cycle.
+- `previous-fired` / `previous-not-fired`: the decision for the preceding note
+  encountered on the same track. At restart or seek the initial value is false.
+- `fill` / `not-fill`: the Fill state sampled when the note-on is scheduled.
+
+Ratchets divide the note duration evenly using integer tick boundaries. Each hit
+has its own note ownership token and matching note-off. Parameter automation is
+independent and is not skipped when a conditional note does not fire. This first
+model persists lock values until another parameter event changes them; it does
+not interpolate or restore values automatically.
+
+Trigger properties currently apply to duration-note events produced by the
+step/timeline editing services. Legacy explicit note-on/note-off pairs retain
+unconditional edge semantics. Parameter events are independent; attaching a
+lock to a conditional note as one atomic conditional group is not yet supported.

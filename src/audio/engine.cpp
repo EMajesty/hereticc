@@ -295,6 +295,14 @@ void AudioEngine::restart() noexcept {
     if (!transport_commands_.push(TransportCommand::restart))
         dropped_transport_commands_.fetch_add(1, std::memory_order_relaxed);
 }
+bool AudioEngine::set_fill(bool active) noexcept {
+    if (!transport_commands_.push(active ? TransportCommand::fill_on
+                                         : TransportCommand::fill_off)) {
+        dropped_transport_commands_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    return true;
+}
 
 void AudioEngine::start_voice(std::uint8_t note, float velocity, TrackId track,
                               EventId event, std::uint64_t occurrence,
@@ -413,10 +421,14 @@ void AudioEngine::process(std::span<float> left,
         else if (command == TransportCommand::stop) {
             transport_playing_ = false;
             stop_voices();
-        } else {
+        } else if (command == TransportCommand::restart) {
             transport_frame_ = 0;
             transport_playing_ = true;
             stop_voices();
+        } else {
+            const auto fill = command == TransportCommand::fill_on;
+            timeline_scheduler_.set_fill(fill);
+            published_fill_.store(fill, std::memory_order_release);
         }
     }
 

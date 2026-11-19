@@ -87,3 +87,7 @@ Task 018 Debug measurements on the same x86-64 development host were about
 voices with the filter bypassed, 1.1 µs for enabled delay processing, and
 110.6 µs for mixed sample/synth playback. These are scenario examples, not
 portable thresholds or ARM measurements.
+Task 020 adds `probability_conditions` and `maximum_ratchets_fill` scheduler
+scenarios. Their reported preparation time is timeline compilation; processing
+time measures bounded scheduling only. Offline figures are regression data, not
+claims about Pi 5 or N150 real-time hardware behavior.

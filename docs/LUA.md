@@ -137,3 +137,10 @@ Examples:
 - [`timeline_mutate.lua`](../examples/timeline_mutate.lua)
 - [`timeline_polyrhythm.lua`](../examples/timeline_polyrhythm.lua)
 - [`timeline_variation.lua`](../examples/timeline_variation.lua)
+## Trigger properties
+
+`add_note` and `modify_note` accept optional `probability`, `condition`,
+`condition_n`, `condition_m`, and `ratchets` fields. Conditions use `always`,
+`first`, `not-first`, `every-n`, `n-of-m`, `previous-fired`,
+`previous-not-fired`, `fill`, and `not-fill`. The binding delegates validation
+and publication to the same C++ timeline transaction used by other clients.

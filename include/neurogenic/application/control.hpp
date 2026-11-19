@@ -110,6 +110,10 @@ struct SelectedEventState {
     float velocity{};
     MusicalTick duration{};
     std::size_t index_at_step{}, events_at_step{};
+    float trigger_probability{1.0F};
+    TriggerCondition trigger_condition{TriggerCondition::always};
+    std::uint16_t condition_n{1}, condition_m{1};
+    std::uint8_t ratchet_count{1};
 };
 struct StepParameterLockState {
     EventId event_id{};
@@ -137,6 +141,8 @@ struct ApplicationState {
     std::string selected_lock_parameter{"synth.cutoff"};
     std::vector<StepParameterLockState> selected_step_locks;
     bool edit_group_active{}, can_undo{}, can_redo{};
+    bool fill_active{}, fill_latched{};
+    std::uint64_t generation_seed{};
     std::size_t undo_depth{}, redo_depth{}, history_capacity{};
     PadMode pad_mode{PadMode::step};
     std::string parameter_page{"main"}, focused_element{"transport"};
@@ -194,6 +200,7 @@ class ApplicationService {
     std::uint64_t next_sequence_{1}, rejected_{};
     std::optional<TimelineTransaction> edit_group_;
     mutable std::optional<EventId> selected_event_id_;
+    bool fill_momentary_{};
     mutable SystemMonitor system_monitor_;
 };
 

@@ -377,6 +377,7 @@ TimelineService::TimelineService(Publish publish, Timeline initial,
                                  std::size_t history_capacity)
     : publish_(std::move(publish)), limits_(limits),
       history_capacity_(history_capacity), current_(std::move(initial)) {
+    generation_seed_ = current_.generation_seed;
     if (!publish_)
         throw std::invalid_argument(
             "timeline publication callback is required");
@@ -434,6 +435,7 @@ bool TimelineService::commit(TimelineTransaction transaction,
         error = "unsupported timeline commit policy";
         return false;
     }
+    transaction.timeline_.generation_seed = transaction.generation_seed_;
     if (!validate(transaction, error))
         return false;
     std::lock_guard commit_lock(commit_mutex_);
@@ -481,6 +483,7 @@ bool TimelineService::undo(TimelineCommitPolicy policy, std::string &error) {
         push_bounded(redo_, {std::move(current_), generation_seed_});
         current_ = std::move(candidate.timeline);
         generation_seed_ = candidate.generation_seed;
+        current_.generation_seed = generation_seed_;
         undo_.pop_back();
         ++revision_;
     }
@@ -509,6 +512,7 @@ bool TimelineService::redo(TimelineCommitPolicy policy, std::string &error) {
         push_bounded(undo_, {std::move(current_), generation_seed_});
         current_ = std::move(candidate.timeline);
         generation_seed_ = candidate.generation_seed;
+        current_.generation_seed = generation_seed_;
         redo_.pop_back();
         ++revision_;
     }
