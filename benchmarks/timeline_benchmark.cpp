@@ -8,12 +8,14 @@
 #include "neurogenic/timeline/playback.hpp"
 #include "neurogenic/ui/gui.hpp"
 #include <chrono>
+#include <charconv>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <vector>
 #ifdef __linux__
 #include <sys/utsname.h>
@@ -22,7 +24,7 @@
 namespace {
 using Clock = std::chrono::steady_clock;
 volatile std::uint64_t checksum{};
-constexpr std::size_t iterations = 2000;
+std::size_t iterations = 2000;
 bool budget_failed{};
 std::string cpu_model() {
     std::ifstream input("/proc/cpuinfo");
@@ -677,7 +679,24 @@ void external_fx_case() {
                iterations);
 }
 } // namespace
-int main() {
+int main(int argc, char **argv) {
+    for (int argument = 1; argument < argc; ++argument) {
+        const std::string_view option{argv[argument]};
+        if (option != "--iterations" || argument + 1 >= argc) {
+            std::cerr << "usage: neurogenic_benchmark [--iterations COUNT]\n";
+            return 2;
+        }
+        const std::string_view value{argv[++argument]};
+        std::size_t parsed{};
+        const auto conversion =
+            std::from_chars(value.data(), value.data() + value.size(), parsed);
+        if (conversion.ec != std::errc{} ||
+            conversion.ptr != value.data() + value.size() || parsed == 0) {
+            std::cerr << "--iterations requires a positive integer\n";
+            return 2;
+        }
+        iterations = parsed;
+    }
     audio_case("idle", 0);
     audio_case("voices_8", 8);
     audio_case("voices_16", 16);

@@ -55,6 +55,13 @@ cmake --build --preset dev --target neurogenic_benchmark
 ./build/dev/neurogenic_benchmark > benchmark.jsonl
 ```
 
+The executable uses 2,000 iterations per timed scenario by default. Pass
+`--iterations COUNT` to choose a different workload. CTest deliberately uses
+100 iterations: its `neurogenic_benchmark_schema` test exercises every scenario
+(including under ASan/UBSan) and validates the JSONL summary, but is a bounded
+correctness smoke test rather than a performance measurement. Run the command
+above without an override when collecting comparable benchmark results.
+
 Each JSON Lines record uses `neurogenic.benchmark.v1` and reports scenario,
 CPU model, architecture, OS/kernel, compiler/build type, sample rate, buffer
 size, preparation time, processing nanoseconds per buffer, real-time factor,

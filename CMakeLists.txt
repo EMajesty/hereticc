@@ -83,7 +83,10 @@ if(NEUROGENIC_BUILD_TESTS)
   set_tests_properties(neurogenic_gui_smoke PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
   add_executable(neurogenic_benchmark benchmarks/timeline_benchmark.cpp)
   target_link_libraries(neurogenic_benchmark PRIVATE neurogenic_engine neurogenic_gui)
-  add_test(NAME neurogenic_benchmark_schema COMMAND neurogenic_benchmark)
+  # CTest validates every scenario and runs it under sanitizers, but does not
+  # collect performance data. Keep this bounded independently of runner speed;
+  # the benchmark executable retains its 2,000-iteration measurement default.
+  add_test(NAME neurogenic_benchmark_schema COMMAND neurogenic_benchmark --iterations 100)
   set_tests_properties(neurogenic_benchmark_schema PROPERTIES
     PASS_REGULAR_EXPRESSION "neurogenic.benchmark.summary.v1" TIMEOUT 30)
   if(NEUROGENIC_FETCH_DEPENDENCIES AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
