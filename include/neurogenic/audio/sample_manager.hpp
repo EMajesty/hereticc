@@ -12,7 +12,7 @@
 #include <vector>
 
 namespace neurogenic {
-enum class SampleSlotLoadState:std::uint8_t{empty,loading,loaded,error};
+enum class SampleSlotLoadState:std::uint8_t{empty,queued,preparing,prepared,pending_activation,loaded,error};
 struct SampleSlotStatus {
   SampleSlotId id{};
   SampleSlotLoadState state{SampleSlotLoadState::empty};
@@ -26,6 +26,7 @@ struct SampleSlotStatus {
   float progress{};
   std::string error;
   std::uint64_t revision{};
+  std::filesystem::path pending_source_path;
 };
 
 class SampleManager {
@@ -46,10 +47,16 @@ public:
 private:
   enum class Operation:std::uint8_t{load,unload};
   struct Command{Operation operation{};SampleSlotId id{};std::filesystem::path path;std::uint64_t revision{};};
+  struct Publication {
+    Operation operation{};std::uint64_t revision{},sequence{};std::filesystem::path path;
+    std::uint32_t source_rate{};std::uint16_t channels{};std::uint64_t frames{};double duration_seconds{};
+  };
+  struct SlotRecord {SampleSlotStatus status;std::deque<Publication> publications;};
   bool submit(Command);
   void run() noexcept;
+  void refresh_locked(SlotRecord&) const;
   AudioEngine& engine_;const std::size_t capacity_;
-  mutable std::mutex mutex_;std::condition_variable wake_,idle_;std::deque<Command> commands_;std::map<std::uint32_t,SampleSlotStatus> states_;
+  mutable std::mutex mutex_;std::condition_variable wake_,idle_;std::deque<Command> commands_;mutable std::map<std::uint32_t,SlotRecord> states_;
   std::thread worker_;bool stopping_{},busy_{};std::uint64_t next_revision_{1},rejected_{};
 };
 [[nodiscard]] const char* sample_slot_state_name(SampleSlotLoadState) noexcept;

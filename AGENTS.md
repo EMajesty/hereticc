@@ -5,6 +5,9 @@
 - Publish live samples as immutable bounded versions. Audio callbacks may mark
   versions retired but must never destroy them; reclamation belongs to a
   non-audio thread, and active voices must retain valid old sample data.
+- Keep frontend sample metadata callback-acknowledged: active fields describe
+  the audio-active version, pending fields describe the newest command, and an
+  older completion must never overwrite a newer revision's visible state.
 - Use integer musical time and deterministic offline tests.
 - Put audio/MIDI/platform details behind narrow adapters.
 - Preserve dependency pins, licenses, notices, and stable external identifiers.

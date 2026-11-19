@@ -86,7 +86,9 @@ files bypass conversion.
 `replace ID FILE`, `unload ID`, `status [ID]`, and `quit` on standard input.
 Loading and windowed-sinc conversion run on a preparation worker while audio
 continues. Existing voices finish on their old immutable sample after replace
-or unload. See [live sample management](docs/SAMPLES.md).
+or unload. Status keeps audio-active metadata separate from the newest pending
+request and reports callback activation explicitly. See
+[live sample management](docs/SAMPLES.md).
 
 `--timeline` loads the versioned, line-oriented `NEUROGENIC_TIMELINE 1`
 interchange format before audio starts. It carries transport metadata, stable

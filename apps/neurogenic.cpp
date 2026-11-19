@@ -7,6 +7,7 @@
 #include "neurogenic/midi/mapping.hpp"
 #include "neurogenic/scripting/runtime.hpp"
 #include "neurogenic/timeline/io.hpp"
+#include <array>
 #include <atomic>
 #include <charconv>
 #include <chrono>
@@ -40,6 +41,7 @@ void usage(){
 void print_status(const neurogenic::SampleSlotStatus& state){
   std::cout<<"slot "<<state.id.value<<" "<<neurogenic::sample_slot_state_name(state.state);
   if(state.has_sample)std::cout<<" source=\""<<state.source_path.string()<<"\" "<<state.source_sample_rate<<"->"<<state.engine_sample_rate<<" Hz "<<state.channels<<"ch "<<state.duration_seconds<<"s";
+  if(!state.pending_source_path.empty())std::cout<<" pending=\""<<state.pending_source_path.string()<<'"';
   if(!state.error.empty())std::cout<<" error=\""<<state.error<<'"';std::cout<<'\n';
 }
 
@@ -99,9 +101,11 @@ int main(int argc,char** argv){
         if(!samples.load(neurogenic::SampleSlotId{id},path))throw std::runtime_error("sample command queue is full");
       }
       samples.wait_idle();
-      for(const auto& [id,path]:slot_files){(void)path;const auto state=samples.status(neurogenic::SampleSlotId{id});if(!state.has_sample)throw std::runtime_error("slot "+std::to_string(id)+" failed: "+state.error);print_status(state);}
+      for(const auto& [id,path]:slot_files){(void)path;const auto state=samples.status(neurogenic::SampleSlotId{id});if(state.state==neurogenic::SampleSlotLoadState::error)throw std::runtime_error("slot "+std::to_string(id)+" failed: "+state.error);}
       for(const auto& [note,id]:note_maps)
         if(!engine.map_note_to_slot(note,neurogenic::SampleSlotId{id}))throw std::invalid_argument("--map references an unloaded sample slot");
+      std::array<float,0> no_audio{};engine.process(no_audio,no_audio);
+      for(const auto& [id,path]:slot_files){(void)path;print_status(samples.status(neurogenic::SampleSlotId{id}));}
     }
 
     neurogenic::ScriptRuntime lua([&](auto pattern){return engine.queue_pattern(pattern);},[&]{return engine.frame_position();});

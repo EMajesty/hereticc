@@ -8,6 +8,7 @@
 #include <atomic>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <span>
 #include <string>
 #include <vector>
@@ -21,8 +22,9 @@ public:
   ~AudioEngine();
   void set_sample(Sample sample); // compatibility: slot 0, mapped from every note
   void set_sample_slot(SampleSlotId id,Sample sample);
-  [[nodiscard]] bool publish_sample_slot(SampleSlotId id,Sample sample) noexcept;
-  [[nodiscard]] bool unload_sample_slot(SampleSlotId id) noexcept;
+  [[nodiscard]] bool publish_sample_slot(SampleSlotId id,Sample sample,std::uint64_t* publication=nullptr) noexcept;
+  [[nodiscard]] bool unload_sample_slot(SampleSlotId id,std::uint64_t* publication=nullptr) noexcept;
+  [[nodiscard]] bool sample_update_applied(std::uint64_t publication) const noexcept{return publication!=0&&applied_sample_update_sequence_.load(std::memory_order_acquire)>=publication;}
   void reclaim_sample_versions() noexcept;
   [[nodiscard]] bool map_note_to_slot(std::uint8_t note,SampleSlotId id) noexcept;
   [[nodiscard]] bool has_sample_slot(SampleSlotId id) const noexcept;
@@ -56,7 +58,7 @@ private:
   struct Voice { const Sample* sample{};std::size_t sample_version{},cursor{};float gain{};std::uint64_t age{};TrackId track{};EventId event{};std::uint64_t occurrence{};std::uint8_t pitch{};bool timeline_owned{},active{}; };
   enum class SampleVersionState:std::uint8_t{free,queued,active,retiring,retired};
   struct SampleVersion {std::atomic<SampleVersionState> state{SampleVersionState::free};std::atomic<std::uint32_t> id{invalid_sample_slot.value};std::unique_ptr<const Sample> sample;};
-  struct SampleUpdate {enum class Type:std::uint8_t{install,unload};Type type{};SampleSlotId id{};std::size_t version{};};
+  struct SampleUpdate {enum class Type:std::uint8_t{install,unload};Type type{};SampleSlotId id{};std::size_t version{};std::uint64_t sequence{};};
   class SampleUpdateQueue {
   public:
     explicit SampleUpdateQueue(std::size_t capacity):items_(std::make_unique<SampleUpdate[]>(capacity)),capacity_(capacity){}
@@ -72,6 +74,7 @@ private:
   void stop_timeline_voice(TrackId,EventId,std::uint64_t occurrence) noexcept;
   void stop_voices(bool timeline_only=false) noexcept;
   void reclaim_retired_plans() noexcept;
+  void reclaim_sample_versions_unlocked() noexcept;
   std::uint32_t rate_; Scheduler scheduler_;TimelineScheduler timeline_scheduler_; PurestGain effect_;
   SpscQueue<Trigger,65> triggers_;
   SpscQueue<Pattern,9> patterns_;
@@ -80,6 +83,9 @@ private:
   std::array<PlanSlot,timeline_plan_slot_count> timeline_plans_{};
   SpscQueue<TransportCommand,16> transport_commands_;
   std::atomic<std::uint64_t> dropped_triggers_{},dropped_patterns_{},dropped_timelines_{},dropped_timeline_events_{},dropped_legacy_events_{},dropped_transport_commands_{},reclaimed_timeline_plans_{},published_frame_{},next_order_{},stolen_voices_{},missing_slot_triggers_{},dropped_sample_updates_{},reclaimed_sample_versions_{};
+  std::atomic<std::uint64_t> applied_sample_update_sequence_{};
+  std::uint64_t next_sample_update_sequence_{};
+  std::mutex sample_update_producer_mutex_;
   SampleUpdateQueue sample_updates_;
   std::unique_ptr<SampleVersion[]> sample_versions_;
   std::size_t sample_version_capacity_{};

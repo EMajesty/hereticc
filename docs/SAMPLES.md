@@ -8,12 +8,27 @@ exposing audio-engine objects.
 
 Loading is asynchronous. A bounded control queue feeds one preparation worker;
 that worker performs file I/O, WAV decoding, allocation, and resampling. Slot
-state is queryable as `empty`, `loading`, `loaded`, or `error`, with a progress
-value (currently zero or one), last successful source path/rate, engine rate,
-channels, frame count, duration, error text, and revision. `loaded` or `empty`
-means the immutable update was accepted for publication; the audio thread
-activates it at the start of its next callback. A failed replacement reports an
-error but retains the last successfully loaded sample and its metadata.
+state is queryable as `empty`, `queued`, `preparing`, `prepared`,
+`pending-activation`, `loaded`, or `error`. `prepared` is normally brief:
+publication immediately follows preparation when capacity is available.
+`pending-activation` means the immutable update is in the bounded audio queue;
+`loaded` or `empty` means the audio callback has acknowledged the install or
+unload. Progress is currently zero or one.
+
+The primary source path/rate, engine rate, channels, frame count, and duration
+always describe the audio-active sample. `pending_source_path` separately
+describes the newest requested load while it is queued, preparing, prepared, or
+awaiting activation; an unload has no pending path. Every accepted command has
+a monotonic revision, and every accepted publication has a monotonic audio
+sequence. Older completions may update active metadata only after their own
+audio acknowledgement; they cannot replace the state, error, or pending
+metadata of a newer revision. This makes polling deterministic for controller
+feedback and UI state replication.
+
+A failed replacement reports an error for the newest revision but retains the
+previous audio-active sample and all of its metadata. If an earlier successful
+publication was already pending, its later callback acknowledgement is still
+reflected as active without erasing the newer failure.
 
 Prepared samples enter a bounded version pool (64 versions by default and
 configurable at engine construction). Its publication queue is allocated to
@@ -27,6 +42,15 @@ alone destroys them. Consequently the callback performs no allocation,
 deallocation, file I/O, decoding, resampling, locking, logging, or scripting.
 If long-lived voices plus rapid replacements exhaust the pool, the command
 fails observably and the current sample remains intact.
+
+The publication queue has one serialized control-side producer path (normally
+`SampleManager`) and the audio callback is its sole consumer. A control-side
+mutex also serializes direct engine publications and version reclamation; the
+audio callback never takes it. Status queries only read an atomic
+applied-sequence acknowledgement; they never inspect sample objects. Shutdown
+drains preparation commands, but a prepared update remains
+`pending-activation` until a subsequent callback consumes it. Destroy the audio
+device before the engine so no callback can outlive the immutable version pool.
 
 The WAV decoder supports mono and stereo PCM16, PCM24, PCM32, and IEEE float32
 RIFF/WAVE files. Other containers and compressed formats are rejected with a

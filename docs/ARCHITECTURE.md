@@ -94,6 +94,10 @@ retain old versions, and only marks unreferenced versions retired. Destruction
 and pool reuse occur on the control side. Unload follows the same rule: new
 triggers see an empty slot while existing voices finish. Publication overload
 is rejected and counted rather than blocking or freeing memory in the callback.
+Monotonic publication sequences acknowledge callback activation back to
+`SampleManager`. Frontend snapshots keep audio-active metadata separate from
+the newest pending request, so stale preparation completions cannot overwrite a
+newer command's visible revision or status.
 See [SAMPLES.md](SAMPLES.md).
 
 ## CPU and ABI portability

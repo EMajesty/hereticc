@@ -99,6 +99,13 @@ preparation-time windowed-sinc conversion. Streaming decode, non-WAV formats,
 mastering-grade selectable resampler profiles, hardware listening tests, and
 sample-management Lua/MIDI bindings remain future work.
 
+The sample-state consistency follow-up adds explicit queued, preparation,
+publication-pending, and callback-acknowledged states. Active metadata and the
+newest pending request are reported separately. Deterministic host tests cover
+rapid same-slot replacement, mixed unload/load ordering, delayed callback
+activation, failed replacement preservation, concurrent playback, and shutdown
+with an unapplied publication.
+
 The AArch64 enablement task exposes the complete Nix package, app, check, and
 development-shell outputs for both `x86_64-linux` and `aarch64-linux`. The code
 and dependency audit found no x86 SIMD baseline; scheduler arithmetic relies on

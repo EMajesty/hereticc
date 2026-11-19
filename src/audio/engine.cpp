@@ -37,19 +37,23 @@ void AudioEngine::set_sample_slot(SampleSlotId id,Sample sample){
   if(!publish_sample_slot(id,std::move(sample)))throw std::runtime_error("sample update capacity is exhausted");
 }
 
-void AudioEngine::reclaim_sample_versions() noexcept{for(std::size_t i=0;i<sample_version_capacity_;++i)if(sample_versions_[i].state.load(std::memory_order_acquire)==SampleVersionState::retired){sample_versions_[i].sample.reset();sample_versions_[i].id.store(invalid_sample_slot.value,std::memory_order_release);sample_versions_[i].state.store(SampleVersionState::free,std::memory_order_release);reclaimed_sample_versions_.fetch_add(1,std::memory_order_relaxed);}}
+void AudioEngine::reclaim_sample_versions_unlocked() noexcept{for(std::size_t i=0;i<sample_version_capacity_;++i)if(sample_versions_[i].state.load(std::memory_order_acquire)==SampleVersionState::retired){sample_versions_[i].sample.reset();sample_versions_[i].id.store(invalid_sample_slot.value,std::memory_order_release);sample_versions_[i].state.store(SampleVersionState::free,std::memory_order_release);reclaimed_sample_versions_.fetch_add(1,std::memory_order_relaxed);}}
+void AudioEngine::reclaim_sample_versions() noexcept{std::lock_guard lock(sample_update_producer_mutex_);reclaim_sample_versions_unlocked();}
 
-bool AudioEngine::publish_sample_slot(SampleSlotId id,Sample sample) noexcept{
+bool AudioEngine::publish_sample_slot(SampleSlotId id,Sample sample,std::uint64_t* publication) noexcept{
+  std::lock_guard lock(sample_update_producer_mutex_);
+  if(publication)*publication=0;
   if(id==invalid_sample_slot||sample.sample_rate!=rate_||(sample.channels!=1&&sample.channels!=2)||sample.interleaved.empty()||sample.interleaved.size()%sample.channels!=0)return false;
-  reclaim_sample_versions();std::size_t version=sample_version_capacity_;for(std::size_t i=0;i<sample_version_capacity_;++i)if(sample_versions_[i].state.load(std::memory_order_acquire)==SampleVersionState::free){version=i;break;}
+  reclaim_sample_versions_unlocked();std::size_t version=sample_version_capacity_;for(std::size_t i=0;i<sample_version_capacity_;++i)if(sample_versions_[i].state.load(std::memory_order_acquire)==SampleVersionState::free){version=i;break;}
   if(version==sample_version_capacity_){dropped_sample_updates_.fetch_add(1,std::memory_order_relaxed);return false;}
   try{sample_versions_[version].sample=std::make_unique<const Sample>(std::move(sample));}catch(...){return false;}
   sample_versions_[version].id.store(id.value,std::memory_order_release);sample_versions_[version].state.store(SampleVersionState::queued,std::memory_order_release);
-  if(!sample_updates_.push({SampleUpdate::Type::install,id,version})){sample_versions_[version].state.store(SampleVersionState::free,std::memory_order_release);sample_versions_[version].sample.reset();sample_versions_[version].id.store(invalid_sample_slot.value,std::memory_order_release);dropped_sample_updates_.fetch_add(1,std::memory_order_relaxed);return false;}
+  if(next_sample_update_sequence_==std::numeric_limits<std::uint64_t>::max()||!sample_updates_.push({SampleUpdate::Type::install,id,version,next_sample_update_sequence_+1})){sample_versions_[version].state.store(SampleVersionState::free,std::memory_order_release);sample_versions_[version].sample.reset();sample_versions_[version].id.store(invalid_sample_slot.value,std::memory_order_release);dropped_sample_updates_.fetch_add(1,std::memory_order_relaxed);return false;}
+  ++next_sample_update_sequence_;if(publication)*publication=next_sample_update_sequence_;
   return true;
 }
 
-bool AudioEngine::unload_sample_slot(SampleSlotId id) noexcept{if(id==invalid_sample_slot||!sample_updates_.push({SampleUpdate::Type::unload,id,0})){dropped_sample_updates_.fetch_add(1,std::memory_order_relaxed);return false;}return true;}
+bool AudioEngine::unload_sample_slot(SampleSlotId id,std::uint64_t* publication) noexcept{std::lock_guard lock(sample_update_producer_mutex_);if(publication)*publication=0;if(id==invalid_sample_slot||next_sample_update_sequence_==std::numeric_limits<std::uint64_t>::max()||!sample_updates_.push({SampleUpdate::Type::unload,id,0,next_sample_update_sequence_+1})){dropped_sample_updates_.fetch_add(1,std::memory_order_relaxed);return false;}++next_sample_update_sequence_;if(publication)*publication=next_sample_update_sequence_;return true;}
 
 bool AudioEngine::map_note_to_slot(std::uint8_t note,SampleSlotId id) noexcept{
   if(processing_started_.load(std::memory_order_acquire)||!has_sample_slot(id))return false;
@@ -110,6 +114,7 @@ void AudioEngine::process(std::span<float> left,std::span<float> right) noexcept
   while(sample_updates_.pop(sample_update)){
     for(std::size_t i=0;i<sample_version_capacity_;++i)if(sample_versions_[i].id.load(std::memory_order_acquire)==sample_update.id.value&&sample_versions_[i].state.load(std::memory_order_acquire)==SampleVersionState::active)sample_versions_[i].state.store(SampleVersionState::retiring,std::memory_order_release);
     if(sample_update.type==SampleUpdate::Type::install)sample_versions_[sample_update.version].state.store(SampleVersionState::active,std::memory_order_release);
+    applied_sample_update_sequence_.store(sample_update.sequence,std::memory_order_release);
   }
 
   Pattern pattern;
