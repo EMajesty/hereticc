@@ -216,6 +216,83 @@ void publication_case() {
                    .count() /
                iterations);
 }
+void automation_case(std::string name, std::size_t locks, bool mixed = false) {
+    neurogenic::Timeline source;
+    neurogenic::Track track;
+    track.id = 1;
+    track.instrument_id = std::string(neurogenic::subtractive_instrument_id);
+    track.pattern.length = 960;
+    track.pattern.events.push_back(
+        {1, 0, neurogenic::MusicalEventType::note, 60, 0.8F, 480});
+    const std::string destinations[]{"synth.cutoff", "synth.resonance",
+                                     "synth.gain", "effect.delay.mix"};
+    for (std::size_t i = 0; i < locks; ++i) {
+        neurogenic::MusicalEvent event;
+        event.id = i + 2;
+        event.tick = static_cast<neurogenic::MusicalTick>((i * 37) % 960);
+        event.type = neurogenic::MusicalEventType::parameter;
+        event.parameter_destination = destinations[i % 4];
+        event.value = i % 4 == 0 ? 1000.0F + static_cast<float>(i)
+                                 : static_cast<float>((i % 8) + 1) / 10.0F;
+        track.pattern.events.push_back(std::move(event));
+    }
+    source.tracks.push_back(std::move(track));
+    neurogenic::AudioEngine engine(48000, 32);
+    if (mixed)
+        engine.set_sample(sample(48000));
+    std::string error;
+    const auto preparation = Clock::now();
+    if (!engine.queue_timeline(source, error))
+        throw std::runtime_error(error);
+    const auto preparation_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
+                                                             preparation)
+            .count();
+    std::vector<float> left(256), right(256);
+    const auto begin = Clock::now();
+    for (std::size_t i = 0; i < iterations; ++i) {
+        if (mixed && i % 32 == 0)
+            engine.trigger(36, 0.5F);
+        engine.process(left, right);
+        checksum += left[0] != 0;
+    }
+    result(std::move(name), 48000, 256,
+           std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
+                                                                begin)
+                   .count() /
+               iterations,
+           preparation_ns);
+}
+void automation_publication_case() {
+    neurogenic::AudioEngine engine;
+    std::vector<float> left(256), right(256);
+    std::string error;
+    const auto begin = Clock::now();
+    for (std::size_t i = 0; i < iterations; ++i) {
+        neurogenic::Timeline source;
+        neurogenic::Track track;
+        track.id = 1;
+        track.instrument_id =
+            std::string(neurogenic::subtractive_instrument_id);
+        track.pattern.length = 960;
+        neurogenic::MusicalEvent event;
+        event.id = 1;
+        event.tick = 0;
+        event.type = neurogenic::MusicalEventType::parameter;
+        event.parameter_destination = "synth.cutoff";
+        event.value = 1000.0F + static_cast<float>(i % 100);
+        track.pattern.events.push_back(std::move(event));
+        source.tracks.push_back(std::move(track));
+        if (!engine.queue_timeline(source, error))
+            throw std::runtime_error(error);
+        engine.process(left, right);
+    }
+    result("rapid_automation_publication", 48000, 256,
+           std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
+                                                                begin)
+                   .count() /
+               iterations);
+}
 void resample_case() {
     auto source = sample(44100, 44100);
     neurogenic::WindowedSincConverter converter;
@@ -268,6 +345,10 @@ int main() {
     mixed_case();
     dense_case();
     publication_case();
+    automation_case("parameter_locks_sparse", 4);
+    automation_case("parameter_locks_dense", 256);
+    automation_case("mixed_sample_synth_automation", 64, true);
+    automation_publication_case();
     resample_case();
     gui_case(1920, 1200);
     gui_case(1024, 800);

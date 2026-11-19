@@ -95,6 +95,9 @@ Timeline load_timeline(const std::filesystem::path &path) {
                 if (!(line >> track >> event.id >> event.tick >>
                       event.parameter_id >> event.value))
                     throw std::runtime_error("invalid parameter");
+                if (line >> std::quoted(event.parameter_destination)) {
+                } else
+                    line.clear();
                 require_end(line);
                 find_track(timeline, track).pattern.events.push_back(event);
             } else
@@ -169,10 +172,14 @@ void save_timeline(const Timeline &timeline,
                 if (event.type == MusicalEventType::note_off)
                     output << ' ' << event.target_event_id;
                 output << '\n';
-            } else
+            } else {
                 output << "parameter " << track.id << ' ' << event.id << ' '
                        << event.tick << ' ' << event.parameter_id << ' '
-                       << event.value << '\n';
+                       << event.value;
+                if (!event.parameter_destination.empty())
+                    output << ' ' << std::quoted(event.parameter_destination);
+                output << '\n';
+            }
         }
     }
 }

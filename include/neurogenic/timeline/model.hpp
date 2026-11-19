@@ -40,6 +40,7 @@ struct MusicalEvent {
     std::uint32_t parameter_id{};
     float value{};
     EventId target_event_id{};
+    std::string parameter_destination;
 };
 struct MusicalPattern {
     MusicalTick length{ticks_per_quarter * 4};

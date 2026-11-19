@@ -195,3 +195,11 @@ separate application updates from processing. The native delay processes the
 mixed output after the gain stage. Concrete hot paths avoid virtual dispatch per
 sample; abstract interfaces remain preparation and extension boundaries. See
 [INSTRUMENTS.md](INSTRUMENTS.md).
+
+Parameter automation remains ordinary authoritative timeline data. Editable
+events store stable destination strings; `compile_timeline` validates routing
+and converts them to numeric `ParameterTarget`/parameter pairs. The callback
+does no string lookup and dispatches bounded due events to the preallocated
+synth or master delay before simultaneous note-ons. Application lock actions,
+GUI, controllers and Lua all call `TimelineTransaction` rather than duplicating
+destination validation or maintaining another pattern model.

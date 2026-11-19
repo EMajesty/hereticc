@@ -1,5 +1,13 @@
 # Implementation status
 
+Task 019 adds validated stable synth/delay parameter destinations, sample-
+accurate discrete timeline automation, step locks with multiple destinations,
+shared Undo/Redo, Lua adapters, lock-aware GUI/controller actions and automation
+benchmarks. Locked values persist until changed and are reapplied on loops;
+curves, chase-on-seek and automatic reversion are not implemented. Nix guidance
+now favors incremental CMake development and includes read-only store/root
+diagnostics without automated cleanup.
+
 Task 018 adds stable track-to-instrument routing, a bounded native instrument
 interface, a playable 32-voice subtractive synth, a reusable DSP processor
 interface and preallocated stereo delay. Timeline and MIDI notes share

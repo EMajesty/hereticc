@@ -118,6 +118,14 @@ target `synth.subtractive.v1`. The 16 NOTES and 16 LEVELS modes define note and
 velocity semantics; translating those semantic grid events into live instrument
 commands remains an application-mapping extension.
 
+Parameter-lock clients use `step.lock-select.v1`, `step.lock-set.v1`,
+`step.lock-remove.v1`, and `step.locks-clear.v1`. A full controller can issue
+`step.lock-set.v1` while a step is held and an encoder moves; the action carries
+the semantic parameter ID and value, not an encoder number. A minimal controller
+selects the step, focuses the parameter list, adjusts with its data wheel and
+confirms. Both paths edit the same timeline transaction and observable lock
+list; no controller owns a shadow pattern.
+
 `PerformanceGrid` converts any virtual or physical index 0..15 to semantic
 events independently of MIDI notes or button placement:
 

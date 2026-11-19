@@ -328,6 +328,14 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
                                        event.tick == tick &&
                                        event.pitch == track->target_note;
                             });
+            const bool locked =
+                valid &&
+                std::any_of(track->events.begin(), track->events.end(),
+                            [&](const MusicalEvent &event) {
+                                return event.type ==
+                                           MusicalEventType::parameter &&
+                                       event.tick == tick;
+                            });
             UiColor color =
                 !valid   ? UiColor::unavailable
                 : active ? UiColor::accent
@@ -337,7 +345,8 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
             rect(l.grid[i], color);
             text(l.grid[i],
                  step == playhead ? UiColor::selected : UiColor::text,
-                 std::to_string(step + 1) + (step == playhead ? " >" : ""));
+                 std::to_string(step + 1) + (locked ? " L" : "") +
+                     (step == playhead ? " >" : ""));
         }
     } else if (view_ == GuiView::samples) {
         text({l.content.x + 12, l.content.y + 8, l.content.w, 28 * l.scale},
@@ -518,6 +527,14 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
               l.parameters.w - 24 * l.scale, 90 * l.scale},
              UiColor::muted,
              "Select + step to inspect\nan existing note event.");
+    std::string locks = "LOCKS";
+    for (const auto &lock : state.selected_step_locks)
+        locks += "\n" + lock.parameter_id + " = " + std::to_string(lock.value);
+    if (state.selected_step_locks.empty())
+        locks += "\n(none)";
+    text({l.parameters.x + 12 * l.scale, l.parameters.y + 380 * l.scale,
+          l.parameters.w - 24 * l.scale, 120 * l.scale},
+         UiColor::text, locks);
     if (!error_.empty())
         text({l.parameters.x + 12,
               l.parameters.y + l.parameters.h - 70 * l.scale,
@@ -635,22 +652,76 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
                 fullscreen_toggle_ = true;
                 ++ui_revision_;
                 save_settings(error_);
+            } else if (view_ == GuiView::parameters && shift_ &&
+                       !state.parameters.empty()) {
+                const auto &parameter =
+                    state
+                        .parameters[parameter_index_ % state.parameters.size()];
+                double value{};
+                if (const auto *real =
+                        std::get_if<double>(&parameter.current_value))
+                    value = *real;
+                else if (const auto *integer = std::get_if<std::int64_t>(
+                             &parameter.current_value))
+                    value = static_cast<double>(*integer);
+                submit(
+                    command("step.lock-set.v1", {{"parameter_id", parameter.id},
+                                                 {"value", value}}));
             } else
                 simple("navigation.confirm.v1");
             return true;
         }
         if (input.key == GuiKey::escape) {
-            simple("navigation.cancel.v1");
+            if (view_ == GuiView::parameters && shift_ &&
+                !state.parameters.empty())
+                submit(command(
+                    "step.lock-remove.v1",
+                    {{"parameter_id", state
+                                          .parameters[parameter_index_ %
+                                                      state.parameters.size()]
+                                          .id}}));
+            else
+                simple("navigation.cancel.v1");
             return true;
         }
         if ((input.key == GuiKey::up || input.key == GuiKey::down) &&
             view_ == GuiView::parameters && !state.parameters.empty()) {
-            submit(command(
-                "parameter.adjust.v1",
-                {{"parameter_id",
-                  state.parameters[parameter_index_ % state.parameters.size()]
-                      .id},
-                 {"steps", input.key == GuiKey::up ? 1.0 : -1.0}}));
+            const auto &parameter =
+                state.parameters[parameter_index_ % state.parameters.size()];
+            if (shift_) {
+                const auto found = std::find_if(
+                    state.selected_step_locks.begin(),
+                    state.selected_step_locks.end(), [&](const auto &lock) {
+                        return lock.parameter_id == parameter.id;
+                    });
+                const auto current =
+                    found == state.selected_step_locks.end()
+                        ? (std::holds_alternative<double>(
+                               parameter.current_value)
+                               ? std::get<double>(parameter.current_value)
+                               : static_cast<double>(std::get<std::int64_t>(
+                                     parameter.current_value)))
+                        : found->value;
+                submit(command(
+                    "step.lock-set.v1",
+                    {{"parameter_id", parameter.id},
+                     {"value",
+                      std::clamp(
+                          current + (input.key == GuiKey::up ? 1 : -1) *
+                                        parameter.step,
+                          std::holds_alternative<double>(parameter.minimum)
+                              ? std::get<double>(parameter.minimum)
+                              : static_cast<double>(
+                                    std::get<std::int64_t>(parameter.minimum)),
+                          std::holds_alternative<double>(parameter.maximum)
+                              ? std::get<double>(parameter.maximum)
+                              : static_cast<double>(std::get<std::int64_t>(
+                                    parameter.maximum)))}}));
+            } else
+                submit(
+                    command("parameter.adjust.v1",
+                            {{"parameter_id", parameter.id},
+                             {"steps", input.key == GuiKey::up ? 1.0 : -1.0}}));
             return true;
         }
         if ((input.key == GuiKey::up || input.key == GuiKey::down) &&

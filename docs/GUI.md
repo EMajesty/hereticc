@@ -75,6 +75,13 @@ it does not hold DSP pointers. The Performance view also reports synth
 polyphony, voice steals, rejected DSP commands and bounded instrument/effect
 processing measurements. Compact displays use the same semantic controls.
 
+Steps containing parameter events show an `L` marker. The inspector lists locks
+for the selected step separately from the live parameter value. In the
+Parameters view, Shift+Enter adds or replaces a lock using the current value,
+Shift+Up/Down edits the selected step's locked value, and Shift+Escape removes
+it. Ordinary Up/Down continues to change the live parameter. These commands
+remain available through keyboard/encoder navigation without touch.
+
 CI covers 1920 × 1200 at 1.0×, 1.5× and 2.0×, both compact resolutions,
 high-DPI coordinate conversion, resize, live scale/fullscreen requests,
 persistence recovery, keyboard, pointer, touch-equivalent and encoder paths,

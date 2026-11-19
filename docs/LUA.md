@@ -68,6 +68,8 @@ arbitrary; the model does not impose 16 steps or 4/4.
   remove events.
 - `track:add_parameter{ id=?, tick=, parameter_id=, value= }` and
   `track:modify_parameter(id, table)` edit extensible parameter events.
+  New scripts should use `destination="synth.cutoff"` or another stable
+  application parameter ID instead of the legacy numeric `parameter_id`.
 
 Pitch is 0..127, velocity is 0..1, duration is positive, and an event position
 must be within its track loop. Argument errors abort the script transaction.

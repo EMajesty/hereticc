@@ -9,7 +9,7 @@ Timeline adapt_step_pattern(const Pattern& pattern,TrackId track_id,MusicalTick 
   for(std::size_t i=0;i<pattern.steps.size();++i){
     const auto& step=pattern.steps[i];if(!step.enabled)continue;
     track.pattern.events.push_back({static_cast<EventId>(i+1),static_cast<MusicalTick>(i)*step_length,
-      MusicalEventType::note,step.note,step.velocity,step_length,0,0});
+      MusicalEventType::note,step.note,step.velocity,step_length,0,0,0,{}});
   }
   timeline.tracks.push_back(std::move(track));return timeline;
 }

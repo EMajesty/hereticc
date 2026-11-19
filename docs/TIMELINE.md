@@ -91,7 +91,7 @@ actions remain in the mapping/control layer: demo note 36 can launch Lua, but
 that mapping is not part of the musical event model.
 
 Current limitations: one pattern plays per track, tempo is constant within a
-plan, parameter events are scheduled but have no destination yet, and timeline
+plan, parameter automation is discrete rather than interpolated, and timeline
 replacement takes effect at the next callback rather than a musical boundary.
 Callback staging is finite and observable. Arrangement, recording, editing
 interfaces, tempo maps, and asynchronous sample replacement are future work.
@@ -148,6 +148,29 @@ that ID and leave other notes, parameter events, and explicit note-on/off pairs
 untouched. Durations may exceed one cell. Timing remains within one resolution
 of the nominal step and inside the pattern. Toggle remains exact-grid and
 target-note-specific.
+
+## Parameter locks and automation
+
+Parameter events retain stable event IDs and now carry an optional stable
+destination such as `synth.cutoff` or `effect.delay.mix`. Compilation resolves
+that string to a bounded numeric target and native parameter index; unknown or
+track-incompatible destinations reject the entire plan before publication.
+Legacy numeric parameter events remain readable and schedulable for format
+compatibility, but new edits use stable destinations.
+
+`step.lock-set.v1`, `step.lock-remove.v1`, and `step.locks-clear.v1` edit
+parameter events at the selected step's exact grid tick. Locks do not require a
+note and multiple distinct destinations may share a step. Editing a lock keeps
+its event ID. Transactions, conflicts, failed publication, Undo and Redo use
+the same timeline history as notes.
+
+At a shared tick the deterministic order is note-off, parameter changes,
+note-on, then other events; IDs break ties within a type. Values persist in the
+target until another event or live parameter command changes them. They are not
+reset per buffer, reverted after a step, or interpolated. Loops reapply events
+on each occurrence. Stop preserves current parameter values; restart returns to
+tick zero, where tick-zero automation is applied on the next callback. Seeking
+is not yet a public transport operation and there is no automation chase.
 
 Application adapters use stable semantic action IDs
 `timeline.generate.v1`, `timeline.mutate-track.v1`,

@@ -111,6 +111,11 @@ struct SelectedEventState {
     MusicalTick duration{};
     std::size_t index_at_step{}, events_at_step{};
 };
+struct StepParameterLockState {
+    EventId event_id{};
+    std::string parameter_id;
+    float value{};
+};
 struct ApplicationState {
     std::uint64_t revision{};
     bool playing{};
@@ -129,6 +134,8 @@ struct ApplicationState {
     MusicalTick step_duration{ticks_per_quarter / 4};
     std::optional<SelectedEventState> selected_event;
     std::string selected_step_property{"velocity"};
+    std::string selected_lock_parameter{"synth.cutoff"};
+    std::vector<StepParameterLockState> selected_step_locks;
     bool edit_group_active{}, can_undo{}, can_redo{};
     std::size_t undo_depth{}, redo_depth{}, history_capacity{};
     PadMode pad_mode{PadMode::step};

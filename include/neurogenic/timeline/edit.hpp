@@ -70,6 +70,10 @@ class TimelineTransaction {
                        std::string &error);
     bool modify_parameter(TrackId, EventId, MusicalTick, std::uint32_t, float,
                           std::string &error);
+    bool add_parameter_destination(TrackId, EventId, MusicalTick, std::string,
+                                   float, std::string &error);
+    bool modify_parameter_destination(TrackId, EventId, MusicalTick,
+                                      std::string, float, std::string &error);
     bool remove_event(TrackId, EventId, std::string &error);
     bool set_tempo_bpm(double, std::string &error);
     bool set_time_signature(std::uint16_t, std::uint16_t, std::string &error);

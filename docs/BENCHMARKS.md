@@ -53,6 +53,14 @@ resident memory, and iteration count. Workloads cover idle, 8/16/32 voices,
 preparation, native synth at 1/8/16/32 voices, filter and delay enabled/bypassed,
 mixed sample/synth playback, and GUI frame construction at 1920×1200, 1024×800
 and 1024×600.
+Task 019 adds sparse and dense parameter-lock scheduling, multiple automated
+destinations, mixed sample/synth automation, and rapid automation publication.
+Compilation/preparation remains reported separately from callback processing.
+On the 2026-11-19 x86-64 Debug host, these scenarios averaged approximately
+12.0 µs per 256-frame buffer for both sparse and dense locks, 11.9 µs for the
+mixed automation case, and 9.5 µs for rapid publication. Dense-plan compilation
+was 18.6 µs. These offline figures are not Pi 5/N150 or hardware real-time
+claims.
 Preparation is excluded from audio processing measurements. GUI measurements
 cover snapshot synchronization, layout and draw-command construction; GPU
 execution and presentation latency are not measured.

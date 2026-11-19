@@ -1,4 +1,5 @@
 #include "neurogenic/timeline/playback.hpp"
+#include "neurogenic/dsp/parameter_destination.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -12,9 +13,10 @@ __extension__ using WideInteger = __int128;
     "NEUROGENIC timeline scheduling requires a compiler with 128-bit integer support"
 #endif
 int type_order(MusicalEventType type) noexcept {
-    return type == MusicalEventType::note_off  ? 0
-           : type == MusicalEventType::note_on ? 1
-                                               : 2;
+    return type == MusicalEventType::note_off    ? 0
+           : type == MusicalEventType::parameter ? 1
+           : type == MusicalEventType::note_on   ? 2
+                                                 : 3;
 }
 bool scheduled_before(const TimelineScheduledEvent &a,
                       const TimelineScheduledEvent &b) noexcept {
@@ -77,10 +79,12 @@ bool compile_timeline(const Timeline &timeline, PlaybackPlan &output,
         const auto begin = plan.events.size();
         auto append = [&](MusicalTick raw_tick, EventId id, EventId target,
                           MusicalEventType type, std::uint8_t pitch,
-                          std::uint32_t parameter, float value) {
+                          std::uint32_t parameter,
+                          std::uint32_t parameter_target, float value) {
             const auto length = track.pattern.length;
             plan.events.push_back(
-                {raw_tick % length, id, target, type, pitch, parameter, value,
+                {raw_tick % length, id, target, type, pitch, parameter,
+                 parameter_target, value,
                  static_cast<std::uint64_t>(raw_tick / length)});
         };
         for (std::size_t index = 0; index < track.pattern.events.size();
@@ -97,10 +101,10 @@ bool compile_timeline(const Timeline &timeline, PlaybackPlan &output,
                 }
             if (event.type == MusicalEventType::note) {
                 append(event.tick, event.id, event.id,
-                       MusicalEventType::note_on, event.pitch, 0,
+                       MusicalEventType::note_on, event.pitch, 0, 0,
                        event.velocity);
                 append(event.tick + event.duration, event.id, event.id,
-                       MusicalEventType::note_off, event.pitch, 0, 0);
+                       MusicalEventType::note_off, event.pitch, 0, 0, 0);
             } else {
                 if (event.type == MusicalEventType::note_off) {
                     if (event.target_event_id == 0) {
@@ -122,11 +126,39 @@ bool compile_timeline(const Timeline &timeline, PlaybackPlan &output,
                         return false;
                     }
                 }
+                std::uint32_t parameter_target{};
+                auto parameter = event.parameter_id;
+                if (event.type == MusicalEventType::parameter) {
+                    if (event.parameter_destination.empty()) {
+                        const auto legacy_target =
+                            track.instrument_id == subtractive_instrument_id
+                                ? ParameterTarget::subtractive_synth
+                                : ParameterTarget::none;
+                        parameter_target =
+                            static_cast<std::uint32_t>(legacy_target);
+                    } else {
+                        const auto destination = resolve_parameter_destination(
+                            event.parameter_destination);
+                        if (!destination ||
+                            (destination->target ==
+                                 ParameterTarget::subtractive_synth &&
+                             track.instrument_id !=
+                                 subtractive_instrument_id)) {
+                            error = "unknown or unroutable parameter "
+                                    "destination: " +
+                                    event.parameter_destination;
+                            return false;
+                        }
+                        parameter = destination->parameter;
+                        parameter_target =
+                            static_cast<std::uint32_t>(destination->target);
+                    }
+                }
                 append(event.tick, event.id,
                        event.type == MusicalEventType::note_off
                            ? event.target_event_id
                            : event.id,
-                       event.type, event.pitch, event.parameter_id,
+                       event.type, event.pitch, parameter, parameter_target,
                        event.type == MusicalEventType::parameter
                            ? event.value
                            : event.velocity);
@@ -301,6 +333,7 @@ TimelineScheduler::schedule(std::uint64_t start, std::uint32_t frames,
                                event.type,
                                event.pitch,
                                event.parameter_id,
+                               event.parameter_target,
                                event.value,
                                track.instrument};
         }

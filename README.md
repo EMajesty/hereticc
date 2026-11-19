@@ -23,6 +23,12 @@ Step edits support shared bounded Undo/Redo, grouped transactions, and stable
 event editing of velocity, duration, pitch, and tick-relative timing. GUI and
 controller clients call the same C++ timeline service; Lua is optional.
 
+Selected steps can hold multiple synth or delay parameter locks. Locks are
+stable timeline events, participate in shared Undo/Redo, run sample-accurately
+before simultaneous note-ons, and persist until another event changes the
+destination. The GUI marks locked cells with `L`; use Shift with parameter
+editing to add, adjust or remove locks.
+
 Timeline and MIDI notes can also drive the first native subtractive synthesizer
 through the same scheduler. It provides bounded polyphony, four oscillator
 shapes, ADSR, a resonant low-pass filter, velocity response and a native stereo
@@ -73,6 +79,13 @@ With direnv installed, run `direnv allow` once; `.envrc` enters the same flake
 shell. Build the installable package with `nix build`, run it with
 `nix run . -- --list-devices`, and run all locked build/test checks with
 `nix flake check`.
+
+For ordinary iteration, enter `nix develop` once and reuse `build/dev` with
+`cmake --build --preset dev` and `ctest --preset dev`; this avoids producing a
+new Nix store derivation for every source edit. Reserve package, sanitizer and
+AArch64 builds for intentional verification points. `tools/nix-disk-report.sh`
+reports capacity, GC roots, project build links and the current-system closure
+without deleting anything. See [Nix build hygiene](docs/CI.md#nix-build-hygiene).
 
 On an AArch64 Linux host, the same commands select the native
 `aarch64-linux` outputs. From x86_64, `nix build

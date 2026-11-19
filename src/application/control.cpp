@@ -1,4 +1,5 @@
 #include "neurogenic/application/control.hpp"
+#include "neurogenic/dsp/parameter_destination.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -109,6 +110,14 @@ ActionRegistry::ActionRegistry() {
                "Sequencer", {{"offset_ticks", ValueType::integer}}));
     add(action("step.property-reset.v1", "Reset step property", "Sequencer",
                {{"property", ValueType::text}}));
+    add(action("step.lock-select.v1", "Select parameter lock", "Sequencer",
+               {{"parameter_id", ValueType::text}}));
+    add(action(
+        "step.lock-set.v1", "Set parameter lock", "Sequencer",
+        {{"parameter_id", ValueType::text}, {"value", ValueType::real}}));
+    add(action("step.lock-remove.v1", "Remove parameter lock", "Sequencer",
+               {{"parameter_id", ValueType::text}}));
+    add(action("step.locks-clear.v1", "Clear step locks", "Sequencer"));
     add(action("step.page-next.v1", "Next step page", "Sequencer"));
     add(action("step.page-previous.v1", "Previous step page", "Sequencer"));
     add(action("step.resolution-set.v1", "Set step resolution", "Sequencer",
@@ -572,6 +581,29 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
         }
         return execute_locked(edit, sequence);
     }
+    if (command.action_id == "navigation.adjust.v1" &&
+        before.focused_element == "step-locks") {
+        const auto descriptor = parameters_.get(before.selected_lock_parameter);
+        if (!descriptor)
+            return {false, sequence, before.revision,
+                    "selected lock parameter is unavailable"};
+        auto value = number(descriptor->current_value);
+        const auto selected_lock = std::find_if(
+            before.selected_step_locks.begin(),
+            before.selected_step_locks.end(), [&](const auto &item) {
+                return item.parameter_id == before.selected_lock_parameter;
+            });
+        if (selected_lock != before.selected_step_locks.end())
+            value = selected_lock->value;
+        value = std::clamp(
+            value + *argument<double>(command, "steps") * descriptor->step,
+            number(descriptor->minimum), number(descriptor->maximum));
+        ApplicationCommand lock;
+        lock.action_id = "step.lock-set.v1";
+        lock.arguments = {{"parameter_id", before.selected_lock_parameter},
+                          {"value", value}};
+        return execute_locked(lock, sequence);
+    }
     bool changed = false;
     if (command.action_id == "transport.play.v1") {
         engine_.play();
@@ -728,6 +760,79 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 state_.selected_step_property = property;
                 state_.focused_element = "step-properties";
                 changed_locked();
+            }
+        } else if (command.action_id == "step.lock-select.v1") {
+            const auto &id = *argument<std::string>(command, "parameter_id");
+            if (!resolve_parameter_destination(id) || !parameters_.get(id))
+                error = "unknown parameter lock destination";
+            else {
+                state_.selected_lock_parameter = id;
+                state_.focused_element = "step-locks";
+                changed_locked();
+            }
+        } else if (command.action_id == "step.lock-set.v1" ||
+                   command.action_id == "step.lock-remove.v1" ||
+                   command.action_id == "step.locks-clear.v1") {
+            auto transaction = edit_group_ ? *edit_group_ : timeline_.edit();
+            auto *track = transaction.find_track(state_.selected_track);
+            const auto tick = state_.selected_step * state_.step_ticks;
+            if (!track || tick < 0 || tick >= track->pattern.length)
+                error = "selected step is outside the track";
+            else {
+                std::vector<EventId> remove;
+                std::string id;
+                if (command.action_id != "step.locks-clear.v1")
+                    id = *argument<std::string>(command, "parameter_id");
+                for (const auto &event : track->pattern.events)
+                    if (event.type == MusicalEventType::parameter &&
+                        event.tick == tick &&
+                        (id.empty() || event.parameter_destination == id))
+                        remove.push_back(event.id);
+                bool edited = true;
+                if (command.action_id == "step.lock-set.v1") {
+                    const auto destination = resolve_parameter_destination(id);
+                    const auto descriptor = parameters_.get(id);
+                    const auto value = *argument<double>(command, "value");
+                    if (!destination || !descriptor)
+                        error = "unknown parameter lock destination";
+                    else if (!std::isfinite(value) ||
+                             value < number(descriptor->minimum) ||
+                             value > number(descriptor->maximum))
+                        error = "parameter lock value is outside its range";
+                    else if (destination->target ==
+                                 ParameterTarget::subtractive_synth &&
+                             track->instrument_id != subtractive_instrument_id)
+                        error = "synth parameter lock requires a synth track";
+                    else if (!remove.empty())
+                        edited = transaction.modify_parameter_destination(
+                            track->id, remove.front(), tick, id,
+                            static_cast<float>(value), error);
+                    else
+                        edited = transaction.add_parameter_destination(
+                            track->id, transaction.next_event_id(), tick, id,
+                            static_cast<float>(value), error);
+                } else {
+                    if (command.action_id == "step.lock-remove.v1" &&
+                        remove.empty())
+                        error = "parameter lock does not exist";
+                    for (const auto event_id : remove)
+                        if (!transaction.remove_event(track->id, event_id,
+                                                      error)) {
+                            edited = false;
+                            break;
+                        }
+                }
+                if (error.empty() && edited &&
+                    (edit_group_ ||
+                     timeline_.commit(transaction,
+                                      TimelineCommitPolicy::next_audio_callback,
+                                      error))) {
+                    if (edit_group_)
+                        edit_group_ = std::move(transaction);
+                    if (!id.empty())
+                        state_.selected_lock_parameter = id;
+                    changed_locked();
+                }
             }
         } else if (command.action_id == "edit.undo.v1" ||
                    command.action_id == "edit.redo.v1") {
@@ -1037,15 +1142,35 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                         ? 0
                         : (static_cast<std::size_t>(found - properties) + 1) %
                               4;
-                state_.selected_step_property = properties[index];
+                if (state_.selected_step_property == "timing")
+                    state_.focused_element = "step-locks";
+                else
+                    state_.selected_step_property = properties[index];
+            } else if (state_.focused_element == "step-locks") {
+                std::vector<std::string> destinations;
+                for (const auto &parameter : state_.parameters)
+                    if (resolve_parameter_destination(parameter.id))
+                        destinations.push_back(parameter.id);
+                const auto found =
+                    std::find(destinations.begin(), destinations.end(),
+                              state_.selected_lock_parameter);
+                if (!destinations.empty())
+                    state_.selected_lock_parameter =
+                        destinations[(found == destinations.end()
+                                          ? 0
+                                          : static_cast<std::size_t>(
+                                                found - destinations.begin() +
+                                                1)) %
+                                     destinations.size()];
             } else
                 state_.focused_element += ".confirmed";
             changed_locked();
         } else if (command.action_id == "navigation.cancel.v1") {
             state_.focused_element =
-                state_.focused_element == "step-properties" ? "steps"
-                : state_.focused_element == "steps"         ? "tracks"
-                                                            : "transport";
+                state_.focused_element == "step-locks" ? "step-properties"
+                : state_.focused_element == "step-properties" ? "steps"
+                : state_.focused_element == "steps"           ? "tracks"
+                                                              : "transport";
             changed_locked();
         } else if (command.action_id == "navigation.adjust.v1") {
             const auto delta = *argument<double>(command, "steps");
@@ -1248,12 +1373,25 @@ void ApplicationService::synchronize_locked() const {
                                  track.instrument_id, track.pattern.events});
     }
     state_.selected_event.reset();
+    state_.selected_step_locks.clear();
+    const auto selected_track = std::find_if(
+        timeline.timeline.tracks.begin(), timeline.timeline.tracks.end(),
+        [&](const Track &value) { return value.id == state_.selected_track; });
+    if (selected_track != timeline.timeline.tracks.end()) {
+        const auto lock_tick = state_.selected_step * state_.step_ticks;
+        for (const auto &event : selected_track->pattern.events)
+            if (event.type == MusicalEventType::parameter &&
+                event.tick == lock_tick && !event.parameter_destination.empty())
+                state_.selected_step_locks.push_back(
+                    {event.id, event.parameter_destination, event.value});
+        std::sort(state_.selected_step_locks.begin(),
+                  state_.selected_step_locks.end(),
+                  [](const auto &a, const auto &b) {
+                      return a.parameter_id < b.parameter_id;
+                  });
+    }
     if (selected_event_id_) {
-        const auto track = std::find_if(
-            timeline.timeline.tracks.begin(), timeline.timeline.tracks.end(),
-            [&](const Track &value) {
-                return value.id == state_.selected_track;
-            });
+        const auto track = selected_track;
         if (track != timeline.timeline.tracks.end()) {
             const auto selected = std::find_if(
                 track->pattern.events.begin(), track->pattern.events.end(),

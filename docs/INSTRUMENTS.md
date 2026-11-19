@@ -36,6 +36,14 @@ synth and delay controls. Generic application commands use
 `track.instrument-set.v1` and the existing parameter actions. No GUI or
 controller touches DSP objects directly.
 
+Timeline automation uses the same stable application parameter IDs. Synth
+destinations are valid only on tracks routed to the subtractive synth; the
+master delay is global and may be automated from any track. Resolution and
+range validation happen during control-side editing/compilation. The callback
+receives only numeric target/parameter pairs and applies discrete changes at
+their scheduled frame. Values persist until changed; smoothing remains the
+responsibility of the destination DSP implementation.
+
 ## Real-time ownership
 
 Synth voices and delay storage are allocated when the engine is constructed.

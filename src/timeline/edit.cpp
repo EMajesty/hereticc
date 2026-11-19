@@ -182,8 +182,16 @@ bool TimelineTransaction::add_note(TrackId track_id, EventId id,
         error = "invalid note values";
         return false;
     }
-    track->pattern.events.push_back(
-        {id, tick, MusicalEventType::note, pitch, velocity, duration, 0, 0, 0});
+    track->pattern.events.push_back({id,
+                                     tick,
+                                     MusicalEventType::note,
+                                     pitch,
+                                     velocity,
+                                     duration,
+                                     0,
+                                     0,
+                                     0,
+                                     {}});
     error.clear();
     return true;
 }
@@ -259,6 +267,43 @@ bool TimelineTransaction::modify_parameter(TrackId track_id, EventId id,
     }
     event->tick = tick;
     event->parameter_id = parameter;
+    event->value = value;
+    error.clear();
+    return true;
+}
+bool TimelineTransaction::add_parameter_destination(
+    TrackId track_id, EventId id, MusicalTick tick, std::string destination,
+    float value, std::string &error) {
+    if (destination.empty()) {
+        error = "parameter destination is required";
+        return false;
+    }
+    if (!add_parameter(track_id, id, tick, 0, value, error))
+        return false;
+    auto *event = find_event(*find_track(track_id), id);
+    event->parameter_destination = std::move(destination);
+    return true;
+}
+bool TimelineTransaction::modify_parameter_destination(
+    TrackId track_id, EventId id, MusicalTick tick, std::string destination,
+    float value, std::string &error) {
+    if (destination.empty()) {
+        error = "parameter destination is required";
+        return false;
+    }
+    auto *track = find_track(track_id);
+    auto *event = track ? find_event(*track, id) : nullptr;
+    if (!event || event->type != MusicalEventType::parameter) {
+        error = "parameter event does not exist";
+        return false;
+    }
+    if (tick < 0 || tick >= track->pattern.length || !std::isfinite(value)) {
+        error = "invalid parameter event values";
+        return false;
+    }
+    event->tick = tick;
+    event->parameter_id = 0;
+    event->parameter_destination = std::move(destination);
     event->value = value;
     error.clear();
     return true;

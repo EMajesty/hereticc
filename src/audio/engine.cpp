@@ -1,4 +1,5 @@
 #include "neurogenic/audio/engine.hpp"
+#include "neurogenic/dsp/parameter_destination.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
@@ -471,15 +472,18 @@ void AudioEngine::process(std::span<float> left,
         while (timeline_index < timeline_count &&
                timeline_events_[timeline_index].frame == frame) {
             const auto &event = timeline_events_[timeline_index++];
-            if (event.instrument == subtractive_instrument_key) {
+            if (event.type == MusicalEventType::parameter) {
+                if (event.parameter_target ==
+                    static_cast<std::uint32_t>(
+                        ParameterTarget::subtractive_synth))
+                    synth_.set_parameter(event.parameter_id, event.value);
+            } else if (event.instrument == subtractive_instrument_key) {
                 const NoteIdentity owner{event.track, event.target_event_id,
                                          event.occurrence};
                 if (event.type == MusicalEventType::note_on)
                     synth_.note_on(event.pitch, event.value, owner);
                 else if (event.type == MusicalEventType::note_off)
                     synth_.note_off(event.pitch, owner);
-                else if (event.type == MusicalEventType::parameter)
-                    synth_.set_parameter(event.parameter_id, event.value);
             } else if (event.instrument == sample_instrument_key) {
                 if (event.type == MusicalEventType::note_on)
                     start_voice(event.pitch, event.value, event.track,
@@ -553,7 +557,24 @@ void AudioEngine::process(std::span<float> left,
                                   ? std::chrono::steady_clock::now()
                                   : std::chrono::steady_clock::time_point{};
     effect_.process(left.first(frames), right.first(frames));
-    delay_.process(left.first(frames), right.first(frames));
+    std::size_t delay_frame{};
+    for (std::size_t i = 0; i < timeline_count; ++i) {
+        const auto &event = timeline_events_[i];
+        if (event.type != MusicalEventType::parameter ||
+            event.parameter_target !=
+                static_cast<std::uint32_t>(ParameterTarget::stereo_delay))
+            continue;
+        const auto event_frame = std::min<std::size_t>(event.frame, frames);
+        if (event_frame > delay_frame)
+            delay_.process(
+                left.subspan(delay_frame, event_frame - delay_frame),
+                right.subspan(delay_frame, event_frame - delay_frame));
+        delay_.set_parameter(event.parameter_id, event.value);
+        delay_frame = event_frame;
+    }
+    if (delay_frame < frames)
+        delay_.process(left.subspan(delay_frame, frames - delay_frame),
+                       right.subspan(delay_frame, frames - delay_frame));
     if (monitoring)
         effect_nanoseconds_.store(
             static_cast<std::uint64_t>(

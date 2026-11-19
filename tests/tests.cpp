@@ -4,6 +4,7 @@
 #include "neurogenic/audio/sample_manager.hpp"
 #include "neurogenic/core/control_dispatcher.hpp"
 #include "neurogenic/core/spsc_queue.hpp"
+#include "neurogenic/dsp/parameter_destination.hpp"
 #include "neurogenic/dsp/processor.hpp"
 #include "neurogenic/instrument/subtractive_synth.hpp"
 #include "neurogenic/midi/mapping.hpp"
@@ -2147,6 +2148,19 @@ void test_gui_model() {
               timeline.snapshot().timeline.tracks[0].instrument_id ==
                   subtractive_instrument_id,
           "GUI semantic instrument selection");
+    GuiInput parameters_tab;
+    parameters_tab.type = GuiInput::Type::pointer_down;
+    parameters_tab.x = small.tabs[2].x + 2;
+    parameters_tab.y = small.tabs[2].y + 2;
+    check(gui.input(parameters_tab, 1024, 600) &&
+              gui.input({GuiInput::Type::key_down, GuiKey::shift}, 1024, 600) &&
+              gui.input({GuiInput::Type::key_down, GuiKey::enter}, 1024, 600) &&
+              gui.input({GuiInput::Type::key_up, GuiKey::shift}, 1024, 600) &&
+              !application.snapshot().selected_step_locks.empty(),
+          "GUI parameter lock creation");
+    parameters_tab.x = small.tabs[0].x + 2;
+    check(gui.input(parameters_tab, 1024, 600),
+          "GUI return to sequencer after lock edit");
     const auto before_pointer = timeline.snapshot().revision;
     GuiInput step_click;
     step_click.type = GuiInput::Type::pointer_down;
@@ -2259,6 +2273,170 @@ void test_gui_model() {
     samples.shutdown();
 }
 
+void test_parameter_locks_and_automation() {
+    using namespace neurogenic;
+    const auto cutoff = resolve_parameter_destination("synth.cutoff");
+    const auto delay_mix = resolve_parameter_destination("effect.delay.mix");
+    check(cutoff && cutoff->target == ParameterTarget::subtractive_synth &&
+              delay_mix && delay_mix->target == ParameterTarget::stereo_delay &&
+              !resolve_parameter_destination("unknown.parameter"),
+          "stable parameter destination resolution");
+
+    Timeline timeline;
+    Track track;
+    track.id = 1;
+    track.name = "synth";
+    track.instrument_id = std::string(subtractive_instrument_id);
+    track.pattern.length = 960;
+    timeline.tracks.push_back(track);
+    auto transaction = TimelineTransaction{};
+    TimelineService editing(
+        [](const Timeline &, std::string &) { return true; }, timeline);
+    transaction = editing.edit();
+    std::string error;
+    check(transaction.add_note(1, 1, 0, 60, 1, 240, error) &&
+              transaction.add_parameter_destination(1, 2, 0, "synth.cutoff",
+                                                    1200, error) &&
+              transaction.add_parameter_destination(1, 3, 0, "effect.delay.mix",
+                                                    0.4F, error),
+          "parameter automation event creation");
+    PlaybackPlan plan;
+    check(compile_timeline(transaction.timeline(), plan, error) &&
+              plan.events[0].type == MusicalEventType::parameter &&
+              plan.events[1].type == MusicalEventType::parameter &&
+              plan.events[2].type == MusicalEventType::note_on,
+          "parameter locks ordered before simultaneous notes");
+    auto invalid = transaction.timeline();
+    invalid.tracks[0].pattern.events[1].parameter_destination = "unknown";
+    check(!compile_timeline(invalid, plan, error),
+          "unknown parameter destination accepted");
+    check(editing.commit(std::move(transaction),
+                         TimelineCommitPolicy::next_audio_callback, error),
+          "automation timeline commit");
+
+    TimelineScheduler scheduler(48000);
+    check(compile_timeline(editing.snapshot().timeline, plan, error),
+          "automation compilation");
+    scheduler.set_plan(&plan, 0);
+    std::array<TimelineScheduledEvent, 16> events{};
+    const auto first = scheduler.schedule(0, 48001, events);
+    check(first >= 7 && events[0].frame == 0 && events[3].frame == 6000 &&
+              events[4].frame == 24000,
+          "parameter automation loop playback");
+
+    Timeline delay_timeline;
+    Track sample_track;
+    sample_track.id = 1;
+    sample_track.pattern.length = 960;
+    sample_track.pattern.events.push_back(
+        {1, 0, MusicalEventType::note, 36, 1, 500});
+    MusicalEvent delayed_mix;
+    delayed_mix.id = 2;
+    delayed_mix.tick = 4;
+    delayed_mix.type = MusicalEventType::parameter;
+    delayed_mix.value = 1;
+    delayed_mix.parameter_destination = "effect.delay.mix";
+    sample_track.pattern.events.push_back(delayed_mix);
+    delay_timeline.tracks.push_back(std::move(sample_track));
+    AudioEngine delay_engine;
+    delay_engine.set_sample({48000, 1, std::vector<float>(1024, 0.25F)});
+    check(delay_engine.queue_timeline(delay_timeline, error),
+          "delay automation publication");
+    std::array<float, 256> delay_left{}, delay_right{};
+    delay_engine.process(delay_left, delay_right);
+    check(std::abs(delay_left[50] - 0.2F) < 0.001F &&
+              delay_left[150] < delay_left[50],
+          "delay automation sample offset");
+
+    AudioEngine engine;
+    TimelineService service(
+        [&](const Timeline &value, std::string &publish_error) {
+            return engine.queue_timeline(value, publish_error);
+        },
+        timeline);
+    SampleManager samples(engine);
+    ApplicationService app(engine, service, samples);
+    auto lock = [&](std::string id, double value) {
+        return app.execute(
+            {"step.lock-set.v1",
+             {{"parameter_id", std::move(id)}, {"value", value}}});
+    };
+    check(lock("synth.cutoff", 2000).accepted &&
+              lock("effect.delay.mix", 0.5).accepted,
+          "multiple step parameter locks");
+    std::array<float, 64> lock_left{}, lock_right{};
+    engine.process(lock_left, lock_right);
+    auto state = app.snapshot();
+    check(state.selected_step_locks.size() == 2,
+          "observable selected-step locks");
+    const auto cutoff_event = state.selected_step_locks[1].event_id;
+    check(lock("synth.cutoff", 3000).accepted &&
+              app.snapshot().selected_step_locks[1].event_id == cutoff_event,
+          "parameter lock edit preserves stable event ID");
+    engine.process(lock_left, lock_right);
+    check(
+        app.execute({"step.lock-select.v1",
+                     {{"parameter_id", std::string("synth.cutoff")}}})
+                .accepted &&
+            app.execute({"navigation.adjust.v1", {{"steps", 1.0}}}).accepted &&
+            app.snapshot().selected_step_locks[1].value > 3000,
+        "minimal-controller parameter lock adjustment");
+    engine.process(lock_left, lock_right);
+    const auto undo = app.execute({"edit.undo.v1"});
+    engine.process(lock_left, lock_right);
+    check(undo.accepted && app.execute({"edit.redo.v1"}).accepted,
+          "parameter lock undo/redo");
+    engine.process(lock_left, lock_right);
+    check(app.execute({"step.lock-remove.v1",
+                       {{"parameter_id", std::string("effect.delay.mix")}}})
+                  .accepted &&
+              app.snapshot().selected_step_locks.size() == 1 &&
+              app.execute({"step.locks-clear.v1"}).accepted &&
+              app.snapshot().selected_step_locks.empty(),
+          "parameter lock removal and clear");
+    check(!lock("unknown.parameter", 0.5).accepted,
+          "unknown application lock accepted");
+    samples.shutdown();
+
+    TimelineService conflicts(
+        [](const Timeline &, std::string &) { return true; }, timeline);
+    auto first_edit = conflicts.edit();
+    auto stale_edit = conflicts.edit();
+    check(first_edit.add_parameter_destination(1, 10, 0, "synth.cutoff", 900,
+                                               error) &&
+              stale_edit.add_parameter_destination(1, 11, 0, "synth.cutoff",
+                                                   1000, error) &&
+              conflicts.commit(std::move(first_edit),
+                               TimelineCommitPolicy::next_audio_callback,
+                               error) &&
+              !conflicts.commit(std::move(stale_edit),
+                                TimelineCommitPolicy::next_audio_callback,
+                                error),
+          "parameter lock revision conflict");
+
+    AudioEngine rejected_engine;
+    TimelineService rejected_service(
+        [](const Timeline &, std::string &publish_error) {
+            publish_error = "publication rejected";
+            return false;
+        },
+        timeline);
+    SampleManager rejected_samples(rejected_engine);
+    ApplicationService rejected_app(rejected_engine, rejected_service,
+                                    rejected_samples);
+    const auto history_before = rejected_service.history_status();
+    check(!rejected_app
+                  .execute({"step.lock-set.v1",
+                            {{"parameter_id", std::string("synth.cutoff")},
+                             {"value", 2000.0}}})
+                  .accepted &&
+              rejected_service.history_status().undo_depth ==
+                  history_before.undo_depth &&
+              rejected_app.snapshot().selected_step_locks.empty(),
+          "failed lock publication changed state or history");
+    rejected_samples.shutdown();
+}
+
 void test_lua_and_offline() {
     using namespace neurogenic;
     bool submitted = false;
@@ -2326,6 +2504,21 @@ void test_lua_and_offline() {
               timeline_state.timeline.tracks[1].pattern.events[0].pitch ==
                   preserved[0].pitch,
           "Lua mutation did not preserve unchanged track");
+    check(
+        lua.execute(
+            "local p=neurogenic.v1.timeline.current(); local t=p:track(1); "
+            "t:add_parameter{tick=0,destination='effect.delay.mix',value=0.3}; "
+            "p:commit()",
+            error),
+        error.c_str());
+    timeline_state = timeline.snapshot();
+    check(std::any_of(timeline_state.timeline.tracks[0].pattern.events.begin(),
+                      timeline_state.timeline.tracks[0].pattern.events.end(),
+                      [](const MusicalEvent &event) {
+                          return event.parameter_destination ==
+                                 "effect.delay.mix";
+                      }),
+          "Lua parameter destination adapter");
     const auto before_error = timeline.snapshot();
     check(!lua.execute("local p=neurogenic.v1.timeline.current(); "
                        "p:track(1):set_name('must rollback'); p:commit(); "
@@ -2424,6 +2617,7 @@ int main() {
         test_application_control_and_controllers();
         test_interactive_step_sequencer();
         test_undo_redo_and_step_properties();
+        test_parameter_locks_and_automation();
         test_gui_model();
         test_lua_and_offline();
         std::cout << "all tests passed\n";
