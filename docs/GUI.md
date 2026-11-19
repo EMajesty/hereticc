@@ -91,6 +91,17 @@ include SDL3. Physical touchscreen mapping, HDMI fullscreen/DPI transitions,
 GPU combinations, 8-inch touch-target comfort and subjective stage readability
 remain unverified.
 
+## Waveform and slice editing
+
+The Samples view draws cached peak data instead of rescanning PCM. Click/tap a
+slice to select it, drag a start/end marker, or click empty waveform space to
+create a short slice. Up/Down selects slices, Left/Right adjusts boundaries,
+Shift+Up/Down zooms and Shift+Left/Right pans. Enter previews,
+Shift+Enter creates 16 equal slices, Escape
+stops preview, and Shift+Escape deletes. Number keys 1–16 assign the selected
+slice to a pad; Shift+number selects sample slots 0–15. Hit tests use drawable coordinates and responsive scaling at
+1920×1200, 1024×800 and 1024×600.
+
 Edits publish at the next audio callback as complete validated plans. A final
 partial step is available when its start tick lies inside a non-grid-aligned
 pattern. Drag-painting and boundary-quantized publication are not implemented.

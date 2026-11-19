@@ -1,5 +1,13 @@
 # Implementation status
 
+Task 021 adds revisioned stable slices, deterministic equal/transient slicing,
+callback-safe version/boundary playback, semantic pad mapping, preview
+ownership, cached waveform peaks, GUI marker editing, Lua adapters, sidecar
+persistence and benchmarks. Host tests cover overlap, boundaries, stale
+revisions, mapping, replacement invalidation and missing references. Dedicated
+zoom controls, automatic project loading, choke editing, stretching, pitch
+shifting and physical touch/controller audition remain future work.
+
 Task 019 adds validated stable synth/delay parameter destinations, sample-
 accurate discrete timeline automation, step locks with multiple destinations,
 shared Undo/Redo, Lua adapters, lock-aware GUI/controller actions and automation

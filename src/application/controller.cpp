@@ -309,6 +309,10 @@ ControllerProfile full_performance_profile() {
                         action_binding("stop", "transport.stop.v1", "led.stop"),
                         action_binding("data.push", "navigation.confirm.v1"),
                         std::move(data)};
+    auto preview = action_binding("data.push", "slice.preview.v1");
+    preview.shift = true;
+    preview.label = "Preview selected slice";
+    profile.bindings.push_back(std::move(preview));
     return profile;
 }
 ControllerProfile minimal_controller_profile() {
@@ -328,6 +332,13 @@ ControllerProfile minimal_controller_profile() {
         action_binding("data", "navigation.adjust.v1", "display"),
         action_binding("enter", "navigation.confirm.v1", "display"),
         action_binding("back", "navigation.cancel.v1", "display")};
+    auto preview = action_binding("enter", "slice.preview.v1", "display");
+    preview.shift = true;
+    auto stop_preview =
+        action_binding("back", "slice.preview-stop.v1", "display");
+    stop_preview.shift = true;
+    profile.bindings.push_back(std::move(preview));
+    profile.bindings.push_back(std::move(stop_preview));
     return profile;
 }
 ControllerProfile generic_midi_profile() {
@@ -368,8 +379,8 @@ GridEvent PerformanceGrid::press(std::size_t pad, bool select_only) const {
                 static_cast<std::uint8_t>(36 + pad),
                 127,
                 SampleSlotId{static_cast<std::uint32_t>(pad)},
-                "sample and instrument playback are supported; slice "
-                "assignment is not implemented"};
+                "assigned slices take precedence over the default sample "
+                "slot mapping"};
     case PadMode::levels:
         return {GridEventType::trigger_level,
                 pad,
@@ -408,7 +419,14 @@ grid_application_command(const GridEvent &event, std::string source_id,
         command.action_id = "step.toggle.v1";
     else if (event.type == GridEventType::select_step)
         command.action_id = "step.event-select.v1";
-    else
+    else if (event.type == GridEventType::trigger_pad) {
+        command.action_id = "pad.trigger.v1";
+        command.arguments.emplace("pad",
+                                  static_cast<std::int64_t>(event.index));
+        command.arguments.emplace("velocity",
+                                  static_cast<double>(event.velocity) / 127.0);
+        return command;
+    } else
         return std::nullopt;
     command.arguments.emplace("step", static_cast<std::int64_t>(event.index));
     return command;

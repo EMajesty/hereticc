@@ -144,3 +144,11 @@ Examples:
 `first`, `not-first`, `every-n`, `n-of-m`, `previous-fired`,
 `previous-not-fired`, `fill`, and `not-fill`. The binding delegates validation
 and publication to the same C++ timeline transaction used by other clients.
+
+## Slice adapter
+
+When a `SliceService` is supplied, `neurogenic.v1.slices` provides thin
+`equal_divisions(slot, count)`, `create(slot, start, end, name)`, and
+`assign_pad(slot, pad, slice_id)` adapters. They fetch the current revision and
+delegate validation/publication to C++; Lua owns no PCM and implements no
+second slicing model. Existing runtimes without slicing remain compatible.

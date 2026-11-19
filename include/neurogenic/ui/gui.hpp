@@ -143,6 +143,9 @@ class GuiModel {
     std::filesystem::path sample_path_;
     std::size_t parameter_index_{};
     bool pointer_down_{}, shift_{}, fullscreen_toggle_{};
+    enum class SliceDrag : std::uint8_t { none, start, end };
+    SliceDrag slice_drag_{SliceDrag::none};
+    float waveform_zoom_{1.0F}, waveform_offset_{};
     std::uint64_t last_xy_ms_{}, ui_revision_{1};
 };
 

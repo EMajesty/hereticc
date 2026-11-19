@@ -188,6 +188,13 @@ exact frame offset, then dispatches to the sample voice pool or subtractive
 synth. Both paths use the authoritative transport. Unsupported routing is
 rejected during control-side compilation.
 
+Sample chopping follows the same ownership boundary. `SliceService` edits
+revisioned metadata on the control thread, `SampleManager` retains the
+callback-acknowledged immutable PCM, and `AudioEngine` receives numeric
+version/boundary commands. Voices store their chosen sample version and end
+cursor; replacement cannot redirect or invalidate them. Waveform and transient
+preparation never enters the callback.
+
 The current built-ins are statically owned and preallocated by `AudioEngine`.
 Synth notes use `(track, event, occurrence)` ownership, while external MIDI
 notes retain bounded identities. Atomic targets and a bounded DSP-command queue

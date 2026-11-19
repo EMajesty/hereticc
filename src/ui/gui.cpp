@@ -238,6 +238,10 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
         frame_.commands.push_back(
             {DrawCommand::Type::text, r, c, std::move(value)});
     };
+    auto line = [&](float x1, float y1, float x2, float y2, UiColor color) {
+        frame_.commands.push_back(
+            {DrawCommand::Type::line, {x1, y1, x2, y2}, color, {}});
+    };
     rect({0, 0, static_cast<float>(frame_.viewport_width),
           static_cast<float>(frame_.viewport_height)},
          UiColor::background);
@@ -361,26 +365,87 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
         }
     } else if (view_ == GuiView::samples) {
         text({l.content.x + 12, l.content.y + 8, l.content.w, 28 * l.scale},
-             UiColor::accent, "SAMPLE SLOTS");
-        for (std::size_t i = 0; i < l.rows.size(); ++i) {
-            const auto slot = static_cast<std::uint32_t>(i);
-            const auto found = std::find_if(
-                state.sample_slots.begin(), state.sample_slots.end(),
-                [&](const auto &s) { return s.id.value == slot; });
-            std::string label = "SLOT " + std::to_string(slot) + "  EMPTY";
-            if (found != state.sample_slots.end())
-                label = "SLOT " + std::to_string(slot) + "  " +
-                        sample_slot_state_name(found->state) + "  " +
-                        found->source_path.filename().string() +
-                        (found->error.empty() ? "" : "  " + found->error);
-            rect(l.rows[i], slot == state.selected_sample_slot.value
-                                ? UiColor::selected
-                                : UiColor::background);
-            text(l.rows[i],
-                 found != state.sample_slots.end() && !found->error.empty()
-                     ? UiColor::error
-                     : UiColor::text,
-                 label);
+             UiColor::accent,
+             "SAMPLE " + std::to_string(state.selected_sample_slot.value) +
+                 " / SLICES " + std::to_string(state.slices.size()) +
+                 "   ENTER preview   SHIFT+ENTER 16-way slice");
+        const UiRect wave{l.content.x + 16 * l.scale,
+                          l.content.y + 46 * l.scale,
+                          l.content.w - 32 * l.scale,
+                          std::min(280 * l.scale, l.content.h * 0.48F)};
+        rect(wave, UiColor::background);
+        const auto center = wave.y + wave.h * 0.5F;
+        const auto visible_frames =
+            state.sample_frames == 0
+                ? std::uint64_t{1}
+                : std::max<std::uint64_t>(1,
+                                          state.sample_frames / waveform_zoom_);
+        const auto visible_start = static_cast<std::uint64_t>(
+            waveform_offset_ * (state.sample_frames - visible_frames));
+        const auto waveform_x = [&](std::uint64_t frame) {
+            return wave.x +
+                   wave.w * (static_cast<float>(frame - visible_start) /
+                             static_cast<float>(visible_frames));
+        };
+        if (!state.waveform_peaks.empty()) {
+            for (std::size_t i = 0; i < state.waveform_peaks.size(); ++i) {
+                const auto &peak = state.waveform_peaks[i];
+                const auto peak_frame =
+                    state.sample_frames * i / state.waveform_peaks.size();
+                if (peak_frame < visible_start ||
+                    peak_frame >= visible_start + visible_frames)
+                    continue;
+                const auto x = waveform_x(peak_frame);
+                if (state.sample_channels > 1) {
+                    const auto left_center = wave.y + wave.h * 0.25F;
+                    const auto right_center = wave.y + wave.h * 0.75F;
+                    line(x, left_center - peak.left_max * wave.h * 0.2F, x,
+                         left_center - peak.left_min * wave.h * 0.2F,
+                         UiColor::accent);
+                    line(x, right_center - peak.right_max * wave.h * 0.2F, x,
+                         right_center - peak.right_min * wave.h * 0.2F,
+                         UiColor::accent);
+                } else
+                    line(x, center - peak.left_max * wave.h * 0.42F, x,
+                         center - peak.left_min * wave.h * 0.42F,
+                         UiColor::accent);
+            }
+        }
+        if (state.sample_frames > 0)
+            for (const auto &slice : state.slices) {
+                if (slice.end_frame < visible_start ||
+                    slice.start_frame > visible_start + visible_frames)
+                    continue;
+                const auto sx =
+                    waveform_x(std::max(slice.start_frame, visible_start));
+                const auto ex = waveform_x(
+                    std::min(slice.end_frame, visible_start + visible_frames));
+                const auto color = slice.id == state.selected_slice
+                                       ? UiColor::selected
+                                       : UiColor::text;
+                line(sx, wave.y, sx, wave.y + wave.h, color);
+                line(ex, wave.y, ex, wave.y + wave.h, color);
+            }
+        const auto list_y = wave.y + wave.h + 12 * l.scale;
+        for (std::size_t i = 0;
+             i < std::min<std::size_t>(4, state.slices.size()); ++i) {
+            UiRect row{wave.x, list_y + i * 42 * l.scale, wave.w, 34 * l.scale};
+            const auto &slice = state.slices[i];
+            rect(row, slice.id == state.selected_slice ? UiColor::selected
+                                                       : UiColor::background);
+            text(row, UiColor::text,
+                 slice.name + "  " + std::to_string(slice.start_frame) + ".." +
+                     std::to_string(slice.end_frame));
+        }
+        if (l.inspector_visible) {
+            text({l.parameters.x + 12 * l.scale, l.parameters.y + 12 * l.scale,
+                  l.parameters.w - 24 * l.scale, 28 * l.scale},
+                 UiColor::accent, "SLICE TOOLS");
+            text({l.parameters.x + 12 * l.scale, l.parameters.y + 52 * l.scale,
+                  l.parameters.w - 24 * l.scale, 120 * l.scale},
+                 UiColor::text,
+                 "E: preview\nShift+E: equal 16\nDelete: Back\nArrows: select "
+                 "/ boundaries\nPads: notes 36..51");
         }
     } else if (view_ == GuiView::parameters) {
         text({l.content.x + 12, l.content.y + 8, l.content.w, 28 * l.scale},
@@ -653,6 +718,80 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
                 return true;
             }
         }
+        if (view_ == GuiView::samples) {
+            const auto selected = std::find_if(
+                state.slices.begin(), state.slices.end(),
+                [&](const auto &s) { return s.id == state.selected_slice; });
+            if (shift_ &&
+                (input.key == GuiKey::up || input.key == GuiKey::down)) {
+                waveform_zoom_ = std::clamp(
+                    waveform_zoom_ * (input.key == GuiKey::up ? 1.25F : 0.8F),
+                    1.0F, 64.0F);
+                ++ui_revision_;
+                return true;
+            }
+            if (shift_ &&
+                (input.key == GuiKey::left || input.key == GuiKey::right)) {
+                waveform_offset_ = std::clamp(
+                    waveform_offset_ +
+                        (input.key == GuiKey::right ? 0.05F : -0.05F),
+                    0.0F, 1.0F);
+                ++ui_revision_;
+                return true;
+            }
+            if ((input.key == GuiKey::up || input.key == GuiKey::down) &&
+                !state.slices.empty()) {
+                auto index = selected == state.slices.end()
+                                 ? std::size_t{0}
+                                 : static_cast<std::size_t>(
+                                       selected - state.slices.begin());
+                index = input.key == GuiKey::down
+                            ? (index + 1) % state.slices.size()
+                            : (index + state.slices.size() - 1) %
+                                  state.slices.size();
+                submit(command("slice.select.v1",
+                               {{"slice_id", static_cast<std::int64_t>(
+                                                 state.slices[index].id)}}));
+                return true;
+            }
+            if ((input.key == GuiKey::left || input.key == GuiKey::right) &&
+                selected != state.slices.end()) {
+                constexpr std::uint64_t amount = 1;
+                auto start = selected->start_frame;
+                auto end = selected->end_frame;
+                if (input.key == GuiKey::left)
+                    start = start > static_cast<std::uint64_t>(amount)
+                                ? start - amount
+                                : 0;
+                else
+                    end = std::min(state.sample_frames, end + amount);
+                submit(
+                    command("slice.bounds-set.v1",
+                            {{"start_frame", static_cast<std::int64_t>(start)},
+                             {"end_frame", static_cast<std::int64_t>(end)}}));
+                return true;
+            }
+            if (input.key == GuiKey::enter) {
+                if (shift_)
+                    submit(command("slice.equal-divisions.v1",
+                                   {{"divisions", std::int64_t{16}}}));
+                else
+                    simple("slice.preview.v1");
+                return true;
+            }
+            if (input.key == GuiKey::escape) {
+                simple(shift_ ? "slice.delete.v1" : "slice.preview-stop.v1");
+                return true;
+            }
+            if (input.key == GuiKey::number && input.number >= 1 &&
+                input.number <= 16) {
+                submit(command(
+                    shift_ ? "sample.slot-select.v1" : "slice.pad-assign.v1",
+                    {{shift_ ? "slot_id" : "pad",
+                      static_cast<std::int64_t>(input.number - 1)}}));
+                return true;
+            }
+        }
         if (input.key == GuiKey::tab) {
             view_ =
                 static_cast<GuiView>((static_cast<unsigned>(view_) + 1) % 6);
@@ -866,14 +1005,69 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
                 return true;
             }
         }
-        if (view_ == GuiView::samples)
-            for (std::size_t i = 0; i < l.rows.size(); ++i)
-                if (l.rows[i].contains(input.x, input.y)) {
-                    submit(
-                        command("sample.slot-select.v1",
-                                {{"slot_id", static_cast<std::int64_t>(i)}}));
+        if (view_ == GuiView::samples) {
+            const UiRect wave{l.content.x + 16 * l.scale,
+                              l.content.y + 46 * l.scale,
+                              l.content.w - 32 * l.scale,
+                              std::min(280 * l.scale, l.content.h * 0.48F)};
+            if (wave.contains(input.x, input.y) && state.sample_frames > 0) {
+                const auto visible = std::max<std::uint64_t>(
+                    1, state.sample_frames / waveform_zoom_);
+                const auto first = static_cast<std::uint64_t>(
+                    waveform_offset_ * (state.sample_frames - visible));
+                const auto frame =
+                    first +
+                    static_cast<std::uint64_t>(
+                        std::clamp((input.x - wave.x) / wave.w, 0.0F, 1.0F) *
+                        visible);
+                const auto tolerance = std::max<std::uint64_t>(
+                    1, static_cast<std::uint64_t>(visible * 10.0F / wave.w));
+                const SliceState *choice{};
+                for (const auto &slice : state.slices) {
+                    if (frame >= slice.start_frame && frame <= slice.end_frame)
+                        choice = &slice;
+                    if (frame + tolerance >= slice.start_frame &&
+                        frame <= slice.start_frame + tolerance) {
+                        choice = &slice;
+                        slice_drag_ = SliceDrag::start;
+                        break;
+                    }
+                    if (frame + tolerance >= slice.end_frame &&
+                        frame <= slice.end_frame + tolerance) {
+                        choice = &slice;
+                        slice_drag_ = SliceDrag::end;
+                        break;
+                    }
+                }
+                if (choice)
+                    submit(command(
+                        "slice.select.v1",
+                        {{"slice_id", static_cast<std::int64_t>(choice->id)}}));
+                else {
+                    const auto end = std::min<std::uint64_t>(
+                        state.sample_frames, frame + state.sample_rate / 4);
+                    if (frame < end)
+                        submit(command(
+                            "slice.create.v1",
+                            {{"start_frame", static_cast<std::int64_t>(frame)},
+                             {"end_frame", static_cast<std::int64_t>(end)},
+                             {"name", std::string("Slice")}}));
+                }
+                return true;
+            }
+            const auto list_y = wave.y + wave.h + 12 * l.scale;
+            for (std::size_t i = 0;
+                 i < std::min<std::size_t>(4, state.slices.size()); ++i) {
+                UiRect row{wave.x, list_y + i * 42 * l.scale, wave.w,
+                           34 * l.scale};
+                if (row.contains(input.x, input.y)) {
+                    submit(command("slice.select.v1",
+                                   {{"slice_id", static_cast<std::int64_t>(
+                                                     state.slices[i].id)}}));
                     return true;
                 }
+            }
+        }
         if (view_ == GuiView::parameters)
             for (std::size_t i = 0;
                  i < std::min(l.rows.size(), state.parameters.size()); ++i)
@@ -900,8 +1094,41 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
             return true;
         }
     }
+    if (move && pointer_down_ && view_ == GuiView::samples &&
+        slice_drag_ != SliceDrag::none && state.selected_slice != 0) {
+        const UiRect wave{l.content.x + 16 * l.scale,
+                          l.content.y + 46 * l.scale,
+                          l.content.w - 32 * l.scale,
+                          std::min(280 * l.scale, l.content.h * 0.48F)};
+        const auto selected = std::find_if(
+            state.slices.begin(), state.slices.end(), [&](const auto &slice) {
+                return slice.id == state.selected_slice;
+            });
+        if (selected != state.slices.end() && state.sample_frames > 0) {
+            const auto visible = std::max<std::uint64_t>(
+                1, state.sample_frames / waveform_zoom_);
+            const auto first = static_cast<std::uint64_t>(
+                waveform_offset_ * (state.sample_frames - visible));
+            const auto frame =
+                first +
+                static_cast<std::uint64_t>(
+                    std::clamp((input.x - wave.x) / wave.w, 0.0F, 1.0F) *
+                    visible);
+            const auto start =
+                slice_drag_ == SliceDrag::start ? frame : selected->start_frame;
+            const auto end =
+                slice_drag_ == SliceDrag::end ? frame : selected->end_frame;
+            if (start < end)
+                submit(
+                    command("slice.bounds-set.v1",
+                            {{"start_frame", static_cast<std::int64_t>(start)},
+                             {"end_frame", static_cast<std::int64_t>(end)}}));
+            return true;
+        }
+    }
     if (up) {
         pointer_down_ = false;
+        slice_drag_ = SliceDrag::none;
         return true;
     }
     return false;

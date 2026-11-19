@@ -177,6 +177,35 @@ ActionRegistry::ActionRegistry() {
                {{"slot_id", ValueType::integer}, {"path", ValueType::text}}));
     add(action("sample.unload.v1", "Unload sample", "Samples",
                {{"slot_id", ValueType::integer}}));
+    add(action("slice.select.v1", "Select slice", "Samples",
+               {{"slice_id", ValueType::integer}}));
+    add(action("slice.create.v1", "Create slice", "Samples",
+               {{"start_frame", ValueType::integer},
+                {"end_frame", ValueType::integer},
+                {"name", ValueType::text, false}}));
+    add(action("slice.delete.v1", "Delete slice", "Samples"));
+    add(action("slice.bounds-set.v1", "Set slice boundaries", "Samples",
+               {{"start_frame", ValueType::integer},
+                {"end_frame", ValueType::integer}}));
+    add(action("slice.rename.v1", "Rename slice", "Samples",
+               {{"name", ValueType::text}}));
+    add(action("slice.duplicate.v1", "Duplicate slice", "Samples"));
+    add(action("slice.clear.v1", "Clear slices", "Samples"));
+    add(action("slice.equal-divisions.v1", "Slice equally", "Samples",
+               {{"divisions", ValueType::integer}}));
+    add(action("slice.detect-transients.v1", "Detect transients", "Samples",
+               {{"sensitivity", ValueType::real},
+                {"minimum_frames", ValueType::integer}}));
+    add(action("slice.pad-assign.v1", "Assign slice to pad", "Samples",
+               {{"pad", ValueType::integer}}));
+    add(action("slice.pad-clear.v1", "Clear pad slice", "Samples",
+               {{"pad", ValueType::integer}}));
+    add(action("slice.preview.v1", "Preview slice", "Samples"));
+    add(action("sample.preview.v1", "Preview sample", "Samples"));
+    add(action("slice.preview-stop.v1", "Stop preview", "Samples"));
+    add(action(
+        "pad.trigger.v1", "Trigger performance pad", "Performance",
+        {{"pad", ValueType::integer}, {"velocity", ValueType::real, false}}));
     add(action("edit.undo.v1", "Undo", "Editing"));
     add(action("edit.redo.v1", "Redo", "Editing"));
     add(action("edit.group-begin.v1", "Begin grouped edit", "Editing"));
@@ -447,7 +476,7 @@ ApplicationService::ApplicationService(AudioEngine &engine,
                                        SampleManager &samples,
                                        std::size_t capacity)
     : engine_(engine), timeline_(timeline), samples_(samples),
-      capacity_(capacity) {
+      slices_(engine, samples), capacity_(capacity) {
     if (capacity_ == 0)
         throw std::invalid_argument(
             "application command capacity must be positive");
@@ -1263,6 +1292,163 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     }
                 }
             }
+        } else if (command.action_id.rfind("slice.", 0) == 0 ||
+                   command.action_id == "sample.preview.v1" ||
+                   command.action_id == "pad.trigger.v1") {
+            auto refresh_slices = [&] {
+                const auto value =
+                    slices_.snapshot(state_.selected_sample_slot);
+                state_.slice_revision = value.revision;
+                state_.sample_frames = value.sample_frames;
+                state_.sample_rate = value.sample_rate;
+                state_.sample_channels = value.channels;
+                state_.slice_pad_assignments = value.pad_assignments;
+                state_.waveform_peaks = value.waveform;
+                state_.slices.clear();
+                for (const auto &slice : value.slices)
+                    state_.slices.push_back({slice.id, slice.name,
+                                             slice.start_frame, slice.end_frame,
+                                             slice.gain, slice.root_note});
+                if (state_.selected_slice != 0 &&
+                    std::none_of(state_.slices.begin(), state_.slices.end(),
+                                 [&](const auto &slice) {
+                                     return slice.id == state_.selected_slice;
+                                 }))
+                    state_.selected_slice = 0;
+            };
+            if (command.action_id == "slice.select.v1") {
+                const auto id = *argument<std::int64_t>(command, "slice_id");
+                if (id <= 0 ||
+                    std::none_of(state_.slices.begin(), state_.slices.end(),
+                                 [&](const auto &slice) {
+                                     return slice.id ==
+                                            static_cast<SliceId>(id);
+                                 }))
+                    error = "slice does not exist";
+                else
+                    state_.selected_slice = static_cast<SliceId>(id);
+            } else if (command.action_id == "slice.create.v1") {
+                const auto start =
+                    *argument<std::int64_t>(command, "start_frame");
+                const auto end = *argument<std::int64_t>(command, "end_frame");
+                std::string name = "Slice";
+                if (const auto found = command.arguments.find("name");
+                    found != command.arguments.end())
+                    name = std::get<std::string>(found->second);
+                SliceId created{};
+                if (start < 0 || end < 0 ||
+                    !slices_.create(state_.selected_sample_slot,
+                                    state_.slice_revision,
+                                    static_cast<std::uint64_t>(start),
+                                    static_cast<std::uint64_t>(end),
+                                    std::move(name), created, error)) {
+                    if (error.empty())
+                        error = "slice boundaries are invalid";
+                } else
+                    state_.selected_slice = created;
+            } else if (command.action_id == "slice.delete.v1") {
+                if (state_.selected_slice == 0)
+                    error = "no slice is selected";
+                else if (slices_.erase(state_.selected_slice,
+                                       state_.slice_revision, error))
+                    state_.selected_slice = 0;
+            } else if (command.action_id == "slice.bounds-set.v1") {
+                const auto start =
+                    *argument<std::int64_t>(command, "start_frame");
+                const auto end = *argument<std::int64_t>(command, "end_frame");
+                if (state_.selected_slice == 0)
+                    error = "no slice is selected";
+                else if (start < 0 || end < 0)
+                    error = "slice boundaries cannot be negative";
+                else
+                    (void)slices_.set_bounds(
+                        state_.selected_slice, state_.slice_revision,
+                        static_cast<std::uint64_t>(start),
+                        static_cast<std::uint64_t>(end), error);
+            } else if (command.action_id == "slice.rename.v1") {
+                if (state_.selected_slice == 0)
+                    error = "no slice is selected";
+                else
+                    (void)slices_.rename(
+                        state_.selected_slice, state_.slice_revision,
+                        *argument<std::string>(command, "name"), error);
+            } else if (command.action_id == "slice.duplicate.v1") {
+                SliceId created{};
+                if (state_.selected_slice == 0)
+                    error = "no slice is selected";
+                else if (slices_.duplicate(state_.selected_slice,
+                                           state_.slice_revision, created,
+                                           error))
+                    state_.selected_slice = created;
+            } else if (command.action_id == "slice.clear.v1") {
+                if (slices_.clear(state_.selected_sample_slot,
+                                  state_.slice_revision, error))
+                    state_.selected_slice = 0;
+            } else if (command.action_id == "slice.equal-divisions.v1") {
+                const auto divisions =
+                    *argument<std::int64_t>(command, "divisions");
+                if (divisions <= 0)
+                    error = "division count must be positive";
+                else if (slices_.equal_divisions(
+                             state_.selected_sample_slot, state_.slice_revision,
+                             static_cast<std::size_t>(divisions), error))
+                    state_.selected_slice = 0;
+            } else if (command.action_id == "slice.detect-transients.v1") {
+                const auto separation =
+                    *argument<std::int64_t>(command, "minimum_frames");
+                if (separation <= 0)
+                    error = "minimum separation must be positive";
+                else if (slices_.detect_transients(
+                             state_.selected_sample_slot, state_.slice_revision,
+                             static_cast<float>(
+                                 *argument<double>(command, "sensitivity")),
+                             static_cast<std::uint64_t>(separation), error))
+                    state_.selected_slice = 0;
+            } else if (command.action_id == "slice.pad-assign.v1") {
+                const auto pad = *argument<std::int64_t>(command, "pad");
+                if (state_.selected_slice == 0)
+                    error = "no slice is selected";
+                else if (pad < 0 ||
+                         !slices_.assign_pad(static_cast<std::size_t>(pad),
+                                             state_.selected_slice,
+                                             state_.slice_revision, error)) {
+                    if (error.empty())
+                        error = "pad index is invalid";
+                }
+            } else if (command.action_id == "slice.pad-clear.v1") {
+                const auto pad = *argument<std::int64_t>(command, "pad");
+                if (pad < 0 ||
+                    !slices_.clear_pad(static_cast<std::size_t>(pad),
+                                       state_.slice_revision, error)) {
+                    if (error.empty())
+                        error = "pad index is invalid";
+                }
+            } else if (command.action_id == "slice.preview.v1") {
+                if (state_.selected_slice == 0)
+                    error = "no slice is selected";
+                else
+                    (void)slices_.preview(state_.selected_slice, 1.0F, error);
+            } else if (command.action_id == "sample.preview.v1") {
+                (void)slices_.preview_full(state_.selected_sample_slot, 1.0F,
+                                           error);
+            } else if (command.action_id == "slice.preview-stop.v1") {
+                slices_.stop_preview();
+            } else if (command.action_id == "pad.trigger.v1") {
+                const auto pad = *argument<std::int64_t>(command, "pad");
+                double velocity = 1.0;
+                if (const auto found = command.arguments.find("velocity");
+                    found != command.arguments.end())
+                    velocity = std::get<double>(found->second);
+                if (pad < 0 || pad >= 16 || velocity < 0 || velocity > 1)
+                    error = "pad or velocity is outside its range";
+                else
+                    engine_.trigger(static_cast<std::uint8_t>(36 + pad),
+                                    static_cast<float>(velocity));
+            }
+            if (error.empty()) {
+                refresh_slices();
+                changed_locked();
+            }
         } else if (command.action_id == "sample.slot-select.v1") {
             const auto id = *argument<std::int64_t>(command, "slot_id");
             if (id < 0 || id > std::numeric_limits<std::uint32_t>::max())
@@ -1270,6 +1456,7 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             else {
                 state_.selected_sample_slot =
                     SampleSlotId{static_cast<std::uint32_t>(id)};
+                state_.selected_slice = 0;
                 changed_locked();
             }
         } else if (command.action_id == "pad.mode-select.v1") {
@@ -1484,6 +1671,7 @@ void ApplicationService::synchronize_locked() const {
     const auto playing = engine_.playing();
     const auto frame = engine_.frame_position();
     auto slots = samples_.states();
+    auto slice_state = slices_.snapshot(state_.selected_sample_slot);
     auto parameters = parameters_.parameters();
     bool external = state_.playing != playing ||
                     state_.transport_frame != frame ||
@@ -1493,6 +1681,7 @@ void ApplicationService::synchronize_locked() const {
                     state_.undo_depth != history.undo_depth ||
                     state_.redo_depth != history.redo_depth ||
                     state_.sample_slots.size() != slots.size() ||
+                    state_.slice_revision != slice_state.revision ||
                     state_.parameters.size() != parameters.size();
     if (!external)
         for (std::size_t i = 0; i < slots.size(); ++i)
@@ -1525,6 +1714,23 @@ void ApplicationService::synchronize_locked() const {
     state_.undo_depth = history.undo_depth;
     state_.redo_depth = history.redo_depth;
     state_.history_capacity = history.capacity;
+    state_.slice_revision = slice_state.revision;
+    state_.sample_frames = slice_state.sample_frames;
+    state_.sample_rate = slice_state.sample_rate;
+    state_.sample_channels = slice_state.channels;
+    state_.slice_pad_assignments = slice_state.pad_assignments;
+    state_.waveform_peaks = std::move(slice_state.waveform);
+    state_.slices.clear();
+    state_.slices.reserve(slice_state.slices.size());
+    for (const auto &slice : slice_state.slices)
+        state_.slices.push_back({slice.id, slice.name, slice.start_frame,
+                                 slice.end_frame, slice.gain, slice.root_note});
+    if (state_.selected_slice != 0 &&
+        std::none_of(state_.slices.begin(), state_.slices.end(),
+                     [&](const auto &slice) {
+                         return slice.id == state_.selected_slice;
+                     }))
+        state_.selected_slice = 0;
     state_.tempo_bpm =
         60'000'000.0 / timeline.timeline.transport.microseconds_per_quarter;
     state_.time_signature_numerator =

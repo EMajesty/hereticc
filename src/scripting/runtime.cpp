@@ -1,4 +1,5 @@
 #include "neurogenic/scripting/runtime.hpp"
+#include "neurogenic/audio/slicing.hpp"
 #include "neurogenic/timeline/edit.hpp"
 #ifdef NEUROGENIC_HAS_LUA
 #include <sol/sol.hpp>
@@ -362,12 +363,14 @@ struct ScriptRuntime::Impl {
     Submit submit;
     Position position;
     TimelineService *timeline{};
+    SliceService *slices{};
     std::optional<TimelineTransaction> pending;
 #ifdef NEUROGENIC_HAS_LUA
     sol::state lua;
 #endif
-    Impl(Submit s, Position p, TimelineService *t)
-        : submit(std::move(s)), position(std::move(p)), timeline(t) {}
+    Impl(Submit s, Position p, TimelineService *t, SliceService *slice_service)
+        : submit(std::move(s)), position(std::move(p)), timeline(t),
+          slices(slice_service) {}
     bool finish(std::string &error) {
         if (!pending)
             return true;
@@ -383,9 +386,9 @@ struct ScriptRuntime::Impl {
 };
 
 ScriptRuntime::ScriptRuntime(Submit submit, Position position,
-                             TimelineService *timeline)
+                             TimelineService *timeline, SliceService *slices)
     : impl_(std::make_unique<Impl>(std::move(submit), std::move(position),
-                                   timeline)) {
+                                   timeline, slices)) {
 #ifdef NEUROGENIC_HAS_LUA
     struct LuaPattern {
         Pattern value;
@@ -462,6 +465,42 @@ ScriptRuntime::ScriptRuntime(Submit submit, Position position,
                 impl_->pending = std::move(transaction);
             }};
     });
+    auto slice_api = impl_->lua.create_table();
+    v1["slices"] = slice_api;
+    slice_api.set_function("equal_divisions", [this](std::uint32_t slot,
+                                                     std::size_t divisions) {
+        if (!impl_->slices)
+            throw std::runtime_error("slice service is unavailable");
+        const auto state = impl_->slices->snapshot(SampleSlotId{slot});
+        std::string error;
+        if (!impl_->slices->equal_divisions(SampleSlotId{slot}, state.revision,
+                                            divisions, error))
+            throw std::runtime_error(error);
+    });
+    slice_api.set_function("create", [this](std::uint32_t slot,
+                                            std::uint64_t start,
+                                            std::uint64_t end,
+                                            std::string name) {
+        if (!impl_->slices)
+            throw std::runtime_error("slice service is unavailable");
+        const auto state = impl_->slices->snapshot(SampleSlotId{slot});
+        SliceId created{};
+        std::string error;
+        if (!impl_->slices->create(SampleSlotId{slot}, state.revision, start,
+                                   end, std::move(name), created, error))
+            throw std::runtime_error(error);
+        return created;
+    });
+    slice_api.set_function(
+        "assign_pad",
+        [this](std::uint32_t slot, std::size_t pad, SliceId slice) {
+            if (!impl_->slices)
+                throw std::runtime_error("slice service is unavailable");
+            const auto state = impl_->slices->snapshot(SampleSlotId{slot});
+            std::string error;
+            if (!impl_->slices->assign_pad(pad, slice, state.revision, error))
+                throw std::runtime_error(error);
+        });
 #endif
 }
 ScriptRuntime::~ScriptRuntime() = default;

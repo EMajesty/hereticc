@@ -263,7 +263,8 @@ int main(int argc, char **argv) {
         }
         neurogenic::ScriptRuntime lua(
             [&](auto pattern) { return engine.queue_pattern(pattern); },
-            [&] { return engine.frame_position(); }, &timeline_service);
+            [&] { return engine.frame_position(); }, &timeline_service,
+            &application.slices());
         if (synth)
             mapper.set_note_event_handler(
                 [&](auto note, auto velocity, bool on) {

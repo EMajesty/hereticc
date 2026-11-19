@@ -1,7 +1,8 @@
 #pragma once
-#include "neurogenic/audio/sample_manager.hpp"
+#include "neurogenic/audio/slicing.hpp"
 #include "neurogenic/performance/monitor.hpp"
 #include "neurogenic/timeline/edit.hpp"
+#include <array>
 #include <cstdint>
 #include <deque>
 #include <filesystem>
@@ -120,6 +121,13 @@ struct StepParameterLockState {
     std::string parameter_id;
     float value{};
 };
+struct SliceState {
+    SliceId id{};
+    std::string name;
+    std::uint64_t start_frame{}, end_frame{};
+    float gain{1.0F};
+    std::optional<std::uint8_t> root_note;
+};
 struct ApplicationState {
     std::uint64_t revision{};
     bool playing{};
@@ -129,6 +137,13 @@ struct ApplicationState {
     std::uint16_t time_signature_numerator{4}, time_signature_denominator{4};
     TrackId selected_track{};
     SampleSlotId selected_sample_slot{};
+    SliceId selected_slice{};
+    std::uint64_t slice_revision{}, sample_frames{};
+    std::uint32_t sample_rate{};
+    std::uint16_t sample_channels{};
+    std::vector<SliceState> slices;
+    std::array<std::optional<SliceId>, 16> slice_pad_assignments{};
+    std::vector<WaveformPeak> waveform_peaks;
     std::uint64_t selected_pattern{};
     std::int64_t selected_step{};
     std::uint64_t step_page{};
@@ -182,6 +197,7 @@ class ApplicationService {
     [[nodiscard]] CommandResult execute(const ApplicationCommand &);
     [[nodiscard]] ApplicationState snapshot() const;
     [[nodiscard]] std::uint64_t rejected_commands() const noexcept;
+    [[nodiscard]] SliceService &slices() noexcept { return slices_; }
 
   private:
     CommandResult execute_locked(const ApplicationCommand &, std::uint64_t);
@@ -190,6 +206,7 @@ class ApplicationService {
     AudioEngine &engine_;
     TimelineService &timeline_;
     SampleManager &samples_;
+    mutable SliceService slices_;
     ActionRegistry actions_;
     ParameterRegistry parameters_;
     const std::size_t capacity_;

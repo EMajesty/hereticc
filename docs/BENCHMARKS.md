@@ -91,3 +91,12 @@ Task 020 adds `probability_conditions` and `maximum_ratchets_fill` scheduler
 scenarios. Their reported preparation time is timeline compilation; processing
 time measures bounded scheduling only. Offline figures are regression data, not
 claims about Pi 5 or N150 real-time hardware behavior.
+
+Task 021 adds `slice_triggers_16`, `slice_voices_32_overlapping`,
+`slice_rapid_retrigger`, `waveform_peak_generation`, and
+`transient_detection`. Playback reports callback work; analysis reports
+preparation time separately. These host averages establish neither Pi 5/N150
+limits nor physical-device latency.
+On the 2026-11-19 Ryzen 7 7800X3D Debug run, the three slice playback cases
+averaged about 21.1, 29.7 and 48.9 µs per 256-frame buffer; four-second waveform
+peaks and transient analysis took about 0.14 and 0.74 ms respectively.

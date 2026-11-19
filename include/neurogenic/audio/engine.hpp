@@ -34,6 +34,9 @@ class AudioEngine {
     publish_sample_slot(SampleSlotId id, Sample sample,
                         std::uint64_t *publication = nullptr) noexcept;
     [[nodiscard]] bool
+    publish_sample_slot(SampleSlotId id, std::shared_ptr<const Sample> sample,
+                        std::uint64_t *publication = nullptr) noexcept;
+    [[nodiscard]] bool
     unload_sample_slot(SampleSlotId id,
                        std::uint64_t *publication = nullptr) noexcept;
     [[nodiscard]] bool
@@ -50,6 +53,18 @@ class AudioEngine {
     [[nodiscard]] std::uint32_t sample_rate() const noexcept { return rate_; }
     void trigger(std::uint8_t note, float velocity,
                  std::uint32_t frame_offset = 0) noexcept;
+    [[nodiscard]] bool trigger_slice(SampleSlotId, std::uint64_t publication,
+                                     std::uint64_t start_frame,
+                                     std::uint64_t end_frame, float slice_gain,
+                                     float velocity,
+                                     std::uint32_t frame_offset = 0) noexcept;
+    [[nodiscard]] bool stop_slice_previews() noexcept;
+    [[nodiscard]] bool map_note_to_slice(std::uint8_t note, SampleSlotId,
+                                         std::uint64_t publication,
+                                         std::uint64_t start_frame,
+                                         std::uint64_t end_frame,
+                                         float gain = 1.0F) noexcept;
+    [[nodiscard]] bool clear_note_slice(std::uint8_t note) noexcept;
     void trigger_synth(std::uint8_t note, float velocity,
                        bool note_on = true) noexcept;
     [[nodiscard]] bool set_synth_parameter(SynthParameter, float) noexcept;
@@ -142,6 +157,10 @@ class AudioEngine {
         float velocity{};
         std::uint32_t frame_offset{};
         std::uint64_t order{};
+        SampleSlotId slot{invalid_sample_slot};
+        std::uint64_t publication{}, start_frame{}, end_frame{};
+        float slice_gain{1.0F};
+        bool sliced{}, stop_previews{};
     };
     struct SynthTrigger {
         std::uint8_t note{};
@@ -156,14 +175,14 @@ class AudioEngine {
     };
     struct Voice {
         const Sample *sample{};
-        std::size_t sample_version{}, cursor{};
+        std::size_t sample_version{}, cursor{}, end_cursor{};
         float gain{};
         std::uint64_t age{};
         TrackId track{};
         EventId event{};
         std::uint64_t occurrence{};
         std::uint8_t pitch{};
-        bool timeline_owned{}, active{};
+        bool timeline_owned{}, preview{}, active{};
     };
     enum class SampleVersionState : std::uint8_t {
         free,
@@ -175,7 +194,18 @@ class AudioEngine {
     struct SampleVersion {
         std::atomic<SampleVersionState> state{SampleVersionState::free};
         std::atomic<std::uint32_t> id{invalid_sample_slot.value};
-        std::unique_ptr<const Sample> sample;
+        std::shared_ptr<const Sample> sample;
+        std::atomic<std::uint64_t> publication{};
+    };
+    struct SliceTarget {
+        SampleSlotId slot{invalid_sample_slot};
+        std::uint64_t publication{}, start_frame{}, end_frame{};
+        float gain{1.0F};
+        bool enabled{};
+    };
+    struct SliceMapCommand {
+        std::uint8_t note{};
+        SliceTarget target;
     };
     struct SampleUpdate {
         enum class Type : std::uint8_t { install, unload };
@@ -228,7 +258,9 @@ class AudioEngine {
     find_active_sample(SampleSlotId id) const noexcept;
     void start_voice(std::uint8_t note, float velocity, TrackId track = 0,
                      EventId event = 0, std::uint64_t occurrence = 0,
-                     bool timeline_owned = false) noexcept;
+                     bool timeline_owned = false,
+                     const SliceTarget *slice = nullptr,
+                     bool preview = false) noexcept;
     void stop_timeline_voice(TrackId, EventId,
                              std::uint64_t occurrence) noexcept;
     void stop_voices(bool timeline_only = false) noexcept;
@@ -246,6 +278,7 @@ class AudioEngine {
     SpscQueue<std::uint8_t, 4> timelines_;
     std::array<PlanSlot, timeline_plan_slot_count> timeline_plans_{};
     SpscQueue<TransportCommand, 16> transport_commands_;
+    SpscQueue<SliceMapCommand, 65> slice_map_commands_;
     std::atomic<std::uint64_t> dropped_triggers_{}, dropped_patterns_{},
         dropped_timelines_{}, dropped_timeline_events_{},
         dropped_legacy_events_{}, dropped_transport_commands_{},
@@ -260,6 +293,7 @@ class AudioEngine {
     std::unique_ptr<SampleVersion[]> sample_versions_;
     std::size_t sample_version_capacity_{};
     std::array<SampleSlotId, 128> note_slots_{};
+    std::array<SliceTarget, 128> note_slices_{};
     std::vector<Voice> voices_;
     std::vector<ScheduledEvent> legacy_events_;
     std::vector<TimelineScheduledEvent> timeline_events_;

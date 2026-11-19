@@ -2,6 +2,7 @@
 #include "neurogenic/dsp/parameter_destination.hpp"
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <fstream>
 #include <limits>
@@ -107,6 +108,7 @@ void AudioEngine::reclaim_sample_versions_unlocked() noexcept {
             sample_versions_[i].sample.reset();
             sample_versions_[i].id.store(invalid_sample_slot.value,
                                          std::memory_order_release);
+            sample_versions_[i].publication.store(0, std::memory_order_release);
             sample_versions_[i].state.store(SampleVersionState::free,
                                             std::memory_order_release);
             reclaimed_sample_versions_.fetch_add(1, std::memory_order_relaxed);
@@ -119,13 +121,24 @@ void AudioEngine::reclaim_sample_versions() noexcept {
 
 bool AudioEngine::publish_sample_slot(SampleSlotId id, Sample sample,
                                       std::uint64_t *publication) noexcept {
+    try {
+        return publish_sample_slot(
+            id, std::make_shared<const Sample>(std::move(sample)), publication);
+    } catch (...) {
+        return false;
+    }
+}
+
+bool AudioEngine::publish_sample_slot(SampleSlotId id,
+                                      std::shared_ptr<const Sample> sample,
+                                      std::uint64_t *publication) noexcept {
     std::lock_guard lock(sample_update_producer_mutex_);
     if (publication)
         *publication = 0;
-    if (id == invalid_sample_slot || sample.sample_rate != rate_ ||
-        (sample.channels != 1 && sample.channels != 2) ||
-        sample.interleaved.empty() ||
-        sample.interleaved.size() % sample.channels != 0)
+    if (id == invalid_sample_slot || !sample || sample->sample_rate != rate_ ||
+        (sample->channels != 1 && sample->channels != 2) ||
+        sample->interleaved.empty() ||
+        sample->interleaved.size() % sample->channels != 0)
         return false;
     reclaim_sample_versions_unlocked();
     std::size_t version = sample_version_capacity_;
@@ -139,12 +152,7 @@ bool AudioEngine::publish_sample_slot(SampleSlotId id, Sample sample,
         dropped_sample_updates_.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
-    try {
-        sample_versions_[version].sample =
-            std::make_unique<const Sample>(std::move(sample));
-    } catch (...) {
-        return false;
-    }
+    sample_versions_[version].sample = std::move(sample);
     sample_versions_[version].id.store(id.value, std::memory_order_release);
     sample_versions_[version].state.store(SampleVersionState::queued,
                                           std::memory_order_release);
@@ -161,6 +169,8 @@ bool AudioEngine::publish_sample_slot(SampleSlotId id, Sample sample,
         return false;
     }
     ++next_sample_update_sequence_;
+    sample_versions_[version].publication.store(next_sample_update_sequence_,
+                                                std::memory_order_release);
     if (publication)
         *publication = next_sample_update_sequence_;
     return true;
@@ -200,6 +210,56 @@ void AudioEngine::trigger(std::uint8_t note, float velocity,
                         next_order_.fetch_add(1, std::memory_order_relaxed)};
     if (!triggers_.push(event))
         dropped_triggers_.fetch_add(1, std::memory_order_relaxed);
+}
+bool AudioEngine::trigger_slice(SampleSlotId slot, std::uint64_t publication,
+                                std::uint64_t start_frame,
+                                std::uint64_t end_frame, float slice_gain,
+                                float velocity,
+                                std::uint32_t frame_offset) noexcept {
+    if (slot == invalid_sample_slot || publication == 0 ||
+        start_frame >= end_frame || !std::isfinite(slice_gain) ||
+        slice_gain < 0 || !std::isfinite(velocity) || velocity < 0)
+        return false;
+    Trigger event{0,
+                  velocity,
+                  frame_offset,
+                  next_order_.fetch_add(1, std::memory_order_relaxed),
+                  slot,
+                  publication,
+                  start_frame,
+                  end_frame,
+                  slice_gain,
+                  true,
+                  false};
+    if (!triggers_.push(event)) {
+        dropped_triggers_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    return true;
+}
+bool AudioEngine::stop_slice_previews() noexcept {
+    Trigger event{};
+    event.order = next_order_.fetch_add(1, std::memory_order_relaxed);
+    event.stop_previews = true;
+    if (!triggers_.push(event)) {
+        dropped_triggers_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    return true;
+}
+bool AudioEngine::map_note_to_slice(std::uint8_t note, SampleSlotId slot,
+                                    std::uint64_t publication,
+                                    std::uint64_t start_frame,
+                                    std::uint64_t end_frame,
+                                    float gain) noexcept {
+    if (slot == invalid_sample_slot || publication == 0 ||
+        start_frame >= end_frame || !std::isfinite(gain) || gain < 0)
+        return false;
+    return slice_map_commands_.push(
+        {note, {slot, publication, start_frame, end_frame, gain, true}});
+}
+bool AudioEngine::clear_note_slice(std::uint8_t note) noexcept {
+    return slice_map_commands_.push({note, {}});
 }
 void AudioEngine::trigger_synth(std::uint8_t note, float velocity,
                                 bool note_on) noexcept {
@@ -306,9 +366,20 @@ bool AudioEngine::set_fill(bool active) noexcept {
 
 void AudioEngine::start_voice(std::uint8_t note, float velocity, TrackId track,
                               EventId event, std::uint64_t occurrence,
-                              bool timeline_owned) noexcept {
-    const auto sample_index = find_active_sample(note_slots_[note]);
+                              bool timeline_owned, const SliceTarget *slice,
+                              bool preview) noexcept {
+    const auto slot = slice ? slice->slot : note_slots_[note];
+    const auto sample_index = find_active_sample(slot);
     if (sample_index == std::numeric_limits<std::size_t>::max()) {
+        missing_slot_triggers_.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    const auto *sample = sample_versions_[sample_index].sample.get();
+    const auto sample_frames = sample->frames();
+    if (slice && (sample_versions_[sample_index].publication.load(
+                      std::memory_order_acquire) != slice->publication ||
+                  slice->start_frame >= slice->end_frame ||
+                  slice->end_frame > sample_frames)) {
         missing_slot_triggers_.fetch_add(1, std::memory_order_relaxed);
         return;
     }
@@ -325,16 +396,20 @@ void AudioEngine::start_voice(std::uint8_t note, float velocity, TrackId track,
                 selected = i;
         stolen_voices_.fetch_add(1, std::memory_order_relaxed);
     }
-    voices_[selected] = {sample_versions_[sample_index].sample.get(),
+    const auto start = slice ? slice->start_frame : 0;
+    const auto end = slice ? slice->end_frame : sample_frames;
+    voices_[selected] = {sample,
                          sample_index,
-                         0,
-                         velocity,
+                         static_cast<std::size_t>(start * sample->channels),
+                         static_cast<std::size_t>(end * sample->channels),
+                         velocity * (slice ? slice->gain : 1.0F),
                          next_voice_age_++,
                          track,
                          event,
                          occurrence,
                          note,
                          timeline_owned,
+                         preview,
                          true};
 }
 
@@ -381,6 +456,9 @@ void AudioEngine::process(std::span<float> left,
         applied_sample_update_sequence_.store(sample_update.sequence,
                                               std::memory_order_release);
     }
+    SliceMapCommand slice_map;
+    while (slice_map_commands_.pop(slice_map))
+        note_slices_[slice_map.note] = slice_map.target;
 
     Pattern pattern;
     DspCommand dsp;
@@ -474,12 +552,32 @@ void AudioEngine::process(std::span<float> left,
         while (external_index < pending_trigger_count_ &&
                pending_triggers_[external_index].frame_offset == frame) {
             const auto &event = pending_triggers_[external_index++];
-            start_voice(event.note, event.velocity);
+            if (event.stop_previews) {
+                for (auto &voice : voices_)
+                    if (voice.active && voice.preview)
+                        voice.active = false;
+                continue;
+            }
+            if (event.sliced) {
+                const SliceTarget target{event.slot,        event.publication,
+                                         event.start_frame, event.end_frame,
+                                         event.slice_gain,  true};
+                start_voice(event.note, event.velocity, 0, 0, 0, false, &target,
+                            true);
+            } else {
+                const auto *slice = note_slices_[event.note].enabled
+                                        ? &note_slices_[event.note]
+                                        : nullptr;
+                start_voice(event.note, event.velocity, 0, 0, 0, false, slice);
+            }
         }
         while (scheduled_index < scheduled_count &&
                legacy_events_[scheduled_index].frame == frame) {
             const auto &event = legacy_events_[scheduled_index++];
-            start_voice(event.note, event.velocity);
+            const auto *slice = note_slices_[event.note].enabled
+                                    ? &note_slices_[event.note]
+                                    : nullptr;
+            start_voice(event.note, event.velocity, 0, 0, 0, false, slice);
         }
         while (timeline_index < timeline_count &&
                timeline_events_[timeline_index].frame == frame) {
@@ -499,7 +597,10 @@ void AudioEngine::process(std::span<float> left,
             } else if (event.instrument == sample_instrument_key) {
                 if (event.type == MusicalEventType::note_on)
                     start_voice(event.pitch, event.value, event.track,
-                                event.target_event_id, event.occurrence, true);
+                                event.target_event_id, event.occurrence, true,
+                                note_slices_[event.pitch].enabled
+                                    ? &note_slices_[event.pitch]
+                                    : nullptr);
                 else if (event.type == MusicalEventType::note_off)
                     stop_timeline_voice(event.track, event.target_event_id,
                                         event.occurrence);
@@ -510,7 +611,8 @@ void AudioEngine::process(std::span<float> left,
             if (!voice.active)
                 continue;
             const auto &sample = *voice.sample;
-            if (voice.cursor + sample.channels > sample.interleaved.size()) {
+            if (voice.cursor + sample.channels > voice.end_cursor ||
+                voice.cursor + sample.channels > sample.interleaved.size()) {
                 voice.active = false;
                 continue;
             }
@@ -520,7 +622,8 @@ void AudioEngine::process(std::span<float> left,
                     .interleaved[voice.cursor + (sample.channels > 1 ? 1 : 0)] *
                 voice.gain;
             voice.cursor += sample.channels;
-            if (voice.cursor >= sample.interleaved.size())
+            if (voice.cursor >= voice.end_cursor ||
+                voice.cursor >= sample.interleaved.size())
                 voice.active = false;
         }
         const auto synth_sample = synth_.render_sample();

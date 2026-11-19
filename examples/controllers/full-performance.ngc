@@ -8,5 +8,6 @@ control|fader.1|fader|Fader 1
 bind|play|action|transport.play.v1|feedback=led.play
 bind|stop|action|transport.stop.v1|feedback=led.stop
 bind|enter|action|navigation.confirm.v1|feedback=display.main
+bind|enter|action|slice.preview.v1|shift|feedback=display.main|label=Preview slice
 bind|data|parameter|transport.tempo|label=Tempo
 bind|fader.1|parameter|performance.xy.x|label=X

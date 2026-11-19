@@ -174,8 +174,15 @@ toggling remain distinct semantic actions.
 
 There is no device firmware, MIDI learn, project persistence for note targets
 or profiles, state-delta subscription, modulation matrix,
-scale engine, slicing or pitch shifting. The profile files are validated
+scale engine or pitch shifting. The profile files are validated
 examples, not a commitment to a particular master-controller layout.
+
+Slice clients use stable `slice.select.v1`, `slice.create.v1`,
+`slice.bounds-set.v1`, delete, auto-slice, pad-assignment and preview actions.
+`pad.trigger.v1` carries a semantic pad index and velocity: PAD mode does not
+depend on physical MIDI IDs or the step editor, and an assigned slice overrides
+the default 36–51 sample-bank mapping. A data wheel can select a slice and
+adjust its numeric boundaries without touch; bindings remain profile policy.
 Trigger editing uses stable actions `step.probability-set.v1`,
 `step.condition-set.v1`, `step.ratchet-set.v1`, and `step.trigger-reset.v1`.
 Fill adapters use `performance.fill-set.v1` on press/release for momentary

@@ -83,3 +83,29 @@ quit
 The existing positional WAV, repeatable `--slot ID=FILE`, and `--map NOTE=ID`
 forms remain supported. Local files under `samples/` are deliberately ignored
 except for `.gitkeep`; tests generate temporary deterministic WAV fixtures.
+
+## Sample slicing
+
+`SliceService` is the shared C++ command/query boundary for chopping. A slice
+has a stable ID, parent slot plus callback-acknowledged sample revision,
+start/end frame, name, optional root note and gain. Coordinates refer to the
+immutable, resampled engine-rate PCM, so playback and waveform markers share
+one canonical domain. Slices reference PCM; they never copy it. Replacement or
+unload invalidates editable slices and pad mappings, while active voices retain
+the old immutable version and finish safely.
+
+Equal slicing supports 2, 4, 8, 16, 32 or 64 divisions. Transient slicing uses
+a deterministic amplitude-flux detector with sensitivity and minimum frame
+separation. Both analysis and the bounded 1024-bucket stereo peak cache run
+outside the callback. Overlap and whole-sample slices are allowed; empty or
+out-of-range regions are rejected.
+
+Pads 0–15 map to notes 36–51 through a bounded callback-applied queue. A slice
+mapping takes precedence; clearing it restores the note-to-slot fallback. STEP
+events retain velocity, probability, conditions and ratchets. Preview uses the
+existing voice pool and stops preview-owned voices without stopping transport.
+
+`NEUROGENIC_SLICES 1` is a sidecar format for metadata, pad assignments and
+external sample paths; PCM is never embedded. Missing references fail clearly.
+Automatic project integration, choke groups, stretching and pitch shifting are
+not implemented.

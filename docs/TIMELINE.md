@@ -203,6 +203,11 @@ independent and is not skipped when a conditional note does not fire. This first
 model persists lock values until another parameter event changes them; it does
 not interpolate or restore values automatically.
 
+Slice sequencing adds no second musical event type. Pad assignments resolve
+notes 36–51 to immutable sample-version/frame ranges before voice creation, so
+duration notes preserve scheduler ordering, velocity, probability, conditions,
+ratchets and ownership. Without an assignment, existing slot mapping applies.
+
 Trigger properties currently apply to duration-note events produced by the
 step/timeline editing services. Legacy explicit note-on/note-off pairs retain
 unconditional edge semantics. Parameter events are independent; attaching a

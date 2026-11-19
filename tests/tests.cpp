@@ -687,6 +687,133 @@ void test_live_sample_management_and_resampling() {
     std::filesystem::remove(float32);
 }
 
+void test_sample_slicing() {
+    using namespace neurogenic;
+    const auto base = std::filesystem::temp_directory_path();
+    const auto wav = base / "neurogenic-slices.wav";
+    std::vector<float> pcm(480);
+    for (std::size_t i = 0; i < pcm.size(); ++i)
+        pcm[i] = i < 120 ? 0.1F : i < 240 ? 0.5F : 0.25F;
+    write_pcm16_wav(wav, 48000, 1, pcm);
+    AudioEngine engine(48000, 8);
+    SampleManager manager(engine, 16);
+    check(manager.load(SampleSlotId{0}, wav), "slice fixture load");
+    manager.wait_idle();
+    std::array<float, 512> left{}, right{};
+    engine.process({left.data(), 0}, {right.data(), 0});
+    SliceService slices(engine, manager);
+    auto state = slices.snapshot(SampleSlotId{0});
+    check(state.sample_frames == 480 && state.waveform.size() == 480,
+          "waveform peak preparation");
+    SliceId first{}, overlap{};
+    std::string error;
+    check(slices.create(SampleSlotId{0}, state.revision, 100, 200, "First",
+                        first, error),
+          "slice creation");
+    state = slices.snapshot(SampleSlotId{0});
+    check(slices.create(SampleSlotId{0}, state.revision, 150, 300, "Overlap",
+                        overlap, error),
+          "overlapping slice creation");
+    state = slices.snapshot(SampleSlotId{0});
+    check(state.slices[0].id == first && state.slices[1].id == overlap,
+          "stable slice identifiers");
+    check(!slices.set_bounds(first, state.revision, 200, 100, error),
+          "invalid slice boundaries accepted");
+    check(!slices.rename(first, state.revision - 1, "stale", error),
+          "stale slice revision accepted");
+    check(slices.assign_pad(0, first, state.revision, error),
+          "slice pad assignment");
+    engine.process({left.data(), 0}, {right.data(), 0});
+    engine.trigger(36, 1.0F);
+    engine.process({left.data(), 128}, {right.data(), 128});
+    check(std::any_of(left.begin(), left.begin() + 100,
+                      [](float value) { return std::abs(value) > 0.1F; }) &&
+              std::all_of(left.begin() + 100, left.begin() + 128,
+                          [](float value) { return value == 0; }),
+          "slice playback boundaries");
+    state = slices.snapshot(SampleSlotId{0});
+    check(slices.equal_divisions(SampleSlotId{0}, state.revision, 16, error),
+          "equal slice generation");
+    state = slices.snapshot(SampleSlotId{0});
+    check(state.slices.size() == 16 && state.slices.front().start_frame == 0 &&
+              state.slices.back().end_frame == 480 && !state.pad_assignments[0],
+          "equal slice coverage and stale pad clearing");
+    check(slices.detect_transients(SampleSlotId{0}, state.revision, 0.25F, 32,
+                                   error),
+          "transient slicing");
+    state = slices.snapshot(SampleSlotId{0});
+    check(state.slices.size() >= 2 && state.slices.front().start_frame == 0,
+          "deterministic transient boundaries");
+    const auto before_replace_revision = state.revision;
+    check(slices.preview(state.slices.front().id, 1, error),
+          "slice before replacement");
+    engine.process({left.data(), 1}, {right.data(), 1});
+    check(manager.replace(SampleSlotId{0}, wav), "slice sample replacement");
+    manager.wait_idle();
+    engine.process({left.data(), 1}, {right.data(), 1});
+    check(left[0] != 0, "old slice voice did not survive replacement");
+    state = slices.snapshot(SampleSlotId{0});
+    check(state.revision > before_replace_revision && state.slices.empty(),
+          "sample replacement invalidated stale slices");
+    TimelineService timeline(
+        [&](const Timeline &value, std::string &timeline_error) {
+            return engine.queue_timeline(value, timeline_error);
+        });
+    ApplicationService application(engine, timeline, manager);
+    auto result = application.execute(
+        {"slice.equal-divisions.v1", {{"divisions", std::int64_t{8}}}});
+    check(result.accepted && application.snapshot().slices.size() == 8,
+          "slice application action/state");
+    result = application.execute(
+        {"slice.select.v1",
+         {{"slice_id",
+           static_cast<std::int64_t>(application.snapshot().slices[0].id)}}});
+    check(result.accepted, "slice application selection");
+    GuiModel gui(application);
+    check(gui.input({GuiInput::Type::key_down, GuiKey::tab}, 1920, 1200),
+          "slice GUI view navigation");
+    const auto &gui_frame = gui.frame(1920, 1200);
+    check(std::any_of(gui_frame.commands.begin(), gui_frame.commands.end(),
+                      [](const auto &item) {
+                          return item.type == DrawCommand::Type::line;
+                      }),
+          "slice GUI waveform rendering");
+#ifdef NEUROGENIC_HAS_LUA
+    ScriptRuntime lua([](Pattern) { return true; }, [] { return 0ULL; },
+                      &timeline, &application.slices());
+    check(lua.execute("neurogenic.v1.slices.equal_divisions(0, 4)", error) &&
+              application.slices().snapshot(SampleSlotId{0}).slices.size() == 4,
+          "Lua slice adapter");
+#endif
+    const auto preview_state = application.slices().snapshot(SampleSlotId{0});
+    check(application.slices().preview(preview_state.slices[0].id, 1, error),
+          "slice preview");
+    engine.process({left.data(), 1}, {right.data(), 1});
+    application.slices().stop_preview();
+    engine.process({left.data(), 1}, {right.data(), 1});
+    check(engine.active_voice_count() == 0, "slice preview stop ownership");
+    SliceProject project;
+    project.sample_paths[0] = wav;
+    project.slices.push_back(
+        {42, SampleSlotId{0}, 1, 1, 0, 100, "Persisted", 60, 0.8F});
+    project.pads[3] = 42;
+    const auto project_path = base / "neurogenic-slices.project";
+    save_slice_project(project, project_path);
+    const auto restored = load_slice_project(project_path);
+    check(restored.slices.size() == 1 && restored.slices[0].id == 42 &&
+              restored.pads[3] == 42,
+          "slice persistence round trip");
+    std::filesystem::remove(wav);
+    bool missing = false;
+    try {
+        (void)load_slice_project(project_path);
+    } catch (const std::runtime_error &) {
+        missing = true;
+    }
+    check(missing, "missing slice sample reference accepted");
+    std::filesystem::remove(project_path);
+}
+
 void test_sample_slots() {
     using namespace neurogenic;
     std::array<float, 8> left{}, right{};
@@ -1573,8 +1700,10 @@ void test_application_control_and_controllers() {
     check(grid.press(4).type == GridEventType::trigger_pad &&
               grid.press(4).slot == SampleSlotId{4},
           "pad semantics");
-    check(!grid_application_command(grid.press(4)),
-          "PAD event coupled to step editor");
+    const auto pad_command = grid_application_command(grid.press(4));
+    check(pad_command && pad_command->action_id == "pad.trigger.v1" &&
+              std::get<std::int64_t>(pad_command->arguments.at("pad")) == 4,
+          "PAD event did not resolve semantic trigger");
     grid.set_mode(PadMode::levels);
     grid.set_selected_slot(SampleSlotId{9});
     check(grid.press(15).type == GridEventType::trigger_level &&
@@ -2794,6 +2923,7 @@ int main() {
         test_polyphony_and_events();
         test_sample_slots();
         test_live_sample_management_and_resampling();
+        test_sample_slicing();
         test_timeline_and_tracks();
         test_transport_integration_and_timeline_io();
         test_midi_control_dispatch();

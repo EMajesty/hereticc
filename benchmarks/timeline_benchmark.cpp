@@ -352,6 +352,55 @@ void resample_case() {
                                                                 begin)
                .count());
 }
+void slice_playback_case(std::string name, std::size_t voices,
+                         bool rapid_retrigger) {
+    neurogenic::AudioEngine engine(48000, 64);
+    std::uint64_t publication{};
+    auto source =
+        std::make_shared<const neurogenic::Sample>(sample(48000, 16384));
+    if (!engine.publish_sample_slot(neurogenic::SampleSlotId{0}, source,
+                                    &publication))
+        throw std::runtime_error("slice benchmark publication failed");
+    std::vector<float> left(256), right(256);
+    engine.process({left.data(), 0}, {right.data(), 0});
+    const auto begin = Clock::now();
+    for (std::size_t i = 0; i < iterations; ++i) {
+        if (rapid_retrigger || i % 32 == 0)
+            for (std::size_t voice = 0; voice < voices; ++voice)
+                if (!engine.trigger_slice(neurogenic::SampleSlotId{0},
+                                          publication, (voice * 97) % 4096,
+                                          8192 + (voice * 97) % 4096, 1.0F,
+                                          0.5F))
+                    break;
+        engine.process(left, right);
+        checksum += left[0] != 0;
+    }
+    result(std::move(name), 48000, 256,
+           std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
+                                                                begin)
+                   .count() /
+               iterations);
+}
+void slice_analysis_cases() {
+    auto source = sample(48000, 48000 * 4);
+    for (std::size_t frame = 0; frame < source.frames(); frame += 6000)
+        source.interleaved[frame] = 1.0F;
+    auto begin = Clock::now();
+    const auto peaks = neurogenic::build_waveform_peaks(source);
+    auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                       Clock::now() - begin)
+                       .count();
+    checksum += peaks.size();
+    result("waveform_peak_generation", 48000, 256, 0, elapsed);
+    begin = Clock::now();
+    const auto transients =
+        neurogenic::detect_transient_frames(source, 0.35F, 2048);
+    elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                  Clock::now() - begin)
+                  .count();
+    checksum += transients.size();
+    result("transient_detection", 48000, 256, 0, elapsed);
+}
 void gui_case(int width, int height) {
     neurogenic::AudioEngine engine;
     neurogenic::TimelineService timeline_service(
@@ -402,6 +451,10 @@ int main() {
     automation_case("mixed_sample_synth_automation", 64, true);
     automation_publication_case();
     resample_case();
+    slice_playback_case("slice_triggers_16", 16, false);
+    slice_playback_case("slice_voices_32_overlapping", 32, false);
+    slice_playback_case("slice_rapid_retrigger", 16, true);
+    slice_analysis_cases();
     gui_case(1920, 1200);
     gui_case(1024, 800);
     gui_case(1024, 600);
