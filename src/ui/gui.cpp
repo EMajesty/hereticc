@@ -1,9 +1,12 @@
 #include "neurogenic/ui/gui.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <fstream>
 #include <limits>
 
 namespace neurogenic {
+UiPoint window_to_drawable(const DisplayMetrics& display,float x,float y) noexcept{return {x*display.pixel_ratio_x,y*display.pixel_ratio_y};}
 namespace {
 ApplicationCommand
 command(std::string id,
@@ -29,45 +32,182 @@ StepResolution next_resolution(StepResolution value) {
 }
 } // namespace
 
+GuiModel::GuiModel(ApplicationService &application, GuiSettings settings,
+                   std::filesystem::path settings_path)
+    : application_(application), settings_(settings),
+      settings_path_(std::move(settings_path)) {}
+
+std::filesystem::path GuiModel::default_settings_path() {
+    if (const auto *xdg = std::getenv("XDG_CONFIG_HOME"))
+        return std::filesystem::path(xdg) / "neurogenic/gui.conf";
+    if (const auto *home = std::getenv("HOME"))
+        return std::filesystem::path(home) / ".config/neurogenic/gui.conf";
+    return {};
+}
+
+GuiSettings GuiModel::load_settings(const std::filesystem::path &path,
+                                    std::string &error) {
+    GuiSettings result;
+    if (path.empty() || !std::filesystem::exists(path)) {
+        error.clear();
+        return result;
+    }
+    std::ifstream input(path);
+    std::string key;
+    while (input >> key) {
+        if (key == "ui_scale") {
+            std::string value;
+            input >> value;
+            if (value != "auto") {
+                try {
+                    const auto scale = std::stof(value);
+                    if (!std::isfinite(scale) || scale < 1.0F || scale > 2.5F)
+                        throw std::out_of_range("scale");
+                    result.ui_scale = scale;
+                } catch (...) {
+                    error = "invalid ui_scale in GUI settings; using automatic scale";
+                    result.ui_scale.reset();
+                }
+            }
+        } else if (key == "fullscreen") {
+            int value{};
+            if (!(input >> value) || (value != 0 && value != 1)) {
+                error = "invalid fullscreen value in GUI settings; using windowed mode";
+                result.fullscreen = false;
+                input.clear();
+            } else
+                result.fullscreen = value != 0;
+        } else {
+            std::string ignored;
+            std::getline(input, ignored);
+        }
+    }
+    return result;
+}
+
+bool GuiModel::save_settings(std::string &error) const {
+    if (settings_path_.empty()) {
+        error.clear();
+        return true;
+    }
+    try {
+        std::filesystem::create_directories(settings_path_.parent_path());
+        std::ofstream output(settings_path_, std::ios::trunc);
+        if (!output)
+            throw std::runtime_error("cannot open GUI settings file");
+        output << "ui_scale ";
+        if (settings_.ui_scale)
+            output << *settings_.ui_scale;
+        else
+            output << "auto";
+        output << "\nfullscreen " << (settings_.fullscreen ? 1 : 0) << '\n';
+        error.clear();
+        return true;
+    } catch (const std::exception &exception) {
+        error = exception.what();
+        return false;
+    }
+}
+
+float GuiModel::effective_scale(int width, int height) const noexcept {
+    if (settings_.ui_scale)
+        return std::clamp(*settings_.ui_scale, 1.0F, 2.5F);
+    if (width >= 1800 && height >= 1100)
+        return 1.5F;
+    if (width >= 1400 && height >= 850)
+        return 1.25F;
+    return 1.0F;
+}
+
+bool GuiModel::set_ui_scale(std::optional<float> scale, std::string &error) {
+    if (scale && (!std::isfinite(*scale) || *scale < 1.0F || *scale > 2.5F)) {
+        error = "UI scale must be between 1.0 and 2.5";
+        return false;
+    }
+    settings_.ui_scale = scale;
+    ++ui_revision_;
+    frame_.ui_revision = 0;
+    return save_settings(error);
+}
+
+bool GuiModel::adjust_ui_scale(float delta, std::string &error) {
+    const auto current = settings_.ui_scale.value_or(
+        frame_.layout.scale >= 1.0F ? frame_.layout.scale : 1.0F);
+    return set_ui_scale(std::clamp(current + delta, 1.0F, 2.5F), error);
+}
+
 GuiLayout GuiModel::layout(int width, int height) const {
     GuiLayout result;
-    result.scale = std::max(0.5F, std::min(width / 1024.0F, height / 600.0F));
+    result.scale = effective_scale(width, height);
     const float logical_width = width / result.scale;
     const float logical_height = height / result.scale;
-    result.offset_y =
-        std::max(0.0F, (logical_height - 600.0F) * 0.5F) * result.scale;
+    result.logical_width = logical_width;
+    result.logical_height = logical_height;
+    result.breakpoint = logical_width >= 1180 && logical_height >= 700
+                            ? GuiBreakpoint::wide
+                        : logical_height >= 680 ? GuiBreakpoint::compact
+                                                : GuiBreakpoint::legacy;
+    result.inspector_visible = logical_width >= 900;
     auto r = [&](float x, float y, float w, float h) {
-        return UiRect{x * result.scale, result.offset_y + y * result.scale,
-                      w * result.scale, h * result.scale};
+        return UiRect{x * result.scale, y * result.scale, w * result.scale,
+                      h * result.scale};
     };
-    result.top = r(0, 0, logical_width, 64);
-    result.nav = r(0, 64, logical_width, 54);
-    result.content = r(16, 130, logical_width - 280, 454);
-    result.parameters = r(logical_width - 248, 130, 232, 454);
-    const float tab_width = (logical_width - 48) / 4;
-    for (int i = 0; i < 4; ++i)
+    const float top_height = 64, nav_height = 54, margin = 16;
+    const float content_y = top_height + nav_height + 12;
+    const float content_height = std::max(360.0F, logical_height - content_y - margin);
+    const float inspector_width = result.inspector_visible
+                                      ? (result.breakpoint == GuiBreakpoint::wide
+                                             ? 300.0F
+                                             : 232.0F)
+                                      : 0.0F;
+    const float gap = result.inspector_visible ? 16.0F : 0.0F;
+    result.top = r(0, 0, logical_width, top_height);
+    result.nav = r(0, top_height, logical_width, nav_height);
+    result.content = r(margin, content_y,
+                       logical_width - margin * 2 - inspector_width - gap,
+                       content_height);
+    result.parameters = result.inspector_visible
+                            ? r(logical_width - margin - inspector_width,
+                                content_y, inspector_width, content_height)
+                            : UiRect{};
+    const float tab_width = (logical_width - 32) / 5;
+    for (int i = 0; i < 5; ++i)
         result.tabs.push_back(r(16 + i * tab_width, 72, tab_width - 8, 38));
-    result.page_previous = r(28, 142, 54, 34);
-    result.page_next = r(88, 142, 54, 34);
-    result.resolution = r(150, 142, 92, 34);
-    result.target_note = r(250, 142, 92, 34);
+    result.page_previous = r(28, content_y + 12, 64, 42);
+    result.page_next = r(100, content_y + 12, 64, 42);
+    result.resolution = r(172, content_y + 12, 100, 42);
+    result.target_note = r(280, content_y + 12, 100, 42);
+    const float row_y = content_y + 66;
+    const float row_width = result.content.w / result.scale - 24;
     for (int i = 0; i < 8; ++i)
-        result.rows.push_back(r(28, 184 + i * 42, logical_width - 316, 34));
-    const float grid_width = logical_width - 328;
-    const float cell = (grid_width - 70) / 8;
+        result.rows.push_back(r(28, row_y + i * 46, row_width, 38));
+    const float grid_top = result.breakpoint == GuiBreakpoint::legacy
+                               ? content_y + 230
+                               : content_y + 250;
+    const float grid_width = result.content.w / result.scale - 24;
+    const float cell_gap = 8;
+    const float cell = (grid_width - cell_gap * 7) / 8;
+    const float grid_height = std::max(52.0F,
+        std::min(92.0F, (logical_height - grid_top - margin - cell_gap) / 2));
     for (int i = 0; i < 16; ++i)
-        result.grid.push_back(
-            r(28 + (i % 8) * (cell + 10), 360 + (i / 8) * 76, cell, 66));
+        result.grid.push_back(r(28 + (i % 8) * (cell + cell_gap),
+                                grid_top + (i / 8) * (grid_height + cell_gap),
+                                cell, grid_height));
+    result.scale_down = r(28, content_y + 90, 100, 48);
+    result.scale_up = r(136, content_y + 90, 100, 48);
+    result.scale_reset = r(244, content_y + 90, 136, 48);
+    result.fullscreen = r(28, content_y + 150, 208, 48);
     return result;
 }
 
 const GuiFrame &GuiModel::frame(int width, int height) {
     const auto state = application_.snapshot();
-    if (frame_.state_revision != state.revision ||
+    if (frame_.state_revision != state.revision || frame_.ui_revision != ui_revision_ ||
         frame_.viewport_width != width || frame_.viewport_height != height) {
         frame_.state_revision = state.revision;
         frame_.viewport_width = width;
         frame_.viewport_height = height;
+        frame_.ui_revision = ui_revision_;
         frame_.layout = layout(width, height);
         render(state, frame_.layout);
     }
@@ -102,14 +242,16 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
              (state.playing ? "PLAY" : "STOP") + "   TRACK " +
              std::to_string(state.selected_track) + "   " +
              pad_mode_name(state.pad_mode));
-    const char *names[]{"SEQUENCER", "SAMPLES", "PARAMETERS", "X/Y"};
+    const char *names[]{"SEQUENCER", "SAMPLES", "PARAMETERS", "X/Y",
+                        "DISPLAY"};
     for (std::size_t i = 0; i < l.tabs.size(); ++i) {
         rect(l.tabs[i], i == static_cast<std::size_t>(view_) ? UiColor::selected
                                                              : UiColor::panel);
         text(l.tabs[i], UiColor::text, names[i]);
     }
     rect(l.content, UiColor::panel);
-    rect(l.parameters, UiColor::panel);
+    if (l.inspector_visible)
+        rect(l.parameters, UiColor::panel);
     if (view_ == GuiView::sequencer) {
         const auto *track = selected_track(state);
         text({l.content.x + 12 * l.scale, l.content.y + 8 * l.scale,
@@ -204,7 +346,7 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
             text(l.rows[i], UiColor::text,
                  p.name + "  " + value + " " + p.unit);
         }
-    } else {
+    } else if (view_ == GuiView::xy) {
         text({l.content.x + 12, l.content.y + 8, l.content.w, 28 * l.scale},
              UiColor::accent, "X/Y PERFORMANCE");
         UiRect pad{l.content.x + 60 * l.scale, l.content.y + 56 * l.scale,
@@ -222,7 +364,29 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
               pad.y + static_cast<float>(y) * pad.h - 10 * l.scale,
               20 * l.scale, 20 * l.scale},
              UiColor::accent);
+    } else {
+        text({l.content.x + 12 * l.scale, l.content.y + 8 * l.scale,
+              l.content.w - 24 * l.scale, 28 * l.scale},
+             UiColor::accent, "DISPLAY SETTINGS");
+        for (const auto control :
+             {l.scale_down, l.scale_up, l.scale_reset, l.fullscreen})
+            rect(control, UiColor::background);
+        text(l.scale_down, UiColor::text, "SCALE -");
+        text(l.scale_up, UiColor::text, "SCALE +");
+        text(l.scale_reset, UiColor::text, "RESET AUTO");
+        text(l.fullscreen, UiColor::text,
+             settings_.fullscreen ? "WINDOWED" : "FULLSCREEN");
+        text({l.content.x + 12 * l.scale, l.content.y + 220 * l.scale,
+              l.content.w - 24 * l.scale, 100 * l.scale},
+             UiColor::text,
+             "UI scale: " +
+                 (settings_.ui_scale ? std::to_string(*settings_.ui_scale)
+                                     : std::string("automatic (current ") +
+                                           std::to_string(l.scale) + ")") +
+                 "\nKeyboard: - / + / 0, F11\nEncoder: Up/Down, Enter toggles fullscreen");
     }
+    if (!l.inspector_visible)
+        return;
     text({l.parameters.x + 12, l.parameters.y + 12, l.parameters.w - 24,
           28 * l.scale},
          UiColor::accent, "STEP INSPECTOR");
@@ -276,6 +440,25 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
     const auto *track = selected_track(state);
     auto simple = [&](std::string id) { submit(command(std::move(id))); };
     if (input.type == GuiInput::Type::key_down) {
+        if (input.key == GuiKey::scale_up || input.key == GuiKey::scale_down ||
+            input.key == GuiKey::scale_reset) {
+            std::string settings_error;
+            const bool accepted = input.key == GuiKey::scale_reset
+                                      ? set_ui_scale(std::nullopt, settings_error)
+                                      : adjust_ui_scale(input.key == GuiKey::scale_up
+                                                            ? 0.1F
+                                                            : -0.1F,
+                                                        settings_error);
+            error_ = accepted ? std::string{} : std::move(settings_error);
+            return true;
+        }
+        if (input.key == GuiKey::fullscreen) {
+            settings_.fullscreen = !settings_.fullscreen;
+            fullscreen_toggle_ = true;
+            ++ui_revision_;
+            save_settings(error_);
+            return true;
+        }
         if (input.key == GuiKey::shift) {
             shift_ = true;
             submit(command("modifier.shift.v1", {{"active", true}}));
@@ -345,7 +528,7 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
         }
         if (input.key == GuiKey::tab) {
             view_ =
-                static_cast<GuiView>((static_cast<unsigned>(view_) + 1) % 4);
+                static_cast<GuiView>((static_cast<unsigned>(view_) + 1) % 5);
             frame_.state_revision = std::numeric_limits<std::uint64_t>::max();
             return true;
         }
@@ -356,7 +539,12 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
                             {{"slot_id", static_cast<std::int64_t>(
                                              state.selected_sample_slot.value)},
                              {"path", sample_path_.string()}}));
-            else
+            else if (view_ == GuiView::settings) {
+                settings_.fullscreen = !settings_.fullscreen;
+                fullscreen_toggle_ = true;
+                ++ui_revision_;
+                save_settings(error_);
+            } else
                 simple("navigation.confirm.v1");
             return true;
         }
@@ -372,6 +560,16 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
                   state.parameters[parameter_index_ % state.parameters.size()]
                       .id},
                  {"steps", input.key == GuiKey::up ? 1.0 : -1.0}}));
+            return true;
+        }
+        if ((input.key == GuiKey::up || input.key == GuiKey::down) &&
+            view_ == GuiView::settings) {
+            std::string settings_error;
+            const auto accepted = adjust_ui_scale(input.key == GuiKey::up
+                                                      ? 0.1F
+                                                      : -0.1F,
+                                                  settings_error);
+            error_ = accepted ? std::string{} : std::move(settings_error);
             return true;
         }
     }
@@ -459,6 +657,26 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
                                                  state.step_page * 16 + i)}}));
                     return true;
                 }
+        }
+        if (view_ == GuiView::settings) {
+            std::string settings_error;
+            if (l.scale_down.contains(input.x, input.y))
+                adjust_ui_scale(-0.1F, settings_error);
+            else if (l.scale_up.contains(input.x, input.y))
+                adjust_ui_scale(0.1F, settings_error);
+            else if (l.scale_reset.contains(input.x, input.y))
+                set_ui_scale(std::nullopt, settings_error);
+            else if (l.fullscreen.contains(input.x, input.y)) {
+                settings_.fullscreen = !settings_.fullscreen;
+                fullscreen_toggle_ = true;
+                ++ui_revision_;
+                save_settings(settings_error);
+            } else
+                settings_error = "display control was not hit";
+            if (settings_error != "display control was not hit") {
+                error_ = std::move(settings_error);
+                return true;
+            }
         }
         if (view_ == GuiView::samples)
             for (std::size_t i = 0; i < l.rows.size(); ++i)

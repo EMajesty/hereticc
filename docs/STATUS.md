@@ -1,5 +1,13 @@
 # Implementation status
 
+Task 016 makes the 8-inch 1920 × 1200 display the primary visual target while
+retaining responsive 1024 × 800 and 1024 × 600 layouts. Window, drawable,
+logical and UI-scale dimensions are separate; automatic/manual live scaling,
+persistent recovery-safe settings, a Display view, native-resolution rendering,
+and high-DPI hit conversion are host-tested. Physical HDMI fullscreen, USB HID
+touch calibration, ARM GPU performance, touch comfort and visual QA remain
+hardware-dependent and unverified.
+
 Task 015 adds shared bounded timeline Undo/Redo, atomic grouped edits, stable
 multi-note event selection, and velocity, duration, pitch, and tick-relative
 timing editing. The SDL inspector and minimal-controller flow use the same C++

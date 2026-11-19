@@ -45,6 +45,7 @@ ctest --preset sanitize
 ./build/dev/neurogenic path/to/sample.wav
 ./build/dev/neurogenic --interactive
 ./build/dev/neurogenic --gui --headless
+./build/dev/neurogenic --gui --ui-scale 1.5 --headless
 ./build/dev/neurogenic --fullscreen --slot 0=samples/kick.wav
 ```
 
@@ -53,6 +54,9 @@ headless application. See [docs/GUI.md](docs/GUI.md) for controls and scaling.
 In the Sequencer view, click/tap a cell or select it with arrows and press
 Enter to toggle a note. Shift+arrows change page or target note; the resolution
 control cycles quarter through 32nd-note straight and triplet grids.
+The default scale is automatic (1.5× at the 1920 × 1200 reference target).
+Use `--ui-scale 1.0` through `2.5`, `--reset-ui-scale`, the Display view, or
+the `+`, `-`, `0`, and `F11` keys to change persistent display settings.
 
 With direnv installed, run `direnv allow` once; `.envrc` enters the same flake
 shell. Build the installable package with `nix build`, run it with

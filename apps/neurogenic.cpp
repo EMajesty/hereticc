@@ -13,9 +13,11 @@
 #include <atomic>
 #include <charconv>
 #include <chrono>
+#include <cmath>
 #include <csignal>
 #include <filesystem>
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -39,7 +41,9 @@ void usage(){
              "  --list-devices    enumerate audio and MIDI devices\n"
              "  --headless        explicitly select null audio\n"
              "  --gui             launch the optional graphical frontend\n"
-             "  --fullscreen      launch the graphical frontend fullscreen\n";
+             "  --fullscreen      launch the graphical frontend fullscreen\n"
+             "  --ui-scale SCALE  override GUI scale (1.0..2.5)\n"
+             "  --reset-ui-scale  restore automatic GUI scaling\n";
 }
 
 void print_status(const neurogenic::SampleSlotStatus& state){
@@ -70,7 +74,7 @@ int main(int argc,char** argv){
     std::string wav,audio_name,midi_name,script="examples/generate.lua",timeline_file;
     std::vector<std::pair<std::uint32_t,std::filesystem::path>> slot_files;
     std::vector<std::pair<std::uint8_t,std::uint32_t>> note_maps;
-    bool list=false,headless=false,interactive=false,gui=false,fullscreen=false;
+    bool list=false,headless=false,interactive=false,gui=false,fullscreen=false,reset_ui_scale=false;std::optional<float> ui_scale;
     for(int i=1;i<argc;++i){
       const std::string arg=argv[i];
       if(arg=="--audio"&&i+1<argc)audio_name=argv[++i];
@@ -84,6 +88,8 @@ int main(int argc,char** argv){
       else if(arg=="--interactive")interactive=true;
       else if(arg=="--gui")gui=true;
       else if(arg=="--fullscreen"){gui=true;fullscreen=true;}
+      else if(arg=="--ui-scale"&&i+1<argc){gui=true;ui_scale=std::stof(argv[++i]);if(!std::isfinite(*ui_scale)||*ui_scale<1.0F||*ui_scale>2.5F)throw std::invalid_argument("--ui-scale must be 1.0..2.5");}
+      else if(arg=="--reset-ui-scale"){gui=true;reset_ui_scale=true;}
       else if(arg=="--help"){usage();return 0;}
       else if(!arg.empty()&&arg[0]!='-'&&wav.empty())wav=arg;
       else{usage();return 2;}
@@ -129,7 +135,7 @@ int main(int argc,char** argv){
     std::signal(SIGINT,stop);std::signal(SIGTERM,stop);
     std::cout<<"Playing "<<engine.sample_slot_count()<<" sample slot(s). MIDI note 36 runs "<<script<<". Press Ctrl-C to stop.\n";
     int exit_code{};
-    if(gui){neurogenic::GuiOptions gui_options;gui_options.fullscreen=fullscreen;exit_code=neurogenic::run_gui(application,gui_options,error);if(exit_code!=0)std::cerr<<"GUI unavailable: "<<error<<'\n';}
+    if(gui){neurogenic::GuiOptions gui_options;gui_options.fullscreen=fullscreen;gui_options.ui_scale=ui_scale;gui_options.reset_ui_scale=reset_ui_scale;exit_code=neurogenic::run_gui(application,gui_options,error);if(exit_code!=0)std::cerr<<"GUI unavailable: "<<error<<'\n';}
     else if(interactive){std::cout<<"Commands: load ID FILE | replace ID FILE | unload ID | status [ID] | quit\n";std::string line;while(running.load()&&std::getline(std::cin,line)){std::istringstream input(line);std::string command;input>>command;if(command=="quit"||command=="exit")break;if(command=="load"||command=="replace"){std::uint32_t id{};std::string path;input>>id>>std::ws;std::getline(input,path);if(path.empty()||!samples.load(neurogenic::SampleSlotId{id},path))std::cerr<<"sample command rejected\n";}else if(command=="unload"){std::uint32_t id{};if(!(input>>id)||!samples.unload(neurogenic::SampleSlotId{id}))std::cerr<<"unload command rejected\n";}else if(command=="status"){std::uint32_t id{};if(input>>id)print_status(samples.status(neurogenic::SampleSlotId{id}));else for(const auto& state:samples.states())print_status(state);}else std::cerr<<"unknown command\n";}}
     else while(running.load())std::this_thread::sleep_for(std::chrono::milliseconds(100));
     audio.stop();midi.close();dispatcher.stop();samples.shutdown();

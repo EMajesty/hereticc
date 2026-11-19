@@ -147,6 +147,15 @@ commands; the SDL3 adapter only owns windowing, events and rendering. It never
 accesses real-time playback structures. X/Y dragging is coalesced to a bounded
 125 Hz command rate. Headless operation does not depend on SDL3.
 
+The GUI keeps SDL window coordinates, drawable pixels, responsive logical
+workspace dimensions, and the persisted UI scale as distinct values. SDL
+events are normalized into drawable coordinates before `GuiModel` hit testing.
+Breakpoints are selected from the post-scale logical workspace, while draw
+commands are emitted at native drawable resolution. GUI invalidation uses both
+application and UI revisions plus drawable dimensions, so resize, DPI, scale,
+view, and focus changes cannot reuse stale geometry. This control-side work is
+independent of audio callback cadence.
+
 The step editor is an `ApplicationService` adapter. Selection, resolution and
 per-track target context are application state; each musical toggle is a
 detached `TimelineService` transaction. Successful commits publish one complete

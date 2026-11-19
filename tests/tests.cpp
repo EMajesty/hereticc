@@ -1846,20 +1846,64 @@ void test_gui_model() {
     SampleManager samples(engine);
     ApplicationService application(engine, timeline, samples);
     GuiModel gui(application);
-    const auto small = gui.layout(1024, 600), large = gui.layout(1920, 1080);
+    const auto small = gui.layout(1024, 600), compact = gui.layout(1024, 800),
+               large = gui.layout(1920, 1200);
     check(small.scale == 1 && small.content.w > 0 && small.grid.size() == 16,
           "1024x600 GUI layout");
-    check(large.scale > 1.0F && large.content.x + large.content.w <= 1920,
-          "scaled GUI layout");
+    check(compact.scale == 1 && compact.breakpoint == GuiBreakpoint::compact &&
+              compact.content.h > small.content.h,
+          "1024x800 compact GUI layout");
+    check(large.scale == 1.5F && large.breakpoint == GuiBreakpoint::wide &&
+              large.inspector_visible &&
+              large.parameters.x + large.parameters.w <= 1920,
+          "1920x1200 automatic high-DPI layout");
+    for (const auto scale : {1.0F, 1.5F, 2.0F}) {
+        GuiModel scaled(application, GuiSettings{scale, false});
+        const auto layout = scaled.layout(1920, 1200);
+        check(layout.scale == scale && layout.grid.size() == 16 &&
+                  layout.content.x + layout.content.w <= 1920 &&
+                  (!layout.inspector_visible ||
+                   layout.parameters.x + layout.parameters.w <= 1920),
+              "reference-display manual scale layout");
+    }
     const auto &first = gui.frame(1024, 600);
     check(first.state_revision == application.snapshot().revision &&
               !first.commands.empty(),
           "GUI state synchronization");
+    const auto drawable = window_to_drawable(
+        DisplayMetrics{960, 600, 1920, 1200, 2.0F, 2.0F}, 240.0F, 150.0F);
+    check(drawable.x == 480.0F && drawable.y == 300.0F,
+          "high-DPI window-to-drawable conversion");
     const auto first_content_width = first.layout.content.w;
     const auto &resized = gui.frame(1600, 900);
     check(resized.viewport_width == 1600 &&
               resized.layout.content.w > first_content_width,
           "GUI resize invalidation and expansion");
+    check(gui.input({GuiInput::Type::key_down, GuiKey::scale_up}, 1600, 900) &&
+              gui.settings().ui_scale && *gui.settings().ui_scale > 1.0F &&
+              gui.frame(1600, 900).layout.scale == *gui.settings().ui_scale,
+          "runtime scale adjustment and invalidation");
+    std::string settings_error;
+    check(!gui.set_ui_scale(3.0F, settings_error) &&
+              !settings_error.empty(),
+          "invalid runtime scale accepted");
+    check(gui.input({GuiInput::Type::key_down, GuiKey::scale_reset}, 1600,
+                    900) &&
+              !gui.settings().ui_scale,
+          "runtime scale reset");
+    for (const auto viewport :
+         {std::pair{1920, 1200}, std::pair{1024, 800},
+          std::pair{1024, 600}}) {
+        GuiModel hit_model(application);
+        const auto hit_layout = hit_model.layout(viewport.first, viewport.second);
+        const auto revision = timeline.snapshot().revision;
+        GuiInput hit{GuiInput::Type::pointer_down};
+        hit.x = hit_layout.grid[7].x + hit_layout.grid[7].w * 0.5F;
+        hit.y = hit_layout.grid[7].y + hit_layout.grid[7].h * 0.5F;
+        check(hit_model.input(hit, viewport.first, viewport.second) &&
+                  timeline.snapshot().revision == revision + 1,
+              "responsive sequencer hit testing");
+    }
     check(gui.input({GuiInput::Type::key_down, GuiKey::space}, 1024, 600),
           "keyboard transport input");
     (void)application.dispatch_pending();
@@ -1920,6 +1964,23 @@ void test_gui_model() {
               application.parameters().get("performance.xy.x")->current_value) >
               0,
           "X/Y application integration");
+    const auto settings_path = std::filesystem::temp_directory_path() /
+                               "neurogenic-gui-settings-test.conf";
+    { GuiModel persistent(application, GuiSettings{1.7F, true}, settings_path);
+      check(persistent.save_settings(settings_error), "GUI settings save"); }
+    const auto loaded = GuiModel::load_settings(settings_path, settings_error);
+    check(loaded.ui_scale && std::fabs(*loaded.ui_scale - 1.7F) < 0.001F &&
+              loaded.fullscreen,
+          "GUI settings persistence");
+    { std::ofstream invalid(settings_path); invalid << "ui_scale 9\nfullscreen x\n"; }
+    const auto recovered = GuiModel::load_settings(settings_path, settings_error);
+    check(!recovered.ui_scale && !recovered.fullscreen &&
+              !settings_error.empty(),
+          "invalid GUI settings recovery");
+    std::filesystem::remove(settings_path);
+    check(gui.input({GuiInput::Type::key_down, GuiKey::fullscreen}, 1024, 600) &&
+              gui.take_fullscreen_toggle(),
+          "runtime fullscreen transition request");
     std::string error;
     const auto folder =
         std::filesystem::temp_directory_path() / "neurogenic-gui-browser";

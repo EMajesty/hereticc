@@ -14,10 +14,32 @@ with null audio, or use `--fullscreen` with normal audio/sample options.
 `-DNEUROGENIC_ENABLE_GUI=OFF` preserves a headless build. If SDL3 is absent,
 the application builds and `--gui` returns a useful unavailable diagnostic.
 
-The layout has a 1024 × 600 minimum logical canvas, scales uniformly, and lets
-content consume extra horizontal space at wider landscape resolutions.
-Viewport dimensions invalidate drawing and hit-test geometry. It has a persistent status bar
-and Sequencer, Samples, Parameters and X/Y views. Timeline and slot information
+The primary visual target is an 8-inch 1920 × 1200 HDMI display with USB HID
+touch, initially at 1.5× automatic scale. HDMI and touch remain host services;
+neither is required. SDL window points, drawable pixels, logical workspace and
+UI scale are tracked separately. Pointer coordinates are converted to drawable
+pixels before the same scaled hit-test geometry used by touch and keyboard.
+
+Automatic scale is 1.5× at 1920 × 1200, 1.25× on medium high-resolution
+viewports, and 1.0× on compact displays. A manual 1.0–2.5× override and
+fullscreen state are stored in `$XDG_CONFIG_HOME/neurogenic/gui.conf` (or
+`$HOME/.config/neurogenic/gui.conf`). The Display view is encoder-accessible;
+Up/Down changes scale and Enter toggles fullscreen. `+`/`-`, `0` (automatic),
+and F11 are global shortcuts. CLI overrides are `--ui-scale SCALE`,
+`--reset-ui-scale`, and `--fullscreen`. Removing the configuration file is the
+last-resort reset path.
+
+Responsive breakpoints use logical workspace size, not raw resolution. Wide
+layouts keep the sequencer and inspector together and expand track/grid space;
+1024 × 800 uses a compact layout; 1024 × 600 retains transport, navigation,
+the 16-cell grid, and inspector without horizontal scrolling. Geometry is
+rebuilt for drawable-size, scale, view, focus, and application revision changes.
+Controls render directly at drawable resolution—there is no blurry whole-frame
+upscale. The current integer-scaled SDL debug font is crisp and dependency-free,
+but remains visually basic.
+
+The shell has a persistent status bar and Sequencer, Samples, Parameters, X/Y,
+and Display views. Timeline and slot information
 comes from application snapshots. The sequencer displays actual target-note
 events, selection, playhead, pages, resolution and note target. Clicking or
 tapping a valid cell toggles it through `step.toggle.v1`.
@@ -39,11 +61,14 @@ the selected note's index when a cell contains several notes. Click a property
 and use Up/Down to adjust it; Enter cycles properties in the encoder-only
 workflow. Undo and Redo buttons reflect the shared timeline history.
 
-CI runs the renderer-independent interaction suite and an SDL dummy-video
-smoke test. The AArch64 cross-check compiles the portable model with the SDL
-adapter disabled; native AArch64 flake outputs include SDL3. Physical
-touchscreen, HDMI fullscreen, GPU combinations and
-subjective stage readability remain unverified.
+CI covers 1920 × 1200 at 1.0×, 1.5× and 2.0×, both compact resolutions,
+high-DPI coordinate conversion, resize, live scale/fullscreen requests,
+persistence recovery, keyboard, pointer, touch-equivalent and encoder paths,
+plus an SDL dummy-video smoke test. The AArch64 cross-check compiles the
+portable model with the SDL adapter disabled; native AArch64 flake outputs
+include SDL3. Physical touchscreen mapping, HDMI fullscreen/DPI transitions,
+GPU combinations, 8-inch touch-target comfort and subjective stage readability
+remain unverified.
 
 Edits publish at the next audio callback as complete validated plans. A final
 partial step is available when its start tick lies inside a non-grid-aligned
