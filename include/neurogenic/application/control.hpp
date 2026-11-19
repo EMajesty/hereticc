@@ -1,6 +1,6 @@
 #pragma once
-#include "neurogenic/audio/slicing.hpp"
 #include "neurogenic/audio/recording.hpp"
+#include "neurogenic/audio/slicing.hpp"
 #include "neurogenic/performance/monitor.hpp"
 #include "neurogenic/project/project.hpp"
 #include "neurogenic/timeline/edit.hpp"
@@ -184,6 +184,9 @@ struct ApplicationState {
     RecordingStatus recording;
     MixerState mixer;
     std::size_t selected_mixer_channel{};
+    std::size_t selected_external_fx_loop{};
+    std::vector<RoutingScene> routing_scenes;
+    std::uint64_t active_routing_scene{};
 };
 struct ApplicationCommand {
     std::string action_id;

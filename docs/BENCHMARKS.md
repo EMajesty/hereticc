@@ -3,6 +3,12 @@
 Mixer scenarios cover 4, 8 and 16 channels, both stereo aux buses and simulated
 six-input/six-output routing. These host measurements do not establish physical
 Raspberry Pi 5 or Intel N150 performance.
+`mixer_two_external_fx_latency` adds eight tracks, two stereo sends/returns,
+simulated six-channel I/O, wet/dry mixing and 128-frame compensation. Routing
+preparation and snapshot publication remain outside the measured callback path.
+On the 2026-11-19 x86-64 Debug host it averaged about 40.7 us per 256-frame
+buffer (roughly 131x offline real-time factor). This is an offline regression
+measurement, not physical I/O, Raspberry Pi 5, or Intel N150 evidence.
 
 NEUROGENIC targets comfortable full-workstation operation on Raspberry Pi 5,
 while the personal reference build is an Intel N150 with 16 GB RAM. These are

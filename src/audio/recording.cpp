@@ -13,17 +13,14 @@ namespace {
 void update_peak(std::atomic<float> &target, float value) noexcept {
     value = std::fabs(value);
     auto current = target.load(std::memory_order_relaxed);
-    while (value > current &&
-           !target.compare_exchange_weak(current, value,
-                                         std::memory_order_relaxed)) {
+    while (value > current && !target.compare_exchange_weak(
+                                  current, value, std::memory_order_relaxed)) {
     }
 }
-template <class T>
-void write_value(std::ofstream &output, T value) {
+template <class T> void write_value(std::ofstream &output, T value) {
     output.write(reinterpret_cast<const char *>(&value), sizeof(value));
 }
-std::size_t recording_storage_size(std::uint32_t rate,
-                                   std::uint64_t frames) {
+std::size_t recording_storage_size(std::uint32_t rate, std::uint64_t frames) {
     if (rate == 0 || frames == 0 ||
         frames > std::numeric_limits<std::size_t>::max() / 2)
         throw std::invalid_argument("invalid recording capacity");
@@ -47,6 +44,10 @@ const char *recording_source_name(RecordingSource source) noexcept {
         return "Auxiliary bus";
     case RecordingSource::physical_input:
         return "Physical input";
+    case RecordingSource::external_fx_return:
+        return "External FX return";
+    case RecordingSource::external_fx_mix:
+        return "External FX wet/dry mix";
     }
     return "Unknown";
 }
@@ -85,8 +86,7 @@ bool RecordingService::arm(RecordingConfiguration configuration,
         return false;
     }
     if (configuration.fixed_frames >
-        std::numeric_limits<std::uint64_t>::max() -
-            configuration.start_frame) {
+        std::numeric_limits<std::uint64_t>::max() - configuration.start_frame) {
         error = "recording frame range overflows";
         return false;
     }
@@ -101,8 +101,8 @@ bool RecordingService::arm(RecordingConfiguration configuration,
         configuration.channels = 2;
     if (configuration.source != RecordingSource::external_mono &&
         configuration.source != RecordingSource::external_stereo)
-        configuration.channels = std::clamp<std::uint16_t>(
-            configuration.channels, 1, 2);
+        configuration.channels =
+            std::clamp<std::uint16_t>(configuration.channels, 1, 2);
     configuration_ = configuration;
     captured_.store(0, std::memory_order_relaxed);
     dropped_.store(0, std::memory_order_relaxed);
@@ -112,11 +112,11 @@ bool RecordingService::arm(RecordingConfiguration configuration,
     finalization_us_.store(0, std::memory_order_relaxed);
     requested_start_.store(configuration.start_frame,
                            std::memory_order_relaxed);
-    requested_stop_.store(
-        configuration.fixed_frames
-            ? configuration.start_frame + configuration.fixed_frames
-            : std::numeric_limits<std::uint64_t>::max(),
-        std::memory_order_relaxed);
+    requested_stop_.store(configuration.fixed_frames
+                              ? configuration.start_frame +
+                                    configuration.fixed_frames
+                              : std::numeric_limits<std::uint64_t>::max(),
+                          std::memory_order_relaxed);
     error_.clear();
     start_enabled_.store(false, std::memory_order_relaxed);
     state_.store(RecordingState::armed, std::memory_order_release);
@@ -201,18 +201,19 @@ void RecordingService::capture_external(std::span<const float> interleaved,
         source != RecordingSource::external_stereo &&
         source != RecordingSource::physical_input)
         return;
-    const auto frames = input_channels ? interleaved.size() / input_channels : 0;
+    const auto frames =
+        input_channels ? interleaved.size() / input_channels : 0;
     // The device adapter provides bounded callback blocks. Deinterleave into
     // fixed stack chunks so no recording buffer allocation occurs here.
     std::array<float, 1024> left{}, right{};
     for (std::size_t done = 0; done < frames;) {
         const auto count = std::min<std::size_t>(left.size(), frames - done);
         for (std::size_t i = 0; i < count; ++i) {
-            const auto selected = source == RecordingSource::physical_input
-                                      ? std::min<std::size_t>(
-                                            configuration_.source_id,
+            const auto selected =
+                source == RecordingSource::physical_input
+                    ? std::min<std::size_t>(configuration_.source_id,
                                             input_channels - 1)
-                                      : 0;
+                    : 0;
             left[i] = interleaved[(done + i) * input_channels + selected];
             right[i] = source == RecordingSource::physical_input
                            ? left[i]
@@ -232,11 +233,14 @@ void RecordingService::capture(RecordingSource source,
                                std::uint64_t callback_frame,
                                std::uint64_t source_id) noexcept {
     auto state = state_.load(std::memory_order_acquire);
-    if ((state != RecordingState::armed && state != RecordingState::recording) ||
+    if ((state != RecordingState::armed &&
+         state != RecordingState::recording) ||
         configuration_.source != source ||
         ((source == RecordingSource::track_channel ||
           source == RecordingSource::auxiliary_bus ||
-          source == RecordingSource::physical_input) &&
+          source == RecordingSource::physical_input ||
+          source == RecordingSource::external_fx_return ||
+          source == RecordingSource::external_fx_mix) &&
          configuration_.source_id != source_id) ||
         !start_enabled_.load(std::memory_order_acquire))
         return;
@@ -264,13 +268,15 @@ void RecordingService::capture(RecordingSource source,
                     ? static_cast<std::size_t>(stop - callback_frame - first)
                     : 0;
     auto captured = captured_.load(std::memory_order_relaxed);
-    const auto available = capacity_frames_ - std::min(captured, capacity_frames_);
-    const auto accepted = static_cast<std::size_t>(
-        std::min<std::uint64_t>(count, available));
+    const auto available =
+        capacity_frames_ - std::min(captured, capacity_frames_);
+    const auto accepted =
+        static_cast<std::size_t>(std::min<std::uint64_t>(count, available));
     const auto channels = configuration_.channels;
     for (std::size_t i = 0; i < accepted; ++i) {
         const auto l = std::isfinite(left[first + i]) ? left[first + i] : 0.0F;
-        const auto r = std::isfinite(right[first + i]) ? right[first + i] : 0.0F;
+        const auto r =
+            std::isfinite(right[first + i]) ? right[first + i] : 0.0F;
         if (channels == 1)
             storage_[static_cast<std::size_t>(captured + i)] =
                 source == RecordingSource::external_mono ? l : (l + r) * 0.5F;
@@ -290,7 +296,8 @@ void RecordingService::capture(RecordingSource source,
         return;
     }
     if ((stop != std::numeric_limits<std::uint64_t>::max() &&
-         callback_frame + frames >= stop) || captured >= capacity_frames_)
+         callback_frame + frames >= stop) ||
+        captured >= capacity_frames_)
         state_.store(RecordingState::completed, std::memory_order_release);
 }
 
@@ -327,12 +334,12 @@ bool RecordingService::monitoring_active() const noexcept {
 
 Sample RecordingService::completed_sample() const {
     const auto frames = captured_.load(std::memory_order_acquire);
-    if (frames == 0 || (state_.load(std::memory_order_acquire) !=
-                            RecordingState::completed &&
-                        state_.load(std::memory_order_acquire) !=
-                            RecordingState::publication_pending &&
-                        state_.load(std::memory_order_acquire) !=
-                            RecordingState::audio_active))
+    if (frames == 0 ||
+        (state_.load(std::memory_order_acquire) != RecordingState::completed &&
+         state_.load(std::memory_order_acquire) !=
+             RecordingState::publication_pending &&
+         state_.load(std::memory_order_acquire) !=
+             RecordingState::audio_active))
         throw std::runtime_error("recording is not complete");
     Sample sample{sample_rate_, configuration_.channels, {}};
     sample.interleaved.assign(storage_.begin(),
@@ -355,7 +362,8 @@ bool RecordingService::finalize_to_slot(SampleManager &samples,
         }
         finalization_us_.store(static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::microseconds>(
-                std::chrono::steady_clock::now() - begin).count()));
+                std::chrono::steady_clock::now() - begin)
+                .count()));
         state_.store(RecordingState::publication_pending,
                      std::memory_order_release);
         error.clear();
@@ -383,8 +391,8 @@ bool RecordingService::save_wav(const std::filesystem::path &path,
             throw std::runtime_error("cannot open recording output");
         const auto bits = format == RecordingWavFormat::pcm16 ? 16U : 32U;
         const auto bytes = bits / 8;
-        const auto data_bytes = static_cast<std::uint32_t>(
-            sample.interleaved.size() * bytes);
+        const auto data_bytes =
+            static_cast<std::uint32_t>(sample.interleaved.size() * bytes);
         output.write("RIFF", 4);
         write_value(output, std::uint32_t{36 + data_bytes});
         output.write("WAVEfmt ", 8);
@@ -393,8 +401,7 @@ bool RecordingService::save_wav(const std::filesystem::path &path,
                                 format == RecordingWavFormat::pcm16 ? 1 : 3));
         write_value(output, sample.channels);
         write_value(output, sample.sample_rate);
-        write_value(output,
-                    sample.sample_rate * sample.channels * bytes);
+        write_value(output, sample.sample_rate * sample.channels * bytes);
         write_value(output,
                     static_cast<std::uint16_t>(sample.channels * bytes));
         write_value(output, static_cast<std::uint16_t>(bits));
@@ -402,9 +409,9 @@ bool RecordingService::save_wav(const std::filesystem::path &path,
         write_value(output, data_bytes);
         for (const auto value : sample.interleaved)
             if (format == RecordingWavFormat::pcm16)
-                write_value(output, static_cast<std::int16_t>(
-                                        std::clamp(value, -1.0F, 1.0F) *
-                                        32767.0F));
+                write_value(output,
+                            static_cast<std::int16_t>(
+                                std::clamp(value, -1.0F, 1.0F) * 32767.0F));
             else
                 write_value(output, value);
         if (!output || !(output.flush()))

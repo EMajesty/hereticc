@@ -17,7 +17,9 @@ enum class RecordingSource : std::uint8_t {
     master_post_effects,
     track_channel,
     auxiliary_bus,
-    physical_input
+    physical_input,
+    external_fx_return,
+    external_fx_mix
 };
 enum class RecordingState : std::uint8_t {
     idle,
@@ -83,8 +85,7 @@ class RecordingService {
     [[nodiscard]] bool finalize_to_slot(SampleManager &, std::string &error);
     void acknowledge_audio_active() noexcept;
     [[nodiscard]] bool save_wav(const std::filesystem::path &,
-                                RecordingWavFormat,
-                                std::string &error) const;
+                                RecordingWavFormat, std::string &error) const;
     [[nodiscard]] Sample completed_sample() const;
 
   private:

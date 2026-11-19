@@ -7,6 +7,12 @@ map to selected-channel parameters/sends and four faders to gain. A minimal
 data-wheel client selects a channel/property and invokes the same actions; no
 physical layout is embedded in the engine.
 
+External routing uses `mixer.fx-loop-select.v1`, `mixer.fx-loop-set.v1`,
+`mixer.fx-loop-levels.v1`, and `mixer.fx-loop-latency.v1`. Scenes use
+`mixer.scene-save/recall/rename/delete.v1`. The selected loop's wet/dry is also
+`mixer.external.selected.wet`, allowing full, MIDI and minimal data-wheel
+profiles to reach it without adapter-specific routing logic.
+
 The control architecture is deliberately client-neutral:
 
 ```text

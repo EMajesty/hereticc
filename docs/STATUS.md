@@ -1,5 +1,14 @@
 # Implementation status
 
+Task 027 adds two validated external track/aux/master effect loops, mono/stereo
+six-channel mappings, linear wet/dry, return gain/mute, manual bounded latency
+compensation, return/mix recording taps, atomic routing scenes, v2 mixer/scene
+persistence, semantic actions/parameters, a Routing GUI, controller mappings
+and deterministic benchmarks. Simulated I/O is host-tested; physical processor
+levels/cabling, round-trip latency, scene-switch clicks and multichannel device
+behavior require hardware verification. Automatic latency calibration and
+scene morphing are not implemented.
+
 Task 026 adds a bounded 32-track mixer with gain/balance pan/mute/solo and peak
 meters, two stereo aux sends/returns with optional native delay, six-channel-
 capable input/output routing, track/aux/input/master recording taps, semantic

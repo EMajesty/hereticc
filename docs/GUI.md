@@ -9,6 +9,11 @@ policy and weight not needed by this instrument interface. Primary references:
 [high DPI](https://wiki.libsdl.org/SDL3/README-highdpi), and
 [video/KMSDRM settings](https://wiki.libsdl.org/SDL3/EnvironmentVariables).
 
+The Routing view shows two external FX loops, send/return pairs, wet/dry,
+manual latency, return levels and scene rows. Up/Down selects a loop,
+Left/Right adjusts wet/dry, Enter toggles enable, and pointer/touch can recall a
+scene. Every operation submits the shared semantic action API.
+
 Build normally, then run `./build/dev/neurogenic --gui --headless` for a window
 with null audio, or use `--fullscreen` with normal audio/sample options.
 `-DNEUROGENIC_ENABLE_GUI=OFF` preserves a headless build. If SDL3 is absent,

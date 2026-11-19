@@ -1498,11 +1498,13 @@ void test_unified_project_persistence() {
               loaded.timeline.tracks[0].pattern.events[0].id == 91 &&
               loaded.timeline.tracks[0].pattern.events[0].ratchet_count == 4 &&
               loaded.samples.slices.size() == 1 &&
-              loaded.samples.slices[0].id == 501 && loaded.samples.pads[5] == 501 &&
+              loaded.samples.slices[0].id == 501 &&
+              loaded.samples.pads[5] == 501 &&
               loaded.samples.pad_settings[5].stretch_mode ==
                   StretchMode::realtime &&
               loaded.parameters.at("synth.cutoff") == 4321.0 &&
-              loaded.missing_assets.empty() && save_metrics.metadata_bytes > 0 &&
+              loaded.missing_assets.empty() &&
+              save_metrics.metadata_bytes > 0 &&
               load_metrics.metadata_bytes > 0,
           "unified project round trip");
 
@@ -1532,7 +1534,8 @@ void test_unified_project_persistence() {
     std::filesystem::remove(relocated / "assets" / "kick.wav");
     loaded = load_project(relocated);
     check(loaded.missing_assets.size() == 1 &&
-              loaded.samples.slices.size() == 1 && loaded.samples.pads[5] == 501,
+              loaded.samples.slices.size() == 1 &&
+              loaded.samples.pads[5] == 501,
           "missing project asset metadata preservation");
     save_project(loaded, relocated);
     check(load_project(relocated).missing_assets.size() == 1,
@@ -1560,10 +1563,10 @@ void test_unified_project_persistence() {
               application.snapshot().project_dirty,
           "new project action and dirty state");
     check(application
-              .execute({"project.save-as.v1",
-                        {{"path", action_project.string()},
-                         {"name", std::string("Actions")}}})
-              .accepted &&
+                  .execute({"project.save-as.v1",
+                            {{"path", action_project.string()},
+                             {"name", std::string("Actions")}}})
+                  .accepted &&
               !application.snapshot().project_dirty,
           "save-as action and clean state");
     GuiModel project_gui(application);
@@ -1571,21 +1574,23 @@ void test_unified_project_persistence() {
         project_gui.input({GuiInput::Type::key_down, GuiKey::tab}, 1920, 1200);
     const auto &project_frame = project_gui.frame(1920, 1200);
     check(std::any_of(project_frame.commands.begin(),
-                      project_frame.commands.end(), [](const auto &draw) {
+                      project_frame.commands.end(),
+                      [](const auto &draw) {
                           return draw.type == DrawCommand::Type::text &&
                                  draw.text.find("PROJECT: Actions") !=
                                      std::string::npos;
                       }),
           "GUI project status");
     check(application
-              .execute({"parameter.set-normalized.v1",
-                        {{"parameter_id", std::string("synth.cutoff")},
-                         {"value", 0.25}}})
-              .accepted &&
+                  .execute({"parameter.set-normalized.v1",
+                            {{"parameter_id", std::string("synth.cutoff")},
+                             {"value", 0.25}}})
+                  .accepted &&
               application.snapshot().project_dirty,
           "project parameter dirty tracking");
-    check(application.execute({"project.open.v1",
-                               {{"path", action_project.string()}}})
+    check(application
+                  .execute(
+                      {"project.open.v1", {{"path", action_project.string()}}})
                   .accepted &&
               !application.snapshot().project_dirty &&
               application.snapshot().project_name == "Actions",
@@ -1658,19 +1663,19 @@ void test_audio_recording_and_resampling() {
                   RecordingSource::master_post_effects,
           "post-effects recording tap");
 
-    const auto root = std::filesystem::temp_directory_path() /
-                      "neurogenic-recording-test";
+    const auto root =
+        std::filesystem::temp_directory_path() / "neurogenic-recording-test";
     std::error_code ignored;
     std::filesystem::remove_all(root, ignored);
     std::filesystem::create_directories(root);
     const auto pcm_path = root / "capture-pcm16.wav";
     const auto float_path = root / "capture-float.wav";
-    check(recorder.save_wav(pcm_path, RecordingWavFormat::pcm16, error) &&
-              recorder.save_wav(float_path, RecordingWavFormat::float32,
-                                error) &&
-              decode_wav(pcm_path).frames() == 4 &&
-              decode_wav(float_path).frames() == 4,
-          "recording WAV export");
+    check(
+        recorder.save_wav(pcm_path, RecordingWavFormat::pcm16, error) &&
+            recorder.save_wav(float_path, RecordingWavFormat::float32, error) &&
+            decode_wav(pcm_path).frames() == 4 &&
+            decode_wav(float_path).frames() == 4,
+        "recording WAV export");
 
     RecordingService external(engine.sample_rate(), 8);
     engine.set_recording_service(&external);
@@ -1701,8 +1706,7 @@ void test_audio_recording_and_resampling() {
     check(external.arm(configuration, error) &&
               external.start(engine.callback_frame_position(), error),
           "arm simulated mono input");
-    const std::array<float, 12> too_long{1, 1, 1, 1, 1, 1,
-                                         1, 1, 1, 1, 1, 1};
+    const std::array<float, 12> too_long{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
     engine.process_duplex(duplex_left, duplex_right, too_long, 1);
     status = external.status();
     check(status.state == RecordingState::completed &&
@@ -1735,9 +1739,9 @@ void test_audio_recording_and_resampling() {
                                    application_samples);
     const auto recording_revision = application.snapshot().revision;
     check(application
-              .execute({"recording.source-select.v1",
-                        {{"source", std::string("master-post")}}})
-              .accepted &&
+                  .execute({"recording.source-select.v1",
+                            {{"source", std::string("master-post")}}})
+                  .accepted &&
               application
                   .execute({"recording.destination-select.v1",
                             {{"slot_id", std::int64_t{12}}}})
@@ -1765,11 +1769,12 @@ void test_audio_recording_and_resampling() {
     application_engine.process(no_audio, no_audio);
     (void)application.snapshot();
     check(application
-              .execute({"recording.assign-pad.v1",
-                        {{"pad", std::int64_t{2}}}})
-              .accepted &&
-              application.slices().snapshot(SampleSlotId{12})
-                      .pad_assignments[2]
+                  .execute(
+                      {"recording.assign-pad.v1", {{"pad", std::int64_t{2}}}})
+                  .accepted &&
+              application.slices()
+                  .snapshot(SampleSlotId{12})
+                  .pad_assignments[2]
                   .has_value(),
           "recording pad assignment");
     const auto project_path = root / "recorded-project";
@@ -1787,9 +1792,9 @@ void test_audio_recording_and_resampling() {
           "recorded project asset restoration");
     application.recording().reset();
     check(application
-              .execute({"recording.quantization-set.v1",
-                        {{"quantization", std::string("beat")}}})
-              .accepted &&
+                  .execute({"recording.quantization-set.v1",
+                            {{"quantization", std::string("beat")}}})
+                  .accepted &&
               application
                   .execute({"recording.fixed-bars-set.v1",
                             {{"bars", std::int64_t{1}}}})
@@ -1839,13 +1844,13 @@ void test_audio_recording_and_resampling() {
           "recording GUI state");
     const auto prior_slot =
         application.snapshot().recording.configuration.destination.value;
-    check(gui.input({GuiInput::Type::key_down, GuiKey::up}, 1920, 1200) &&
-              application.snapshot().recording.configuration.destination.value ==
-                  prior_slot + 1,
-          "encoder-only recording destination navigation");
+    check(
+        gui.input({GuiInput::Type::key_down, GuiKey::up}, 1920, 1200) &&
+            application.snapshot().recording.configuration.destination.value ==
+                prior_slot + 1,
+        "encoder-only recording destination navigation");
     check(gui.input({GuiInput::Type::pointer_down, GuiKey{}, 0,
-                     frame.layout.rows[0].x + 2,
-                     frame.layout.rows[0].y + 2},
+                     frame.layout.rows[0].x + 2, frame.layout.rows[0].y + 2},
                     1920, 1200),
           "pointer recording start");
     gui.input({GuiInput::Type::key_down, GuiKey::escape}, 1920, 1200);
@@ -3525,8 +3530,7 @@ void test_mixer_and_routing() {
     configuration.tracks[1].solo = true;
     check(mixer.publish(configuration, error), "publish mute solo mixer");
     mixer.begin_block(1);
-    check(mixer.add_track(11, 0, 1, 1) &&
-              mixer.add_track(22, 0, 1, 1),
+    check(mixer.add_track(11, 0, 1, 1) && mixer.add_track(22, 0, 1, 1),
           "route muted and solo channels");
     left.fill(0);
     right.fill(0);
@@ -3585,6 +3589,96 @@ void test_mixer_and_routing() {
               saturated.state().rejected_publications == 1,
           "mixer publication overflow is observable");
 
+    MixerConfiguration fx_configuration;
+    fx_configuration.revision = 1;
+    fx_configuration.track_count = 1;
+    fx_configuration.tracks[0].track = 11;
+    auto &fx = fx_configuration.external_fx[0];
+    fx.id = 1;
+    fx.source = ExternalFxSource::track;
+    fx.source_id = 11;
+    fx.send_left = 2;
+    fx.send_right = 3;
+    fx.return_left = 0;
+    fx.return_right = 1;
+    fx.send_gain = 0.5F;
+    fx.return_gain = 0.5F;
+    fx.wet = 0.5F;
+    fx.enabled = true;
+    Mixer fx_mixer;
+    check(fx_mixer.publish(fx_configuration, error),
+          "publish external FX routing");
+    fx_mixer.begin_block(4);
+    for (std::size_t frame = 0; frame < 4; ++frame) {
+        check(fx_mixer.add_track(11, frame, 1, 1), "route FX source");
+        fx_mixer.add_input(0, frame, 0.5F);
+        fx_mixer.add_input(1, frame, 0.25F);
+    }
+    std::array<float, 4> fx_left{}, fx_right{};
+    std::array<float, 24> fx_physical{};
+    fx_mixer.process(fx_left, fx_right, fx_physical, 6);
+    near(fx_physical[2], 0.5F, "external FX left send gain");
+    near(fx_physical[3], 0.5F, "external FX right send gain");
+    near(fx_left[0], 0.625F, "external FX linear wet/dry left");
+    near(fx_right[0], 0.5625F, "external FX linear wet/dry right");
+    near(fx_mixer.external_return_left(0)[0], 0.25F,
+         "external FX return recording tap");
+    check(fx_mixer.state().external_send_available[0] &&
+              fx_mixer.state().external_return_available[0],
+          "external FX availability state");
+    RecordingService fx_recorder(48000, 8);
+    RecordingConfiguration fx_recording;
+    fx_recording.source = RecordingSource::external_fx_return;
+    fx_recording.source_id = 0;
+    fx_recording.destination = SampleSlotId{18};
+    fx_recording.fixed_frames = 4;
+    check(fx_recorder.arm(fx_recording, error) && fx_recorder.start(0, error),
+          "arm external return recording tap");
+    fx_recorder.capture_internal(RecordingSource::external_fx_return,
+                                 fx_mixer.external_return_left(0),
+                                 fx_mixer.external_return_right(0), 0, 0);
+    check(fx_recorder.status().state == RecordingState::completed &&
+              fx_recorder.completed_sample().interleaved[0] == 0.25F,
+          "external return recording source");
+
+    auto mono = fx_configuration;
+    mono.revision++;
+    mono.external_fx[0].mono_send = true;
+    mono.external_fx[0].mono_return = true;
+    mono.external_fx[0].wet = 1;
+    check(fx_mixer.publish(mono, error), "publish mono external FX loop");
+    fx_mixer.begin_block(1);
+    check(fx_mixer.add_track(11, 0, 1, 0.5F), "route mono FX source");
+    fx_mixer.add_input(0, 0, 0.4F);
+    fx_left.fill(0);
+    fx_right.fill(0);
+    fx_physical.fill(0);
+    fx_mixer.process({fx_left.data(), 1}, {fx_right.data(), 1}, fx_physical, 6);
+    near(fx_physical[2], 0.375F, "mono send fold-down");
+    near(fx_left[0], 0.2F, "mono return left duplication");
+    near(fx_right[0], 0.2F, "mono return right duplication");
+
+    auto latency = fx_configuration;
+    latency.revision++;
+    latency.external_fx[0].wet = 0;
+    latency.external_fx[0].latency_frames = 2;
+    check(fx_mixer.publish(latency, error), "publish FX latency compensation");
+    fx_mixer.begin_block(4);
+    check(fx_mixer.add_track(11, 0, 1, 1), "route compensation impulse");
+    fx_left.fill(0);
+    fx_right.fill(0);
+    fx_physical.fill(0);
+    fx_mixer.process(fx_left, fx_right, fx_physical, 6);
+    near(fx_left[0], 0, "compensated dry is delayed");
+    near(fx_left[2], 1, "manual compensation frame offset");
+    auto feedback = fx_configuration;
+    feedback.external_fx[0].send_left = 0;
+    feedback.external_fx[0].send_right = 1;
+    check(!validate_mixer_configuration(feedback, 6, 6, error),
+          "external send cannot conflict with master output");
+    check(!validate_mixer_configuration(fx_configuration, 2, 2, error),
+          "missing physical FX channels rejected");
+
     AudioEngine engine;
     engine.set_sample(constant_sample(256));
     Timeline timeline;
@@ -3621,13 +3715,19 @@ void test_mixer_and_routing() {
     project.name = "Mixer";
     project.timeline = timeline;
     project.mixer = engine_mixer;
-    const auto path = std::filesystem::temp_directory_path() /
-                      "neurogenic-mixer-project";
+    project.routing_scenes.push_back({41, "Performance", fx_configuration});
+    project.active_routing_scene = 41;
+    const auto path =
+        std::filesystem::temp_directory_path() / "neurogenic-mixer-project";
     std::filesystem::remove_all(path);
     save_project(project, path);
     const auto restored = load_project(path);
     check(restored.mixer.track_count == 1 &&
-              restored.mixer.tracks[0].track == 77,
+              restored.mixer.tracks[0].track == 77 &&
+              restored.routing_scenes.size() == 1 &&
+              restored.routing_scenes[0].id == 41 &&
+              restored.routing_scenes[0].mixer.external_fx[0].enabled &&
+              restored.active_routing_scene == 41,
           "mixer project persistence");
     std::filesystem::remove_all(path);
 
@@ -3639,20 +3739,22 @@ void test_mixer_and_routing() {
         },
         timeline);
     ApplicationService application(app_engine, service, samples);
-    check(application
-              .execute({"mixer.gain-set.v1", {{"value", 0.25}}})
-              .accepted &&
+    check(application.execute({"mixer.gain-set.v1", {{"value", 0.25}}})
+                  .accepted &&
               application
                   .execute({"mixer.aux-send-set.v1",
-                            {{"aux", std::int64_t{1}}, {"value", 0.4},
+                            {{"aux", std::int64_t{1}},
+                             {"value", 0.4},
                              {"pre_fader", true}}})
                   .accepted &&
               application
                   .execute({"mixer.input-set.v1",
                             {{"index", std::int64_t{0}},
                              {"physical_channel", std::int64_t{0}},
-                             {"gain", 0.75}, {"pan", 0.0},
-                             {"route_to_master", true}, {"aux_1", 0.2}}})
+                             {"gain", 0.75},
+                             {"pan", 0.0},
+                             {"route_to_master", true},
+                             {"aux_1", 0.2}}})
                   .accepted,
           "controller-independent mixer actions");
     app_engine.process(rendered_left, rendered_right);
@@ -3665,6 +3767,53 @@ void test_mixer_and_routing() {
               std::fabs(app_state.mixer.configuration.inputs[0].aux_send[0] -
                         0.2F) < 0.0001F,
           "observable mixer state");
+    check(application
+                  .execute({"mixer.fx-loop-set.v1",
+                            {{"index", std::int64_t{0}},
+                             {"source", "master"},
+                             {"source_id", std::int64_t{0}},
+                             {"send_left", std::int64_t{2}},
+                             {"send_right", std::int64_t{3}},
+                             {"return_left", std::int64_t{0}},
+                             {"return_right", std::int64_t{1}},
+                             {"enabled", true}}})
+                  .accepted &&
+              application.execute({"mixer.scene-save.v1", {{"name", "Live"}}})
+                  .accepted &&
+              application
+                  .execute({"mixer.fx-loop-levels.v1",
+                            {{"index", std::int64_t{0}},
+                             {"send_gain", 0.5},
+                             {"return_gain", 0.75},
+                             {"wet", 0.8}}})
+                  .accepted,
+          "external FX and routing scene actions");
+    const auto scene_state = application.snapshot();
+    check(scene_state.routing_scenes.size() == 1 &&
+              scene_state.mixer.configuration.external_fx[0].wet == 0.8F &&
+              application
+                  .execute({"mixer.scene-recall.v1",
+                            {{"id", static_cast<std::int64_t>(
+                                        scene_state.routing_scenes[0].id)}}})
+                  .accepted,
+          "routing scene recall action");
+    app_engine.process(rendered_left, rendered_right);
+    check(std::fabs(
+              application.snapshot().mixer.configuration.external_fx[0].wet -
+              0.5F) < 0.0001F,
+          "scene recall atomically restores mixer snapshot");
+    const auto scene_id = scene_state.routing_scenes[0].id;
+    check(application
+                  .execute({"mixer.scene-rename.v1",
+                            {{"id", static_cast<std::int64_t>(scene_id)},
+                             {"name", "Live renamed"}}})
+                  .accepted &&
+              application
+                  .execute({"mixer.scene-delete.v1",
+                            {{"id", static_cast<std::int64_t>(scene_id)}}})
+                  .accepted &&
+              application.snapshot().routing_scenes.empty(),
+          "routing scene rename and delete actions");
     GuiModel gui(application);
     for (int i = 0; i < 7; ++i)
         check(gui.input({GuiInput::Type::key_down, GuiKey::tab}, 1920, 1200),
@@ -3675,6 +3824,12 @@ void test_mixer_and_routing() {
     check(gui.input({GuiInput::Type::key_down, GuiKey::right}, 1024, 600) &&
               !gui.frame(1024, 600).commands.empty(),
           "compact encoder mixer adjustment");
+    check(
+        gui.input({GuiInput::Type::key_down, GuiKey::tab}, 1920, 1200) &&
+            gui.view() == GuiView::routing &&
+            gui.input({GuiInput::Type::key_down, GuiKey::right}, 1920, 1200) &&
+            !gui.frame(1024, 600).commands.empty(),
+        "headless external routing GUI interaction");
 }
 
 void test_lua_and_offline() {

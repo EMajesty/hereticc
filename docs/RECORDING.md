@@ -1,5 +1,10 @@
 # Audio recording and internal resampling
 
+External processors add `external-fx-return` for an isolated return and
+`external-fx-mix` for the compensated wet/dry result, with loop index as
+`source_id`. Existing track, aux, physical-input and master sources are
+unchanged. A loop need not reach the physical master to be recorded.
+
 NEUROGENIC's first recording path uses one reusable `RecordingService`. A
 preallocated stereo-capable buffer is the bounded real-time producer target;
 the audio callback only copies samples and updates lock-free counters. The

@@ -175,8 +175,8 @@ GuiLayout GuiModel::layout(int width, int height) const {
                             ? r(logical_width - margin - inspector_width,
                                 content_y, inspector_width, content_height)
                             : UiRect{};
-    const float tab_width = (logical_width - 32) / 8;
-    for (int i = 0; i < 8; ++i)
+    const float tab_width = (logical_width - 32) / 9;
+    for (int i = 0; i < 9; ++i)
         result.tabs.push_back(r(16 + i * tab_width, 72, tab_width - 8, 38));
     result.page_previous = r(28, content_y + 12, 64, 42);
     result.page_next = r(100, content_y + 12, 64, 42);
@@ -274,8 +274,8 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
                   : "n/a") +
              " MiB  VOICES " + std::to_string(perf.engine.active_voices) + "/" +
              std::to_string(perf.engine.maximum_voices));
-    const char *names[]{"SEQUENCER", "SAMPLES", "PARAMETERS", "X/Y",
-                        "PERF", "DISPLAY", "RECORD", "MIXER"};
+    const char *names[]{"SEQUENCER", "SAMPLES", "PARAMETERS", "X/Y",    "PERF",
+                        "DISPLAY",   "RECORD",  "MIXER",      "ROUTING"};
     for (std::size_t i = 0; i < l.tabs.size(); ++i) {
         rect(l.tabs[i], i == static_cast<std::size_t>(view_) ? UiColor::selected
                                                              : UiColor::panel);
@@ -605,29 +605,68 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
                      (channel.solo ? "  SOLO" : ""));
         }
         if (l.inspector_visible)
-            text({l.parameters.x + 12 * l.scale,
-                  l.parameters.y + 48 * l.scale,
+            text({l.parameters.x + 12 * l.scale, l.parameters.y + 48 * l.scale,
                   l.parameters.w - 24 * l.scale, 180 * l.scale},
                  UiColor::text,
-                 "UP/DOWN channel\nLEFT/RIGHT gain\nENTER mute\nSHIFT+ENTER solo\n\nMASTER " +
+                 "UP/DOWN channel\nLEFT/RIGHT gain\nENTER mute\nSHIFT+ENTER "
+                 "solo\n\nMASTER " +
                      std::to_string(state.mixer.configuration.master.gain) +
                      "  PEAK " +
                      std::to_string(std::max(state.mixer.master.left,
                                              state.mixer.master.right)));
+    } else if (view_ == GuiView::routing) {
+        text({l.content.x + 12 * l.scale, l.content.y + 8 * l.scale,
+              l.content.w - 24 * l.scale, 28 * l.scale},
+             UiColor::accent, "EXTERNAL FX / ROUTING SCENES");
+        for (std::size_t i = 0; i < mixer_external_fx_count; ++i) {
+            const auto &loop = state.mixer.configuration.external_fx[i];
+            const auto &meter = state.mixer.external_returns[i];
+            rect(l.rows[i], i == state.selected_external_fx_loop
+                                ? UiColor::selected
+                                : UiColor::background);
+            text(l.rows[i], loop.enabled ? UiColor::text : UiColor::muted,
+                 std::string(loop.name.data()) + " [" +
+                     std::to_string(loop.id) + "]" +
+                     (loop.enabled ? " ON" : " OFF") + "  SEND " +
+                     std::to_string(loop.send_left + 1) + "/" +
+                     std::to_string(loop.send_right + 1) + " RETURN " +
+                     std::to_string(loop.return_left + 1) + "/" +
+                     std::to_string(loop.return_right + 1) + " WET " +
+                     std::to_string(loop.wet) + " LAT " +
+                     std::to_string(loop.latency_frames) + "f  LEVEL " +
+                     std::to_string(std::max(meter.left, meter.right)));
+        }
+        for (std::size_t i = 0;
+             i < state.routing_scenes.size() && i + 2 < l.rows.size(); ++i) {
+            const auto &scene = state.routing_scenes[i];
+            rect(l.rows[i + 2], scene.id == state.active_routing_scene
+                                    ? UiColor::selected
+                                    : UiColor::background);
+            text(l.rows[i + 2], UiColor::text,
+                 "SCENE " + std::to_string(scene.id) + "  " + scene.name);
+        }
+        if (l.inspector_visible)
+            text({l.parameters.x + 12 * l.scale, l.parameters.y + 48 * l.scale,
+                  l.parameters.w - 24 * l.scale, 220 * l.scale},
+                 UiColor::text,
+                 "UP/DOWN select loop\nLEFT/RIGHT wet/dry\nENTER "
+                 "enable/disable\n\n"
+                 "Scenes publish one validated snapshot.\nUnavailable channels "
+                 "stay silent.\n"
+                 "Latency compensation is manual.");
     } else if (view_ == GuiView::recording) {
         const auto &recording = state.recording;
         text({l.content.x + 12 * l.scale, l.content.y + 8 * l.scale,
               l.content.w - 24 * l.scale, 28 * l.scale},
              UiColor::accent, "AUDIO RECORDING");
-        const auto usage = recording.capacity_frames
-                               ? 100.0 * recording.captured_frames /
-                                     recording.capacity_frames
-                               : 0.0;
+        const auto usage =
+            recording.capacity_frames
+                ? 100.0 * recording.captured_frames / recording.capacity_frames
+                : 0.0;
         const std::string rows[]{
             "State: " + std::string(recording_state_name(recording.state)),
-            "Source: " +
-                std::string(recording_source_name(
-                    recording.configuration.source)),
+            "Source: " + std::string(recording_source_name(
+                             recording.configuration.source)),
             "Destination slot: " +
                 std::to_string(recording.configuration.destination.value) +
                 "  Channels: " +
@@ -636,9 +675,8 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
                 " frames / " + std::to_string(usage) + "% buffer",
             "Peak L/R: " + std::to_string(recording.peak_left) + " / " +
                 std::to_string(recording.peak_right),
-            "Overflow / dropped: " +
-                std::to_string(recording.overflow_count) + " / " +
-                std::to_string(recording.dropped_frames),
+            "Overflow / dropped: " + std::to_string(recording.overflow_count) +
+                " / " + std::to_string(recording.dropped_frames),
             "Enter: arm/start/stop   Escape: cancel"};
         for (std::size_t i = 0; i < std::size(rows) && i < l.rows.size(); ++i) {
             rect(l.rows[i], UiColor::background);
@@ -664,15 +702,16 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
                                      : std::string("automatic (current ") +
                                            std::to_string(l.scale) + ")") +
                  "\nKeyboard: - / + / 0, F11\nEncoder: Up/Down, Enter toggles "
-                 "fullscreen\n\nPROJECT: " + state.project_name +
-                 (state.project_dirty ? " *" : "") + "\n" +
+                 "fullscreen\n\nPROJECT: " +
+                 state.project_name + (state.project_dirty ? " *" : "") + "\n" +
                  (state.project_path.empty() ? "Not saved"
                                              : state.project_path.string()) +
                  "\nMissing assets: " +
                  std::to_string(state.missing_assets.size()) +
                  "  Shift+Enter: Save");
     }
-    if (view_ == GuiView::mixer || !l.inspector_visible)
+    if (view_ == GuiView::mixer || view_ == GuiView::routing ||
+        !l.inspector_visible)
         return;
     text({l.parameters.x + 12, l.parameters.y + 12, l.parameters.w - 24,
           28 * l.scale},
@@ -914,12 +953,34 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
         }
         if (input.key == GuiKey::tab) {
             view_ =
-                static_cast<GuiView>((static_cast<unsigned>(view_) + 1) % 8);
+                static_cast<GuiView>((static_cast<unsigned>(view_) + 1) % 9);
             frame_.state_revision = std::numeric_limits<std::uint64_t>::max();
             return true;
         }
         if (input.key == GuiKey::enter) {
-            if (view_ == GuiView::mixer) {
+            if (view_ == GuiView::routing) {
+                const auto index = state.selected_external_fx_loop;
+                const auto &loop = state.mixer.configuration.external_fx[index];
+                const auto source =
+                    loop.source == ExternalFxSource::track       ? "track"
+                    : loop.source == ExternalFxSource::auxiliary ? "aux"
+                                                                 : "master";
+                submit(command(
+                    "mixer.fx-loop-set.v1",
+                    {{"index", static_cast<std::int64_t>(index)},
+                     {"source", std::string(source)},
+                     {"source_id", static_cast<std::int64_t>(loop.source_id)},
+                     {"send_left", static_cast<std::int64_t>(loop.send_left)},
+                     {"send_right", static_cast<std::int64_t>(loop.send_right)},
+                     {"return_left",
+                      static_cast<std::int64_t>(loop.return_left)},
+                     {"return_right",
+                      static_cast<std::int64_t>(loop.return_right)},
+                     {"enabled", !loop.enabled},
+                     {"bypass", loop.bypass},
+                     {"mono_send", loop.mono_send},
+                     {"mono_return", loop.mono_return}}));
+            } else if (view_ == GuiView::mixer) {
                 submit(command(shift_ ? "mixer.solo-toggle.v1"
                                       : "mixer.mute-toggle.v1"));
             } else if (view_ == GuiView::recording) {
@@ -983,13 +1044,40 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
             return true;
         }
         if ((input.key == GuiKey::up || input.key == GuiKey::down) &&
-            view_ == GuiView::mixer &&
-            state.mixer.configuration.track_count) {
-            const auto count = state.mixer.configuration.track_count;
+            view_ == GuiView::routing) {
             const auto next = input.key == GuiKey::down
-                                  ? (state.selected_mixer_channel + 1) % count
-                                  : (state.selected_mixer_channel + count - 1) %
-                                        count;
+                                  ? (state.selected_external_fx_loop + 1) %
+                                        mixer_external_fx_count
+                                  : (state.selected_external_fx_loop +
+                                     mixer_external_fx_count - 1) %
+                                        mixer_external_fx_count;
+            submit(command("mixer.fx-loop-select.v1",
+                           {{"index", static_cast<std::int64_t>(next)}}));
+            return true;
+        }
+        if ((input.key == GuiKey::left || input.key == GuiKey::right) &&
+            view_ == GuiView::routing) {
+            const auto index = state.selected_external_fx_loop;
+            const auto &loop = state.mixer.configuration.external_fx[index];
+            submit(command(
+                "mixer.fx-loop-levels.v1",
+                {{"index", static_cast<std::int64_t>(index)},
+                 {"send_gain", static_cast<double>(loop.send_gain)},
+                 {"return_gain", static_cast<double>(loop.return_gain)},
+                 {"wet",
+                  static_cast<double>(std::clamp(
+                      loop.wet + (input.key == GuiKey::right ? .05F : -.05F),
+                      0.0F, 1.0F))},
+                 {"return_mute", loop.return_mute}}));
+            return true;
+        }
+        if ((input.key == GuiKey::up || input.key == GuiKey::down) &&
+            view_ == GuiView::mixer && state.mixer.configuration.track_count) {
+            const auto count = state.mixer.configuration.track_count;
+            const auto next =
+                input.key == GuiKey::down
+                    ? (state.selected_mixer_channel + 1) % count
+                    : (state.selected_mixer_channel + count - 1) % count;
             submit(command("mixer.channel-select.v1",
                            {{"index", static_cast<std::int64_t>(next)}}));
             return true;
@@ -998,15 +1086,15 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
             view_ == GuiView::mixer &&
             state.selected_mixer_channel <
                 state.mixer.configuration.track_count) {
-            const auto current = state.mixer.configuration
-                                     .tracks[state.selected_mixer_channel]
-                                     .gain;
-            submit(command("mixer.gain-set.v1",
-                           {{"value", static_cast<double>(std::clamp(
-                                          current + (input.key == GuiKey::right
-                                                         ? 0.05F
-                                                         : -0.05F),
-                                          0.0F, 2.0F))}}));
+            const auto current =
+                state.mixer.configuration.tracks[state.selected_mixer_channel]
+                    .gain;
+            submit(command(
+                "mixer.gain-set.v1",
+                {{"value",
+                  static_cast<double>(std::clamp(
+                      current + (input.key == GuiKey::right ? 0.05F : -0.05F),
+                      0.0F, 2.0F))}}));
             return true;
         }
         if ((input.key == GuiKey::up || input.key == GuiKey::down) &&
@@ -1117,14 +1205,30 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
         }
         if (view_ == GuiView::mixer)
             for (std::size_t i = 0;
-                 i < std::min(l.rows.size(),
-                              state.mixer.configuration.track_count);
+                 i <
+                 std::min(l.rows.size(), state.mixer.configuration.track_count);
                  ++i)
                 if (l.rows[i].contains(input.x, input.y)) {
                     submit(command("mixer.channel-select.v1",
                                    {{"index", static_cast<std::int64_t>(i)}}));
                     return true;
                 }
+        if (view_ == GuiView::routing) {
+            for (std::size_t i = 0; i < mixer_external_fx_count; ++i)
+                if (l.rows[i].contains(input.x, input.y)) {
+                    submit(command("mixer.fx-loop-select.v1",
+                                   {{"index", static_cast<std::int64_t>(i)}}));
+                    return true;
+                }
+            for (std::size_t i = 0;
+                 i < state.routing_scenes.size() && i + 2 < l.rows.size(); ++i)
+                if (l.rows[i + 2].contains(input.x, input.y)) {
+                    submit(command("mixer.scene-recall.v1",
+                                   {{"id", static_cast<std::int64_t>(
+                                               state.routing_scenes[i].id)}}));
+                    return true;
+                }
+        }
         if (view_ == GuiView::sequencer) {
             UiRect undo{l.parameters.x + 12 * l.scale,
                         l.parameters.y + 48 * l.scale, 92 * l.scale,

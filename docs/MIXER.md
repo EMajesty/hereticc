@@ -12,6 +12,8 @@ timeline track -> sample/synth -> track channel --+-> master pre tap
                                  +-> aux -> return-+
 physical input -> input channel ------------------+
 
+track/aux/master -> external send -> physical processor -> return -> master
+
 master pre tap -> master gain -> master effects -> master post tap -> output
 ```
 
@@ -31,6 +33,30 @@ increments `mixer_publication_failures`.
 The callback owns fixed 1024-frame track, input and aux buffers. It performs no
 allocation, locking, file access or graph construction. Control-visible
 configuration is a separate copy; meters use atomics.
+
+## External effects loops
+
+Two fixed loop slots are part of the same compiled mixer snapshot. A loop has a
+stable numeric ID and selects a track, aux bus, or the master as its source. It
+maps a mono or stereo send and return, and provides linear send/return gains,
+linear wet/dry (`dry = 1-wet`, `return = wet`), bypass, return mute, and manual
+round-trip compensation up to 16,384 frames. New loops are disabled.
+
+The ordinary source-to-master path is the dry path. When that source normally
+feeds master, enabling a loop replaces its contribution with the compensated
+dry/return blend; a directly routed source retains its direct output and adds
+only wet return to master. One master-source loop may be active at a time.
+
+Send channels may not overlap master, a direct track/aux output, or another
+enabled send. Stereo endpoints must be distinct and source IDs must exist.
+Return audio is never internally routed into its send source. Unavailable
+channels remain silent and visible rather than being remapped. Physical cabling
+can still create feedback, so connect and gain-stage external equipment
+conservatively.
+
+Compensation delays the loop source's dry contribution using fixed preallocated
+ring buffers. Calibration is manual; NEUROGENIC never emits an automatic test
+tone. Hardware latency can vary with backend and device buffering.
 
 ## Channel and bus semantics
 
@@ -62,6 +88,8 @@ Recording sources include `track` plus stable track ID, `aux` plus bus index,
 and `physical-input` plus channel index, in addition to external mono/stereo
 and master pre/post. Track taps are post-fader. Aux taps are after bus gain and
 before return gain. A source need not be audible at the physical master.
+`external-fx-return` captures an isolated return; `external-fx-mix` captures the
+compensated wet/dry result. Both use the loop index as source ID.
 
 ## Persistence and controls
 
@@ -70,11 +98,19 @@ it receive unity channels generated from timeline track IDs. Settings follow
 stable IDs when tracks reorder. Unavailable physical assignments remain visible
 and silent.
 
+Routing scenes contain a stable ID, name, and mixer snapshot only. Recall
+validates and queues one complete snapshot, so the callback cannot see a
+partial scene; failure leaves the current scene active. Scene morphing and full
+click-free switching are not implemented.
+
 The `mixer.*.v1` action family covers selection, gain, pan, mute/solo, sends,
 direct outputs, inputs, aux buses and master routing. `mixer.master.gain`,
 `mixer.selected.gain` and `mixer.selected.pan` also use the generic parameter
 registry. The Mixer GUI supports pointer and non-touch selection, gain and
 mute/solo editing.
+The Routing GUI shows loops, return meters, channel availability, latency and
+scenes. Shared `mixer.fx-loop-*.v1` and `mixer.scene-*.v1` actions serve GUI,
+controllers and future clients.
 
 The fixed capacities are real-time memory budgets rather than workflow
 assumptions: 32 simultaneously mixed timeline tracks, six physical inputs and

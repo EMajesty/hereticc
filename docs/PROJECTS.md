@@ -12,6 +12,8 @@ My Set/
       samples.ngs
       parameters.ngp
       mixer.ngm
+      scenes.ngr
+      scene-<stable-id>.ngm
 ```
 
 `manifest.ngp` names exactly one committed generation. A save validates a
@@ -32,6 +34,10 @@ The optional mixer file stores track/input/master channels, two aux buses and
 physical assignments. Older projects without it receive unity channels derived
 from timeline IDs. Unavailable outputs remain assigned and silent rather than
 being redirected.
+Mixer metadata v2 adds external-loop mappings and latency while retaining v1
+loading. The optional scene index names up to 32 stable routing snapshots, each
+stored in the same validated mixer format. Older generations load with no
+scenes.
 Transient voices, playback position, monitoring counters, GUI caches, focus,
 and controller state are deliberately excluded.
 

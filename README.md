@@ -16,6 +16,11 @@ receives MIDI through libremidi, executes Lua 5.4 through sol2, applies generate
 The engine now includes a bounded per-track mixer, two stereo aux buses,
 master routing, six-channel-capable device adaptation and track/aux/master
 recording taps. See [mixer and routing](docs/MIXER.md).
+Two disabled-by-default external FX loops can route track, aux, or master audio
+through physical mono/stereo sends and returns with wet/dry control, manual
+latency compensation, recording taps and recallable routing scenes. Routing
+uses the same application service and atomic mixer publication; consult the
+mixer document before connecting external hardware.
 
 This is foundation software, not a DAW or a finished groovebox. The engine does
 not assume a UI, controller, or hardware layout. Linux x86_64 and AArch64 are

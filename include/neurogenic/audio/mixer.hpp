@@ -6,9 +6,9 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include <span>
 #include <string>
-#include <mutex>
 
 namespace neurogenic {
 
@@ -17,7 +17,12 @@ inline constexpr std::size_t maximum_mixer_tracks = 32;
 inline constexpr std::size_t maximum_mixer_inputs = 6;
 inline constexpr std::size_t maximum_mixer_outputs = 6;
 inline constexpr std::size_t mixer_aux_count = 2;
+inline constexpr std::size_t mixer_external_fx_count = 2;
+inline constexpr std::size_t maximum_external_fx_latency_frames = 16384;
 inline constexpr std::size_t maximum_mixer_block = 1024;
+using ExternalFxLoopId = std::uint32_t;
+
+enum class ExternalFxSource : std::uint8_t { track, auxiliary, master };
 
 struct MixerChannelSettings {
     TrackId track{};
@@ -43,6 +48,17 @@ struct MixerMasterSettings {
     std::uint8_t output_left{}, output_right{1};
     bool mute{};
 };
+struct ExternalFxLoopSettings {
+    ExternalFxLoopId id{};
+    std::array<char, 32> name{};
+    ExternalFxSource source{ExternalFxSource::master};
+    std::uint64_t source_id{}; // TrackId for tracks, zero-based index for aux.
+    std::uint8_t send_left{}, send_right{1};
+    std::uint8_t return_left{}, return_right{1};
+    float send_gain{0.5F}, return_gain{1.0F}, wet{0.5F};
+    std::uint32_t latency_frames{};
+    bool enabled{}, bypass{}, return_mute{}, mono_send{}, mono_return{};
+};
 struct MixerConfiguration {
     std::uint64_t revision{};
     std::array<MixerChannelSettings, maximum_mixer_tracks> tracks{};
@@ -50,7 +66,13 @@ struct MixerConfiguration {
     std::array<MixerInputSettings, maximum_mixer_inputs> inputs{};
     std::size_t input_count{};
     std::array<MixerAuxSettings, mixer_aux_count> aux{};
+    std::array<ExternalFxLoopSettings, mixer_external_fx_count> external_fx{};
     MixerMasterSettings master;
+};
+struct RoutingScene {
+    std::uint64_t id{};
+    std::string name;
+    MixerConfiguration mixer;
 };
 struct StereoMeter {
     float left{}, right{};
@@ -62,6 +84,9 @@ struct MixerState {
     std::array<StereoMeter, maximum_mixer_tracks> tracks{};
     std::array<StereoMeter, maximum_mixer_inputs> inputs{};
     std::array<StereoMeter, mixer_aux_count> aux{};
+    std::array<StereoMeter, mixer_external_fx_count> external_returns{};
+    std::array<bool, mixer_external_fx_count> external_send_available{},
+        external_return_available{};
     StereoMeter master;
 };
 
@@ -101,9 +126,18 @@ class Mixer {
         return active_.master.output_right;
     }
     [[nodiscard]] std::span<const float> track_left(std::size_t) const noexcept;
-    [[nodiscard]] std::span<const float> track_right(std::size_t) const noexcept;
+    [[nodiscard]] std::span<const float>
+    track_right(std::size_t) const noexcept;
     [[nodiscard]] std::span<const float> aux_left(std::size_t) const noexcept;
     [[nodiscard]] std::span<const float> aux_right(std::size_t) const noexcept;
+    [[nodiscard]] std::span<const float>
+    external_return_left(std::size_t) const noexcept;
+    [[nodiscard]] std::span<const float>
+    external_return_right(std::size_t) const noexcept;
+    [[nodiscard]] std::span<const float>
+    external_mix_left(std::size_t) const noexcept;
+    [[nodiscard]] std::span<const float>
+    external_mix_right(std::size_t) const noexcept;
 
   private:
     struct AtomicMeter {
@@ -122,12 +156,24 @@ class Mixer {
     std::array<std::array<float, maximum_mixer_block>, maximum_mixer_tracks>
         track_left_{}, track_right_{};
     std::array<std::array<float, maximum_mixer_block>, maximum_mixer_inputs>
-        input_{};
+        physical_input_{};
     std::array<std::array<float, maximum_mixer_block>, mixer_aux_count>
         aux_left_{}, aux_right_{};
+    std::array<std::array<float, maximum_mixer_block>, mixer_external_fx_count>
+        external_return_left_{}, external_return_right_{}, external_mix_left_{},
+        external_mix_right_{};
+    std::array<std::array<float, maximum_external_fx_latency_frames + 1>,
+               mixer_external_fx_count>
+        external_delay_left_{}, external_delay_right_{};
+    std::array<std::size_t, mixer_external_fx_count> external_delay_cursor_{};
+    std::array<std::size_t, mixer_external_fx_count> external_delay_valid_{};
+    std::uint8_t physical_input_channels_{};
     std::array<AtomicMeter, maximum_mixer_tracks> track_meters_{};
     std::array<AtomicMeter, maximum_mixer_inputs> input_meters_{};
     std::array<AtomicMeter, mixer_aux_count> aux_meters_{};
+    std::array<AtomicMeter, mixer_external_fx_count> external_meters_{};
+    std::array<std::atomic<bool>, mixer_external_fx_count>
+        external_send_available_{}, external_return_available_{};
     AtomicMeter master_meter_;
     std::array<StereoDelay, mixer_aux_count> aux_effects_;
 };

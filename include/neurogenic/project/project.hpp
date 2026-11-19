@@ -15,6 +15,8 @@ struct Project {
     SliceProject samples;
     std::map<std::string, double> parameters;
     MixerConfiguration mixer;
+    std::vector<RoutingScene> routing_scenes;
+    std::uint64_t active_routing_scene{};
     std::vector<std::filesystem::path> missing_assets;
 };
 

@@ -1,6 +1,7 @@
 #include "neurogenic/project/project.hpp"
 #include "neurogenic/timeline/io.hpp"
 #include "neurogenic/timeline/playback.hpp"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -45,8 +46,8 @@ std::string generation_name() {
 }
 std::string serialize_mixer(const MixerConfiguration &mixer) {
     std::ostringstream out;
-    out << "NEUROGENIC_MIXER 1\n" << std::setprecision(9)
-        << "master " << mixer.master.gain << ' '
+    out << "NEUROGENIC_MIXER 2\n"
+        << std::setprecision(9) << "master " << mixer.master.gain << ' '
         << static_cast<unsigned>(mixer.master.output_left) << ' '
         << static_cast<unsigned>(mixer.master.output_right) << ' '
         << mixer.master.mute << '\n';
@@ -74,6 +75,20 @@ std::string serialize_mixer(const MixerConfiguration &mixer) {
             << static_cast<int>(bus.output_pair) << ' ' << bus.mute << ' '
             << bus.effect_enabled << '\n';
     }
+    for (std::size_t i = 0; i < mixer_external_fx_count; ++i) {
+        const auto &loop = mixer.external_fx[i];
+        out << "external " << i << ' ' << loop.id << ' '
+            << std::quoted(std::string(loop.name.data())) << ' '
+            << static_cast<unsigned>(loop.source) << ' ' << loop.source_id
+            << ' ' << static_cast<unsigned>(loop.send_left) << ' '
+            << static_cast<unsigned>(loop.send_right) << ' '
+            << static_cast<unsigned>(loop.return_left) << ' '
+            << static_cast<unsigned>(loop.return_right) << ' ' << loop.send_gain
+            << ' ' << loop.return_gain << ' ' << loop.wet << ' '
+            << loop.latency_frames << ' ' << loop.enabled << ' ' << loop.bypass
+            << ' ' << loop.return_mute << ' ' << loop.mono_send << ' '
+            << loop.mono_return << '\n';
+    }
     return out.str();
 }
 MixerConfiguration load_mixer(const std::filesystem::path &path) {
@@ -84,7 +99,8 @@ MixerConfiguration load_mixer(const std::filesystem::path &path) {
     MixerConfiguration result;
     int output{};
     if (!(input >> magic >> version) || magic != "NEUROGENIC_MIXER" ||
-        version != 1 || !(input >> label) || label != "master" ||
+        (version != 1 && version != 2) || !(input >> label) ||
+        label != "master" ||
         !(input >> result.master.gain >> left >> right >> result.master.mute) ||
         left >= maximum_mixer_outputs || right >= maximum_mixer_outputs ||
         !(input >> label >> result.track_count) || label != "tracks" ||
@@ -94,7 +110,8 @@ MixerConfiguration load_mixer(const std::filesystem::path &path) {
     result.master.output_right = static_cast<std::uint8_t>(right);
     for (std::size_t i = 0; i < result.track_count; ++i) {
         auto &c = result.tracks[i];
-        if (!(input >> c.track >> c.gain >> c.pan >> c.mute >> c.solo >> output))
+        if (!(input >> c.track >> c.gain >> c.pan >> c.mute >> c.solo >>
+              output))
             throw std::runtime_error("malformed mixer track");
         c.output_pair = static_cast<std::int8_t>(output);
         for (std::size_t a = 0; a < mixer_aux_count; ++a)
@@ -108,7 +125,8 @@ MixerConfiguration load_mixer(const std::filesystem::path &path) {
         auto &c = result.inputs[i];
         unsigned physical{};
         if (!(input >> physical >> c.gain >> c.pan >> c.mute >>
-              c.route_to_master) || physical >= maximum_mixer_inputs)
+              c.route_to_master) ||
+            physical >= maximum_mixer_inputs)
             throw std::runtime_error("malformed mixer input");
         c.physical_channel = static_cast<std::uint8_t>(physical);
         for (auto &send : c.aux_send)
@@ -118,12 +136,40 @@ MixerConfiguration load_mixer(const std::filesystem::path &path) {
     for (std::size_t i = 0; i < mixer_aux_count; ++i) {
         std::size_t index{};
         auto &bus = result.aux[i];
-        if (!(input >> label >> index >> bus.gain >> bus.return_gain >> output >>
-              bus.mute >> bus.effect_enabled) ||
+        if (!(input >> label >> index >> bus.gain >> bus.return_gain >>
+              output >> bus.mute >> bus.effect_enabled) ||
             label != "aux" || index != i)
             throw std::runtime_error("malformed auxiliary bus");
         bus.output_pair = static_cast<std::int8_t>(output);
     }
+    if (version >= 2)
+        for (std::size_t i = 0; i < mixer_external_fx_count; ++i) {
+            std::size_t index{};
+            unsigned source{}, send_left{}, send_right{}, return_left{},
+                return_right{};
+            auto &loop = result.external_fx[i];
+            std::string name;
+            if (!(input >> label >> index >> loop.id >> std::quoted(name) >>
+                  source >> loop.source_id >> send_left >> send_right >>
+                  return_left >> return_right >> loop.send_gain >>
+                  loop.return_gain >> loop.wet >> loop.latency_frames >>
+                  loop.enabled >> loop.bypass >> loop.return_mute >>
+                  loop.mono_send >> loop.mono_return) ||
+                label != "external" || index != i || source > 2 ||
+                send_left >= maximum_mixer_outputs ||
+                send_right >= maximum_mixer_outputs ||
+                return_left >= maximum_mixer_inputs ||
+                return_right >= maximum_mixer_inputs)
+                throw std::runtime_error("malformed external FX loop");
+            if (name.size() >= loop.name.size())
+                throw std::runtime_error("external FX loop name is too long");
+            std::copy(name.begin(), name.end(), loop.name.begin());
+            loop.source = static_cast<ExternalFxSource>(source);
+            loop.send_left = static_cast<std::uint8_t>(send_left);
+            loop.send_right = static_cast<std::uint8_t>(send_right);
+            loop.return_left = static_cast<std::uint8_t>(return_left);
+            loop.return_right = static_cast<std::uint8_t>(return_right);
+        }
     std::string error;
     if (!validate_mixer_configuration(result, maximum_mixer_inputs,
                                       maximum_mixer_outputs, error))
@@ -143,10 +189,29 @@ void save_project(const Project &project,
         !compile_timeline(project.timeline, validation, validation_error))
         throw std::invalid_argument("invalid project: " + validation_error);
     if (!validate_mixer_configuration(project.mixer, maximum_mixer_inputs,
-                                      maximum_mixer_outputs,
-                                      validation_error))
+                                      maximum_mixer_outputs, validation_error))
         throw std::invalid_argument("invalid project mixer: " +
                                     validation_error);
+    if (project.routing_scenes.size() > 32)
+        throw std::invalid_argument("too many routing scenes");
+    for (std::size_t i = 0; i < project.routing_scenes.size(); ++i) {
+        const auto &scene = project.routing_scenes[i];
+        if (!scene.id || scene.name.empty() ||
+            !validate_mixer_configuration(scene.mixer, maximum_mixer_inputs,
+                                          maximum_mixer_outputs,
+                                          validation_error))
+            throw std::invalid_argument("invalid routing scene: " +
+                                        validation_error);
+        for (std::size_t j = 0; j < i; ++j)
+            if (project.routing_scenes[j].id == scene.id)
+                throw std::invalid_argument("duplicate routing scene ID");
+    }
+    if (project.active_routing_scene &&
+        std::none_of(project.routing_scenes.begin(),
+                     project.routing_scenes.end(), [&](const auto &scene) {
+                         return scene.id == project.active_routing_scene;
+                     }))
+        throw std::invalid_argument("active routing scene does not exist");
     std::filesystem::create_directories(directory / "generations");
     const auto generation = generation_name();
     const auto temporary = directory / "generations" / (generation + ".tmp");
@@ -166,12 +231,22 @@ void save_project(const Project &project,
         }
         save_slice_project(samples, temporary / "samples.ngs");
         std::ostringstream parameters;
-        parameters << "NEUROGENIC_PARAMETERS 1\n"
-                   << std::setprecision(17);
+        parameters << "NEUROGENIC_PARAMETERS 1\n" << std::setprecision(17);
         for (const auto &[id, value] : project.parameters)
             parameters << std::quoted(id) << ' ' << value << '\n';
         checked_write(temporary / "parameters.ngp", parameters.str());
         checked_write(temporary / "mixer.ngm", serialize_mixer(project.mixer));
+        std::ostringstream scenes;
+        scenes << "NEUROGENIC_ROUTING_SCENES 1\nactive "
+               << project.active_routing_scene << "\ncount "
+               << project.routing_scenes.size() << '\n';
+        for (const auto &scene : project.routing_scenes) {
+            const auto file = "scene-" + std::to_string(scene.id) + ".ngm";
+            scenes << scene.id << ' ' << std::quoted(scene.name) << ' '
+                   << std::quoted(file) << '\n';
+            checked_write(temporary / file, serialize_mixer(scene.mixer));
+        }
+        checked_write(temporary / "scenes.ngr", scenes.str());
         std::filesystem::rename(temporary, committed);
         std::ostringstream manifest;
         manifest << "NEUROGENIC_PROJECT " << Project::format_version << '\n'
@@ -195,7 +270,8 @@ void save_project(const Project &project,
             std::filesystem::file_size(committed / "timeline.ngt") +
             std::filesystem::file_size(committed / "samples.ngs") +
             std::filesystem::file_size(committed / "parameters.ngp") +
-            std::filesystem::file_size(committed / "mixer.ngm");
+            std::filesystem::file_size(committed / "mixer.ngm") +
+            std::filesystem::file_size(committed / "scenes.ngr");
     }
 }
 
@@ -224,6 +300,35 @@ Project load_project(const std::filesystem::path &directory,
     result.samples = load_slice_project(files / "samples.ngs", false);
     if (std::filesystem::exists(files / "mixer.ngm"))
         result.mixer = load_mixer(files / "mixer.ngm");
+    if (std::filesystem::exists(files / "scenes.ngr")) {
+        bounded(files / "scenes.ngr");
+        std::ifstream scenes(files / "scenes.ngr");
+        std::size_t count{};
+        if (!(scenes >> magic >> version) ||
+            magic != "NEUROGENIC_ROUTING_SCENES" || version != 1 ||
+            !(scenes >> kind >> result.active_routing_scene) ||
+            kind != "active" || !(scenes >> kind >> count) || kind != "count" ||
+            count > 32)
+            throw std::runtime_error("unsupported or malformed routing scenes");
+        for (std::size_t i = 0; i < count; ++i) {
+            RoutingScene scene;
+            std::string file;
+            if (!(scenes >> scene.id >> std::quoted(scene.name) >>
+                  std::quoted(file)) ||
+                !scene.id || scene.name.empty() || file.empty() ||
+                file.find('/') != std::string::npos ||
+                file.find("..") != std::string::npos)
+                throw std::runtime_error("malformed routing scene entry");
+            scene.mixer = load_mixer(files / file);
+            result.routing_scenes.push_back(std::move(scene));
+        }
+        if (result.active_routing_scene &&
+            std::none_of(result.routing_scenes.begin(),
+                         result.routing_scenes.end(), [&](const auto &scene) {
+                             return scene.id == result.active_routing_scene;
+                         }))
+            throw std::runtime_error("active routing scene was not found");
+    }
     for (auto &[slot, path] : result.samples.sample_paths) {
         path = resolve_reference(directory, path);
         if (!std::filesystem::exists(path))
@@ -253,6 +358,9 @@ Project load_project(const std::filesystem::path &directory,
             std::filesystem::file_size(files / "parameters.ngp") +
             (std::filesystem::exists(files / "mixer.ngm")
                  ? std::filesystem::file_size(files / "mixer.ngm")
+                 : 0) +
+            (std::filesystem::exists(files / "scenes.ngr")
+                 ? std::filesystem::file_size(files / "scenes.ngr")
                  : 0);
     }
     return result;

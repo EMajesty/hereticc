@@ -14,4 +14,5 @@ bind|enter|action|slice.preview.v1|shift|feedback=display.main|label=Preview sli
 bind|data|parameter|transport.tempo|label=Tempo
 bind|fader.1|parameter|performance.xy.x|label=X
 bind|encoder.1|parameter|mixer.selected.gain|label=Channel gain
+bind|encoder.1|parameter|mixer.external.selected.wet|shift|label=External FX wet/dry
 bind|mute|action|mixer.mute-toggle.v1|feedback=led.mute

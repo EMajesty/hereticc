@@ -9,3 +9,4 @@ bind|button.2|action|transport.stop.v1
 bind|knob.1|parameter|performance.xy.x
 bind|fader.1|parameter|performance.xy.y
 bind|fader.1|parameter|mixer.selected.gain|shift|label=Mixer gain
+bind|knob.1|parameter|mixer.external.selected.wet|shift|label=External FX wet/dry

@@ -16,12 +16,11 @@ std::pair<float, float> pan(float value) noexcept {
 } // namespace
 
 bool validate_mixer_configuration(const MixerConfiguration &value,
-                                  std::uint8_t inputs,
-                                  std::uint8_t outputs,
+                                  std::uint8_t inputs, std::uint8_t outputs,
                                   std::string &error) noexcept {
     if (value.track_count > maximum_mixer_tracks ||
-        value.input_count > maximum_mixer_inputs || outputs > maximum_mixer_outputs ||
-        inputs > maximum_mixer_inputs) {
+        value.input_count > maximum_mixer_inputs ||
+        outputs > maximum_mixer_outputs || inputs > maximum_mixer_inputs) {
         error = "mixer capacity exceeded";
         return false;
     }
@@ -70,13 +69,100 @@ bool validate_mixer_configuration(const MixerConfiguration &value,
     }
     for (const auto &aux : value.aux)
         if (!finite_range(aux.gain, 0, 2) ||
-            !finite_range(aux.return_gain, 0, 2) ||
-            aux.output_pair < -1 ||
+            !finite_range(aux.return_gain, 0, 2) || aux.output_pair < -1 ||
             (aux.output_pair >= 0 &&
              (!outputs || aux.output_pair + 1 >= outputs))) {
             error = "invalid auxiliary bus configuration";
             return false;
         }
+    std::array<bool, maximum_mixer_outputs> claimed_outputs{};
+    if (outputs) {
+        claimed_outputs[value.master.output_left] = true;
+        claimed_outputs[value.master.output_right] = true;
+    }
+    for (std::size_t i = 0; i < value.track_count; ++i)
+        if (value.tracks[i].output_pair >= 0) {
+            claimed_outputs[static_cast<std::size_t>(
+                value.tracks[i].output_pair)] = true;
+            claimed_outputs[static_cast<std::size_t>(
+                                value.tracks[i].output_pair) +
+                            1] = true;
+        }
+    for (const auto &aux : value.aux)
+        if (aux.output_pair >= 0) {
+            claimed_outputs[static_cast<std::size_t>(aux.output_pair)] = true;
+            claimed_outputs[static_cast<std::size_t>(aux.output_pair) + 1] =
+                true;
+        }
+    bool master_source{};
+    for (std::size_t i = 0; i < mixer_external_fx_count; ++i) {
+        const auto &loop = value.external_fx[i];
+        if (!loop.id && !loop.enabled)
+            continue;
+        if (!loop.id || !finite_range(loop.send_gain, 0, 2) ||
+            !finite_range(loop.return_gain, 0, 2) ||
+            !finite_range(loop.wet, 0, 1) ||
+            loop.latency_frames > maximum_external_fx_latency_frames) {
+            error = "invalid external FX loop";
+            return false;
+        }
+        for (std::size_t j = 0; j < i; ++j)
+            if (value.external_fx[j].id == loop.id) {
+                error = "duplicate external FX loop ID";
+                return false;
+            }
+        for (std::size_t j = 0; loop.enabled && j < i; ++j)
+            if (value.external_fx[j].enabled &&
+                value.external_fx[j].source == loop.source &&
+                value.external_fx[j].source_id == loop.source_id) {
+                error = "external FX loops cannot process the same source";
+                return false;
+            }
+        if (loop.enabled && loop.source == ExternalFxSource::track) {
+            const auto found = std::find_if(
+                value.tracks.begin(), value.tracks.begin() + value.track_count,
+                [&](const auto &channel) {
+                    return channel.track == loop.source_id;
+                });
+            if (found == value.tracks.begin() + value.track_count) {
+                error = "external FX track source is unavailable";
+                return false;
+            }
+        } else if (loop.enabled && loop.source == ExternalFxSource::auxiliary &&
+                   loop.source_id >= mixer_aux_count) {
+            error = "external FX auxiliary source is unavailable";
+            return false;
+        } else if (loop.enabled && loop.source == ExternalFxSource::master) {
+            if (master_source) {
+                error =
+                    "only one master-source external FX loop may be enabled";
+                return false;
+            }
+            master_source = true;
+        }
+        if (!loop.enabled)
+            continue;
+        const auto send_right =
+            loop.mono_send ? loop.send_left : loop.send_right;
+        const auto return_right =
+            loop.mono_return ? loop.return_left : loop.return_right;
+        if (!outputs || loop.send_left >= outputs || send_right >= outputs ||
+            (!loop.mono_send && loop.send_left == loop.send_right)) {
+            error = "external FX send mapping is unavailable";
+            return false;
+        }
+        if (!inputs || loop.return_left >= inputs || return_right >= inputs ||
+            (!loop.mono_return && loop.return_left == loop.return_right)) {
+            error = "external FX return mapping is unavailable";
+            return false;
+        }
+        if (claimed_outputs[loop.send_left] || claimed_outputs[send_right]) {
+            error = "external FX send conflicts with another physical output";
+            return false;
+        }
+        claimed_outputs[loop.send_left] = true;
+        claimed_outputs[send_right] = true;
+    }
     error.clear();
     return true;
 }
@@ -110,19 +196,33 @@ bool Mixer::publish(const MixerConfiguration &value,
 }
 void Mixer::begin_block(std::size_t frames) noexcept {
     MixerConfiguration pending;
+    const auto previous_revision = active_.revision;
     while (publications_.pop(pending))
         active_ = pending;
+    if (active_.revision != previous_revision) {
+        external_delay_cursor_.fill(0);
+        external_delay_valid_.fill(0);
+    }
     revision_.store(active_.revision, std::memory_order_release);
     frames_ = std::min(frames, maximum_mixer_block);
+    physical_input_channels_ = 0;
     for (auto &buffer : track_left_)
         std::fill_n(buffer.begin(), frames_, 0.0F);
     for (auto &buffer : track_right_)
         std::fill_n(buffer.begin(), frames_, 0.0F);
-    for (auto &buffer : input_)
+    for (auto &buffer : physical_input_)
         std::fill_n(buffer.begin(), frames_, 0.0F);
     for (auto &buffer : aux_left_)
         std::fill_n(buffer.begin(), frames_, 0.0F);
     for (auto &buffer : aux_right_)
+        std::fill_n(buffer.begin(), frames_, 0.0F);
+    for (auto &buffer : external_return_left_)
+        std::fill_n(buffer.begin(), frames_, 0.0F);
+    for (auto &buffer : external_return_right_)
+        std::fill_n(buffer.begin(), frames_, 0.0F);
+    for (auto &buffer : external_mix_left_)
+        std::fill_n(buffer.begin(), frames_, 0.0F);
+    for (auto &buffer : external_mix_right_)
         std::fill_n(buffer.begin(), frames_, 0.0F);
 }
 std::size_t Mixer::find_track(TrackId track) const noexcept {
@@ -146,25 +246,27 @@ void Mixer::add_input(std::uint8_t physical, std::size_t frame,
                       float value) noexcept {
     if (frame >= frames_)
         return;
-    for (std::size_t i = 0; i < active_.input_count; ++i)
-        if (active_.inputs[i].physical_channel == physical)
-            input_[i][frame] += value;
+    if (physical < maximum_mixer_inputs) {
+        physical_input_[physical][frame] += value;
+        physical_input_channels_ = std::max<std::uint8_t>(
+            physical_input_channels_, static_cast<std::uint8_t>(physical + 1));
+    }
 }
 void Mixer::update_meter(AtomicMeter &meter, float left, float right) noexcept {
     constexpr float decay = 0.92F;
     const auto l = std::max(std::fabs(left),
                             meter.left.load(std::memory_order_relaxed) * decay);
-    const auto r = std::max(std::fabs(right),
-                            meter.right.load(std::memory_order_relaxed) * decay);
+    const auto r = std::max(
+        std::fabs(right), meter.right.load(std::memory_order_relaxed) * decay);
     meter.left.store(l, std::memory_order_relaxed);
     meter.right.store(r, std::memory_order_relaxed);
     if (l >= 1 || r >= 1)
         meter.clip.store(true, std::memory_order_relaxed);
 }
-void Mixer::process(std::span<float> master_left,
-                    std::span<float> master_right,
+void Mixer::process(std::span<float> master_left, std::span<float> master_right,
                     std::span<float> physical, std::uint8_t channels) noexcept {
-    const auto frames = std::min({frames_, master_left.size(), master_right.size()});
+    const auto frames =
+        std::min({frames_, master_left.size(), master_right.size()});
     bool any_solo{};
     for (std::size_t i = 0; i < active_.track_count; ++i)
         any_solo |= active_.tracks[i].solo;
@@ -182,8 +284,10 @@ void Mixer::process(std::span<float> master_left,
             track_left_[channel][frame] = post_l;
             track_right_[channel][frame] = post_r;
             for (std::size_t aux = 0; aux < mixer_aux_count; ++aux) {
-                const auto send_l = settings.aux_pre_fader[aux] ? pre_l : post_l;
-                const auto send_r = settings.aux_pre_fader[aux] ? pre_r : post_r;
+                const auto send_l =
+                    settings.aux_pre_fader[aux] ? pre_l : post_l;
+                const auto send_r =
+                    settings.aux_pre_fader[aux] ? pre_r : post_r;
                 aux_left_[aux][frame] += send_l * settings.aux_send[aux];
                 aux_right_[aux][frame] += send_r * settings.aux_send[aux];
             }
@@ -204,7 +308,11 @@ void Mixer::process(std::span<float> master_left,
         const auto [pan_l, pan_r] = pan(settings.pan);
         float peak_l{}, peak_r{};
         for (std::size_t frame = 0; frame < frames; ++frame) {
-            const auto value = settings.mute ? 0.0F : input_[channel][frame] * settings.gain;
+            const auto value =
+                settings.mute
+                    ? 0.0F
+                    : physical_input_[settings.physical_channel][frame] *
+                          settings.gain;
             const auto l = value * pan_l, r = value * pan_r;
             if (settings.route_to_master) {
                 master_left[frame] += l;
@@ -222,13 +330,14 @@ void Mixer::process(std::span<float> master_left,
     for (std::size_t aux = 0; aux < mixer_aux_count; ++aux) {
         const auto &settings = active_.aux[aux];
         if (settings.effect_enabled)
-            aux_effects_[aux].process(
-                {aux_left_[aux].data(), frames},
-                {aux_right_[aux].data(), frames});
+            aux_effects_[aux].process({aux_left_[aux].data(), frames},
+                                      {aux_right_[aux].data(), frames});
         float peak_l{}, peak_r{};
         for (std::size_t frame = 0; frame < frames; ++frame) {
-            const auto l = settings.mute ? 0.0F : aux_left_[aux][frame] * settings.gain;
-            const auto r = settings.mute ? 0.0F : aux_right_[aux][frame] * settings.gain;
+            const auto l =
+                settings.mute ? 0.0F : aux_left_[aux][frame] * settings.gain;
+            const auto r =
+                settings.mute ? 0.0F : aux_right_[aux][frame] * settings.gain;
             aux_left_[aux][frame] = l;
             aux_right_[aux][frame] = r;
             if (settings.output_pair < 0) {
@@ -242,6 +351,113 @@ void Mixer::process(std::span<float> master_left,
             peak_r = std::max(peak_r, std::fabs(r));
         }
         update_meter(aux_meters_[aux], peak_l, peak_r);
+    }
+    for (std::size_t index = 0; index < mixer_external_fx_count; ++index) {
+        const auto &loop = active_.external_fx[index];
+        const auto send_right_channel =
+            loop.mono_send ? loop.send_left : loop.send_right;
+        const auto return_right_channel =
+            loop.mono_return ? loop.return_left : loop.return_right;
+        const auto send_available = loop.enabled && channels &&
+                                    loop.send_left < channels &&
+                                    send_right_channel < channels &&
+                                    physical.size() >= frames * channels;
+        const auto return_available =
+            loop.enabled && loop.return_left < physical_input_channels_ &&
+            return_right_channel < physical_input_channels_;
+        external_send_available_[index].store(send_available,
+                                              std::memory_order_relaxed);
+        external_return_available_[index].store(return_available,
+                                                std::memory_order_relaxed);
+        if (!loop.enabled || loop.bypass) {
+            update_meter(external_meters_[index], 0, 0);
+            continue;
+        }
+        const float *source_l = master_left.data(),
+                    *source_r = master_right.data();
+        bool source_routes_to_master = true;
+        float source_master_gain = 1.0F;
+        if (loop.source == ExternalFxSource::track) {
+            const auto track = find_track(static_cast<TrackId>(loop.source_id));
+            if (track >= active_.track_count)
+                continue;
+            source_l = track_left_[track].data();
+            source_r = track_right_[track].data();
+            source_routes_to_master = active_.tracks[track].output_pair < 0;
+        } else if (loop.source == ExternalFxSource::auxiliary) {
+            const auto aux = static_cast<std::size_t>(loop.source_id);
+            if (aux >= mixer_aux_count)
+                continue;
+            source_l = aux_left_[aux].data();
+            source_r = aux_right_[aux].data();
+            source_routes_to_master = active_.aux[aux].output_pair < 0;
+            source_master_gain = active_.aux[aux].return_gain;
+        }
+        float peak_l{}, peak_r{};
+        for (std::size_t frame = 0; frame < frames; ++frame) {
+            const auto dry_l = source_l[frame] * source_master_gain;
+            const auto dry_r = source_r[frame] * source_master_gain;
+            if (send_available) {
+                if (loop.mono_send) {
+                    physical[frame * channels + loop.send_left] +=
+                        (source_l[frame] + source_r[frame]) * 0.5F *
+                        loop.send_gain;
+                } else {
+                    physical[frame * channels + loop.send_left] +=
+                        source_l[frame] * loop.send_gain;
+                    physical[frame * channels + loop.send_right] +=
+                        source_r[frame] * loop.send_gain;
+                }
+            }
+            float returned_l{}, returned_r{};
+            if (return_available && !loop.return_mute) {
+                returned_l =
+                    physical_input_[loop.return_left][frame] * loop.return_gain;
+                returned_r = loop.mono_return
+                                 ? returned_l
+                                 : physical_input_[loop.return_right][frame] *
+                                       loop.return_gain;
+            }
+            external_return_left_[index][frame] = returned_l;
+            external_return_right_[index][frame] = returned_r;
+            const auto cursor = external_delay_cursor_[index];
+            external_delay_left_[index][cursor] = dry_l;
+            external_delay_right_[index][cursor] = dry_r;
+            external_delay_valid_[index] =
+                std::min<std::size_t>(external_delay_valid_[index] + 1,
+                                      maximum_external_fx_latency_frames + 1);
+            const auto delay = std::min<std::size_t>(
+                loop.latency_frames, maximum_external_fx_latency_frames);
+            constexpr auto delay_capacity =
+                maximum_external_fx_latency_frames + 1;
+            const auto read =
+                (cursor + delay_capacity - delay) % delay_capacity;
+            const auto ready = !delay || external_delay_valid_[index] > delay;
+            const auto aligned_l = !delay  ? dry_l
+                                   : ready ? external_delay_left_[index][read]
+                                           : 0.0F;
+            const auto aligned_r = !delay  ? dry_r
+                                   : ready ? external_delay_right_[index][read]
+                                           : 0.0F;
+            external_delay_cursor_[index] =
+                (cursor + 1) % delay_capacity;
+            const auto mixed_l =
+                aligned_l * (1.0F - loop.wet) + returned_l * loop.wet;
+            const auto mixed_r =
+                aligned_r * (1.0F - loop.wet) + returned_r * loop.wet;
+            external_mix_left_[index][frame] = mixed_l;
+            external_mix_right_[index][frame] = mixed_r;
+            if (source_routes_to_master) {
+                master_left[frame] += mixed_l - dry_l;
+                master_right[frame] += mixed_r - dry_r;
+            } else {
+                master_left[frame] += returned_l * loop.wet;
+                master_right[frame] += returned_r * loop.wet;
+            }
+            peak_l = std::max(peak_l, std::fabs(returned_l));
+            peak_r = std::max(peak_r, std::fabs(returned_r));
+        }
+        update_meter(external_meters_[index], peak_l, peak_r);
     }
 }
 void Mixer::apply_master_gain(std::span<float> left,
@@ -268,10 +484,12 @@ void Mixer::route_master_output(std::span<const float> left,
         if (channels == 1 && physical.size() >= frames)
             physical[frame] += (left[frame] + right[frame]) * 0.5F;
         else if (channels && physical.size() >= frames * channels &&
-            active_.master.output_left < channels &&
-            active_.master.output_right < channels) {
-            physical[frame * channels + active_.master.output_left] += left[frame];
-            physical[frame * channels + active_.master.output_right] += right[frame];
+                 active_.master.output_left < channels &&
+                 active_.master.output_right < channels) {
+            physical[frame * channels + active_.master.output_left] +=
+                left[frame];
+            physical[frame * channels + active_.master.output_right] +=
+                right[frame];
         }
     }
     update_meter(master_meter_, peak_l, peak_r);
@@ -296,6 +514,13 @@ MixerState Mixer::state() const noexcept {
         result.inputs[i] = read(input_meters_[i]);
     for (std::size_t i = 0; i < mixer_aux_count; ++i)
         result.aux[i] = read(aux_meters_[i]);
+    for (std::size_t i = 0; i < mixer_external_fx_count; ++i) {
+        result.external_returns[i] = read(external_meters_[i]);
+        result.external_send_available[i] =
+            external_send_available_[i].load(std::memory_order_relaxed);
+        result.external_return_available[i] =
+            external_return_available_[i].load(std::memory_order_relaxed);
+    }
     result.master = read(master_meter_);
     return result;
 }
@@ -317,6 +542,34 @@ std::span<const float> Mixer::aux_left(std::size_t index) const noexcept {
 std::span<const float> Mixer::aux_right(std::size_t index) const noexcept {
     return index < mixer_aux_count
                ? std::span<const float>{aux_right_[index].data(), frames_}
+               : std::span<const float>{};
+}
+std::span<const float>
+Mixer::external_return_left(std::size_t index) const noexcept {
+    return index < mixer_external_fx_count
+               ? std::span<const float>{external_return_left_[index].data(),
+                                        frames_}
+               : std::span<const float>{};
+}
+std::span<const float>
+Mixer::external_return_right(std::size_t index) const noexcept {
+    return index < mixer_external_fx_count
+               ? std::span<const float>{external_return_right_[index].data(),
+                                        frames_}
+               : std::span<const float>{};
+}
+std::span<const float>
+Mixer::external_mix_left(std::size_t index) const noexcept {
+    return index < mixer_external_fx_count
+               ? std::span<const float>{external_mix_left_[index].data(),
+                                        frames_}
+               : std::span<const float>{};
+}
+std::span<const float>
+Mixer::external_mix_right(std::size_t index) const noexcept {
+    return index < mixer_external_fx_count
+               ? std::span<const float>{external_mix_right_[index].data(),
+                                        frames_}
                : std::span<const float>{};
 }
 } // namespace neurogenic

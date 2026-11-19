@@ -5,6 +5,9 @@ The bounded mixer applies channel gain/pan/mute/solo, two aux buses, physical
 inputs, master gain, metering and explicit outputs before the existing master
 effects. Complete validated snapshots cross a bounded SPSC queue; the callback
 never constructs a graph. See [mixer architecture](MIXER.md).
+External hardware loops are bounded members of the same snapshot, not a
+parallel graph. Delay lines and return taps are fixed storage; routing scenes
+remain control-side data and publish atomically.
 
 The control thread owns files, projects, scripts, mappings, editable state, and
 immutable compiled timeline plans. The audio thread consumes only plan pointers,

@@ -10,8 +10,8 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
-#include <fstream>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -493,8 +493,8 @@ void gui_case(int width, int height) {
     samples.shutdown();
 }
 void project_io_case() {
-    const auto path = std::filesystem::temp_directory_path() /
-                      "neurogenic-project-benchmark";
+    const auto path =
+        std::filesystem::temp_directory_path() / "neurogenic-project-benchmark";
     std::error_code ignored;
     std::filesystem::remove_all(path, ignored);
     neurogenic::Project project;
@@ -528,7 +528,8 @@ void recording_case() {
     for (std::size_t i = 0; i < iterations; ++i)
         engine.process(left, right);
     const auto processing =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - begin)
+        std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
+                                                             begin)
             .count() /
         iterations;
     const auto preparation_begin = Clock::now();
@@ -580,15 +581,14 @@ void mixer_case(std::size_t channels, bool auxiliaries, bool six_io) {
                       six_io ? std::span<float>{physical} : std::span<float>{},
                       six_io ? 6 : 0);
         mixer.apply_master_gain(left, right);
-        mixer.route_master_output(
-            left, right,
-            six_io ? std::span<float>{physical} : std::span<float>{},
-            six_io ? 6 : 0);
+        mixer.route_master_output(left, right,
+                                  six_io ? std::span<float>{physical}
+                                         : std::span<float>{},
+                                  six_io ? 6 : 0);
         checksum += left[0] != 0;
     }
     result("mixer_" + std::to_string(channels) +
-               (auxiliaries ? "_two_aux" : "") +
-               (six_io ? "_six_io" : ""),
+               (auxiliaries ? "_two_aux" : "") + (six_io ? "_six_io" : ""),
            48000, 256,
            std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
                                                                 begin)
@@ -612,7 +612,8 @@ void mixer_publication_case() {
         mixer.begin_block(256);
     }
     const auto preparation =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - begin)
+        std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
+                                                             begin)
             .count() /
         iterations;
     std::array<float, 256> left{}, right{};
@@ -624,11 +625,56 @@ void mixer_publication_case() {
         mixer.route_master_output(left, right);
     }
     result("mixer_rapid_publication", 48000, 256,
-           std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
-                                                                processing_begin)
+           std::chrono::duration_cast<std::chrono::nanoseconds>(
+               Clock::now() - processing_begin)
                    .count() /
                iterations,
            preparation);
+}
+void external_fx_case() {
+    neurogenic::Mixer mixer;
+    neurogenic::MixerConfiguration configuration;
+    configuration.revision = 1;
+    configuration.track_count = 8;
+    for (std::size_t i = 0; i < configuration.track_count; ++i)
+        configuration.tracks[i].track = i + 1;
+    for (std::size_t i = 0; i < neurogenic::mixer_external_fx_count; ++i) {
+        auto &loop = configuration.external_fx[i];
+        loop.id = i + 1;
+        loop.source = neurogenic::ExternalFxSource::track;
+        loop.source_id = i + 1;
+        loop.send_left = static_cast<std::uint8_t>(2 + i * 2);
+        loop.send_right = static_cast<std::uint8_t>(3 + i * 2);
+        loop.return_left = static_cast<std::uint8_t>(i * 2);
+        loop.return_right = static_cast<std::uint8_t>(1 + i * 2);
+        loop.enabled = true;
+        loop.latency_frames = 128;
+    }
+    std::string error;
+    if (!mixer.publish(configuration, error))
+        throw std::runtime_error(error);
+    std::array<float, 256> left{}, right{};
+    std::array<float, 256 * 6> physical{};
+    const auto begin = Clock::now();
+    for (std::size_t iteration = 0; iteration < iterations; ++iteration) {
+        mixer.begin_block(256);
+        left.fill(0);
+        right.fill(0);
+        physical.fill(0);
+        for (std::size_t frame = 0; frame < 256; ++frame) {
+            for (std::size_t channel = 0; channel < 8; ++channel)
+                (void)mixer.add_track(channel + 1, frame, .01F, .01F);
+            for (std::uint8_t input = 0; input < 4; ++input)
+                mixer.add_input(input, frame, .005F);
+        }
+        mixer.process(left, right, physical, 6);
+        checksum += physical[2] != 0;
+    }
+    result("mixer_two_external_fx_latency", 48000, 256,
+           std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
+                                                                begin)
+                   .count() /
+               iterations);
 }
 } // namespace
 int main() {
@@ -699,6 +745,7 @@ int main() {
     mixer_case(16, true, false);
     mixer_case(16, true, true);
     mixer_publication_case();
+    external_fx_case();
     std::cout << "{\"schema\":\"neurogenic.benchmark.summary.v1\",\"checksum\":"
               << checksum
               << ",\"budget_passed\":" << (budget_failed ? "false" : "true")
