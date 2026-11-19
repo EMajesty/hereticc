@@ -1,5 +1,6 @@
 #pragma once
 #include "neurogenic/audio/sample_manager.hpp"
+#include "neurogenic/performance/monitor.hpp"
 #include "neurogenic/timeline/edit.hpp"
 #include <cstdint>
 #include <deque>
@@ -137,6 +138,7 @@ struct ApplicationState {
     std::vector<TrackSummary> tracks;
     std::vector<SampleSlotStatus> sample_slots;
     std::uint64_t timeline_revision{};
+    PerformanceSnapshot performance;
 };
 struct ApplicationCommand {
     std::string action_id;
@@ -184,6 +186,7 @@ class ApplicationService {
     std::uint64_t next_sequence_{1}, rejected_{};
     std::optional<TimelineTransaction> edit_group_;
     mutable std::optional<EventId> selected_event_id_;
+    mutable SystemMonitor system_monitor_;
 };
 
 struct TextEntryState {

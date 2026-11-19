@@ -43,7 +43,8 @@ void usage(){
              "  --gui             launch the optional graphical frontend\n"
              "  --fullscreen      launch the graphical frontend fullscreen\n"
              "  --ui-scale SCALE  override GUI scale (1.0..2.5)\n"
-             "  --reset-ui-scale  restore automatic GUI scaling\n";
+             "  --reset-ui-scale  restore automatic GUI scaling\n"
+             "  --stats           print one performance.v1 JSON snapshot and exit\n";
 }
 
 void print_status(const neurogenic::SampleSlotStatus& state){
@@ -74,7 +75,7 @@ int main(int argc,char** argv){
     std::string wav,audio_name,midi_name,script="examples/generate.lua",timeline_file;
     std::vector<std::pair<std::uint32_t,std::filesystem::path>> slot_files;
     std::vector<std::pair<std::uint8_t,std::uint32_t>> note_maps;
-    bool list=false,headless=false,interactive=false,gui=false,fullscreen=false,reset_ui_scale=false;std::optional<float> ui_scale;
+    bool list=false,headless=false,interactive=false,gui=false,fullscreen=false,reset_ui_scale=false,stats=false;std::optional<float> ui_scale;
     for(int i=1;i<argc;++i){
       const std::string arg=argv[i];
       if(arg=="--audio"&&i+1<argc)audio_name=argv[++i];
@@ -85,6 +86,7 @@ int main(int argc,char** argv){
       else if(arg=="--map"&&i+1<argc){auto [note,id_text]=assignment(argv[++i],"--map");if(note>127)throw std::invalid_argument("--map note must be 0..127");note_maps.emplace_back(static_cast<std::uint8_t>(note),unsigned_number(id_text,"--map"));}
       else if(arg=="--list-devices")list=true;
       else if(arg=="--headless")headless=true;
+      else if(arg=="--stats"){stats=true;headless=true;}
       else if(arg=="--interactive")interactive=true;
       else if(arg=="--gui")gui=true;
       else if(arg=="--fullscreen"){gui=true;fullscreen=true;}
@@ -104,7 +106,7 @@ int main(int argc,char** argv){
       for(const auto& name:midi.inputs())std::cout<<"  ["<<index++<<"] "<<name<<'\n';if(index==0)std::cout<<"  (none discovered)\n";
       if(wav.empty()&&slot_files.empty()&&!interactive&&!gui)return 0;
     }
-    if(wav.empty()&&slot_files.empty()&&!interactive&&!gui){usage();return 2;}
+    if(wav.empty()&&slot_files.empty()&&!interactive&&!gui&&!stats){usage();return 2;}
 
     if(slot_files.empty()&&!wav.empty())engine.set_sample(neurogenic::load_wav(wav,engine.sample_rate()));
     else{
@@ -126,6 +128,7 @@ int main(int argc,char** argv){
     {std::string timeline_error;if(!engine.queue_timeline(editable_timeline,timeline_error))throw std::runtime_error("timeline queue failed: "+timeline_error);}
     neurogenic::TimelineService timeline_service([&](const auto& timeline,std::string& error){return engine.queue_timeline(timeline,error);},std::move(editable_timeline));
     neurogenic::ApplicationService application(engine,timeline_service,samples);
+    if(stats){std::array<float,256> left{},right{};engine.process(left,right);std::cout<<neurogenic::performance_json(application.snapshot().performance)<<'\n';samples.shutdown();return 0;}
     neurogenic::ScriptRuntime lua([&](auto pattern){return engine.queue_pattern(pattern);},[&]{return engine.frame_position();},&timeline_service);
     mapper.set_note_handler([&](auto note,auto velocity){engine.trigger(note,velocity);});
     mapper.map_button(0,36,"pattern.generate",[&]{std::string error;if(lua.execute_file(script,error))std::cout<<"Lua pattern queued for next bar\n";else std::cerr<<"Lua error: "<<error<<'\n';});

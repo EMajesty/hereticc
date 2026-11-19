@@ -6,7 +6,7 @@
 #include <vector>
 
 namespace neurogenic {
-enum class GuiView:std::uint8_t{sequencer,samples,parameters,xy,settings};
+enum class GuiView:std::uint8_t{sequencer,samples,parameters,xy,performance,settings};
 struct UiRect {float x{},y{},w{},h{};[[nodiscard]] bool contains(float px,float py) const noexcept{return px>=x&&py>=y&&px<x+w&&py<y+h;}};
 enum class GuiBreakpoint:std::uint8_t{legacy,compact,wide};
 struct DisplayMetrics {int window_width{},window_height{},drawable_width{},drawable_height{};float pixel_ratio_x{1},pixel_ratio_y{1};};
@@ -16,7 +16,7 @@ struct GuiSettings {std::optional<float> ui_scale;bool fullscreen{};};
 struct GuiLayout {float scale{1},logical_width{},logical_height{};GuiBreakpoint breakpoint{GuiBreakpoint::legacy};bool inspector_visible{};UiRect top,nav,content,parameters,page_previous,page_next,resolution,target_note,scale_down,scale_up,scale_reset,fullscreen;std::vector<UiRect> tabs,grid,rows;};
 enum class UiColor:std::uint8_t{background,panel,text,muted,accent,selected,error,unavailable};
 struct DrawCommand {enum class Type:std::uint8_t{rectangle,text,line};Type type{};UiRect rect;UiColor color{};std::string text;};
-struct GuiFrame {std::uint64_t state_revision{},ui_revision{};int viewport_width{},viewport_height{};GuiLayout layout;std::vector<DrawCommand> commands;};
+struct GuiFrame {std::uint64_t state_revision{},performance_generation{},ui_revision{};int viewport_width{},viewport_height{};GuiLayout layout;std::vector<DrawCommand> commands;};
 enum class GuiKey:std::uint8_t{left,right,up,down,enter,escape,tab,space,shift,number,scale_up,scale_down,scale_reset,fullscreen};
 struct GuiInput {enum class Type:std::uint8_t{key_down,key_up,pointer_down,pointer_up,pointer_move,touch_down,touch_up,touch_move};Type type{};GuiKey key{};int number{};float x{},y{};std::uint64_t timestamp_ms{};};
 

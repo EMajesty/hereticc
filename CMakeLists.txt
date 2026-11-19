@@ -25,6 +25,7 @@ add_library(neurogenic_engine
   src/application/control.cpp src/application/controller.cpp
   src/audio/engine.cpp src/audio/sample.cpp src/audio/sample_manager.cpp src/core/command.cpp src/core/control_dispatcher.cpp
   src/dsp/purest_gain.cpp src/midi/mapping.cpp src/project/project.cpp
+  src/performance/monitor.cpp
   src/sequencer/scheduler.cpp src/sequencer/pattern_adapter.cpp src/scripting/runtime.cpp src/timeline/edit.cpp src/timeline/io.cpp src/timeline/playback.cpp)
 target_include_directories(neurogenic_engine PUBLIC include)
 target_compile_options(neurogenic_engine PRIVATE -Wall -Wextra -Wpedantic)
@@ -81,7 +82,10 @@ if(NEUROGENIC_BUILD_TESTS)
   add_test(NAME neurogenic_gui_smoke COMMAND neurogenic_gui_smoke)
   set_tests_properties(neurogenic_gui_smoke PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
   add_executable(neurogenic_benchmark benchmarks/timeline_benchmark.cpp)
-  target_link_libraries(neurogenic_benchmark PRIVATE neurogenic_engine)
+  target_link_libraries(neurogenic_benchmark PRIVATE neurogenic_engine neurogenic_gui)
+  add_test(NAME neurogenic_benchmark_schema COMMAND neurogenic_benchmark)
+  set_tests_properties(neurogenic_benchmark_schema PROPERTIES
+    PASS_REGULAR_EXPRESSION "neurogenic.benchmark.summary.v1" TIMEOUT 30)
   if(NEUROGENIC_FETCH_DEPENDENCIES AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_test(NAME neurogenic_alsa_runtime_link COMMAND ${CMAKE_COMMAND}
       -DNEUROGENIC_EXECUTABLE=$<TARGET_FILE:neurogenic>

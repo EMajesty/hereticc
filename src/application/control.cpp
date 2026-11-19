@@ -1185,6 +1185,17 @@ void ApplicationService::synchronize_locked() const {
     }
     state_.sample_slots = std::move(slots);
     state_.parameters = std::move(parameters);
+    state_.performance.generation = system_monitor_.generation();
+    state_.performance.monotonic_milliseconds = system_monitor_.monotonic_milliseconds();
+    state_.performance.audio = engine_.callback_statistics();
+    state_.performance.engine = {
+        engine_.sample_rate(), engine_.buffer_frames(), engine_.active_voice_count(),
+        engine_.voice_capacity(), engine_.playing(), engine_.dropped_triggers(),
+        engine_.dropped_patterns(), engine_.dropped_timelines(),
+        engine_.timeline_event_overruns(), engine_.dropped_legacy_events(),
+        engine_.dropped_transport_commands(), engine_.dropped_sample_updates(),
+        engine_.missing_slot_triggers(), engine_.stolen_voices(), rejected_};
+    state_.performance.system = system_monitor_.snapshot();
     state_.available_actions.clear();
     for (const auto &value : actions_.actions())
         if (value.available &&

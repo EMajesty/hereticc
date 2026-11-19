@@ -2,6 +2,7 @@
 #include "neurogenic/audio/sample.hpp"
 #include "neurogenic/core/spsc_queue.hpp"
 #include "neurogenic/dsp/purest_gain.hpp"
+#include "neurogenic/performance/monitor.hpp"
 #include "neurogenic/sequencer/scheduler.hpp"
 #include "neurogenic/timeline/playback.hpp"
 #include <array>
@@ -53,6 +54,10 @@ public:
   [[nodiscard]] std::uint64_t dropped_transport_commands() const noexcept{return dropped_transport_commands_.load();}
   [[nodiscard]] std::uint64_t reclaimed_timeline_plans() const noexcept{return reclaimed_timeline_plans_.load();}
   [[nodiscard]] std::size_t voice_capacity() const noexcept { return voices_.size(); }
+  [[nodiscard]] std::size_t active_voice_count() const noexcept{return callback_monitor_.active_voices();}
+  [[nodiscard]] AudioCallbackStatistics callback_statistics() const noexcept{return callback_monitor_.snapshot();}
+  void set_performance_monitoring(bool enabled) noexcept{callback_monitor_.set_enabled(enabled);}
+  [[nodiscard]] std::uint32_t buffer_frames() const noexcept{return buffer_frames_.load(std::memory_order_relaxed);}
 private:
   struct Trigger { std::uint8_t note{}; float velocity{}; std::uint32_t frame_offset{}; std::uint64_t order{}; };
   struct Voice { const Sample* sample{};std::size_t sample_version{},cursor{};float gain{};std::uint64_t age{};TrackId track{};EventId event{};std::uint64_t occurrence{};std::uint8_t pitch{};bool timeline_owned{},active{}; };
@@ -101,5 +106,7 @@ private:
   bool transport_playing_{true};
   std::atomic<bool> processing_started_{};
   std::atomic<bool> published_playing_{true};
+  CallbackMonitor callback_monitor_;
+  std::atomic<std::uint32_t> buffer_frames_{};
 };
 }

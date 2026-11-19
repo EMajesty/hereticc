@@ -39,7 +39,7 @@ upscale. The current integer-scaled SDL debug font is crisp and dependency-free,
 but remains visually basic.
 
 The shell has a persistent status bar and Sequencer, Samples, Parameters, X/Y,
-and Display views. Timeline and slot information
+Performance and Display views. Timeline and slot information
 comes from application snapshots. The sequencer displays actual target-note
 events, selection, playhead, pages, resolution and note target. Clicking or
 tapping a valid cell toggles it through `step.toggle.v1`.
@@ -60,6 +60,13 @@ step inspector shows event ID, velocity, duration, pitch, timing offset, and
 the selected note's index when a cell contains several notes. Click a property
 and use Up/Down to adjust it; Enter cycles properties in the encoder-only
 workflow. Undo and Redo buttons reflect the shared timeline history.
+
+The status bar shows compact callback load, process CPU, resident memory and
+voice usage. The Performance view adds current/average/peak callback timing,
+deadline and measured-overrun counts, sample rate/buffer size, queue counters,
+CPU/memory availability, and the explicit absence of backend XRUN data. It is
+refreshed from `ApplicationState` generations and never reads audio-owned state.
+At compact resolutions it remains a separate view, avoiding sequencer clutter.
 
 CI covers 1920 × 1200 at 1.0×, 1.5× and 2.0×, both compact resolutions,
 high-DPI coordinate conversion, resize, live scale/fullscreen requests,

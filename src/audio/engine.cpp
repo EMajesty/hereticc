@@ -1,5 +1,6 @@
 #include "neurogenic/audio/engine.hpp"
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <fstream>
 #include <limits>
@@ -106,6 +107,8 @@ void AudioEngine::stop_timeline_voice(TrackId track,EventId event,std::uint64_t 
 void AudioEngine::stop_voices(bool timeline_only) noexcept{for(auto& voice:voices_)if(!timeline_only||voice.timeline_owned)voice.active=false;}
 
 void AudioEngine::process(std::span<float> left,std::span<float> right) noexcept {
+  const auto monitoring=callback_monitor_.enabled();
+  const auto callback_begin=monitoring?std::chrono::steady_clock::now():std::chrono::steady_clock::time_point{};
   processing_started_.store(true,std::memory_order_release);
   const auto frames=std::min(left.size(),right.size());
   std::fill(left.begin(),left.end(),0);std::fill(right.begin(),right.end(),0);
@@ -187,6 +190,10 @@ void AudioEngine::process(std::span<float> left,std::span<float> right) noexcept
   }
   published_frame_.store(transport_frame_,std::memory_order_release);published_playing_.store(transport_playing_,std::memory_order_release);
   effect_.process(left.first(frames),right.first(frames));
+  buffer_frames_.store(static_cast<std::uint32_t>(frames),std::memory_order_relaxed);
+  if(monitoring){std::size_t active_voices{};for(const auto& voice:voices_)active_voices+=voice.active?1U:0U;
+    const auto elapsed=std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-callback_begin).count();
+    callback_monitor_.record(static_cast<std::uint64_t>(std::max<std::int64_t>(0,elapsed)),static_cast<std::uint32_t>(frames),rate_,active_voices);}
 }
 
 void AudioEngine::render_wav(const std::filesystem::path& path,std::uint64_t frames){

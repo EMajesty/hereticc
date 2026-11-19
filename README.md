@@ -40,6 +40,7 @@ cmake --preset sanitize
 cmake --build --preset sanitize
 ctest --preset sanitize
 ./build/dev/neurogenic_benchmark
+./build/dev/neurogenic --stats
 ./build/dev/neurogenic --list-devices
 ./build/dev/neurogenic --headless --list-devices
 ./build/dev/neurogenic path/to/sample.wav
@@ -57,6 +58,10 @@ control cycles quarter through 32nd-note straight and triplet grids.
 The default scale is automatic (1.5× at the 1920 × 1200 reference target).
 Use `--ui-scale 1.0` through `2.5`, `--reset-ui-scale`, the Display view, or
 the `+`, `-`, `0`, and `F11` keys to change persistent display settings.
+The compact status line and Performance view consume the shared monitoring
+snapshot. `--stats` emits `neurogenic.performance.v1` JSON and the benchmark
+emits JSON Lines for commit comparisons. See
+[docs/BENCHMARKS.md](docs/BENCHMARKS.md) for metric semantics and limitations.
 
 With direnv installed, run `direnv allow` once; `.envrc` enters the same flake
 shell. Build the installable package with `nix build`, run it with

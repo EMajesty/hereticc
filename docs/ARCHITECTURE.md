@@ -167,3 +167,14 @@ native generators, and Lua timeline commits share it. Snapshot history and
 grouped working copies stay on the control side. Commit, Undo, and Redo publish
 immutable plans through the existing bounded handoff; the callback never
 allocates, locks, or destroys history.
+
+## Performance observation
+
+`AudioEngine` owns a bounded atomic callback accumulator. A callback reads the
+monotonic clock at entry/exit, records duration/deadline statistics and counts
+active voices; no observer calls into callback-owned structures. A Linux
+`SystemMonitor` separately samples `/proc` at 2 Hz on a normal control thread.
+`ApplicationService` copies both sources and existing engine counters into an
+availability-tagged `PerformanceSnapshot`. GUI, CLI and future remote clients
+consume that snapshot rather than engine internals. Monitoring never changes
+scheduling, voice ownership, publication, or backend synchronization.

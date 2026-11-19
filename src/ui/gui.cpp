@@ -170,8 +170,8 @@ GuiLayout GuiModel::layout(int width, int height) const {
                             ? r(logical_width - margin - inspector_width,
                                 content_y, inspector_width, content_height)
                             : UiRect{};
-    const float tab_width = (logical_width - 32) / 5;
-    for (int i = 0; i < 5; ++i)
+    const float tab_width = (logical_width - 32) / 6;
+    for (int i = 0; i < 6; ++i)
         result.tabs.push_back(r(16 + i * tab_width, 72, tab_width - 8, 38));
     result.page_previous = r(28, content_y + 12, 64, 42);
     result.page_next = r(100, content_y + 12, 64, 42);
@@ -202,9 +202,12 @@ GuiLayout GuiModel::layout(int width, int height) const {
 
 const GuiFrame &GuiModel::frame(int width, int height) {
     const auto state = application_.snapshot();
-    if (frame_.state_revision != state.revision || frame_.ui_revision != ui_revision_ ||
+    if (frame_.state_revision != state.revision ||
+        frame_.performance_generation != state.performance.generation ||
+        frame_.ui_revision != ui_revision_ ||
         frame_.viewport_width != width || frame_.viewport_height != height) {
         frame_.state_revision = state.revision;
+        frame_.performance_generation = state.performance.generation;
         frame_.viewport_width = width;
         frame_.viewport_height = height;
         frame_.ui_revision = ui_revision_;
@@ -242,8 +245,16 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
              (state.playing ? "PLAY" : "STOP") + "   TRACK " +
              std::to_string(state.selected_track) + "   " +
              pad_mode_name(state.pad_mode));
+    const auto& perf=state.performance;
+    text({l.top.x + l.top.w - 510 * l.scale,l.top.y + 38 * l.scale,
+          500 * l.scale,20 * l.scale},UiColor::muted,
+         "AUDIO " + std::to_string(static_cast<int>(perf.audio.current_load_percent)) +
+         "%  CPU " + (perf.system.process_cpu_available?std::to_string(static_cast<int>(perf.system.process_cpu_percent)):"n/a") +
+         "%  MEM " + (perf.system.resident_memory_available?std::to_string(perf.system.resident_memory_bytes/(1024*1024)):"n/a") +
+         " MiB  VOICES " + std::to_string(perf.engine.active_voices) + "/" +
+         std::to_string(perf.engine.maximum_voices));
     const char *names[]{"SEQUENCER", "SAMPLES", "PARAMETERS", "X/Y",
-                        "DISPLAY"};
+                        "PERF", "DISPLAY"};
     for (std::size_t i = 0; i < l.tabs.size(); ++i) {
         rect(l.tabs[i], i == static_cast<std::size_t>(view_) ? UiColor::selected
                                                              : UiColor::panel);
@@ -364,6 +375,20 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
               pad.y + static_cast<float>(y) * pad.h - 10 * l.scale,
               20 * l.scale, 20 * l.scale},
              UiColor::accent);
+    } else if(view_==GuiView::performance){
+        const auto micros=[](std::uint64_t ns){return std::to_string(ns/1000)+" us";};
+        text({l.content.x+12*l.scale,l.content.y+8*l.scale,l.content.w-24*l.scale,28*l.scale},UiColor::accent,"PERFORMANCE MONITOR");
+        const std::string rows[]{
+          "Audio load current / average / peak: " + std::to_string(perf.audio.current_load_percent) + "% / " + std::to_string(perf.audio.average_load_percent) + "% / " + std::to_string(perf.audio.peak_load_percent) + "%",
+          "Callback current / average / peak: " + micros(perf.audio.current_nanoseconds) + " / " + micros(perf.audio.average_nanoseconds) + " / " + micros(perf.audio.peak_nanoseconds),
+          "Deadline: " + micros(perf.audio.deadline_nanoseconds) + "  measured overruns: " + std::to_string(perf.audio.deadline_overruns) + " (not backend XRUNs)",
+          "Audio: " + std::to_string(perf.engine.sample_rate) + " Hz / " + std::to_string(perf.engine.buffer_frames) + " frames  voices " + std::to_string(perf.engine.active_voices) + "/" + std::to_string(perf.engine.maximum_voices),
+          "Process CPU: " + (perf.system.process_cpu_available?std::to_string(perf.system.process_cpu_percent)+"% of one core":"unavailable") + "  System CPU: " + (perf.system.system_cpu_available?std::to_string(perf.system.system_cpu_percent)+"%":"unavailable"),
+          "Resident / system memory: " + (perf.system.resident_memory_available?std::to_string(perf.system.resident_memory_bytes/(1024*1024))+" MiB":"unavailable") + " / " + (perf.system.total_memory_available?std::to_string(perf.system.total_memory_bytes/(1024*1024))+" MiB":"unavailable"),
+          "Queue overflow: triggers " + std::to_string(perf.engine.dropped_triggers) + ", timelines " + std::to_string(perf.engine.dropped_timelines) + ", commands " + std::to_string(perf.engine.rejected_commands),
+          "Backend XRUN counter: unavailable"
+        };
+        for(std::size_t i=0;i<std::size(rows)&&i<l.rows.size();++i){rect(l.rows[i],UiColor::background);text(l.rows[i],UiColor::text,rows[i]);}
     } else {
         text({l.content.x + 12 * l.scale, l.content.y + 8 * l.scale,
               l.content.w - 24 * l.scale, 28 * l.scale},
@@ -528,7 +553,7 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
         }
         if (input.key == GuiKey::tab) {
             view_ =
-                static_cast<GuiView>((static_cast<unsigned>(view_) + 1) % 5);
+                static_cast<GuiView>((static_cast<unsigned>(view_) + 1) % 6);
             frame_.state_revision = std::numeric_limits<std::uint64_t>::max();
             return true;
         }

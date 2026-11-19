@@ -1,37 +1,73 @@
-# Headless performance benchmark
+# Performance monitoring and benchmarks
 
-`neurogenic_benchmark` is a reproducible offline microbenchmark built with the
-test targets. It uses `std::chrono::steady_clock`, performs 4,000 scheduler or
-render callbacks per case (1,000 for replacement), requires no audio/MIDI
-device, and prints average wall time. Run it with:
+NEUROGENIC targets comfortable full-workstation operation on Raspberry Pi 5,
+while the personal reference build is an Intel N150 with 16 GB RAM. These are
+design targets, not measured claims. Faster machines provide feature headroom;
+they do not justify baseline overhead or an x86-specific implementation.
+
+## Live metrics
+
+`AudioEngine` records one bounded callback sample using a monotonic
+`steady_clock`: current, exponentially smoothed average (1/64 update weight),
+peak duration, frame/rate-derived deadline, count, measured deadline overruns,
+and active voices. The callback performs two clock reads, bounded voice
+counting, and relaxed atomic updates. Monitoring can be disabled through
+`AudioEngine::set_performance_monitoring(false)`. It performs no allocation,
+locks, logging, file access, or waits.
+
+A deadline overrun means measured engine processing exceeded
+`frames / sample_rate`; it is not proof that the audio backend experienced an
+XRUN. Backend XRUN reporting is currently unavailable. Callback load is engine
+processing time divided by its deadline. Linux process CPU is process CPU time
+divided by wall time and can exceed 100% when multiple cores are busy; system
+CPU is aggregate utilization across all cores.
+
+`SystemMonitor` reads `/proc` on a control-side thread at most twice per second.
+It publishes availability-tagged process CPU, aggregate CPU, resident memory,
+and total memory atomically. Unsupported platforms report unavailable values.
+`ApplicationState::performance` combines these metrics with sample rate,
+buffer size, voice capacity, transport and existing bounded-queue counters.
+
+Run one headless machine-readable snapshot with:
+
+```sh
+./build/dev/neurogenic --stats
+```
+
+The schema is `neurogenic.performance.v1`. A one-shot snapshot normally reports
+CPU unavailable because two periodic samples are required.
+
+## Deterministic benchmark workloads
 
 ```sh
 cmake --preset dev
 cmake --build --preset dev --target neurogenic_benchmark
-./build/dev/neurogenic_benchmark
+./build/dev/neurogenic_benchmark > benchmark.jsonl
 ```
 
-The cases vary stored-but-far event count, track count, callback frames, 1,024
-simultaneous events with a 512-event staging buffer, 32 active sample voices,
-and repeated compile/queue/callback replacement. The checksum prevents removal
-of measured work. Results are sensitive to compiler flags, CPU frequency,
-thermal state, and other host load; compare results from the same build and host.
+Each JSON Lines record uses `neurogenic.benchmark.v1` and reports scenario,
+CPU model, architecture, OS/kernel, compiler/build type, sample rate, buffer
+size, preparation time, processing nanoseconds per buffer, real-time factor,
+resident memory, and iteration count. Workloads cover idle, 8/16/32 voices,
+44.1/48 kHz playback, dense scheduling, rapid publication, 44.1-to-48 kHz
+preparation, and GUI frame construction at 1920×1200, 1024×800 and 1024×600.
+Preparation is excluded from audio processing measurements. GUI measurements
+cover snapshot synchronization, layout and draw-command construction; GPU
+execution and presentation latency are not measured.
 
-Reference run on 2026-11-18, dependency-enabled Debug preset, AMD Ryzen 7
-7800X3D, no CPU affinity or real-time scheduling:
+An optional dedicated benchmark machine can enforce a per-buffer ceiling:
 
-| Case | Average |
-|---|---:|
-| 1 track, 64 far events, 256 frames | 6 ns/callback |
-| 1 track, 65,536 far events, 256 frames | 7 ns/callback |
-| 1 / 16 / 64 tracks, 64 events each | 8 / 22 / 100 ns/callback |
-| 16 tracks, 64 / 1,024 frames | 38 / 41 ns/callback |
-| 1,024 simultaneous events | 11,115 ns/callback |
-| 32 sample voices, 256 frames | 44,625 ns/callback |
-| rapid 8-track/64-event replacement | 10,587 ns/operation |
+```sh
+NEUROGENIC_BENCHMARK_BUDGET_NS=100000 ./build/dev/neurogenic_benchmark
+```
 
-The far-event comparison demonstrates that steady callback scheduling does not
-scale with total events away from the playhead. These are offline measurements,
-not worst-case execution-time analysis and not evidence of glitch-free hardware
-performance. Device callbacks, OS scheduling, cache interference, DSP growth,
-and release compiler settings require separate measurement.
+No budget is enabled in ordinary CI because shared-runner timings are not
+comparable. Retain JSONL from both commits and use the same machine, power mode,
+compiler, build type, and background load. Compare matching scenario records.
+The checksum/schema test verifies deterministic workload execution and output,
+not identical elapsed time.
+
+Example Debug output from the 2026-11-19 development host included roughly
+8.8 µs idle, 9.6/14.0/23.1 µs for 8/16/32 voices, and 3.2–3.7 µs for GUI frame
+construction. These offline averages are neither worst-case analysis nor
+evidence of Pi 5, N150, physical audio, GPU, XRUN, or thermal performance.

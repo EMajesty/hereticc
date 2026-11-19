@@ -5,6 +5,7 @@
 #include "neurogenic/core/control_dispatcher.hpp"
 #include "neurogenic/core/spsc_queue.hpp"
 #include "neurogenic/midi/mapping.hpp"
+#include "neurogenic/performance/monitor.hpp"
 #include "neurogenic/scripting/runtime.hpp"
 #include "neurogenic/sequencer/pattern_adapter.hpp"
 #include "neurogenic/timeline/edit.hpp"
@@ -34,6 +35,63 @@ void check(bool value, const char *message) {
 void near(float actual, float expected, const char *message) {
     if (std::fabs(actual - expected) > 0.0001F)
         throw std::runtime_error(message);
+}
+
+void test_performance_monitoring() {
+    using namespace neurogenic;
+    CallbackMonitor monitor;
+    monitor.record(100, 256, 48000, 8);
+    monitor.record(300, 256, 48000, 16);
+    auto state = monitor.snapshot();
+    check(state.available && state.current_nanoseconds == 300 &&
+              state.average_nanoseconds == 103 &&
+              state.peak_nanoseconds == 300 &&
+              state.deadline_nanoseconds == 5'333'333 &&
+              state.callback_count == 2 && monitor.active_voices() == 16,
+          "callback timing statistics");
+    monitor.record(6'000'000, 256, 48000, 1);
+    check(monitor.snapshot().deadline_overruns == 1,
+          "callback deadline overrun calculation");
+    monitor.set_enabled(false);
+    monitor.record(9'000'000, 256, 48000, 2);
+    check(!monitor.snapshot().available &&
+              monitor.snapshot().callback_count == 3,
+          "disabled callback monitor state");
+    check(std::fabs(cpu_percent(250'000'000, 1'000'000'000) - 25.0) < 0.001 &&
+              cpu_percent(1, 0) == 0,
+          "process CPU calculation");
+    std::atomic<std::uint64_t> saturated{std::numeric_limits<std::uint64_t>::max()};
+    saturating_increment(saturated);
+    check(saturated.load() == std::numeric_limits<std::uint64_t>::max(),
+          "performance counter saturation");
+    CallbackMonitor concurrent;
+    std::atomic<bool> done{};
+    auto writer = std::async(std::launch::async, [&] {
+        for (int i = 0; i < 10000; ++i)
+            concurrent.record(static_cast<std::uint64_t>(i + 1), 64, 48000, 4);
+        done.store(true);
+    });
+    while (!done.load()) (void)concurrent.snapshot();
+    writer.get();
+    check(concurrent.snapshot().callback_count == 10000,
+          "concurrent performance snapshots");
+    const auto system = sample_system_now();
+#ifdef __linux__
+    check(system.resident_memory_available && system.resident_memory_bytes > 0 &&
+              system.total_memory_available && system.total_memory_bytes > 0,
+          "Linux memory reporting");
+#else
+    check(!system.resident_memory_available && !system.total_memory_available,
+          "unsupported monitoring availability");
+#endif
+    PerformanceSnapshot json_state;
+    json_state.audio.available = true;
+    json_state.engine.sample_rate = 48000;
+    const auto json = performance_json(json_state);
+    check(json.find("\"schema\":\"neurogenic.performance.v1\"") !=
+                  std::string::npos &&
+              json.find("\"sample_rate\":48000") != std::string::npos,
+          "machine-readable performance output");
 }
 
 neurogenic::Sample constant_sample(std::size_t frames, float value = 1.0F) {
@@ -1964,6 +2022,23 @@ void test_gui_model() {
               application.parameters().get("performance.xy.x")->current_value) >
               0,
           "X/Y application integration");
+    std::array<float, 64> performance_left{}, performance_right{};
+    engine.process(performance_left, performance_right);
+    GuiInput performance_click;
+    performance_click.type = GuiInput::Type::pointer_down;
+    performance_click.x = small.tabs[4].x + 2;
+    performance_click.y = small.tabs[4].y + 2;
+    check(gui.input(performance_click, 1024, 600) &&
+              gui.view() == GuiView::performance,
+          "GUI performance view selection");
+    const auto &performance_frame = gui.frame(1024, 600);
+    check(std::any_of(performance_frame.commands.begin(),
+                      performance_frame.commands.end(), [](const auto &item) {
+                          return item.text.find("PERFORMANCE MONITOR") !=
+                                 std::string::npos;
+                      }) &&
+              application.snapshot().performance.audio.callback_count > 0,
+          "GUI performance state synchronization");
     const auto settings_path = std::filesystem::temp_directory_path() /
                                "neurogenic-gui-settings-test.conf";
     { GuiModel persistent(application, GuiSettings{1.7F, true}, settings_path);
@@ -2150,6 +2225,7 @@ void test_lua_and_offline() {
 
 int main() {
     try {
+        test_performance_monitoring();
         test_queue_and_scheduler();
         test_polyphony_and_events();
         test_sample_slots();

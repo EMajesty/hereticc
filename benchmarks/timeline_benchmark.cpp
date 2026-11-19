@@ -1,53 +1,84 @@
+#include "neurogenic/application/control.hpp"
 #include "neurogenic/audio/engine.hpp"
+#include "neurogenic/audio/sample_manager.hpp"
+#include "neurogenic/performance/monitor.hpp"
 #include "neurogenic/timeline/playback.hpp"
+#include "neurogenic/ui/gui.hpp"
 #include <chrono>
+#include <cstdlib>
 #include <cstdint>
 #include <iostream>
+#include <fstream>
 #include <string>
 #include <vector>
+#ifdef __linux__
+#include <sys/utsname.h>
+#endif
 
 namespace {
 using Clock=std::chrono::steady_clock;
 volatile std::uint64_t checksum{};
-
-neurogenic::Timeline make_timeline(std::size_t tracks,std::size_t events,bool dense=false,bool far=false){
-  neurogenic::Timeline timeline;
-  for(std::size_t ti=0;ti<tracks;++ti){
-    neurogenic::Track track;track.id=ti+1;track.pattern.length=dense?1:960*2048;
-    for(std::size_t ei=0;ei<events;++ei)track.pattern.events.push_back({ei+1,dense?0:static_cast<neurogenic::MusicalTick>((far?500000:0)+ei*8),neurogenic::MusicalEventType::note_on,static_cast<std::uint8_t>(36+ti%16),0.5F,0,0,0});
-    timeline.tracks.push_back(std::move(track));
-  }
-  return timeline;
+constexpr std::size_t iterations=2000;
+bool budget_failed{};
+std::string cpu_model(){std::ifstream input("/proc/cpuinfo");std::string line;while(std::getline(input,line))if(line.rfind("model name",0)==0||line.rfind("Model",0)==0){const auto colon=line.find(':');return colon==std::string::npos?line:line.substr(colon+2);}return "unknown";}
+std::string kernel(){
+#ifdef __linux__
+  utsname value{};if(uname(&value)==0)return std::string(value.sysname)+" "+value.release;
+#endif
+  return "unknown";
 }
-
-void scheduler_case(const char* name,std::size_t tracks,std::size_t events,std::uint32_t frames,bool dense=false,bool far=false){
-  auto timeline=make_timeline(tracks,events,dense,far);neurogenic::PlaybackPlan plan;std::string error;
-  if(!neurogenic::compile_timeline(timeline,plan,error))throw std::runtime_error(error);
-  neurogenic::TimelineScheduler scheduler(48000);scheduler.set_plan(&plan,0);std::vector<neurogenic::TimelineScheduledEvent> output(512);
-  constexpr std::size_t iterations=4000;std::uint64_t position{};const auto begin=Clock::now();
-  for(std::size_t i=0;i<iterations;++i){checksum+=scheduler.schedule(position,frames,output);position+=frames;}
-  const auto elapsed=std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now()-begin).count();
-  std::cout<<name<<": "<<elapsed/iterations<<" ns/callback (tracks="<<tracks<<", events/track="<<events<<", frames="<<frames<<")\n";
+void result(const std::string& scenario,std::uint32_t rate,std::uint32_t frames,
+            std::uint64_t ns,std::uint64_t preparation=0){
+  if(const auto* budget=std::getenv("NEUROGENIC_BENCHMARK_BUDGET_NS"))
+    if(ns&&ns>std::stoull(budget))budget_failed=true;
+  const auto memory=neurogenic::sample_system_now();
+  const double deadline=1e9*frames/rate;
+  std::cout<<"{\"schema\":\"neurogenic.benchmark.v1\",\"scenario\":\""<<scenario
+    <<"\",\"architecture\":\""
+#if defined(__aarch64__)
+    <<"aarch64"
+#elif defined(__x86_64__)
+    <<"x86_64"
+#else
+    <<"portable"
+#endif
+    <<"\",\"cpu_model\":\""<<cpu_model()<<"\",\"os_kernel\":\""<<kernel()
+    <<"\",\"compiler\":\""<<__VERSION__<<"\",\"build_type\":\""
+#ifdef NDEBUG
+    <<"release"
+#else
+    <<"debug"
+#endif
+    <<"\",\"sample_rate\":"<<rate<<",\"buffer_frames\":"<<frames
+    <<",\"processing_ns_per_buffer\":"<<ns<<",\"preparation_ns\":"<<preparation
+    <<",\"realtime_factor\":"<<(ns?deadline/ns:0)
+    <<",\"resident_memory_bytes\":"<<(memory.resident_memory_available?memory.resident_memory_bytes:0)
+    <<",\"iterations\":"<<iterations<<"}\n";
 }
-
-void polyphony_case(){
-  neurogenic::AudioEngine engine(48000,64);engine.set_sample({48000,1,std::vector<float>(4096,0.25F)});std::vector<float> left(256),right(256);
-  constexpr std::size_t iterations=4000;const auto begin=Clock::now();
-  for(std::size_t i=0;i<iterations;++i){for(std::uint8_t note=36;note<68;++note)engine.trigger(note,0.5F);engine.process(left,right);checksum+=left[0]!=0;}
-  const auto elapsed=std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now()-begin).count();std::cout<<"polyphony_32: "<<elapsed/iterations<<" ns/callback (256 frames)\n";
+neurogenic::Sample sample(std::uint32_t rate,std::size_t frames=8192){return {rate,1,std::vector<float>(frames,0.25F)};}
+void audio_case(std::string name,std::size_t voices,std::uint32_t rate=48000,std::uint32_t frames=256){
+  neurogenic::AudioEngine engine(rate,64);engine.set_sample(sample(rate));
+  std::vector<float> left(frames),right(frames);engine.process(left,right);
+  const auto begin=Clock::now();for(std::size_t i=0;i<iterations;++i){
+    if(i%32==0)for(std::size_t voice=0;voice<voices;++voice)engine.trigger(36,0.5F);
+    engine.process(left,right);checksum+=left[0]!=0;}
+  const auto ns=std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now()-begin).count()/iterations;
+  result(name,rate,frames,ns);
 }
-
-void replacement_case(){
-  neurogenic::AudioEngine engine;auto timeline=make_timeline(8,64);std::vector<float> left(64),right(64);std::string error;
-  constexpr std::size_t iterations=1000;const auto begin=Clock::now();
-  for(std::size_t i=0;i<iterations;++i){if(!engine.queue_timeline(timeline,error))throw std::runtime_error(error);engine.process(left,right);}
-  const auto elapsed=std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now()-begin).count();std::cout<<"rapid_replacement: "<<elapsed/iterations<<" ns/compile+queue+callback\n";
+neurogenic::Timeline timeline(std::size_t events,neurogenic::MusicalTick length=960){neurogenic::Timeline value;neurogenic::Track track;track.id=1;track.pattern.length=length;
+  for(std::size_t i=0;i<events;++i)track.pattern.events.push_back({i+1,0,neurogenic::MusicalEventType::note_on,36,0.5F,0,0,0});value.tracks.push_back(std::move(track));return value;}
+void dense_case(){neurogenic::PlaybackPlan plan;std::string error;const auto source=timeline(1024,1);const auto prep=Clock::now();
+  if(!neurogenic::compile_timeline(source,plan,error))throw std::runtime_error(error);const auto prep_ns=std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now()-prep).count();
+  neurogenic::TimelineScheduler scheduler(48000);scheduler.set_plan(&plan,0);std::vector<neurogenic::TimelineScheduledEvent> output(2048);std::uint64_t frame{};
+  const auto begin=Clock::now();for(std::size_t i=0;i<iterations;++i){checksum+=scheduler.schedule(frame,256,output);frame+=256;}
+  result("dense_timeline",48000,256,std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now()-begin).count()/iterations,prep_ns);}
+void publication_case(){neurogenic::AudioEngine engine;auto source=timeline(64);std::vector<float> left(256),right(256);std::string error;
+  const auto begin=Clock::now();for(std::size_t i=0;i<iterations;++i){if(!engine.queue_timeline(source,error))throw std::runtime_error(error);engine.process(left,right);}
+  result("rapid_publication",48000,256,std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now()-begin).count()/iterations);}
+void resample_case(){auto source=sample(44100,44100);neurogenic::WindowedSincConverter converter;const auto begin=Clock::now();auto converted=converter.convert(source,48000);
+  checksum+=converted.frames();result("resample_44100_to_48000",48000,256,0,std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now()-begin).count());}
+void gui_case(int width,int height){neurogenic::AudioEngine engine;neurogenic::TimelineService timeline_service([&](const auto& value,std::string& error){return engine.queue_timeline(value,error);},timeline(16));neurogenic::SampleManager samples(engine);neurogenic::ApplicationService app(engine,timeline_service,samples);neurogenic::GuiModel gui(app);
+  const auto begin=Clock::now();for(std::size_t i=0;i<iterations;++i){const auto& frame=gui.frame(width+(i&1),height);checksum+=frame.commands.size();}
+  result("gui_frame_"+std::to_string(width)+"x"+std::to_string(height),48000,256,std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now()-begin).count()/iterations);samples.shutdown();}
 }
-}
-
-int main(){
-  scheduler_case("far_64",1,64,256,false,true);scheduler_case("far_65536",1,65536,256,false,true);
-  scheduler_case("tracks_1",1,64,256);scheduler_case("tracks_16",16,64,256);scheduler_case("tracks_64",64,64,256);
-  scheduler_case("callback_64",16,128,64);scheduler_case("callback_1024",16,128,1024);
-  scheduler_case("dense_1024",1,1024,256,true);polyphony_case();replacement_case();std::cout<<"checksum="<<checksum<<'\n';
-}
+int main(){audio_case("idle",0);audio_case("voices_8",8);audio_case("voices_16",16);audio_case("voices_32",32);audio_case("sample_44100",16,44100);audio_case("sample_48000",16,48000);dense_case();publication_case();resample_case();gui_case(1920,1200);gui_case(1024,800);gui_case(1024,600);std::cout<<"{\"schema\":\"neurogenic.benchmark.summary.v1\",\"checksum\":"<<checksum<<",\"budget_passed\":"<<(budget_failed?"false":"true")<<"}\n";return budget_failed?1:0;}
