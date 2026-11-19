@@ -11,6 +11,7 @@ My Set/
       timeline.ngt
       samples.ngs
       parameters.ngp
+      mixer.ngm
 ```
 
 `manifest.ngp` names exactly one committed generation. A save validates a
@@ -27,6 +28,10 @@ routing, notes, automation and parameter locks, probability, conditions, and
 ratchets. The sample metadata stores slot references, stable slices, pad
 assignments, expressive playback/envelope settings, and time-stretch settings.
 The parameter file stores registered native synth/effect parameter values.
+The optional mixer file stores track/input/master channels, two aux buses and
+physical assignments. Older projects without it receive unity channels derived
+from timeline IDs. Unavailable outputs remain assigned and silent rather than
+being redirected.
 Transient voices, playback position, monitoring counters, GUI caches, focus,
 and controller state are deliberately excluded.
 

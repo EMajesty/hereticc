@@ -1,5 +1,11 @@
 # Architecture
 
+Timeline-owned sample and synth voices render into fixed per-track buffers.
+The bounded mixer applies channel gain/pan/mute/solo, two aux buses, physical
+inputs, master gain, metering and explicit outputs before the existing master
+effects. Complete validated snapshots cross a bounded SPSC queue; the callback
+never constructs a graph. See [mixer architecture](MIXER.md).
+
 The control thread owns files, projects, scripts, mappings, editable state, and
 immutable compiled timeline plans. The audio thread consumes only plan pointers,
 bounded event staging, and sample memory prepared in advance.

@@ -182,6 +182,8 @@ struct ApplicationState {
     std::string project_error;
     std::vector<std::filesystem::path> missing_assets;
     RecordingStatus recording;
+    MixerState mixer;
+    std::size_t selected_mixer_channel{};
 };
 struct ApplicationCommand {
     std::string action_id;
@@ -226,6 +228,7 @@ class ApplicationService {
     mutable RecordingService recording_;
     RecordingConfiguration recording_configuration_;
     std::uint64_t recording_fixed_bars_{};
+    mutable MixerConfiguration mixer_configuration_;
     ActionRegistry actions_;
     ParameterRegistry parameters_;
     const std::size_t capacity_;

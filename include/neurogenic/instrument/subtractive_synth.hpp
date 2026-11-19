@@ -32,6 +32,9 @@ class SubtractiveSynth final : public Instrument {
     void set_sample_rate(std::uint32_t) noexcept override;
     InstrumentState state() const noexcept override;
     float render_sample() noexcept;
+    void render_sample_tracks(std::span<const std::uint64_t> tracks,
+                              std::span<float> outputs,
+                              float &unrouted) noexcept;
 
   private:
     enum class EnvelopeStage : std::uint8_t {

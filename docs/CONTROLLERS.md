@@ -1,5 +1,12 @@
 # Application control and controller API
 
+Mixer clients use `mixer.channel-select.v1`, `mixer.gain-set.v1`,
+`mixer.pan-set.v1`, `mixer.mute-toggle.v1`, `mixer.solo-toggle.v1`,
+`mixer.aux-send-set.v1` and `mixer.output-pair-set.v1`. Eight encoders naturally
+map to selected-channel parameters/sends and four faders to gain. A minimal
+data-wheel client selects a channel/property and invokes the same actions; no
+physical layout is embedded in the engine.
+
 The control architecture is deliberately client-neutral:
 
 ```text

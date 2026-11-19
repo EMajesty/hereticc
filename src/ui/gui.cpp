@@ -175,8 +175,8 @@ GuiLayout GuiModel::layout(int width, int height) const {
                             ? r(logical_width - margin - inspector_width,
                                 content_y, inspector_width, content_height)
                             : UiRect{};
-    const float tab_width = (logical_width - 32) / 7;
-    for (int i = 0; i < 7; ++i)
+    const float tab_width = (logical_width - 32) / 8;
+    for (int i = 0; i < 8; ++i)
         result.tabs.push_back(r(16 + i * tab_width, 72, tab_width - 8, 38));
     result.page_previous = r(28, content_y + 12, 64, 42);
     result.page_next = r(100, content_y + 12, 64, 42);
@@ -275,7 +275,7 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
              " MiB  VOICES " + std::to_string(perf.engine.active_voices) + "/" +
              std::to_string(perf.engine.maximum_voices));
     const char *names[]{"SEQUENCER", "SAMPLES", "PARAMETERS", "X/Y",
-                        "PERF", "DISPLAY", "RECORD"};
+                        "PERF", "DISPLAY", "RECORD", "MIXER"};
     for (std::size_t i = 0; i < l.tabs.size(); ++i) {
         rect(l.tabs[i], i == static_cast<std::size_t>(view_) ? UiColor::selected
                                                              : UiColor::panel);
@@ -583,6 +583,37 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
             rect(l.rows[i], UiColor::background);
             text(l.rows[i], UiColor::text, rows[i]);
         }
+    } else if (view_ == GuiView::mixer) {
+        text({l.content.x + 12 * l.scale, l.content.y + 8 * l.scale,
+              l.content.w - 24 * l.scale, 28 * l.scale},
+             UiColor::accent, "TRACK MIXER / TWO AUX BUSES");
+        const auto count = state.mixer.configuration.track_count;
+        for (std::size_t i = 0; i < std::min(count, l.rows.size()); ++i) {
+            const auto &channel = state.mixer.configuration.tracks[i];
+            const auto &meter = state.mixer.tracks[i];
+            rect(l.rows[i], i == state.selected_mixer_channel
+                                ? UiColor::selected
+                                : UiColor::background);
+            text(l.rows[i], channel.mute ? UiColor::muted : UiColor::text,
+                 "T" + std::to_string(channel.track) + "  G " +
+                     std::to_string(channel.gain) + "  P " +
+                     std::to_string(channel.pan) + "  A " +
+                     std::to_string(channel.aux_send[0]) + "/" +
+                     std::to_string(channel.aux_send[1]) + "  METER " +
+                     std::to_string(std::max(meter.left, meter.right)) +
+                     (channel.mute ? "  MUTE" : "") +
+                     (channel.solo ? "  SOLO" : ""));
+        }
+        if (l.inspector_visible)
+            text({l.parameters.x + 12 * l.scale,
+                  l.parameters.y + 48 * l.scale,
+                  l.parameters.w - 24 * l.scale, 180 * l.scale},
+                 UiColor::text,
+                 "UP/DOWN channel\nLEFT/RIGHT gain\nENTER mute\nSHIFT+ENTER solo\n\nMASTER " +
+                     std::to_string(state.mixer.configuration.master.gain) +
+                     "  PEAK " +
+                     std::to_string(std::max(state.mixer.master.left,
+                                             state.mixer.master.right)));
     } else if (view_ == GuiView::recording) {
         const auto &recording = state.recording;
         text({l.content.x + 12 * l.scale, l.content.y + 8 * l.scale,
@@ -641,7 +672,7 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
                  std::to_string(state.missing_assets.size()) +
                  "  Shift+Enter: Save");
     }
-    if (!l.inspector_visible)
+    if (view_ == GuiView::mixer || !l.inspector_visible)
         return;
     text({l.parameters.x + 12, l.parameters.y + 12, l.parameters.w - 24,
           28 * l.scale},
@@ -883,12 +914,15 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
         }
         if (input.key == GuiKey::tab) {
             view_ =
-                static_cast<GuiView>((static_cast<unsigned>(view_) + 1) % 7);
+                static_cast<GuiView>((static_cast<unsigned>(view_) + 1) % 8);
             frame_.state_revision = std::numeric_limits<std::uint64_t>::max();
             return true;
         }
         if (input.key == GuiKey::enter) {
-            if (view_ == GuiView::recording) {
+            if (view_ == GuiView::mixer) {
+                submit(command(shift_ ? "mixer.solo-toggle.v1"
+                                      : "mixer.mute-toggle.v1"));
+            } else if (view_ == GuiView::recording) {
                 if (state.recording.state == RecordingState::recording)
                     submit(command("recording.stop.v1"));
                 else if (state.recording.state == RecordingState::armed)
@@ -946,6 +980,33 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
                                           .id}}));
             else
                 simple("navigation.cancel.v1");
+            return true;
+        }
+        if ((input.key == GuiKey::up || input.key == GuiKey::down) &&
+            view_ == GuiView::mixer &&
+            state.mixer.configuration.track_count) {
+            const auto count = state.mixer.configuration.track_count;
+            const auto next = input.key == GuiKey::down
+                                  ? (state.selected_mixer_channel + 1) % count
+                                  : (state.selected_mixer_channel + count - 1) %
+                                        count;
+            submit(command("mixer.channel-select.v1",
+                           {{"index", static_cast<std::int64_t>(next)}}));
+            return true;
+        }
+        if ((input.key == GuiKey::left || input.key == GuiKey::right) &&
+            view_ == GuiView::mixer &&
+            state.selected_mixer_channel <
+                state.mixer.configuration.track_count) {
+            const auto current = state.mixer.configuration
+                                     .tracks[state.selected_mixer_channel]
+                                     .gain;
+            submit(command("mixer.gain-set.v1",
+                           {{"value", static_cast<double>(std::clamp(
+                                          current + (input.key == GuiKey::right
+                                                         ? 0.05F
+                                                         : -0.05F),
+                                          0.0F, 2.0F))}}));
             return true;
         }
         if ((input.key == GuiKey::up || input.key == GuiKey::down) &&
@@ -1054,6 +1115,16 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
                 return true;
             }
         }
+        if (view_ == GuiView::mixer)
+            for (std::size_t i = 0;
+                 i < std::min(l.rows.size(),
+                              state.mixer.configuration.track_count);
+                 ++i)
+                if (l.rows[i].contains(input.x, input.y)) {
+                    submit(command("mixer.channel-select.v1",
+                                   {{"index", static_cast<std::int64_t>(i)}}));
+                    return true;
+                }
         if (view_ == GuiView::sequencer) {
             UiRect undo{l.parameters.x + 12 * l.scale,
                         l.parameters.y + 48 * l.scale, 92 * l.scale,

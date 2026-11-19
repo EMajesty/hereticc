@@ -51,6 +51,8 @@ std::string performance_json(const PerformanceSnapshot &value) {
         << value.engine.recording_finalization_microseconds
         << ",\"recording_memory_bytes\":"
         << value.engine.recording_memory_bytes
+        << ",\"mixer_publication_failures\":"
+        << value.engine.mixer_publication_failures
         << ",\"queue_overflows\":"
         << (value.engine.dropped_triggers + value.engine.dropped_patterns +
             value.engine.dropped_timelines + value.engine.rejected_commands)

@@ -135,3 +135,11 @@ buffer usage, peak levels, and overflow/dropped counts. Enter arms, starts, or
 stops; Escape cancels. The same actions work via pointer and controllers, and
 touch is optional. Responsive layouts retain essential status at 1920×1200,
 1024×800, and 1024×600.
+
+# Mixer view
+
+The Mixer tab displays track strips, gain/pan, mute/solo, two sends, peak levels
+and the master meter. Up/Down selects a strip, Left/Right adjusts gain, Enter
+toggles mute and Shift+Enter toggles solo. Pointer selection invokes the same
+semantic actions. Detailed input/aux/output setup currently uses the shared
+action API rather than dedicated widgets.

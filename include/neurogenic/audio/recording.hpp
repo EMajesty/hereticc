@@ -14,7 +14,10 @@ enum class RecordingSource : std::uint8_t {
     external_mono,
     external_stereo,
     master_pre_effects,
-    master_post_effects
+    master_post_effects,
+    track_channel,
+    auxiliary_bus,
+    physical_input
 };
 enum class RecordingState : std::uint8_t {
     idle,
@@ -32,6 +35,7 @@ enum class RecordingWavFormat : std::uint8_t { pcm16, float32 };
 
 struct RecordingConfiguration {
     RecordingSource source{RecordingSource::master_post_effects};
+    std::uint64_t source_id{};
     SampleSlotId destination{};
     std::uint16_t channels{2};
     RecordingMonitorMode monitoring{RecordingMonitorMode::off};
@@ -68,7 +72,8 @@ class RecordingService {
     // Audio-callback producer entry points. Both are bounded and noexcept.
     void capture_internal(RecordingSource, std::span<const float> left,
                           std::span<const float> right,
-                          std::uint64_t callback_frame) noexcept;
+                          std::uint64_t callback_frame,
+                          std::uint64_t source_id = 0) noexcept;
     void capture_external(std::span<const float> interleaved,
                           std::uint16_t input_channels,
                           std::uint64_t callback_frame) noexcept;
@@ -84,7 +89,8 @@ class RecordingService {
 
   private:
     void capture(RecordingSource, std::span<const float>,
-                 std::span<const float>, std::uint64_t) noexcept;
+                 std::span<const float>, std::uint64_t,
+                 std::uint64_t source_id = 0) noexcept;
     std::uint32_t sample_rate_{};
     std::uint64_t capacity_frames_{};
     std::vector<float> storage_;

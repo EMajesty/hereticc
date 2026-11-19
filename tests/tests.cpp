@@ -3489,6 +3489,194 @@ void test_probability_conditions_and_ratchets() {
           "trigger serialization round trip");
 }
 
+void test_mixer_and_routing() {
+    using namespace neurogenic;
+    std::string error;
+    MixerConfiguration configuration;
+    configuration.revision = 1;
+    configuration.track_count = 2;
+    configuration.tracks[0].track = 11;
+    configuration.tracks[0].gain = 0.5F;
+    configuration.tracks[0].pan = -1.0F;
+    configuration.tracks[0].aux_send[0] = 0.5F;
+    configuration.tracks[1].track = 22;
+    configuration.tracks[1].pan = 1.0F;
+    Mixer mixer;
+    check(mixer.publish(configuration, error), "publish mixer configuration");
+    mixer.begin_block(4);
+    for (std::size_t frame = 0; frame < 4; ++frame) {
+        check(mixer.add_track(11, frame, 1, 1), "route first track");
+        check(mixer.add_track(22, frame, 1, 1), "route second track");
+    }
+    std::array<float, 4> left{}, right{};
+    mixer.process(left, right);
+    mixer.apply_master_gain(left, right);
+    mixer.route_master_output(left, right);
+    near(left[0], 0.75F, "gain pan and auxiliary left summing");
+    near(right[0], 1.0F, "gain pan and auxiliary right summing");
+    const auto metered = mixer.state();
+    check(metered.tracks[0].left > 0 && metered.tracks[1].right > 0 &&
+              metered.master.left > 0,
+          "track and master metering");
+
+    configuration.revision++;
+    configuration.tracks[0].mute = true;
+    configuration.tracks[0].aux_pre_fader[0] = true;
+    configuration.tracks[1].solo = true;
+    check(mixer.publish(configuration, error), "publish mute solo mixer");
+    mixer.begin_block(1);
+    check(mixer.add_track(11, 0, 1, 1) &&
+              mixer.add_track(22, 0, 1, 1),
+          "route muted and solo channels");
+    left.fill(0);
+    right.fill(0);
+    mixer.process({left.data(), 1}, {right.data(), 1});
+    mixer.apply_master_gain({left.data(), 1}, {right.data(), 1});
+    mixer.route_master_output({left.data(), 1}, {right.data(), 1});
+    near(left[0], 0.5F, "solo and pre-fader left semantics");
+    near(right[0], 1.0F, "solo and pre-fader right semantics");
+
+    configuration.revision++;
+    configuration.tracks[0].mute = false;
+    configuration.tracks[0].solo = false;
+    configuration.tracks[1].solo = false;
+    configuration.tracks[0].aux_send = {};
+    configuration.tracks[0].output_pair = 2;
+    configuration.input_count = 1;
+    configuration.inputs[0].physical_channel = 5;
+    configuration.inputs[0].gain = 0.5F;
+    check(mixer.publish(configuration, error), "publish six-channel routing");
+    mixer.begin_block(1);
+    check(mixer.add_track(11, 0, 1, 1), "route direct-output track");
+    mixer.add_input(5, 0, 1);
+    std::array<float, 6> physical{};
+    left.fill(0);
+    right.fill(0);
+    mixer.process({left.data(), 1}, {right.data(), 1}, physical, 6);
+    mixer.apply_master_gain({left.data(), 1}, {right.data(), 1});
+    mixer.route_master_output({left.data(), 1}, {right.data(), 1}, physical, 6);
+    check(std::fabs(physical[2] - 0.5F) < 0.0001F &&
+              std::fabs(physical[3]) < 0.0001F && physical[0] > 0 &&
+              physical[1] > 0,
+          "six-channel output mapping and mono input conversion");
+    std::array<float, 1> mono_output{};
+    mixer.route_master_output({left.data(), 1}, {right.data(), 1}, mono_output,
+                              1);
+    check(mono_output[0] > 0, "stereo master to mono output conversion");
+    auto invalid = configuration;
+    invalid.tracks[0].output_pair = 5;
+    check(!validate_mixer_configuration(invalid, 6, 6, error),
+          "invalid output channel rejection");
+    invalid = configuration;
+    invalid.tracks[1].track = invalid.tracks[0].track;
+    check(!validate_mixer_configuration(invalid, 6, 6, error),
+          "duplicate routing rejection");
+    check(!validate_mixer_configuration(configuration, 2, 2, error),
+          "device capability change rejects unavailable routes");
+    Mixer saturated;
+    for (std::uint64_t revision = 1; revision <= 4; ++revision) {
+        auto update = configuration;
+        update.revision = revision;
+        check(saturated.publish(update, error), "bounded mixer publication");
+    }
+    auto overflow = configuration;
+    overflow.revision = 5;
+    check(!saturated.publish(overflow, error) &&
+              saturated.state().rejected_publications == 1,
+          "mixer publication overflow is observable");
+
+    AudioEngine engine;
+    engine.set_sample(constant_sample(256));
+    Timeline timeline;
+    Track track;
+    track.id = 77;
+    track.pattern.length = ticks_per_quarter;
+    track.pattern.events.push_back(
+        {1, 0, MusicalEventType::note, 36, 1.0F, 240});
+    timeline.tracks.push_back(track);
+    MixerConfiguration engine_mixer;
+    engine_mixer.revision = 1;
+    engine_mixer.track_count = 1;
+    engine_mixer.tracks[0].track = 77;
+    check(engine.publish_mixer(engine_mixer, error) &&
+              engine.queue_timeline(timeline, error),
+          "publish timeline track routing");
+    RecordingService recorder(48000, 64);
+    RecordingConfiguration recording;
+    recording.source = RecordingSource::track_channel;
+    recording.source_id = 77;
+    recording.destination = SampleSlotId{9};
+    recording.fixed_frames = 32;
+    check(recorder.arm(recording, error) && recorder.start(0, error),
+          "arm track recording tap");
+    engine.set_recording_service(&recorder);
+    std::array<float, 64> rendered_left{}, rendered_right{};
+    engine.process(rendered_left, rendered_right);
+    engine.set_recording_service(nullptr);
+    check(recorder.status().state == RecordingState::completed &&
+              recorder.completed_sample().interleaved[0] != 0,
+          "post-fader track recording tap");
+
+    Project project;
+    project.name = "Mixer";
+    project.timeline = timeline;
+    project.mixer = engine_mixer;
+    const auto path = std::filesystem::temp_directory_path() /
+                      "neurogenic-mixer-project";
+    std::filesystem::remove_all(path);
+    save_project(project, path);
+    const auto restored = load_project(path);
+    check(restored.mixer.track_count == 1 &&
+              restored.mixer.tracks[0].track == 77,
+          "mixer project persistence");
+    std::filesystem::remove_all(path);
+
+    AudioEngine app_engine;
+    SampleManager samples(app_engine);
+    TimelineService service(
+        [&](const Timeline &value, std::string &publish_error) {
+            return app_engine.queue_timeline(value, publish_error);
+        },
+        timeline);
+    ApplicationService application(app_engine, service, samples);
+    check(application
+              .execute({"mixer.gain-set.v1", {{"value", 0.25}}})
+              .accepted &&
+              application
+                  .execute({"mixer.aux-send-set.v1",
+                            {{"aux", std::int64_t{1}}, {"value", 0.4},
+                             {"pre_fader", true}}})
+                  .accepted &&
+              application
+                  .execute({"mixer.input-set.v1",
+                            {{"index", std::int64_t{0}},
+                             {"physical_channel", std::int64_t{0}},
+                             {"gain", 0.75}, {"pan", 0.0},
+                             {"route_to_master", true}, {"aux_1", 0.2}}})
+                  .accepted,
+          "controller-independent mixer actions");
+    app_engine.process(rendered_left, rendered_right);
+    const auto app_state = application.snapshot();
+    check(std::fabs(app_state.mixer.configuration.tracks[0].gain - 0.25F) <
+                  0.0001F &&
+              std::fabs(app_state.mixer.configuration.tracks[0].aux_send[1] -
+                        0.4F) < 0.0001F &&
+              app_state.mixer.configuration.input_count == 1 &&
+              std::fabs(app_state.mixer.configuration.inputs[0].aux_send[0] -
+                        0.2F) < 0.0001F,
+          "observable mixer state");
+    GuiModel gui(application);
+    for (int i = 0; i < 7; ++i)
+        check(gui.input({GuiInput::Type::key_down, GuiKey::tab}, 1920, 1200),
+              "navigate to mixer view");
+    check(gui.view() == GuiView::mixer &&
+              gui.input({GuiInput::Type::key_down, GuiKey::enter}, 1920, 1200),
+          "headless mixer GUI navigation");
+    check(gui.input({GuiInput::Type::key_down, GuiKey::right}, 1024, 600) &&
+              !gui.frame(1024, 600).commands.empty(),
+          "compact encoder mixer adjustment");
+}
+
 void test_lua_and_offline() {
     using namespace neurogenic;
     bool submitted = false;
@@ -3683,6 +3871,7 @@ int main() {
         test_timeline_and_tracks();
         test_unified_project_persistence();
         test_audio_recording_and_resampling();
+        test_mixer_and_routing();
         test_transport_integration_and_timeline_io();
         test_midi_control_dispatch();
         test_timeline_editing_and_generation();

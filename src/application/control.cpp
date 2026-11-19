@@ -259,7 +259,8 @@ ActionRegistry::ActionRegistry() {
         {{"missing", ValueType::text}, {"replacement", ValueType::text}}));
     add(action("project.query.v1", "Query project status", "Project"));
     add(action("recording.source-select.v1", "Select recording source", "Recording",
-               {{"source", ValueType::text}}));
+               {{"source", ValueType::text},
+                {"source_id", ValueType::integer, false}}));
     add(action("recording.destination-select.v1", "Select recording destination", "Recording",
                {{"slot_id", ValueType::integer}}));
     add(action("recording.channels-set.v1", "Set recording channels", "Recording",
@@ -278,6 +279,38 @@ ActionRegistry::ActionRegistry() {
                {{"path", ValueType::text}, {"format", ValueType::text, false}}));
     add(action("recording.assign-pad.v1", "Assign recording to pad", "Recording",
                {{"pad", ValueType::integer}}));
+    add(action("mixer.channel-select.v1", "Select mixer channel", "Mixer",
+               {{"index", ValueType::integer}}));
+    add(action("mixer.gain-set.v1", "Set mixer gain", "Mixer",
+               {{"value", ValueType::real}}));
+    add(action("mixer.pan-set.v1", "Set mixer pan", "Mixer",
+               {{"value", ValueType::real}}));
+    add(action("mixer.mute-toggle.v1", "Toggle mixer mute", "Mixer"));
+    add(action("mixer.solo-toggle.v1", "Toggle mixer solo", "Mixer"));
+    add(action("mixer.aux-send-set.v1", "Set auxiliary send", "Mixer",
+               {{"aux", ValueType::integer}, {"value", ValueType::real},
+                {"pre_fader", ValueType::boolean, false}}));
+    add(action("mixer.output-pair-set.v1", "Set channel output pair", "Mixer",
+               {{"pair", ValueType::integer}}));
+    add(action("mixer.master-gain-set.v1", "Set master gain", "Mixer",
+               {{"value", ValueType::real}}));
+    add(action("mixer.master-mute-toggle.v1", "Toggle master mute", "Mixer"));
+    add(action("mixer.master-output-set.v1", "Set master output", "Mixer",
+               {{"left", ValueType::integer}, {"right", ValueType::integer}}));
+    add(action("mixer.input-set.v1", "Configure physical input", "Mixer",
+               {{"index", ValueType::integer},
+                {"physical_channel", ValueType::integer},
+                {"gain", ValueType::real}, {"pan", ValueType::real},
+                {"mute", ValueType::boolean, false},
+                {"route_to_master", ValueType::boolean, false},
+                {"aux_1", ValueType::real, false},
+                {"aux_2", ValueType::real, false}}));
+    add(action("mixer.aux-set.v1", "Configure auxiliary bus", "Mixer",
+                {{"aux", ValueType::integer}, {"gain", ValueType::real},
+                {"return_gain", ValueType::real},
+                {"effect_enabled", ValueType::boolean},
+                {"mute", ValueType::boolean, false},
+                {"output_pair", ValueType::integer, false}}));
     add(action("edit.undo.v1", "Undo", "Editing"));
     add(action("edit.redo.v1", "Redo", "Editing"));
     add(action("edit.group-begin.v1", "Begin grouped edit", "Editing"));
@@ -629,11 +662,29 @@ ApplicationService::ApplicationService(AudioEngine &engine,
     synth_parameter("effect.delay.feedback", "Delay feedback", "", 0, 0.95, 0.3,
                     0.01);
     synth_parameter("effect.delay.mix", "Delay mix", "", 0, 1, 0, 0.01);
+    const auto mixer_parameter = [&](std::string id, std::string name,
+                                     double minimum, double maximum,
+                                     double initial) {
+        parameters_.register_parameter(
+            {std::move(id), std::move(name), "", ParameterType::real, minimum,
+             maximum, initial, initial, 0.01, true, false, false, {}},
+            error);
+    };
+    mixer_parameter("mixer.master.gain", "Master gain", 0, 2, 1);
+    mixer_parameter("mixer.selected.gain", "Channel gain", 0, 2, 1);
+    mixer_parameter("mixer.selected.pan", "Channel pan", -1, 1, 0);
     state_.step_ticks = step_resolution_ticks(state_.step_resolution);
     state_.step_duration = state_.step_ticks;
     project_.timeline = timeline_.snapshot().timeline;
     state_.timeline_revision = timeline_.snapshot().revision;
     recording_configuration_.destination = SampleSlotId{0};
+    mixer_configuration_.revision = 1;
+    mixer_configuration_.track_count = std::min(
+        project_.timeline.tracks.size(), maximum_mixer_tracks);
+    for (std::size_t i = 0; i < mixer_configuration_.track_count; ++i)
+        mixer_configuration_.tracks[i].track = project_.timeline.tracks[i].id;
+    if (!engine_.publish_mixer(mixer_configuration_, error))
+        throw std::runtime_error("cannot publish initial mixer: " + error);
     engine_.set_recording_service(&recording_);
 }
 ApplicationService::~ApplicationService() {
@@ -682,7 +733,36 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
     if (!actions_.validate(command.action_id, command.arguments, error))
         return {false, sequence, snapshot().revision, std::move(error)};
     const auto before = snapshot();
+    const auto publish_parameter = [&](const std::string &id) {
+        if (id.rfind("mixer.", 0) != 0)
+            return publish_dsp_parameter(engine_, parameters_, id);
+        const auto descriptor = parameters_.get(id);
+        if (!descriptor ||
+            !std::holds_alternative<double>(descriptor->current_value))
+            return false;
+        const auto value =
+            static_cast<float>(std::get<double>(descriptor->current_value));
+        auto next = mixer_configuration_;
+        if (id == "mixer.master.gain")
+            next.master.gain = value;
+        else if (state_.selected_mixer_channel < next.track_count &&
+                 id == "mixer.selected.gain")
+            next.tracks[state_.selected_mixer_channel].gain = value;
+        else if (state_.selected_mixer_channel < next.track_count &&
+                 id == "mixer.selected.pan")
+            next.tracks[state_.selected_mixer_channel].pan = value;
+        else
+            return false;
+        ++next.revision;
+        std::string mixer_error;
+        if (!engine_.publish_mixer(next, mixer_error))
+            return false;
+        mixer_configuration_ = next;
+        state_.project_dirty = true;
+        return true;
+    };
     if (command.action_id.rfind("recording.", 0) == 0) {
+        const auto previous_recording_configuration = recording_configuration_;
         const auto text = [&](std::string_view name) {
             return *argument<std::string>(command, name);
         };
@@ -696,8 +776,40 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 recording_configuration_.source = RecordingSource::master_pre_effects;
             else if (value == "master-post")
                 recording_configuration_.source = RecordingSource::master_post_effects;
+            else if (value == "track")
+                recording_configuration_.source = RecordingSource::track_channel;
+            else if (value == "aux")
+                recording_configuration_.source = RecordingSource::auxiliary_bus;
+            else if (value == "physical-input")
+                recording_configuration_.source = RecordingSource::physical_input;
             else
                 error = "unknown recording source";
+            if (const auto *source_id =
+                    argument<std::int64_t>(command, "source_id")) {
+                if (*source_id < 0)
+                    error = "recording source ID must be non-negative";
+                else
+                    recording_configuration_.source_id =
+                        static_cast<std::uint64_t>(*source_id);
+            }
+            if (recording_configuration_.source ==
+                    RecordingSource::auxiliary_bus &&
+                recording_configuration_.source_id >= mixer_aux_count)
+                error = "auxiliary recording source is unavailable";
+            if (recording_configuration_.source ==
+                    RecordingSource::physical_input &&
+                recording_configuration_.source_id >= maximum_mixer_inputs)
+                error = "physical recording source is unavailable";
+            if (recording_configuration_.source ==
+                    RecordingSource::track_channel &&
+                std::none_of(
+                    mixer_configuration_.tracks.begin(),
+                    mixer_configuration_.tracks.begin() +
+                        mixer_configuration_.track_count,
+                    [&](const auto &channel) {
+                        return channel.track == recording_configuration_.source_id;
+                    }))
+                error = "track recording source is unavailable";
         } else if (command.action_id == "recording.destination-select.v1") {
             const auto value = *argument<std::int64_t>(command, "slot_id");
             if (value < 0 || value >= invalid_sample_slot.value)
@@ -862,12 +974,212 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
         }
         {
             std::lock_guard lock(mutex_);
+            if (!error.empty())
+                recording_configuration_ = previous_recording_configuration;
             if (error.empty() &&
                 (command.action_id == "recording.save.v1" ||
                  command.action_id == "recording.assign-pad.v1"))
                 state_.project_dirty = true;
             changed_locked();
         }
+        return {error.empty(), sequence, snapshot().revision, std::move(error)};
+    }
+    if (command.action_id.rfind("mixer.", 0) == 0) {
+        const auto previous_configuration = mixer_configuration_;
+        auto changed = false;
+        if (command.action_id == "mixer.channel-select.v1") {
+            const auto index = *argument<std::int64_t>(command, "index");
+            if (index < 0 ||
+                static_cast<std::size_t>(index) >=
+                    mixer_configuration_.track_count)
+                error = "mixer channel index is unavailable";
+            else
+                state_.selected_mixer_channel =
+                    static_cast<std::size_t>(index);
+            if (error.empty()) {
+                const auto &selected = mixer_configuration_.tracks[
+                    state_.selected_mixer_channel];
+                std::string ignored;
+                parameters_.set("mixer.selected.gain",
+                                static_cast<double>(selected.gain), ignored);
+                parameters_.set("mixer.selected.pan",
+                                static_cast<double>(selected.pan), ignored);
+            }
+        } else if (command.action_id == "mixer.master-gain-set.v1") {
+            const auto value = number(command.arguments.at("value"));
+            if (!std::isfinite(value) || value < 0 || value > 2)
+                error = "master gain must be 0..2";
+            else {
+                mixer_configuration_.master.gain = static_cast<float>(value);
+                changed = true;
+            }
+        } else if (command.action_id == "mixer.master-mute-toggle.v1") {
+            mixer_configuration_.master.mute =
+                !mixer_configuration_.master.mute;
+            changed = true;
+        } else if (command.action_id == "mixer.master-output-set.v1") {
+            const auto left = *argument<std::int64_t>(command, "left");
+            const auto right = *argument<std::int64_t>(command, "right");
+            if (left < 0 || right < 0 || left >= 6 || right >= 6 ||
+                left == right)
+                error = "master outputs must be distinct channels 0..5";
+            else {
+                mixer_configuration_.master.output_left =
+                    static_cast<std::uint8_t>(left);
+                mixer_configuration_.master.output_right =
+                    static_cast<std::uint8_t>(right);
+                changed = true;
+            }
+        } else if (command.action_id == "mixer.input-set.v1") {
+            const auto index = *argument<std::int64_t>(command, "index");
+            const auto physical =
+                *argument<std::int64_t>(command, "physical_channel");
+            const auto gain = number(command.arguments.at("gain"));
+            const auto pan = number(command.arguments.at("pan"));
+            if (index < 0 || index >= 6 || physical < 0 || physical >= 6 ||
+                !std::isfinite(gain) || gain < 0 || gain > 2 ||
+                !std::isfinite(pan) || pan < -1 || pan > 1)
+                error = "invalid physical input configuration";
+            else {
+                auto &input = mixer_configuration_.inputs[
+                    static_cast<std::size_t>(index)];
+                input.physical_channel = static_cast<std::uint8_t>(physical);
+                input.gain = static_cast<float>(gain);
+                input.pan = static_cast<float>(pan);
+                if (const auto *mute = argument<bool>(command, "mute"))
+                    input.mute = *mute;
+                if (const auto *route =
+                        argument<bool>(command, "route_to_master"))
+                    input.route_to_master = *route;
+                for (std::size_t aux = 0; aux < mixer_aux_count; ++aux) {
+                    const auto id = std::string("aux_") +
+                                    std::to_string(aux + 1);
+                    if (const auto found = command.arguments.find(id);
+                        found != command.arguments.end()) {
+                        const auto send = number(found->second);
+                        if (!std::isfinite(send) || send < 0 || send > 1) {
+                            error = "input aux sends must be 0..1";
+                            break;
+                        }
+                        input.aux_send[aux] = static_cast<float>(send);
+                    }
+                }
+                mixer_configuration_.input_count = std::max(
+                    mixer_configuration_.input_count,
+                    static_cast<std::size_t>(index + 1));
+                changed = true;
+            }
+        } else if (command.action_id == "mixer.aux-set.v1") {
+            const auto aux = *argument<std::int64_t>(command, "aux");
+            const auto gain = number(command.arguments.at("gain"));
+            const auto return_gain = number(command.arguments.at("return_gain"));
+            if (aux < 0 || aux >= 2 || !std::isfinite(gain) || gain < 0 ||
+                gain > 2 || !std::isfinite(return_gain) || return_gain < 0 ||
+                return_gain > 2)
+                error = "invalid auxiliary bus configuration";
+            else {
+                auto &bus = mixer_configuration_.aux[
+                    static_cast<std::size_t>(aux)];
+                bus.gain = static_cast<float>(gain);
+                bus.return_gain = static_cast<float>(return_gain);
+                bus.effect_enabled =
+                    *argument<bool>(command, "effect_enabled");
+                if (const auto *mute = argument<bool>(command, "mute"))
+                    bus.mute = *mute;
+                if (const auto *output =
+                        argument<std::int64_t>(command, "output_pair")) {
+                    if (*output != -1 && *output != 0 && *output != 2 &&
+                        *output != 4)
+                        error = "aux output pair must be master, 1/2, 3/4, or 5/6";
+                    else
+                        bus.output_pair = static_cast<std::int8_t>(*output);
+                }
+                changed = true;
+            }
+        } else if (state_.selected_mixer_channel >=
+                   mixer_configuration_.track_count) {
+            error = "no mixer channel is selected";
+        } else {
+            auto &channel = mixer_configuration_.tracks[
+                state_.selected_mixer_channel];
+            if (command.action_id == "mixer.gain-set.v1") {
+                const auto value = number(command.arguments.at("value"));
+                if (!std::isfinite(value) || value < 0 || value > 2)
+                    error = "channel gain must be 0..2";
+                else {
+                    channel.gain = static_cast<float>(value);
+                    changed = true;
+                }
+            } else if (command.action_id == "mixer.pan-set.v1") {
+                const auto value = number(command.arguments.at("value"));
+                if (!std::isfinite(value) || value < -1 || value > 1)
+                    error = "channel pan must be -1..1";
+                else {
+                    channel.pan = static_cast<float>(value);
+                    changed = true;
+                }
+            } else if (command.action_id == "mixer.mute-toggle.v1") {
+                channel.mute = !channel.mute;
+                changed = true;
+            } else if (command.action_id == "mixer.solo-toggle.v1") {
+                channel.solo = !channel.solo;
+                changed = true;
+            } else if (command.action_id == "mixer.aux-send-set.v1") {
+                const auto aux = *argument<std::int64_t>(command, "aux");
+                const auto value = number(command.arguments.at("value"));
+                if (aux < 0 || aux >=
+                                   static_cast<std::int64_t>(mixer_aux_count) ||
+                    !std::isfinite(value) || value < 0 || value > 1)
+                    error = "aux send requires bus 0..1 and value 0..1";
+                else {
+                    channel.aux_send[static_cast<std::size_t>(aux)] =
+                        static_cast<float>(value);
+                    if (const auto *pre =
+                            argument<bool>(command, "pre_fader"))
+                        channel.aux_pre_fader[static_cast<std::size_t>(aux)] =
+                            *pre;
+                    changed = true;
+                }
+            } else if (command.action_id == "mixer.output-pair-set.v1") {
+                const auto pair = *argument<std::int64_t>(command, "pair");
+                if (pair != -1 && pair != 0 && pair != 2 && pair != 4)
+                    error = "output pair must be master, 1/2, 3/4, or 5/6";
+                else {
+                    channel.output_pair = static_cast<std::int8_t>(pair);
+                    changed = true;
+                }
+            }
+        }
+        if (!error.empty())
+            mixer_configuration_ = previous_configuration;
+        if (changed && error.empty()) {
+            ++mixer_configuration_.revision;
+            if (!engine_.publish_mixer(mixer_configuration_, error))
+                mixer_configuration_ = previous_configuration;
+            else {
+                state_.project_dirty = true;
+                std::string ignored;
+                if (command.action_id == "mixer.master-gain-set.v1")
+                    parameters_.set("mixer.master.gain",
+                                    static_cast<double>(
+                                        mixer_configuration_.master.gain),
+                                    ignored);
+                else if (state_.selected_mixer_channel <
+                         mixer_configuration_.track_count) {
+                    const auto &channel = mixer_configuration_.tracks[
+                        state_.selected_mixer_channel];
+                    if (command.action_id == "mixer.gain-set.v1")
+                        parameters_.set("mixer.selected.gain",
+                                        static_cast<double>(channel.gain),
+                                        ignored);
+                    if (command.action_id == "mixer.pan-set.v1")
+                        parameters_.set("mixer.selected.pan",
+                                        static_cast<double>(channel.pan),
+                                        ignored);
+                }
+            }
+        }
+        changed_locked();
         return {error.empty(), sequence, snapshot().revision, std::move(error)};
     }
     if (command.action_id.rfind("project.", 0) == 0) {
@@ -888,6 +1200,7 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     found != command.arguments.end())
                     saving.name = std::get<std::string>(found->second);
                 saving.timeline = timeline_.snapshot().timeline;
+                saving.mixer = mixer_configuration_;
                 for (const auto &slot : samples_.states())
                     if (slot.has_sample && slot.source_path.empty()) {
                         const auto recording = recording_.status();
@@ -1022,6 +1335,17 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     throw std::runtime_error(error);
                 if (!slices_.restore_project(loaded.samples, error))
                     throw std::runtime_error(error);
+                auto loaded_mixer = loaded.mixer;
+                if (loaded_mixer.track_count == 0) {
+                    loaded_mixer.track_count = std::min(
+                        loaded.timeline.tracks.size(), maximum_mixer_tracks);
+                    for (std::size_t i = 0; i < loaded_mixer.track_count; ++i)
+                        loaded_mixer.tracks[i].track = loaded.timeline.tracks[i].id;
+                }
+                loaded_mixer.revision = mixer_configuration_.revision + 1;
+                if (!engine_.publish_mixer(loaded_mixer, error))
+                    throw std::runtime_error(error);
+                mixer_configuration_ = loaded_mixer;
                 for (const auto &[id, value] : loaded.parameters) {
                     const auto previous = parameters_.get(id);
                     if (!parameters_.set(id, value, error) ||
@@ -1104,6 +1428,10 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 engine_.stop();
                 if (!slices_.restore_project(replacement.samples, error))
                     return {false, sequence, before.revision, std::move(error)};
+                replacement.mixer.revision = mixer_configuration_.revision + 1;
+                if (!engine_.publish_mixer(replacement.mixer, error))
+                    return {false, sequence, before.revision, std::move(error)};
+                mixer_configuration_ = replacement.mixer;
                 for (const auto &slot : samples_.states())
                     if ((slot.has_sample ||
                          slot.state != SampleSlotLoadState::empty) &&
@@ -2346,7 +2674,7 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             const auto previous = parameters_.get(id);
             if (parameters_.set_normalized(
                     id, *argument<double>(command, "value"), error)) {
-                if (!publish_dsp_parameter(engine_, parameters_, id)) {
+                if (!publish_parameter(id)) {
                     std::string rollback_error;
                     if (previous)
                         parameters_.set(id, previous->current_value,
@@ -2360,7 +2688,7 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             const auto previous = parameters_.get(id);
             if (parameters_.adjust(id, *argument<double>(command, "steps"),
                                    error)) {
-                if (!publish_dsp_parameter(engine_, parameters_, id)) {
+                if (!publish_parameter(id)) {
                     std::string rollback_error;
                     if (previous)
                         parameters_.set(id, previous->current_value,
@@ -2373,7 +2701,7 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             const auto id = *argument<std::string>(command, "parameter_id");
             const auto previous = parameters_.get(id);
             if (parameters_.reset(id, error)) {
-                if (!publish_dsp_parameter(engine_, parameters_, id)) {
+                if (!publish_parameter(id)) {
                     std::string rollback_error;
                     if (previous)
                         parameters_.set(id, previous->current_value,
@@ -2451,6 +2779,35 @@ void ApplicationService::synchronize_locked() const {
     const auto playing = engine_.playing();
     const auto frame = engine_.frame_position();
     auto slots = samples_.states();
+    const auto desired_tracks =
+        std::min(timeline.timeline.tracks.size(), maximum_mixer_tracks);
+    auto mixer_matches = mixer_configuration_.track_count == desired_tracks;
+    for (std::size_t i = 0; mixer_matches && i < desired_tracks; ++i)
+        mixer_matches = mixer_configuration_.tracks[i].track ==
+                        timeline.timeline.tracks[i].id;
+    if (!mixer_matches) {
+        auto updated = mixer_configuration_;
+        updated.track_count = desired_tracks;
+        for (std::size_t i = 0; i < desired_tracks; ++i) {
+            const auto id = timeline.timeline.tracks[i].id;
+            const auto found = std::find_if(
+                mixer_configuration_.tracks.begin(),
+                mixer_configuration_.tracks.begin() +
+                    mixer_configuration_.track_count,
+                [&](const auto &channel) { return channel.track == id; });
+            updated.tracks[i] =
+                found == mixer_configuration_.tracks.begin() +
+                             mixer_configuration_.track_count
+                    ? MixerChannelSettings{}
+                    : *found;
+            updated.tracks[i].track = id;
+        }
+        ++updated.revision;
+        std::string ignored;
+        if (engine_.publish_mixer(updated, ignored))
+            mixer_configuration_ = updated;
+    }
+    const auto mixer = engine_.mixer_state();
     if (recording.state == RecordingState::publication_pending) {
         const auto active = std::find_if(
             slots.begin(), slots.end(), [&](const auto &slot) {
@@ -2477,12 +2834,40 @@ void ApplicationService::synchronize_locked() const {
                     state_.sample_slots.size() != slots.size() ||
                     state_.slice_revision != slice_state.revision ||
                     state_.parameters.size() != parameters.size();
+    external = external || state_.mixer.revision != mixer.revision ||
+               state_.mixer.master.left != mixer.master.left ||
+               state_.mixer.master.right != mixer.master.right;
+    if (!external)
+        for (std::size_t i = 0; i < maximum_mixer_tracks; ++i)
+            if (state_.mixer.tracks[i].left != mixer.tracks[i].left ||
+                state_.mixer.tracks[i].right != mixer.tracks[i].right ||
+                state_.mixer.tracks[i].clip != mixer.tracks[i].clip) {
+                external = true;
+                break;
+            }
+    if (!external)
+        for (std::size_t i = 0; i < mixer_aux_count; ++i)
+            if (state_.mixer.aux[i].left != mixer.aux[i].left ||
+                state_.mixer.aux[i].right != mixer.aux[i].right ||
+                state_.mixer.aux[i].clip != mixer.aux[i].clip) {
+                external = true;
+                break;
+            }
+    if (!external)
+        for (std::size_t i = 0; i < maximum_mixer_inputs; ++i)
+            if (state_.mixer.inputs[i].left != mixer.inputs[i].left ||
+                state_.mixer.inputs[i].right != mixer.inputs[i].right ||
+                state_.mixer.inputs[i].clip != mixer.inputs[i].clip) {
+                external = true;
+                break;
+            }
     const auto &old_recording = state_.recording;
     const auto &old_configuration = old_recording.configuration;
     const auto &new_configuration = recording.configuration;
     external =
         external || old_recording.state != recording.state ||
         old_configuration.source != new_configuration.source ||
+        old_configuration.source_id != new_configuration.source_id ||
         old_configuration.destination != new_configuration.destination ||
         old_configuration.channels != new_configuration.channels ||
         old_configuration.monitoring != new_configuration.monitoring ||
@@ -2523,6 +2908,7 @@ void ApplicationService::synchronize_locked() const {
             ? std::numeric_limits<MusicalTick>::max()
             : static_cast<MusicalTick>(transport_tick);
     state_.recording = std::move(recording);
+    state_.mixer = mixer;
     state_.timeline_revision = timeline.revision;
     state_.can_undo = history.can_undo;
     state_.can_redo = history.can_redo;
@@ -2690,7 +3076,8 @@ void ApplicationService::synchronize_locked() const {
                                  state_.recording.dropped_frames,
                                  state_.recording.overflow_count,
                                  state_.recording.finalization_microseconds,
-                                 state_.recording.memory_bytes};
+                                 state_.recording.memory_bytes,
+                                 state_.mixer.rejected_publications};
     state_.performance.system = system_monitor_.snapshot();
     state_.available_actions.clear();
     for (const auto &value : actions_.actions())

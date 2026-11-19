@@ -31,7 +31,7 @@ struct EngineStatistics {
     std::uint64_t recording_captured_frames{}, recording_capacity_frames{},
         recording_dropped_frames{},
         recording_overflows{}, recording_finalization_microseconds{},
-        recording_memory_bytes{};
+        recording_memory_bytes{}, mixer_publication_failures{};
 };
 
 struct SystemStatistics {

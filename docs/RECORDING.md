@@ -21,6 +21,9 @@ Stable source identifiers currently select:
 - `external-mono` and `external-stereo`: miniaudio duplex capture input;
 - `master-pre`: the mixed sample/synth signal before master gain/effects;
 - `master-post`: output after master gain and stereo delay.
+- `track` plus stable track ID: post-fader timeline channel;
+- `aux` plus bus index: post-gain aux before return gain;
+- `physical-input` plus channel index: one device input independently.
 
 Pre-effects excludes master gain; post-effects includes it and current master
 processing. Both internal taps include samples, synths, and timeline playback.
@@ -33,6 +36,10 @@ with unrelated clocks are not supported; they need asynchronous drift
 compensation. Output-only operation is unchanged. Use `--list-devices` to see
 inputs and `--input NAME` to open duplex mode. Physical input operation has not
 been verified in CI.
+
+Track and aux sources do not need to be routed to the physical master. The
+multichannel adapter accepts one to six inputs and outputs, but physical
+multichannel behavior remains hardware-unverified.
 
 Input monitoring is Off, On, or Auto. On mixes the current input block into the
 output; Auto does so only while armed/recording. Latency is the backend duplex

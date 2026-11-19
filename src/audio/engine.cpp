@@ -20,7 +20,7 @@ AudioEngine::AudioEngine(std::uint32_t rate, std::size_t voice_capacity,
       sample_version_capacity_(sample_version_capacity),
       voices_(voice_capacity), legacy_events_(event_staging_capacity),
       timeline_events_(event_staging_capacity), synth_(rate, voice_capacity),
-      delay_(rate) {
+      delay_(rate), mixer_(rate) {
     if (rate == 0 || voice_capacity == 0 || event_staging_capacity == 0 ||
         sample_version_capacity == 0)
         throw std::invalid_argument(
@@ -565,6 +565,19 @@ void AudioEngine::process(std::span<float> left,
     const auto frames = std::min(left.size(), right.size());
     std::fill(left.begin(), left.end(), 0);
     std::fill(right.begin(), right.end(), 0);
+    mixer_.begin_block(frames);
+    if (duplex_input_ && duplex_input_channels_) {
+        const auto input_frames = std::min(
+            frames, duplex_input_samples_ / duplex_input_channels_);
+        for (std::size_t frame = 0; frame < input_frames; ++frame)
+            for (std::uint16_t channel = 0;
+                 channel < duplex_input_channels_ &&
+                 channel < maximum_mixer_inputs;
+                 ++channel)
+                mixer_.add_input(channel, frame,
+                                 duplex_input_[frame * duplex_input_channels_ +
+                                               channel]);
+    }
 
     SampleUpdate sample_update;
     while (sample_updates_.pop(sample_update)) {
@@ -680,6 +693,12 @@ void AudioEngine::process(std::span<float> left,
     const auto instrument_begin = monitoring
                                       ? std::chrono::steady_clock::now()
                                       : std::chrono::steady_clock::time_point{};
+    std::array<std::uint64_t, maximum_mixer_tracks> mixer_tracks{};
+    std::array<float, maximum_mixer_tracks> synth_tracks{};
+    const auto mixer_track_count =
+        std::min(mixer_.active_track_count(), mixer_tracks.size());
+    for (std::size_t i = 0; i < mixer_track_count; ++i)
+        mixer_tracks[i] = mixer_.active_track_id(i);
 
     for (std::size_t frame = 0; frame < frames; ++frame) {
         while (external_index < pending_trigger_count_ &&
@@ -781,8 +800,14 @@ void AudioEngine::process(std::span<float> left,
                 sample_right = interpolate(1);
             }
             const auto level = voice.gain * voice.envelope_level;
-            left[frame] += sample_left * level;
-            right[frame] += sample_right * level;
+            const auto routed =
+                voice.timeline_owned &&
+                mixer_.add_track(voice.track, frame, sample_left * level,
+                                 sample_right * level);
+            if (!routed) {
+                left[frame] += sample_left * level;
+                right[frame] += sample_right * level;
+            }
             if (voice.envelope_stage == Voice::EnvelopeStage::attack) {
                 voice.envelope_level += voice.attack_step;
                 if (voice.envelope_level >= 1.0F) {
@@ -809,9 +834,15 @@ void AudioEngine::process(std::span<float> left,
                 voice.position +=
                     voice.reverse ? -voice.increment : voice.increment;
         }
-        const auto synth_sample = synth_.render_sample();
-        left[frame] += synth_sample;
-        right[frame] += synth_sample;
+        float synth_unrouted{};
+        synth_.render_sample_tracks(
+            {mixer_tracks.data(), mixer_track_count},
+            {synth_tracks.data(), mixer_track_count}, synth_unrouted);
+        left[frame] += synth_unrouted;
+        right[frame] += synth_unrouted;
+        for (std::size_t i = 0; i < mixer_track_count; ++i)
+            (void)mixer_.add_track(mixer_tracks[i], frame, synth_tracks[i],
+                                   synth_tracks[i]);
     }
 
     const auto remaining = pending_trigger_count_ - external_index;
@@ -851,10 +882,27 @@ void AudioEngine::process(std::span<float> left,
     }
     published_frame_.store(transport_frame_, std::memory_order_release);
     published_playing_.store(transport_playing_, std::memory_order_release);
-    if (auto *recorder = recording_.load(std::memory_order_acquire))
+    mixer_.process(
+        left.first(frames), right.first(frames),
+        physical_output_
+            ? std::span<float>{physical_output_, physical_output_samples_}
+            : std::span<float>{},
+        physical_output_channels_);
+    if (auto *recorder = recording_.load(std::memory_order_acquire)) {
+        for (std::size_t i = 0; i < mixer_track_count; ++i)
+            recorder->capture_internal(RecordingSource::track_channel,
+                                       mixer_.track_left(i),
+                                       mixer_.track_right(i), callback_frame,
+                                       mixer_tracks[i]);
+        for (std::size_t i = 0; i < mixer_aux_count; ++i)
+            recorder->capture_internal(RecordingSource::auxiliary_bus,
+                                       mixer_.aux_left(i), mixer_.aux_right(i),
+                                       callback_frame, i);
         recorder->capture_internal(RecordingSource::master_pre_effects,
                                    left.first(frames), right.first(frames),
                                    callback_frame);
+    }
+    mixer_.apply_master_gain(left.first(frames), right.first(frames));
     const auto effect_begin = monitoring
                                   ? std::chrono::steady_clock::now()
                                   : std::chrono::steady_clock::time_point{};
@@ -881,6 +929,12 @@ void AudioEngine::process(std::span<float> left,
         recorder->capture_internal(RecordingSource::master_post_effects,
                                    left.first(frames), right.first(frames),
                                    callback_frame);
+    mixer_.route_master_output(
+        left.first(frames), right.first(frames),
+        physical_output_
+            ? std::span<float>{physical_output_, physical_output_samples_}
+            : std::span<float>{},
+        physical_output_channels_);
     if (monitoring)
         effect_nanoseconds_.store(
             static_cast<std::uint64_t>(
@@ -921,7 +975,13 @@ void AudioEngine::process_duplex(std::span<float> left, std::span<float> right,
                                  std::span<const float> input,
                                  std::uint16_t channels) noexcept {
     capture_external_input(input, channels);
+    duplex_input_ = input.data();
+    duplex_input_samples_ = input.size();
+    duplex_input_channels_ = channels;
     process(left, right);
+    duplex_input_ = nullptr;
+    duplex_input_samples_ = 0;
+    duplex_input_channels_ = 0;
     auto *recorder = recording_.load(std::memory_order_acquire);
     if (!recorder || !recorder->monitoring_active() || channels == 0)
         return;
@@ -933,6 +993,48 @@ void AudioEngine::process_duplex(std::span<float> left, std::span<float> right,
         left[i] += l;
         right[i] += r;
     }
+}
+
+void AudioEngine::process_io(std::span<float> output,
+                             std::uint16_t output_channels,
+                             std::span<const float> input,
+                             std::uint16_t input_channels) noexcept {
+    if (output_channels == 0)
+        return;
+    const auto frames = output.size() / output_channels;
+    std::array<float, maximum_mixer_block> left{}, right{};
+    const auto count = std::min(frames, left.size());
+    std::fill(output.begin(), output.end(), 0.0F);
+    physical_output_ = output.data();
+    physical_output_samples_ = output.size();
+    physical_output_channels_ = static_cast<std::uint8_t>(
+        std::min<std::uint16_t>(output_channels, maximum_mixer_outputs));
+    duplex_input_ = input.data();
+    duplex_input_samples_ = input.size();
+    duplex_input_channels_ = input_channels;
+    capture_external_input(input, input_channels);
+    process({left.data(), count}, {right.data(), count});
+    if (auto *recorder = recording_.load(std::memory_order_acquire);
+        recorder && recorder->monitoring_active() && input_channels) {
+        const auto output_left = mixer_.active_master_left();
+        const auto output_right = mixer_.active_master_right();
+        if (output_left < output_channels && output_right < output_channels)
+            for (std::size_t frame = 0;
+                 frame < std::min(count, input.size() / input_channels);
+                 ++frame) {
+                output[frame * output_channels + output_left] +=
+                    input[frame * input_channels];
+                output[frame * output_channels + output_right] +=
+                    input[frame * input_channels +
+                          (input_channels > 1 ? 1 : 0)];
+            }
+    }
+    physical_output_ = nullptr;
+    physical_output_samples_ = 0;
+    physical_output_channels_ = 0;
+    duplex_input_ = nullptr;
+    duplex_input_samples_ = 0;
+    duplex_input_channels_ = 0;
 }
 
 void AudioEngine::render_wav(const std::filesystem::path &path,

@@ -540,6 +540,96 @@ void recording_case() {
     checksum += completed.frames();
     result("internal_master_recording", 48000, 256, processing, preparation);
 }
+void mixer_case(std::size_t channels, bool auxiliaries, bool six_io) {
+    neurogenic::Mixer mixer;
+    neurogenic::MixerConfiguration configuration;
+    configuration.revision = 1;
+    configuration.track_count = channels;
+    for (std::size_t i = 0; i < channels; ++i) {
+        configuration.tracks[i].track = i + 1;
+        configuration.tracks[i].aux_send =
+            auxiliaries ? std::array<float, 2>{0.25F, 0.125F}
+                        : std::array<float, 2>{};
+    }
+    if (six_io) {
+        configuration.input_count = 6;
+        for (std::size_t i = 0; i < 6; ++i)
+            configuration.inputs[i].physical_channel =
+                static_cast<std::uint8_t>(i);
+    }
+    std::string error;
+    if (!mixer.publish(configuration, error))
+        throw std::runtime_error(error);
+    std::array<float, 256> left{}, right{};
+    std::array<float, 256 * 6> physical{};
+    const auto begin = Clock::now();
+    for (std::size_t iteration = 0; iteration < iterations; ++iteration) {
+        mixer.begin_block(left.size());
+        left.fill(0);
+        right.fill(0);
+        physical.fill(0);
+        for (std::size_t frame = 0; frame < left.size(); ++frame) {
+            for (std::size_t channel = 0; channel < channels; ++channel)
+                (void)mixer.add_track(channel + 1, frame, 0.01F, 0.01F);
+            if (six_io)
+                for (std::size_t input = 0; input < 6; ++input)
+                    mixer.add_input(static_cast<std::uint8_t>(input), frame,
+                                    0.005F);
+        }
+        mixer.process(left, right,
+                      six_io ? std::span<float>{physical} : std::span<float>{},
+                      six_io ? 6 : 0);
+        mixer.apply_master_gain(left, right);
+        mixer.route_master_output(
+            left, right,
+            six_io ? std::span<float>{physical} : std::span<float>{},
+            six_io ? 6 : 0);
+        checksum += left[0] != 0;
+    }
+    result("mixer_" + std::to_string(channels) +
+               (auxiliaries ? "_two_aux" : "") +
+               (six_io ? "_six_io" : ""),
+           48000, 256,
+           std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
+                                                                begin)
+                   .count() /
+               iterations);
+}
+void mixer_publication_case() {
+    neurogenic::Mixer mixer;
+    neurogenic::MixerConfiguration configuration;
+    configuration.track_count = 16;
+    for (std::size_t i = 0; i < configuration.track_count; ++i)
+        configuration.tracks[i].track = i + 1;
+    std::string error;
+    const auto begin = Clock::now();
+    for (std::size_t i = 0; i < iterations; ++i) {
+        configuration.revision = i + 1;
+        configuration.tracks[i % configuration.track_count].gain =
+            0.5F + static_cast<float>(i % 100) / 100.0F;
+        if (!mixer.publish(configuration, error))
+            throw std::runtime_error(error);
+        mixer.begin_block(256);
+    }
+    const auto preparation =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - begin)
+            .count() /
+        iterations;
+    std::array<float, 256> left{}, right{};
+    const auto processing_begin = Clock::now();
+    for (std::size_t i = 0; i < iterations; ++i) {
+        mixer.begin_block(256);
+        mixer.process(left, right);
+        mixer.apply_master_gain(left, right);
+        mixer.route_master_output(left, right);
+    }
+    result("mixer_rapid_publication", 48000, 256,
+           std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
+                                                                processing_begin)
+                   .count() /
+               iterations,
+           preparation);
+}
 } // namespace
 int main() {
     audio_case("idle", 0);
@@ -604,6 +694,11 @@ int main() {
     gui_case(1024, 600);
     project_io_case();
     recording_case();
+    mixer_case(4, false, false);
+    mixer_case(8, true, false);
+    mixer_case(16, true, false);
+    mixer_case(16, true, true);
+    mixer_publication_case();
     std::cout << "{\"schema\":\"neurogenic.benchmark.summary.v1\",\"checksum\":"
               << checksum
               << ",\"budget_passed\":" << (budget_failed ? "false" : "true")

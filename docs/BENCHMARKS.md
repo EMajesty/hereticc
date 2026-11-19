@@ -1,5 +1,9 @@
 # Performance monitoring and benchmarks
 
+Mixer scenarios cover 4, 8 and 16 channels, both stereo aux buses and simulated
+six-input/six-output routing. These host measurements do not establish physical
+Raspberry Pi 5 or Intel N150 performance.
+
 NEUROGENIC targets comfortable full-workstation operation on Raspberry Pi 5,
 while the personal reference build is an Intel N150 with 16 GB RAM. These are
 design targets, not measured claims. Faster machines provide feature headroom;
@@ -132,3 +136,11 @@ real-time performance.
 from the control-side immutable-sample copy reported as preparation time. It
 uses deterministic silence and a preallocated buffer; WAV filesystem throughput
 and physical-device latency are excluded.
+
+Task 026 adds mixer scenarios for 4 channels, 8/16 channels with two active
+sends, simulated six-channel I/O and rapid routing publication. On the
+2026-11-19 Ryzen 7 7800X3D Debug host these averaged approximately 9.4, 29.8,
+50.1 and 62.5 µs per 256-frame buffer. Rapid publication preparation averaged
+1.2 µs and its idle 16-channel processing pass 12.5 µs. Resident process memory
+was about 35.8 MiB. These are deterministic offline averages, not worst-case,
+physical-device, Pi 5, N150 or XRUN claims.

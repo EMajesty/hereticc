@@ -41,6 +41,12 @@ const char *recording_source_name(RecordingSource source) noexcept {
         return "Master pre-effects";
     case RecordingSource::master_post_effects:
         return "Master post-effects";
+    case RecordingSource::track_channel:
+        return "Track channel";
+    case RecordingSource::auxiliary_bus:
+        return "Auxiliary bus";
+    case RecordingSource::physical_input:
+        return "Physical input";
     }
     return "Unknown";
 }
@@ -180,8 +186,9 @@ void RecordingService::reset() noexcept {
 void RecordingService::capture_internal(RecordingSource source,
                                         std::span<const float> left,
                                         std::span<const float> right,
-                                        std::uint64_t callback_frame) noexcept {
-    capture(source, left, right, callback_frame);
+                                        std::uint64_t callback_frame,
+                                        std::uint64_t source_id) noexcept {
+    capture(source, left, right, callback_frame, source_id);
 }
 void RecordingService::capture_external(std::span<const float> interleaved,
                                         std::uint16_t input_channels,
@@ -191,7 +198,8 @@ void RecordingService::capture_external(std::span<const float> interleaved,
         return;
     const auto source = configuration_.source;
     if (source != RecordingSource::external_mono &&
-        source != RecordingSource::external_stereo)
+        source != RecordingSource::external_stereo &&
+        source != RecordingSource::physical_input)
         return;
     const auto frames = input_channels ? interleaved.size() / input_channels : 0;
     // The device adapter provides bounded callback blocks. Deinterleave into
@@ -200,13 +208,20 @@ void RecordingService::capture_external(std::span<const float> interleaved,
     for (std::size_t done = 0; done < frames;) {
         const auto count = std::min<std::size_t>(left.size(), frames - done);
         for (std::size_t i = 0; i < count; ++i) {
-            left[i] = interleaved[(done + i) * input_channels];
-            right[i] = input_channels > 1
-                           ? interleaved[(done + i) * input_channels + 1]
-                           : left[i];
+            const auto selected = source == RecordingSource::physical_input
+                                      ? std::min<std::size_t>(
+                                            configuration_.source_id,
+                                            input_channels - 1)
+                                      : 0;
+            left[i] = interleaved[(done + i) * input_channels + selected];
+            right[i] = source == RecordingSource::physical_input
+                           ? left[i]
+                           : (input_channels > 1
+                                  ? interleaved[(done + i) * input_channels + 1]
+                                  : left[i]);
         }
         capture(source, {left.data(), count}, {right.data(), count},
-                callback_frame + done);
+                callback_frame + done, configuration_.source_id);
         done += count;
     }
 }
@@ -214,10 +229,15 @@ void RecordingService::capture_external(std::span<const float> interleaved,
 void RecordingService::capture(RecordingSource source,
                                std::span<const float> left,
                                std::span<const float> right,
-                               std::uint64_t callback_frame) noexcept {
+                               std::uint64_t callback_frame,
+                               std::uint64_t source_id) noexcept {
     auto state = state_.load(std::memory_order_acquire);
     if ((state != RecordingState::armed && state != RecordingState::recording) ||
         configuration_.source != source ||
+        ((source == RecordingSource::track_channel ||
+          source == RecordingSource::auxiliary_bus ||
+          source == RecordingSource::physical_input) &&
+         configuration_.source_id != source_id) ||
         !start_enabled_.load(std::memory_order_acquire))
         return;
     const auto frames = std::min(left.size(), right.size());
@@ -296,7 +316,8 @@ RecordingStatus RecordingService::status() const {
 bool RecordingService::monitoring_active() const noexcept {
     const auto state = state_.load(std::memory_order_acquire);
     if (configuration_.source != RecordingSource::external_mono &&
-        configuration_.source != RecordingSource::external_stereo)
+        configuration_.source != RecordingSource::external_stereo &&
+        configuration_.source != RecordingSource::physical_input)
         return false;
     return configuration_.monitoring == RecordingMonitorMode::on ||
            (configuration_.monitoring == RecordingMonitorMode::automatic &&

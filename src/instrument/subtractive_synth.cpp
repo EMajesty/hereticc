@@ -158,6 +158,14 @@ float SubtractiveSynth::envelope(Voice &voice) noexcept {
 }
 float SubtractiveSynth::render_sample() noexcept {
     float output{};
+    render_sample_tracks({}, {}, output);
+    return output;
+}
+void SubtractiveSynth::render_sample_tracks(std::span<const std::uint64_t> tracks,
+                                            std::span<float> outputs,
+                                            float &unrouted) noexcept {
+    std::fill(outputs.begin(), outputs.end(), 0.0F);
+    unrouted = 0;
     const auto cutoff = std::clamp(smooth(cutoff_, cutoff_current_), 20.0F,
                                    rate_ * 0.45F),
                resonance = smooth(resonance_, resonance_current_),
@@ -180,9 +188,19 @@ float SubtractiveSynth::render_sample() noexcept {
                 value = 0;
             }
         }
-        output += value;
+        auto routed = false;
+        for (std::size_t i = 0; i < std::min(tracks.size(), outputs.size()); ++i)
+            if (voice.owner.track != 0 && voice.owner.track == tracks[i]) {
+                outputs[i] += value;
+                routed = true;
+                break;
+            }
+        if (!routed)
+            unrouted += value;
     }
-    return std::clamp(output * gain, -2.0F, 2.0F);
+    for (auto &value : outputs)
+        value = std::clamp(value * gain, -2.0F, 2.0F);
+    unrouted = std::clamp(unrouted * gain, -2.0F, 2.0F);
 }
 void SubtractiveSynth::process(std::span<float> left,
                                std::span<float> right) noexcept {

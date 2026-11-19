@@ -9,6 +9,10 @@ workstation engine. Its first live vertical slice plays a WAV through miniaudio,
 receives MIDI through libremidi, executes Lua 5.4 through sol2, applies generated
 16-step patterns at bar boundaries, and retains deterministic offline rendering.
 
+The engine now includes a bounded per-track mixer, two stereo aux buses,
+master routing, six-channel-capable device adaptation and track/aux/master
+recording taps. See [mixer and routing](docs/MIXER.md).
+
 This is foundation software, not a DAW or a finished groovebox. The engine does
 not assume a UI, controller, or hardware layout. Linux x86_64 and AArch64 are
 supported build targets; portable C++ and narrow backend interfaces remain the
@@ -155,7 +159,8 @@ request and reports callback activation explicitly. See
 [live sample management](docs/SAMPLES.md).
 
 Live recording supports bounded external mono/stereo duplex input and internal
-master pre/post-effects resampling. `--input NAME` selects capture; interactive
+master pre/post-effects resampling. `--input NAME --input-channels 2
+--output-channels 2` selects a duplex layout; interactive
 `record-start`, `record-stop`, `record-status`, and `record-save` commands form
 a headless workflow. Recordings publish through immutable sample slots and can
 be sliced or assigned to pads. See [recording](docs/RECORDING.md).

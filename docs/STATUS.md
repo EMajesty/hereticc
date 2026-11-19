@@ -1,5 +1,12 @@
 # Implementation status
 
+Task 026 adds a bounded 32-track mixer with gain/balance pan/mute/solo and peak
+meters, two stereo aux sends/returns with optional native delay, six-channel-
+capable input/output routing, track/aux/input/master recording taps, semantic
+actions/parameters, versioned project metadata, a Mixer GUI and deterministic
+benchmarks. Six-channel paths are simulated and cross-compiled; physical
+multichannel hardware, channel labels and monitoring latency are not verified.
+
 Task 023 adds optional bounded realtime pitch-preserving stretch for full
 samples and slices, independent time/pitch ratios, beat/BPM tempo sync, three
 window/latency presets, semantic actions, GUI/controller access, v3 persistence
@@ -229,5 +236,6 @@ pre/post-effects resampling, simulated and miniaudio duplex external input,
 Off/On/Auto monitoring, immediate/beat/bar starts, fixed-bar/manual stops,
 PCM16/float32 WAV output, immutable publication, project recording assets,
 semantic actions, GUI status, tests, and benchmarks. Physical duplex hardware,
-independent-device clock correction, multichannel routing, and track/aux taps
-remain unverified or deferred.
+independent-device clock correction and subjective monitoring remain unverified
+or deferred. Task 026 adds track/aux taps and simulated six-channel routing;
+physical multichannel hardware remains unverified.

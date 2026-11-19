@@ -39,6 +39,8 @@ void usage() {
            "(repeatable)\n"
            "  --audio NAME      select audio output by index or name\n"
            "  --input NAME      open a duplex audio input by index or name\n"
+           "  --input-channels N  request 1..6 device input channels\n"
+           "  --output-channels N request 1..6 device output channels\n"
            "  --midi NAME       select MIDI input by index or name\n"
            "  --script FILE     Lua action for MIDI note 36\n"
            "  --timeline FILE   load a NEUROGENIC_TIMELINE version 1 file\n"
@@ -109,12 +111,17 @@ int main(int argc, char **argv) {
              fullscreen = false, reset_ui_scale = false, stats = false,
              synth = false;
         std::optional<float> ui_scale;
+        std::uint32_t input_channels{2}, output_channels{2};
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
             if (arg == "--audio" && i + 1 < argc)
                 audio_name = argv[++i];
             else if (arg == "--input" && i + 1 < argc)
                 input_name = argv[++i];
+            else if (arg == "--input-channels" && i + 1 < argc)
+                input_channels = unsigned_number(argv[++i], "--input-channels");
+            else if (arg == "--output-channels" && i + 1 < argc)
+                output_channels = unsigned_number(argv[++i], "--output-channels");
             else if (arg == "--midi" && i + 1 < argc)
                 midi_name = argv[++i];
             else if (arg == "--script" && i + 1 < argc)
@@ -178,14 +185,26 @@ int main(int argc, char **argv) {
             std::cout << "Audio backend: " << audio.backend()
                       << "\nAudio outputs:\n";
             std::size_t index = 0;
-            for (const auto &name : audio.outputs())
-                std::cout << "  [" << index++ << "] " << name << '\n';
+            for (const auto &port : audio.output_capabilities())
+                std::cout << "  [" << index++ << "] " << port.name
+                          << (port.maximum_channels
+                                  ? " (up to " +
+                                        std::to_string(port.maximum_channels) +
+                                        " ch)"
+                                  : " (channel capability unknown)")
+                          << '\n';
             if (index == 0)
                 std::cout << "  (none discovered)\n";
             std::cout << "Audio inputs:\n";
             index = 0;
-            for (const auto &name : audio.inputs())
-                std::cout << "  [" << index++ << "] " << name << '\n';
+            for (const auto &port : audio.input_capabilities())
+                std::cout << "  [" << index++ << "] " << port.name
+                          << (port.maximum_channels
+                                  ? " (up to " +
+                                        std::to_string(port.maximum_channels) +
+                                        " ch)"
+                                  : " (channel capability unknown)")
+                          << '\n';
             if (index == 0)
                 std::cout << "  (none discovered)\n";
             std::cout << "MIDI backend: " << midi.backend()
@@ -321,11 +340,18 @@ int main(int argc, char **argv) {
         });
         dispatcher.start();
         std::string error;
-        const auto audio_started = input_name.empty()
+        if (input_channels == 0 || input_channels > 6 || output_channels == 0 ||
+            output_channels > 6)
+            throw std::invalid_argument("audio channel counts must be 1..6");
+        const auto audio_started = input_name.empty() && output_channels == 2
                                        ? audio.start(audio_name, error)
                                        : audio.start_duplex(audio_name,
-                                                            input_name, 2,
-                                                            error);
+                                                            input_name,
+                                                            input_name.empty()
+                                                                ? 0
+                                                                : input_channels,
+                                                            error,
+                                                            output_channels);
         if (!audio_started) {
             std::cerr << "audio unavailable: " << error << '\n';
             return 1;

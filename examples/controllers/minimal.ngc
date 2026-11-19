@@ -5,6 +5,7 @@ control|enter|momentary|Enter
 control|back|momentary|Back
 control|joystick|joystick|X/Y
 bind|data|action|navigation.adjust.v1|label=Navigate
+bind|data|parameter|mixer.selected.gain|shift|label=Mixer gain
 bind|enter|action|navigation.confirm.v1|feedback=display.main
 bind|enter|action|slice.preview.v1|shift|feedback=display.main|label=Preview slice
 bind|back|action|slice.preview-stop.v1|shift|feedback=display.main|label=Stop preview

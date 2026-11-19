@@ -5,9 +5,13 @@ control|stop|momentary|Stop
 control|data|encoder|Data encoder
 control|enter|momentary|Data push
 control|fader.1|fader|Fader 1
+control|encoder.1|encoder|Mixer gain
+control|mute|toggle|Mixer mute
 bind|play|action|transport.play.v1|feedback=led.play
 bind|stop|action|transport.stop.v1|feedback=led.stop
 bind|enter|action|navigation.confirm.v1|feedback=display.main
 bind|enter|action|slice.preview.v1|shift|feedback=display.main|label=Preview slice
 bind|data|parameter|transport.tempo|label=Tempo
 bind|fader.1|parameter|performance.xy.x|label=X
+bind|encoder.1|parameter|mixer.selected.gain|label=Channel gain
+bind|mute|action|mixer.mute-toggle.v1|feedback=led.mute

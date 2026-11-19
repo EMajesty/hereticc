@@ -1,4 +1,5 @@
 #pragma once
+#include "neurogenic/audio/mixer.hpp"
 #include "neurogenic/audio/sample.hpp"
 #include "neurogenic/core/spsc_queue.hpp"
 #include "neurogenic/dsp/processor.hpp"
@@ -96,6 +97,13 @@ class AudioEngine {
     [[nodiscard]] bool set_synth_parameter(SynthParameter, float) noexcept;
     [[nodiscard]] bool set_delay_parameter(DelayParameter, float) noexcept;
     [[nodiscard]] bool set_delay_bypass(bool) noexcept;
+    [[nodiscard]] bool publish_mixer(const MixerConfiguration &configuration,
+                                     std::string &error) noexcept {
+        return mixer_.publish(configuration, error);
+    }
+    [[nodiscard]] MixerState mixer_state() const noexcept {
+        return mixer_.state();
+    }
     bool queue_pattern(const Pattern &pattern) noexcept;
     bool queue_timeline(const Timeline &, std::string &error);
     void play() noexcept;
@@ -106,6 +114,10 @@ class AudioEngine {
     void process_duplex(std::span<float> left, std::span<float> right,
                         std::span<const float> interleaved_input,
                         std::uint16_t input_channels) noexcept;
+    void process_io(std::span<float> interleaved_output,
+                    std::uint16_t output_channels,
+                    std::span<const float> interleaved_input = {},
+                    std::uint16_t input_channels = 0) noexcept;
     void set_recording_service(RecordingService *service) noexcept {
         recording_.store(service, std::memory_order_release);
     }
@@ -376,5 +388,12 @@ class AudioEngine {
     std::atomic<std::uint64_t> callback_frame_{};
     SubtractiveSynth synth_;
     StereoDelay delay_;
+    Mixer mixer_;
+    const float *duplex_input_{};
+    std::size_t duplex_input_samples_{};
+    std::uint16_t duplex_input_channels_{};
+    float *physical_output_{};
+    std::size_t physical_output_samples_{};
+    std::uint8_t physical_output_channels_{};
 };
 } // namespace neurogenic

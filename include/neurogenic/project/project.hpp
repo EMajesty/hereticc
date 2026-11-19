@@ -1,4 +1,5 @@
 #pragma once
+#include "neurogenic/audio/mixer.hpp"
 #include "neurogenic/audio/slicing.hpp"
 #include "neurogenic/timeline/model.hpp"
 #include <filesystem>
@@ -13,6 +14,7 @@ struct Project {
     Timeline timeline;
     SliceProject samples;
     std::map<std::string, double> parameters;
+    MixerConfiguration mixer;
     std::vector<std::filesystem::path> missing_assets;
 };
 
