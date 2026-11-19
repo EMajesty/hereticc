@@ -28,6 +28,10 @@ struct EngineStatistics {
         dropped_dsp_commands{}, synth_stolen_voices{}, instrument_nanoseconds{},
         effect_nanoseconds{};
     std::size_t active_synth_voices{}, maximum_synth_voices{};
+    std::uint64_t recording_captured_frames{}, recording_capacity_frames{},
+        recording_dropped_frames{},
+        recording_overflows{}, recording_finalization_microseconds{},
+        recording_memory_bytes{};
 };
 
 struct SystemStatistics {

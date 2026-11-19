@@ -12,7 +12,8 @@ enum class GuiView : std::uint8_t {
     parameters,
     xy,
     performance,
-    settings
+    settings,
+    recording
 };
 struct UiRect {
     float x{}, y{}, w{}, h{};

@@ -52,6 +52,11 @@ class SampleManager {
         return load(id, path);
     }
     [[nodiscard]] bool unload(SampleSlotId);
+    [[nodiscard]] bool
+        publish_prepared(SampleSlotId, std::shared_ptr<const Sample>,
+                         const std::filesystem::path &source_path);
+    [[nodiscard]] bool set_source_path(SampleSlotId,
+                                       const std::filesystem::path &);
     [[nodiscard]] SampleSlotStatus status(SampleSlotId) const;
     [[nodiscard]] std::vector<SampleSlotStatus> states() const;
     [[nodiscard]] std::shared_ptr<const Sample>

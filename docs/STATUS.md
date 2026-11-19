@@ -223,3 +223,11 @@ project; missing assets remain inspectable, savable, and relinkable. Startup
 supports `--project`. Automatic asset copying, generation pruning, a full GUI
 filesystem browser, reopen-last preference, and power-loss durability claims
 remain deferred.
+
+Task 025 adds a bounded 60-second default mono/stereo recorder, master
+pre/post-effects resampling, simulated and miniaudio duplex external input,
+Off/On/Auto monitoring, immediate/beat/bar starts, fixed-bar/manual stops,
+PCM16/float32 WAV output, immutable publication, project recording assets,
+semantic actions, GUI status, tests, and benchmarks. Physical duplex hardware,
+independent-device clock correction, multichannel routing, and track/aux taps
+remain unverified or deferred.

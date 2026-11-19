@@ -78,3 +78,8 @@ Legacy `.ngt` timelines and version 1-3 slice sidecars remain accepted by their
 existing loaders. They can be assembled into a project through the shared C++
 services; there is not yet a one-click GUI migration wizard.
 
+An audio-active recording without a filename is retained during Save as a
+float32 `recordings/slot-ID.wav` asset and then referenced relatively. Failure
+to write that asset aborts the new generation instead of silently dropping the
+capture. Missing recorded assets use the same reporting and relinking path as
+other samples.

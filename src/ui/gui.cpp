@@ -175,8 +175,8 @@ GuiLayout GuiModel::layout(int width, int height) const {
                             ? r(logical_width - margin - inspector_width,
                                 content_y, inspector_width, content_height)
                             : UiRect{};
-    const float tab_width = (logical_width - 32) / 6;
-    for (int i = 0; i < 6; ++i)
+    const float tab_width = (logical_width - 32) / 7;
+    for (int i = 0; i < 7; ++i)
         result.tabs.push_back(r(16 + i * tab_width, 72, tab_width - 8, 38));
     result.page_previous = r(28, content_y + 12, 64, 42);
     result.page_next = r(100, content_y + 12, 64, 42);
@@ -274,8 +274,8 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
                   : "n/a") +
              " MiB  VOICES " + std::to_string(perf.engine.active_voices) + "/" +
              std::to_string(perf.engine.maximum_voices));
-    const char *names[]{"SEQUENCER", "SAMPLES", "PARAMETERS",
-                        "X/Y",       "PERF",    "DISPLAY"};
+    const char *names[]{"SEQUENCER", "SAMPLES", "PARAMETERS", "X/Y",
+                        "PERF", "DISPLAY", "RECORD"};
     for (std::size_t i = 0; i < l.tabs.size(); ++i) {
         rect(l.tabs[i], i == static_cast<std::size_t>(view_) ? UiColor::selected
                                                              : UiColor::panel);
@@ -573,7 +573,42 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
                 std::to_string(perf.engine.synth_stolen_voices) + "  inst/fx " +
                 micros(perf.engine.instrument_nanoseconds) + "/" +
                 micros(perf.engine.effect_nanoseconds),
-            "Backend XRUN counter: unavailable"};
+            "Recording " +
+                std::to_string(perf.engine.recording_captured_frames) + "/" +
+                std::to_string(perf.engine.recording_capacity_frames) +
+                " frames, dropped " +
+                std::to_string(perf.engine.recording_dropped_frames) +
+                "  Backend XRUNs unavailable"};
+        for (std::size_t i = 0; i < std::size(rows) && i < l.rows.size(); ++i) {
+            rect(l.rows[i], UiColor::background);
+            text(l.rows[i], UiColor::text, rows[i]);
+        }
+    } else if (view_ == GuiView::recording) {
+        const auto &recording = state.recording;
+        text({l.content.x + 12 * l.scale, l.content.y + 8 * l.scale,
+              l.content.w - 24 * l.scale, 28 * l.scale},
+             UiColor::accent, "AUDIO RECORDING");
+        const auto usage = recording.capacity_frames
+                               ? 100.0 * recording.captured_frames /
+                                     recording.capacity_frames
+                               : 0.0;
+        const std::string rows[]{
+            "State: " + std::string(recording_state_name(recording.state)),
+            "Source: " +
+                std::string(recording_source_name(
+                    recording.configuration.source)),
+            "Destination slot: " +
+                std::to_string(recording.configuration.destination.value) +
+                "  Channels: " +
+                std::to_string(recording.configuration.channels),
+            "Captured: " + std::to_string(recording.captured_frames) +
+                " frames / " + std::to_string(usage) + "% buffer",
+            "Peak L/R: " + std::to_string(recording.peak_left) + " / " +
+                std::to_string(recording.peak_right),
+            "Overflow / dropped: " +
+                std::to_string(recording.overflow_count) + " / " +
+                std::to_string(recording.dropped_frames),
+            "Enter: arm/start/stop   Escape: cancel"};
         for (std::size_t i = 0; i < std::size(rows) && i < l.rows.size(); ++i) {
             rect(l.rows[i], UiColor::background);
             text(l.rows[i], UiColor::text, rows[i]);
@@ -848,12 +883,21 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
         }
         if (input.key == GuiKey::tab) {
             view_ =
-                static_cast<GuiView>((static_cast<unsigned>(view_) + 1) % 6);
+                static_cast<GuiView>((static_cast<unsigned>(view_) + 1) % 7);
             frame_.state_revision = std::numeric_limits<std::uint64_t>::max();
             return true;
         }
         if (input.key == GuiKey::enter) {
-            if (view_ == GuiView::samples && !sample_path_.empty())
+            if (view_ == GuiView::recording) {
+                if (state.recording.state == RecordingState::recording)
+                    submit(command("recording.stop.v1"));
+                else if (state.recording.state == RecordingState::armed)
+                    submit(command("recording.start.v1"));
+                else {
+                    submit(command("recording.arm.v1"));
+                    submit(command("recording.start.v1"));
+                }
+            } else if (view_ == GuiView::samples && !sample_path_.empty())
                 submit(
                     command("sample.replace.v1",
                             {{"slot_id", static_cast<std::int64_t>(
@@ -888,6 +932,10 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
             return true;
         }
         if (input.key == GuiKey::escape) {
+            if (view_ == GuiView::recording) {
+                submit(command("recording.cancel.v1"));
+                return true;
+            }
             if (view_ == GuiView::parameters && shift_ &&
                 !state.parameters.empty())
                 submit(command(
@@ -948,6 +996,26 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
             error_ = accepted ? std::string{} : std::move(settings_error);
             return true;
         }
+        if ((input.key == GuiKey::up || input.key == GuiKey::down) &&
+            view_ == GuiView::recording) {
+            if (shift_) {
+                const std::array sources{"external-mono", "external-stereo",
+                                         "master-pre", "master-post"};
+                const auto current = state.recording.configuration.source;
+                auto index = static_cast<int>(current);
+                index = (index + (input.key == GuiKey::up ? 1 : 3)) % 4;
+                submit(command("recording.source-select.v1",
+                               {{"source", std::string(sources[index])}}));
+            } else {
+                auto slot = static_cast<std::int64_t>(
+                    state.recording.configuration.destination.value);
+                slot = std::max<std::int64_t>(
+                    0, slot + (input.key == GuiKey::up ? 1 : -1));
+                submit(command("recording.destination-select.v1",
+                               {{"slot_id", slot}}));
+            }
+            return true;
+        }
     }
     if (input.type == GuiInput::Type::key_up && input.key == GuiKey::shift) {
         shift_ = false;
@@ -969,6 +1037,23 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
                     std::numeric_limits<std::uint64_t>::max();
                 return true;
             }
+        if (view_ == GuiView::recording) {
+            if (!l.rows.empty() && l.rows[0].contains(input.x, input.y)) {
+                if (state.recording.state == RecordingState::recording)
+                    submit(command("recording.stop.v1"));
+                else if (state.recording.state == RecordingState::armed)
+                    submit(command("recording.start.v1"));
+                else {
+                    submit(command("recording.arm.v1"));
+                    submit(command("recording.start.v1"));
+                }
+                return true;
+            }
+            if (l.rows.size() > 6 && l.rows[6].contains(input.x, input.y)) {
+                submit(command("recording.cancel.v1"));
+                return true;
+            }
+        }
         if (view_ == GuiView::sequencer) {
             UiRect undo{l.parameters.x + 12 * l.scale,
                         l.parameters.y + 48 * l.scale, 92 * l.scale,

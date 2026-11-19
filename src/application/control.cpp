@@ -258,6 +258,26 @@ ActionRegistry::ActionRegistry() {
         "project.relink-sample.v1", "Relink missing sample", "Project",
         {{"missing", ValueType::text}, {"replacement", ValueType::text}}));
     add(action("project.query.v1", "Query project status", "Project"));
+    add(action("recording.source-select.v1", "Select recording source", "Recording",
+               {{"source", ValueType::text}}));
+    add(action("recording.destination-select.v1", "Select recording destination", "Recording",
+               {{"slot_id", ValueType::integer}}));
+    add(action("recording.channels-set.v1", "Set recording channels", "Recording",
+               {{"channels", ValueType::integer}}));
+    add(action("recording.quantization-set.v1", "Set recording quantization", "Recording",
+               {{"quantization", ValueType::text}}));
+    add(action("recording.fixed-bars-set.v1", "Set fixed recording length", "Recording",
+               {{"bars", ValueType::integer}}));
+    add(action("recording.monitoring-set.v1", "Set input monitoring", "Recording",
+               {{"mode", ValueType::text}}));
+    add(action("recording.arm.v1", "Arm recording", "Recording"));
+    add(action("recording.start.v1", "Start recording", "Recording"));
+    add(action("recording.stop.v1", "Stop recording", "Recording"));
+    add(action("recording.cancel.v1", "Cancel recording", "Recording"));
+    add(action("recording.save.v1", "Save recording", "Recording",
+               {{"path", ValueType::text}, {"format", ValueType::text, false}}));
+    add(action("recording.assign-pad.v1", "Assign recording to pad", "Recording",
+               {{"pad", ValueType::integer}}));
     add(action("edit.undo.v1", "Undo", "Editing"));
     add(action("edit.redo.v1", "Redo", "Editing"));
     add(action("edit.group-begin.v1", "Begin grouped edit", "Editing"));
@@ -528,7 +548,8 @@ ApplicationService::ApplicationService(AudioEngine &engine,
                                        SampleManager &samples,
                                        std::size_t capacity)
     : engine_(engine), timeline_(timeline), samples_(samples),
-      slices_(engine, samples), capacity_(capacity) {
+      slices_(engine, samples), recording_(engine.sample_rate()),
+      capacity_(capacity) {
     if (capacity_ == 0)
         throw std::invalid_argument(
             "application command capacity must be positive");
@@ -612,6 +633,11 @@ ApplicationService::ApplicationService(AudioEngine &engine,
     state_.step_duration = state_.step_ticks;
     project_.timeline = timeline_.snapshot().timeline;
     state_.timeline_revision = timeline_.snapshot().revision;
+    recording_configuration_.destination = SampleSlotId{0};
+    engine_.set_recording_service(&recording_);
+}
+ApplicationService::~ApplicationService() {
+    engine_.set_recording_service(nullptr);
 }
 bool ApplicationService::submit(ApplicationCommand command) noexcept {
     try {
@@ -656,6 +682,194 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
     if (!actions_.validate(command.action_id, command.arguments, error))
         return {false, sequence, snapshot().revision, std::move(error)};
     const auto before = snapshot();
+    if (command.action_id.rfind("recording.", 0) == 0) {
+        const auto text = [&](std::string_view name) {
+            return *argument<std::string>(command, name);
+        };
+        if (command.action_id == "recording.source-select.v1") {
+            const auto value = text("source");
+            if (value == "external-mono")
+                recording_configuration_.source = RecordingSource::external_mono;
+            else if (value == "external-stereo")
+                recording_configuration_.source = RecordingSource::external_stereo;
+            else if (value == "master-pre")
+                recording_configuration_.source = RecordingSource::master_pre_effects;
+            else if (value == "master-post")
+                recording_configuration_.source = RecordingSource::master_post_effects;
+            else
+                error = "unknown recording source";
+        } else if (command.action_id == "recording.destination-select.v1") {
+            const auto value = *argument<std::int64_t>(command, "slot_id");
+            if (value < 0 || value >= invalid_sample_slot.value)
+                error = "invalid recording destination";
+            else
+                recording_configuration_.destination =
+                    SampleSlotId{static_cast<std::uint32_t>(value)};
+        } else if (command.action_id == "recording.channels-set.v1") {
+            const auto value = *argument<std::int64_t>(command, "channels");
+            if (value != 1 && value != 2)
+                error = "recording channels must be 1 or 2";
+            else
+                recording_configuration_.channels =
+                    static_cast<std::uint16_t>(value);
+        } else if (command.action_id == "recording.quantization-set.v1") {
+            const auto value = text("quantization");
+            if (value == "immediate")
+                recording_configuration_.quantization =
+                    RecordingQuantization::immediate;
+            else if (value == "beat")
+                recording_configuration_.quantization =
+                    RecordingQuantization::beat;
+            else if (value == "bar")
+                recording_configuration_.quantization =
+                    RecordingQuantization::bar;
+            else
+                error = "unknown recording quantization";
+        } else if (command.action_id == "recording.fixed-bars-set.v1") {
+            const auto value = *argument<std::int64_t>(command, "bars");
+            if (value < 0 || value > 1024)
+                error = "fixed recording length must be 0..1024 bars";
+            else
+                recording_fixed_bars_ = static_cast<std::uint64_t>(value);
+        } else if (command.action_id == "recording.monitoring-set.v1") {
+            const auto value = text("mode");
+            if (value == "off")
+                recording_configuration_.monitoring = RecordingMonitorMode::off;
+            else if (value == "on")
+                recording_configuration_.monitoring = RecordingMonitorMode::on;
+            else if (value == "auto")
+                recording_configuration_.monitoring =
+                    RecordingMonitorMode::automatic;
+            else
+                error = "unknown recording monitoring mode";
+        } else if (command.action_id == "recording.arm.v1") {
+            const auto timeline = timeline_.snapshot().timeline;
+            const auto bar_ticks = static_cast<MusicalTick>(
+                ticks_per_quarter * 4ULL *
+                timeline.transport.time_signature_numerator /
+                timeline.transport.time_signature_denominator);
+            auto start_tick = before.transport_tick;
+            if (recording_configuration_.quantization !=
+                RecordingQuantization::immediate) {
+                if (!before.playing)
+                    error = "quantized recording requires a running transport";
+                const auto quantum =
+                    recording_configuration_.quantization ==
+                            RecordingQuantization::beat
+                        ? static_cast<MusicalTick>(ticks_per_quarter)
+                        : bar_ticks;
+                if (error.empty())
+                    start_tick = ((start_tick / quantum) + 1) * quantum;
+            }
+            const auto frames_for_ticks = [&](MusicalTick ticks) {
+                return static_cast<std::uint64_t>(std::ceil(
+                    static_cast<long double>(std::max<MusicalTick>(0, ticks)) *
+                    engine_.sample_rate() *
+                    timeline.transport.microseconds_per_quarter /
+                    (static_cast<long double>(ticks_per_quarter) * 1'000'000.0L)));
+            };
+            if (error.empty()) {
+                recording_configuration_.start_frame =
+                    engine_.callback_frame_position() +
+                    frames_for_ticks(start_tick - before.transport_tick);
+                recording_configuration_.fixed_frames =
+                    recording_fixed_bars_ ?
+                        frames_for_ticks(bar_ticks * recording_fixed_bars_) : 0;
+                recording_.arm(recording_configuration_, error);
+            }
+        } else if (command.action_id == "recording.start.v1") {
+            recording_.start(engine_.callback_frame_position(), error);
+        } else if (command.action_id == "recording.stop.v1") {
+            if (recording_configuration_.quantization ==
+                RecordingQuantization::immediate)
+                recording_.stop(error);
+            else if (!before.playing)
+                error = "quantized recording stop requires running transport";
+            else {
+                const auto timeline = timeline_.snapshot().timeline;
+                const auto bar_ticks = static_cast<MusicalTick>(
+                    ticks_per_quarter * 4ULL *
+                    timeline.transport.time_signature_numerator /
+                    timeline.transport.time_signature_denominator);
+                const auto quantum =
+                    recording_configuration_.quantization ==
+                            RecordingQuantization::beat
+                        ? static_cast<MusicalTick>(ticks_per_quarter)
+                        : bar_ticks;
+                const auto stop_tick =
+                    ((before.transport_tick / quantum) + 1) * quantum;
+                const auto delta_frames = static_cast<std::uint64_t>(std::ceil(
+                    static_cast<long double>(stop_tick - before.transport_tick) *
+                    engine_.sample_rate() *
+                    timeline.transport.microseconds_per_quarter /
+                    (static_cast<long double>(ticks_per_quarter) *
+                     1'000'000.0L)));
+                recording_.stop_at(engine_.callback_frame_position() +
+                                       delta_frames,
+                                   error);
+            }
+        } else if (command.action_id == "recording.cancel.v1") {
+            recording_.cancel();
+        } else if (command.action_id == "recording.save.v1") {
+            const auto format_found = command.arguments.find("format");
+            auto format = RecordingWavFormat::pcm16;
+            if (format_found != command.arguments.end()) {
+                const auto &value = std::get<std::string>(format_found->second);
+                if (value == "float32")
+                    format = RecordingWavFormat::float32;
+                else if (value != "pcm16")
+                    error = "recording WAV format must be pcm16 or float32";
+            }
+            const auto path = std::filesystem::path(text("path"));
+            if (error.empty() && recording_.save_wav(path, format, error) &&
+                !samples_.set_source_path(
+                    recording_configuration_.destination, path))
+                error = "recorded sample is not published";
+        } else if (command.action_id == "recording.assign-pad.v1") {
+            const auto pad_value = *argument<std::int64_t>(command, "pad");
+            if (pad_value < 0 || pad_value >= 16)
+                error = "pad must be 0..15";
+            else {
+                const auto status =
+                    samples_.status(recording_configuration_.destination);
+                auto slice_state =
+                    slices_.snapshot(recording_configuration_.destination);
+                if (!status.has_sample || status.frames == 0)
+                    error = "recorded sample is not audio-active";
+                else {
+                    SliceId id{};
+                    const auto found = std::find_if(
+                        slice_state.slices.begin(), slice_state.slices.end(),
+                        [&](const auto &slice) {
+                            return slice.start_frame == 0 &&
+                                   slice.end_frame == status.frames;
+                        });
+                    if (found != slice_state.slices.end())
+                        id = found->id;
+                    else if (!slices_.create(recording_configuration_.destination,
+                                             slice_state.revision, 0,
+                                             status.frames, "Recording", id,
+                                             error))
+                        id = 0;
+                    if (id) {
+                        slice_state =
+                            slices_.snapshot(recording_configuration_.destination);
+                        slices_.assign_pad(static_cast<std::size_t>(pad_value), id,
+                                           slice_state.revision, error);
+                    }
+                }
+            }
+        }
+        {
+            std::lock_guard lock(mutex_);
+            if (error.empty() &&
+                (command.action_id == "recording.save.v1" ||
+                 command.action_id == "recording.assign-pad.v1"))
+                state_.project_dirty = true;
+            changed_locked();
+        }
+        return {error.empty(), sequence, snapshot().revision, std::move(error)};
+    }
     if (command.action_id.rfind("project.", 0) == 0) {
         try {
             if (command.action_id == "project.query.v1")
@@ -674,6 +888,25 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     found != command.arguments.end())
                     saving.name = std::get<std::string>(found->second);
                 saving.timeline = timeline_.snapshot().timeline;
+                for (const auto &slot : samples_.states())
+                    if (slot.has_sample && slot.source_path.empty()) {
+                        const auto recording = recording_.status();
+                        if (recording.state != RecordingState::audio_active ||
+                            recording.configuration.destination != slot.id)
+                            throw std::runtime_error(
+                                "project contains an unsaved in-memory sample");
+                        const auto asset =
+                            path / "recordings" /
+                            ("slot-" + std::to_string(slot.id.value) + ".wav");
+                        std::filesystem::create_directories(asset.parent_path());
+                        if (!recording_.save_wav(asset,
+                                                 RecordingWavFormat::float32,
+                                                 error) ||
+                            !samples_.set_source_path(slot.id, asset))
+                            throw std::runtime_error(
+                                error.empty() ? "cannot retain recorded asset"
+                                              : error);
+                    }
                 std::map<std::uint32_t, std::filesystem::path> paths;
                 for (const auto &slot : samples_.states())
                     if (slot.has_sample)
@@ -747,6 +980,7 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                         throw std::runtime_error("invalid project parameter: " +
                                                  id);
                 }
+                recording_.cancel();
                 engine_.stop();
                 for (const auto &[slot, sample] : loaded.samples.sample_paths)
                     if (std::filesystem::exists(sample) &&
@@ -866,6 +1100,7 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                                       TimelineCommitPolicy::next_audio_callback,
                                       error))
                     return {false, sequence, before.revision, std::move(error)};
+                recording_.cancel();
                 engine_.stop();
                 if (!slices_.restore_project(replacement.samples, error))
                     return {false, sequence, before.revision, std::move(error)};
@@ -2198,11 +2433,35 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
     return {error.empty(), sequence, snapshot().revision, std::move(error)};
 }
 void ApplicationService::synchronize_locked() const {
+    auto recording = recording_.status();
+    if (recording.state != RecordingState::armed &&
+        recording.state != RecordingState::recording &&
+        recording.state != RecordingState::completed)
+        recording.configuration = recording_configuration_;
+    if (recording.state == RecordingState::completed) {
+        std::string recording_error;
+        if (!recording_.finalize_to_slot(samples_, recording_error))
+            state_.project_error = std::move(recording_error);
+        else
+            state_.project_dirty = true;
+        recording = recording_.status();
+    }
     const auto timeline = timeline_.snapshot();
     const auto history = timeline_.history_status();
     const auto playing = engine_.playing();
     const auto frame = engine_.frame_position();
     auto slots = samples_.states();
+    if (recording.state == RecordingState::publication_pending) {
+        const auto active = std::find_if(
+            slots.begin(), slots.end(), [&](const auto &slot) {
+                return slot.id == recording.configuration.destination &&
+                       slot.state == SampleSlotLoadState::loaded;
+            });
+        if (active != slots.end()) {
+            recording_.acknowledge_audio_active();
+            recording = recording_.status();
+        }
+    }
     auto slice_state = slices_.snapshot(state_.selected_sample_slot);
     auto parameters = parameters_.parameters();
     if (state_.timeline_revision != timeline.revision &&
@@ -2218,6 +2477,26 @@ void ApplicationService::synchronize_locked() const {
                     state_.sample_slots.size() != slots.size() ||
                     state_.slice_revision != slice_state.revision ||
                     state_.parameters.size() != parameters.size();
+    const auto &old_recording = state_.recording;
+    const auto &old_configuration = old_recording.configuration;
+    const auto &new_configuration = recording.configuration;
+    external =
+        external || old_recording.state != recording.state ||
+        old_configuration.source != new_configuration.source ||
+        old_configuration.destination != new_configuration.destination ||
+        old_configuration.channels != new_configuration.channels ||
+        old_configuration.monitoring != new_configuration.monitoring ||
+        old_configuration.quantization != new_configuration.quantization ||
+        old_configuration.start_frame != new_configuration.start_frame ||
+        old_configuration.fixed_frames != new_configuration.fixed_frames ||
+        old_recording.captured_frames != recording.captured_frames ||
+        old_recording.dropped_frames != recording.dropped_frames ||
+        old_recording.overflow_count != recording.overflow_count ||
+        old_recording.finalization_microseconds !=
+            recording.finalization_microseconds ||
+        old_recording.peak_left != recording.peak_left ||
+        old_recording.peak_right != recording.peak_right ||
+        old_recording.error != recording.error;
     if (!external)
         for (std::size_t i = 0; i < slots.size(); ++i)
             if (state_.sample_slots[i].revision != slots[i].revision ||
@@ -2243,6 +2522,7 @@ void ApplicationService::synchronize_locked() const {
         transport_tick >= std::numeric_limits<MusicalTick>::max()
             ? std::numeric_limits<MusicalTick>::max()
             : static_cast<MusicalTick>(transport_tick);
+    state_.recording = std::move(recording);
     state_.timeline_revision = timeline.revision;
     state_.can_undo = history.can_undo;
     state_.can_redo = history.can_redo;
@@ -2404,7 +2684,13 @@ void ApplicationService::synchronize_locked() const {
                                  engine_.instrument_nanoseconds(),
                                  engine_.effect_nanoseconds(),
                                  engine_.synth_state().active_voices,
-                                 engine_.synth_state().maximum_voices};
+                                 engine_.synth_state().maximum_voices,
+                                 state_.recording.captured_frames,
+                                 state_.recording.capacity_frames,
+                                 state_.recording.dropped_frames,
+                                 state_.recording.overflow_count,
+                                 state_.recording.finalization_microseconds,
+                                 state_.recording.memory_bytes};
     state_.performance.system = system_monitor_.snapshot();
     state_.available_actions.clear();
     for (const auto &value : actions_.actions())

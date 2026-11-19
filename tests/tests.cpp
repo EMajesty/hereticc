@@ -1607,6 +1607,263 @@ void test_unified_project_persistence() {
     std::filesystem::remove_all(relocated, ignored);
 }
 
+void test_audio_recording_and_resampling() {
+    using namespace neurogenic;
+    AudioEngine engine;
+    SampleManager samples(engine);
+    RecordingService recorder(engine.sample_rate(), 32);
+    engine.set_recording_service(&recorder);
+    engine.set_sample(constant_sample(256, 0.25F));
+    std::string error;
+    RecordingConfiguration configuration;
+    configuration.source = RecordingSource::master_pre_effects;
+    configuration.destination = SampleSlotId{9};
+    configuration.channels = 2;
+    configuration.fixed_frames = 16;
+    check(recorder.arm(configuration, error) &&
+              recorder.start(engine.callback_frame_position(), error),
+          "arm internal resampling");
+    engine.trigger(36, 1.0F);
+    std::array<float, 32> left{}, right{};
+    engine.process(left, right);
+    auto status = recorder.status();
+    check(status.state == RecordingState::completed &&
+              status.captured_frames == 16 && status.peak_left > 0 &&
+              status.overflow_count == 0,
+          "pre-effects internal resampling");
+    check(recorder.finalize_to_slot(samples, error),
+          "recorded sample finalization");
+    std::array<float, 0> no_audio{};
+    engine.process(no_audio, no_audio);
+    const auto recorded = samples.status(SampleSlotId{9});
+    check(recorded.has_sample && recorded.frames == 16 &&
+              recorded.channels == 2,
+          "recorded sample publication");
+
+    recorder.reset();
+    check(engine.set_delay_parameter(DelayParameter::mix, 1.0F),
+          "queue delay for post-effects capture");
+    engine.process(no_audio, no_audio);
+    configuration.source = RecordingSource::master_post_effects;
+    configuration.destination = SampleSlotId{13};
+    configuration.fixed_frames = 4;
+    check(recorder.arm(configuration, error) &&
+              recorder.start(engine.callback_frame_position(), error),
+          "arm post-effects resampling");
+    engine.trigger(36, 1.0F);
+    engine.process(left, right);
+    const auto post_effects = recorder.completed_sample();
+    check(post_effects.frames() == 4 &&
+              recorder.status().configuration.source ==
+                  RecordingSource::master_post_effects,
+          "post-effects recording tap");
+
+    const auto root = std::filesystem::temp_directory_path() /
+                      "neurogenic-recording-test";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    const auto pcm_path = root / "capture-pcm16.wav";
+    const auto float_path = root / "capture-float.wav";
+    check(recorder.save_wav(pcm_path, RecordingWavFormat::pcm16, error) &&
+              recorder.save_wav(float_path, RecordingWavFormat::float32,
+                                error) &&
+              decode_wav(pcm_path).frames() == 4 &&
+              decode_wav(float_path).frames() == 4,
+          "recording WAV export");
+
+    RecordingService external(engine.sample_rate(), 8);
+    engine.set_recording_service(&external);
+    configuration = {};
+    configuration.source = RecordingSource::external_stereo;
+    configuration.destination = SampleSlotId{10};
+    configuration.channels = 2;
+    configuration.monitoring = RecordingMonitorMode::on;
+    configuration.fixed_frames = 4;
+    check(external.arm(configuration, error) &&
+              external.start(engine.callback_frame_position(), error),
+          "arm simulated stereo input");
+    const std::array<float, 8> stereo_input{0.1F, -0.1F, 0.2F, -0.2F,
+                                            0.3F, -0.3F, 0.4F, -0.4F};
+    std::array<float, 4> duplex_left{}, duplex_right{};
+    engine.process_duplex(duplex_left, duplex_right, stereo_input, 2);
+    const auto external_sample = external.completed_sample();
+    check(external_sample.channels == 2 && external_sample.frames() == 4 &&
+              std::fabs(external_sample.interleaved[2] - 0.2F) < 0.0001F &&
+              duplex_left[0] != 0,
+          "simulated stereo input and monitoring");
+
+    external.reset();
+    configuration.source = RecordingSource::external_mono;
+    configuration.destination = SampleSlotId{11};
+    configuration.channels = 1;
+    configuration.fixed_frames = 0;
+    check(external.arm(configuration, error) &&
+              external.start(engine.callback_frame_position(), error),
+          "arm simulated mono input");
+    const std::array<float, 12> too_long{1, 1, 1, 1, 1, 1,
+                                         1, 1, 1, 1, 1, 1};
+    engine.process_duplex(duplex_left, duplex_right, too_long, 1);
+    status = external.status();
+    check(status.state == RecordingState::completed &&
+              status.captured_frames == 8 && status.dropped_frames == 4 &&
+              status.overflow_count == 1,
+          "bounded recording overflow");
+    external.reset();
+    check(external.arm(configuration, error), "rearm recording");
+    external.cancel();
+    check(external.status().state == RecordingState::canceled &&
+              external.status().captured_frames == 0,
+          "recording cancellation");
+    external.reset();
+    check(external.arm(configuration, error), "arm before device failure");
+    external.device_stopped();
+    check(external.status().state == RecordingState::error &&
+              !external.status().error.empty(),
+          "recording device failure");
+
+    engine.set_recording_service(nullptr);
+    AudioEngine application_engine;
+    SampleManager application_samples(application_engine);
+    Timeline timeline;
+    TimelineService timeline_service(
+        [&](const Timeline &value, std::string &publish_error) {
+            return application_engine.queue_timeline(value, publish_error);
+        },
+        timeline);
+    ApplicationService application(application_engine, timeline_service,
+                                   application_samples);
+    const auto recording_revision = application.snapshot().revision;
+    check(application
+              .execute({"recording.source-select.v1",
+                        {{"source", std::string("master-post")}}})
+              .accepted &&
+              application
+                  .execute({"recording.destination-select.v1",
+                            {{"slot_id", std::int64_t{12}}}})
+                  .accepted,
+          "recording semantic configuration actions");
+    const auto configured_recording = application.snapshot();
+    check(configured_recording.revision > recording_revision &&
+              configured_recording.recording.configuration.destination ==
+                  SampleSlotId{12},
+          "recording configuration produces observable revisioned state");
+    RecordingConfiguration app_configuration;
+    app_configuration.source = RecordingSource::master_post_effects;
+    app_configuration.destination = SampleSlotId{12};
+    app_configuration.channels = 2;
+    app_configuration.fixed_frames = 8;
+    check(application.recording().arm(app_configuration, error) &&
+              application.recording().start(
+                  application_engine.callback_frame_position(), error),
+          "application recording arm");
+    application_engine.trigger_synth(60, 1.0F);
+    application_engine.process(left, right);
+    check(application.snapshot().recording.state ==
+              RecordingState::publication_pending,
+          "application recording completion publication");
+    application_engine.process(no_audio, no_audio);
+    (void)application.snapshot();
+    check(application
+              .execute({"recording.assign-pad.v1",
+                        {{"pad", std::int64_t{2}}}})
+              .accepted &&
+              application.slices().snapshot(SampleSlotId{12})
+                      .pad_assignments[2]
+                  .has_value(),
+          "recording pad assignment");
+    const auto project_path = root / "recorded-project";
+    check(application
+              .execute({"project.save-as.v1",
+                        {{"path", project_path.string()},
+                         {"name", std::string("Recorded")}}})
+              .accepted,
+          "recorded project save");
+    const auto restored_project = load_project(project_path);
+    check(restored_project.samples.sample_paths.contains(12) &&
+              std::filesystem::exists(
+                  restored_project.samples.sample_paths.at(12)) &&
+              restored_project.samples.pads[2].has_value(),
+          "recorded project asset restoration");
+    application.recording().reset();
+    check(application
+              .execute({"recording.quantization-set.v1",
+                        {{"quantization", std::string("beat")}}})
+              .accepted &&
+              application
+                  .execute({"recording.fixed-bars-set.v1",
+                            {{"bars", std::int64_t{1}}}})
+                  .accepted,
+          "quantized recording configuration");
+    (void)application.execute({"transport.stop.v1", {}});
+    application_engine.process(no_audio, no_audio);
+    check(!application.execute({"recording.arm.v1", {}}).accepted,
+          "quantized recording armed while transport stopped");
+    (void)application.execute({"transport.play.v1", {}});
+    application_engine.process(no_audio, no_audio);
+    check(application.execute({"recording.arm.v1", {}}).accepted &&
+              application.execute({"recording.start.v1", {}}).accepted,
+          "quantized recording actions");
+    const auto quantized = application.recording().status();
+    check(quantized.configuration.fixed_frames == 96000,
+          "fixed bar recording length");
+    const auto frames_to_boundary =
+        quantized.configuration.start_frame -
+        application_engine.callback_frame_position();
+    std::vector<float> before_boundary(frames_to_boundary),
+        before_boundary_right(frames_to_boundary);
+    application_engine.process(before_boundary, before_boundary_right);
+    check(application.recording().status().state == RecordingState::armed,
+          "quantized recording started before boundary");
+    std::array<float, 4> boundary_left{}, boundary_right{};
+    application_engine.process(boundary_left, boundary_right);
+    check(application.recording().status().state == RecordingState::recording,
+          "quantized recording boundary start");
+    check(application.execute({"recording.stop.v1", {}}).accepted,
+          "quantized recording stop action");
+    std::vector<float> stop_boundary(24001), stop_boundary_right(24001);
+    application_engine.process(stop_boundary, stop_boundary_right);
+    check(application.snapshot().recording.state ==
+              RecordingState::publication_pending,
+          "manual recording stop completion");
+    GuiModel gui(application);
+    for (int i = 0; i < 6; ++i)
+        gui.input({GuiInput::Type::key_down, GuiKey::tab}, 1920, 1200);
+    const auto &frame = gui.frame(1920, 1200);
+    check(std::any_of(frame.commands.begin(), frame.commands.end(),
+                      [](const auto &draw) {
+                          return draw.type == DrawCommand::Type::text &&
+                                 draw.text.find("AUDIO RECORDING") !=
+                                     std::string::npos;
+                      }),
+          "recording GUI state");
+    const auto prior_slot =
+        application.snapshot().recording.configuration.destination.value;
+    check(gui.input({GuiInput::Type::key_down, GuiKey::up}, 1920, 1200) &&
+              application.snapshot().recording.configuration.destination.value ==
+                  prior_slot + 1,
+          "encoder-only recording destination navigation");
+    check(gui.input({GuiInput::Type::pointer_down, GuiKey{}, 0,
+                     frame.layout.rows[0].x + 2,
+                     frame.layout.rows[0].y + 2},
+                    1920, 1200),
+          "pointer recording start");
+    gui.input({GuiInput::Type::key_down, GuiKey::escape}, 1920, 1200);
+    for (const auto size : {std::pair{1024, 800}, std::pair{1024, 600}}) {
+        const auto &compact = gui.frame(size.first, size.second);
+        check(std::any_of(compact.commands.begin(), compact.commands.end(),
+                          [](const auto &draw) {
+                              return draw.type == DrawCommand::Type::text &&
+                                     draw.text.find("AUDIO RECORDING") !=
+                                         std::string::npos;
+                          }),
+              "compact recording GUI layout");
+    }
+    application_samples.shutdown();
+    samples.shutdown();
+    std::filesystem::remove_all(root, ignored);
+}
+
 void test_transport_integration_and_timeline_io() {
     using namespace neurogenic;
     std::string error;
@@ -3425,6 +3682,7 @@ int main() {
         test_realtime_time_stretch();
         test_timeline_and_tracks();
         test_unified_project_persistence();
+        test_audio_recording_and_resampling();
         test_transport_integration_and_timeline_io();
         test_midi_control_dispatch();
         test_timeline_editing_and_generation();

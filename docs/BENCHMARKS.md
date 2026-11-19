@@ -127,3 +127,8 @@ These deterministic cases cover metadata only; sample decode/resampling time is
 already measured by the existing preparation benchmarks and depends on asset
 size and storage. The figures do not establish crash durability or hardware
 real-time performance.
+
+`internal_master_recording` measures post-effect callback capture separately
+from the control-side immutable-sample copy reported as preparation time. It
+uses deterministic silence and a preallocated buffer; WAV filesystem throughput
+and physical-device latency are excluded.

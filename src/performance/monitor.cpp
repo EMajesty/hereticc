@@ -39,6 +39,18 @@ std::string performance_json(const PerformanceSnapshot &value) {
         << ",\"active_synth_voices\":" << value.engine.active_synth_voices
         << ",\"maximum_synth_voices\":" << value.engine.maximum_synth_voices
         << ",\"synth_voice_steals\":" << value.engine.synth_stolen_voices
+        << ",\"recording_frames\":"
+        << value.engine.recording_captured_frames
+        << ",\"recording_capacity_frames\":"
+        << value.engine.recording_capacity_frames
+        << ",\"recording_dropped_frames\":"
+        << value.engine.recording_dropped_frames
+        << ",\"recording_overflows\":"
+        << value.engine.recording_overflows
+        << ",\"recording_finalization_us\":"
+        << value.engine.recording_finalization_microseconds
+        << ",\"recording_memory_bytes\":"
+        << value.engine.recording_memory_bytes
         << ",\"queue_overflows\":"
         << (value.engine.dropped_triggers + value.engine.dropped_patterns +
             value.engine.dropped_timelines + value.engine.rejected_commands)

@@ -170,3 +170,8 @@ Unified projects store sample paths plus slice, pad, expressive playback, and
 stretch metadata, never PCM. Relative paths resolve from the project root.
 Missing references preserve their metadata and may be relinked through
 `project.relink-sample.v1`; unaffected slots remain usable.
+
+Recorded samples use the same immutable version pool. Existing voices retain an
+old version when recording replaces a slot; the new capture stays silent until
+callback acknowledgement. Recording pad assignment creates a full-sample slice,
+so waveform caching and later slicing require no parallel playback path.

@@ -511,6 +511,35 @@ void project_io_case() {
            load.elapsed_microseconds * 1000);
     std::filesystem::remove_all(path, ignored);
 }
+void recording_case() {
+    neurogenic::AudioEngine engine;
+    neurogenic::RecordingService recorder(48000, iterations * 256);
+    engine.set_recording_service(&recorder);
+    neurogenic::RecordingConfiguration configuration;
+    configuration.source = neurogenic::RecordingSource::master_post_effects;
+    configuration.destination = neurogenic::SampleSlotId{31};
+    configuration.channels = 2;
+    configuration.fixed_frames = iterations * 256;
+    std::string error;
+    recorder.arm(configuration, error);
+    recorder.start(0, error);
+    std::array<float, 256> left{}, right{};
+    const auto begin = Clock::now();
+    for (std::size_t i = 0; i < iterations; ++i)
+        engine.process(left, right);
+    const auto processing =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - begin)
+            .count() /
+        iterations;
+    const auto preparation_begin = Clock::now();
+    const auto completed = recorder.completed_sample();
+    const auto preparation =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
+                                                             preparation_begin)
+            .count();
+    checksum += completed.frames();
+    result("internal_master_recording", 48000, 256, processing, preparation);
+}
 } // namespace
 int main() {
     audio_case("idle", 0);
@@ -574,6 +603,7 @@ int main() {
     gui_case(1024, 800);
     gui_case(1024, 600);
     project_io_case();
+    recording_case();
     std::cout << "{\"schema\":\"neurogenic.benchmark.summary.v1\",\"checksum\":"
               << checksum
               << ",\"budget_passed\":" << (budget_failed ? "false" : "true")

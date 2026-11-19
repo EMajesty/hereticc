@@ -29,6 +29,9 @@ authoritative transport -> scheduler -> instrument routing -> track/master DSP -
 - `project`: versioned generation-directory persistence for complete control-side
   timeline, sample/slice, pad, routing, and native parameter state. It publishes
   only after parse/preparation and never serializes callback-owned objects.
+- `recording`: a preallocated SPSC capture buffer with external duplex and
+  master pre/post-effect taps. Callback production is separate from control-side
+  finalization, WAV output, immutable publication, and project retention.
 
 No callback operation performs I/O, locks, allocation, logging, or Lua work.
 Pattern snapshots and control-thread triggers cross into audio through bounded

@@ -154,6 +154,12 @@ or unload. Status keeps audio-active metadata separate from the newest pending
 request and reports callback activation explicitly. See
 [live sample management](docs/SAMPLES.md).
 
+Live recording supports bounded external mono/stereo duplex input and internal
+master pre/post-effects resampling. `--input NAME` selects capture; interactive
+`record-start`, `record-stop`, `record-status`, and `record-save` commands form
+a headless workflow. Recordings publish through immutable sample slots and can
+be sliced or assigned to pads. See [recording](docs/RECORDING.md).
+
 `--timeline` loads the versioned, line-oriented `NEUROGENIC_TIMELINE 1`
 interchange format before audio starts. It carries transport metadata, stable
 track/event IDs, loop lengths, mute state, notes, velocities, and durations.

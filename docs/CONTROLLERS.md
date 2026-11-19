@@ -207,3 +207,10 @@ can be bound by full or minimal controllers. Their path arguments are supplied
 by a client-neutral filesystem navigator; no desktop file dialog or physical
 layout is assumed. Project progress, errors, dirty state, and missing assets are
 copied application state suitable for controller feedback.
+
+# Recording actions
+
+Source, destination, channel mode, quantization, fixed bars, monitoring,
+arm/start/stop/cancel, save, and pad assignment are semantic actions. A minimal
+data-wheel client can operate the Record view with Enter/Back; full controllers
+may bind dedicated controls without changing recording logic.

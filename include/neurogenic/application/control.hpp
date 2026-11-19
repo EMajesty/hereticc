@@ -1,5 +1,6 @@
 #pragma once
 #include "neurogenic/audio/slicing.hpp"
+#include "neurogenic/audio/recording.hpp"
 #include "neurogenic/performance/monitor.hpp"
 #include "neurogenic/project/project.hpp"
 #include "neurogenic/timeline/edit.hpp"
@@ -180,6 +181,7 @@ struct ApplicationState {
     bool project_dirty{}, project_loading{}, project_saving{};
     std::string project_error;
     std::vector<std::filesystem::path> missing_assets;
+    RecordingStatus recording;
 };
 struct ApplicationCommand {
     std::string action_id;
@@ -198,6 +200,7 @@ class ApplicationService {
     static constexpr std::size_t default_queue_capacity = 256;
     ApplicationService(AudioEngine &, TimelineService &, SampleManager &,
                        std::size_t queue_capacity = default_queue_capacity);
+    ~ApplicationService();
     [[nodiscard]] const ActionRegistry &actions() const noexcept {
         return actions_;
     }
@@ -210,6 +213,7 @@ class ApplicationService {
     [[nodiscard]] ApplicationState snapshot() const;
     [[nodiscard]] std::uint64_t rejected_commands() const noexcept;
     [[nodiscard]] SliceService &slices() noexcept { return slices_; }
+    [[nodiscard]] RecordingService &recording() noexcept { return recording_; }
 
   private:
     CommandResult execute_locked(const ApplicationCommand &, std::uint64_t);
@@ -219,6 +223,9 @@ class ApplicationService {
     TimelineService &timeline_;
     SampleManager &samples_;
     mutable SliceService slices_;
+    mutable RecordingService recording_;
+    RecordingConfiguration recording_configuration_;
+    std::uint64_t recording_fixed_bars_{};
     ActionRegistry actions_;
     ParameterRegistry parameters_;
     const std::size_t capacity_;

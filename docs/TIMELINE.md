@@ -226,3 +226,8 @@ The timeline remains authoritative when embedded in a version-1 project. Its
 transport, generation seed, routing, stable IDs, automation, trigger conditions,
 and ratchets are written unchanged to the committed generation. Project load
 stops transport and publishes one validated timeline; it does not auto-play.
+
+Recording beat/bar quantization derives its boundary from this same transport;
+there is no recording-only clock. Fixed bars are converted to frames at arm
+time. A stopped transport accepts immediate recording but rejects quantized
+start, and project replacement cancels an active capture.

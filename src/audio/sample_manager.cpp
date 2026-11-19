@@ -62,6 +62,54 @@ bool SampleManager::unload(SampleSlotId id) {
     return submit({Operation::unload, id, {}, {}});
 }
 
+bool SampleManager::publish_prepared(
+    SampleSlotId id, std::shared_ptr<const Sample> sample,
+    const std::filesystem::path &source_path) {
+    if (id == invalid_sample_slot || !sample || sample->sample_rate == 0 ||
+        sample->frames() == 0 || (sample->channels != 1 && sample->channels != 2))
+        return false;
+    std::uint64_t revision{};
+    {
+        std::lock_guard lock(mutex_);
+        if (stopping_)
+            return false;
+        revision = next_revision_++;
+    }
+    std::uint64_t publication{};
+    if (!engine_.publish_sample_slot(id, sample, &publication))
+        return false;
+    std::lock_guard lock(mutex_);
+    auto &record = states_[id.value];
+    auto &state = record.status;
+    state.id = id;
+    state.state = SampleSlotLoadState::pending_activation;
+    state.engine_sample_rate = engine_.sample_rate();
+    state.progress = 1;
+    state.error.clear();
+    state.revision = revision;
+    state.pending_source_path = source_path;
+    record.publications.push_back(
+        {Operation::load, revision, publication, source_path,
+         sample->sample_rate, sample->channels, sample->frames(),
+         static_cast<double>(sample->frames()) / sample->sample_rate,
+         std::move(sample)});
+    return true;
+}
+
+bool SampleManager::set_source_path(SampleSlotId id,
+                                    const std::filesystem::path &path) {
+    std::lock_guard lock(mutex_);
+    const auto found = states_.find(id.value);
+    if (found == states_.end())
+        return false;
+    refresh_locked(found->second);
+    if (!found->second.status.has_sample)
+        return false;
+    found->second.status.source_path = path;
+    found->second.status.revision = next_revision_++;
+    return true;
+}
+
 void SampleManager::refresh_locked(SlotRecord &record) const {
     while (
         !record.publications.empty() &&

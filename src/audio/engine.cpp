@@ -1,4 +1,5 @@
 #include "neurogenic/audio/engine.hpp"
+#include "neurogenic/audio/recording.hpp"
 #include "neurogenic/dsp/parameter_destination.hpp"
 #include <algorithm>
 #include <chrono>
@@ -555,6 +556,7 @@ void AudioEngine::stop_voices(bool timeline_only) noexcept {
 
 void AudioEngine::process(std::span<float> left,
                           std::span<float> right) noexcept {
+    const auto callback_frame = callback_frame_.load(std::memory_order_relaxed);
     const auto monitoring = callback_monitor_.enabled();
     const auto callback_begin = monitoring
                                     ? std::chrono::steady_clock::now()
@@ -849,6 +851,10 @@ void AudioEngine::process(std::span<float> left,
     }
     published_frame_.store(transport_frame_, std::memory_order_release);
     published_playing_.store(transport_playing_, std::memory_order_release);
+    if (auto *recorder = recording_.load(std::memory_order_acquire))
+        recorder->capture_internal(RecordingSource::master_pre_effects,
+                                   left.first(frames), right.first(frames),
+                                   callback_frame);
     const auto effect_begin = monitoring
                                   ? std::chrono::steady_clock::now()
                                   : std::chrono::steady_clock::time_point{};
@@ -871,6 +877,10 @@ void AudioEngine::process(std::span<float> left,
     if (delay_frame < frames)
         delay_.process(left.subspan(delay_frame, frames - delay_frame),
                        right.subspan(delay_frame, frames - delay_frame));
+    if (auto *recorder = recording_.load(std::memory_order_acquire))
+        recorder->capture_internal(RecordingSource::master_post_effects,
+                                   left.first(frames), right.first(frames),
+                                   callback_frame);
     if (monitoring)
         effect_nanoseconds_.store(
             static_cast<std::uint64_t>(
@@ -891,6 +901,37 @@ void AudioEngine::process(std::span<float> left,
         callback_monitor_.record(
             static_cast<std::uint64_t>(std::max<std::int64_t>(0, elapsed)),
             static_cast<std::uint32_t>(frames), rate_, active_voices);
+    }
+    callback_frame_.store(callback_frame + frames, std::memory_order_release);
+}
+
+void AudioEngine::capture_external_input(
+    std::span<const float> interleaved, std::uint16_t channels) noexcept {
+    if (auto *recorder = recording_.load(std::memory_order_acquire))
+        recorder->capture_external(interleaved, channels,
+                                   callback_frame_.load(
+                                       std::memory_order_relaxed));
+}
+void AudioEngine::recording_device_stopped() noexcept {
+    if (auto *recorder = recording_.load(std::memory_order_acquire))
+        recorder->device_stopped();
+}
+
+void AudioEngine::process_duplex(std::span<float> left, std::span<float> right,
+                                 std::span<const float> input,
+                                 std::uint16_t channels) noexcept {
+    capture_external_input(input, channels);
+    process(left, right);
+    auto *recorder = recording_.load(std::memory_order_acquire);
+    if (!recorder || !recorder->monitoring_active() || channels == 0)
+        return;
+    const auto frames = std::min({left.size(), right.size(),
+                                  input.size() / channels});
+    for (std::size_t i = 0; i < frames; ++i) {
+        const auto l = input[i * channels];
+        const auto r = channels > 1 ? input[i * channels + 1] : l;
+        left[i] += l;
+        right[i] += r;
     }
 }
 

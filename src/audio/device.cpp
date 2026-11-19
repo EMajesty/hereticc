@@ -14,7 +14,8 @@ struct AudioDevice::Impl {
   bool force_null{};
 #ifdef NEUROGENIC_HAS_MINIAUDIO
   ma_context context{};ma_device device{};bool context_ready{},device_ready{};
-  static void callback(ma_device* device,void* output,const void*,ma_uint32 count){auto& self=*static_cast<Impl*>(device->pUserData);auto* out=static_cast<float*>(output);std::array<float,1024> left{},right{};ma_uint32 done=0;while(done<count){auto n=std::min<ma_uint32>(1024,count-done);self.engine.process({left.data(),n},{right.data(),n});for(ma_uint32 i=0;i<n;++i){out[(done+i)*2]=left[i];out[(done+i)*2+1]=right[i];}done+=n;}}
+  std::uint16_t input_channels{};
+  static void callback(ma_device* device,void* output,const void* input,ma_uint32 count){auto& self=*static_cast<Impl*>(device->pUserData);auto* out=static_cast<float*>(output);const auto* in=static_cast<const float*>(input);std::array<float,1024> left{},right{};ma_uint32 done=0;while(done<count){auto n=std::min<ma_uint32>(1024,count-done);if(in&&self.input_channels)self.engine.process_duplex({left.data(),n},{right.data(),n},{in+static_cast<std::size_t>(done)*self.input_channels,static_cast<std::size_t>(n)*self.input_channels},self.input_channels);else self.engine.process({left.data(),n},{right.data(),n});for(ma_uint32 i=0;i<n;++i){out[(done+i)*2]=left[i];out[(done+i)*2+1]=right[i];}done+=n;}}
 #endif
   explicit Impl(AudioEngine& e,bool null_backend):engine(e),force_null(null_backend){}
 };
@@ -55,16 +56,24 @@ std::vector<std::string> AudioDevice::outputs() const{std::vector<std::string> r
 if(!impl_->context_ready)return result;ma_device_info* playback{};ma_uint32 count{};if(ma_context_get_devices(&impl_->context,&playback,&count,nullptr,nullptr)==MA_SUCCESS)for(ma_uint32 i=0;i<count;++i)result.emplace_back(playback[i].name);
 #endif
 return result;}
-bool AudioDevice::start(const std::string& selector,std::string& error){
+std::vector<std::string> AudioDevice::inputs() const{std::vector<std::string> result;
 #ifdef NEUROGENIC_HAS_MINIAUDIO
- if(!impl_->context_ready){error="miniaudio was compiled, but no audio backend could be initialized";return false;}ma_device_id* selected=nullptr;ma_device_info* playback{};ma_uint32 count{};if(!selector.empty()){if(ma_context_get_devices(&impl_->context,&playback,&count,nullptr,nullptr)!=MA_SUCCESS){error="audio backend '"+backend()+"' is available, but device enumeration failed";return false;}const bool numeric=std::all_of(selector.begin(),selector.end(),[](unsigned char c){return c>='0'&&c<='9';});if(numeric){const auto index=std::stoul(selector);if(index<count)selected=&playback[index].id;}else for(ma_uint32 i=0;i<count;++i)if(std::string(playback[i].name).find(selector)!=std::string::npos){selected=&playback[i].id;break;}if(!selected){error="audio backend '"+backend()+"' found no output matching: "+selector;return false;}}auto config=ma_device_config_init(ma_device_type_playback);config.playback.format=ma_format_f32;config.playback.channels=2;config.playback.pDeviceID=selected;config.sampleRate=48000;config.dataCallback=&Impl::callback;config.pUserData=impl_.get();auto status=ma_device_init(&impl_->context,&config,&impl_->device);if(status!=MA_SUCCESS){error="audio backend '"+backend()+"' found the device but could not open it: "+ma_result_description(status);return false;}impl_->device_ready=true;status=ma_device_start(&impl_->device);if(status!=MA_SUCCESS){error="audio device opened but could not start: "+std::string(ma_result_description(status));stop();return false;}return true;
+if(!impl_->context_ready)return result;ma_device_info* capture{};ma_uint32 count{};if(ma_context_get_devices(&impl_->context,nullptr,nullptr,&capture,&count)==MA_SUCCESS)for(ma_uint32 i=0;i<count;++i)result.emplace_back(capture[i].name);
+#endif
+return result;}
+bool AudioDevice::start(const std::string& selector,std::string& error){
+return start_duplex(selector,"",0,error);
+}
+bool AudioDevice::start_duplex(const std::string& selector,const std::string& input_selector,std::uint16_t input_channels,std::string& error){
+#ifdef NEUROGENIC_HAS_MINIAUDIO
+ if(!impl_->context_ready){error="miniaudio was compiled, but no audio backend could be initialized";return false;}if(input_channels>2){error="initial duplex support is limited to mono or stereo input";return false;}ma_device_id* selected=nullptr;ma_device_id* selected_input=nullptr;ma_device_info* playback{};ma_device_info* capture{};ma_uint32 count{},capture_count{};if(ma_context_get_devices(&impl_->context,&playback,&count,&capture,&capture_count)!=MA_SUCCESS){error="audio backend '"+backend()+"' is available, but device enumeration failed";return false;}auto select=[&](const std::string& name,ma_device_info* devices,ma_uint32 size)->ma_device_id*{if(name.empty())return nullptr;const bool numeric=std::all_of(name.begin(),name.end(),[](unsigned char c){return c>='0'&&c<='9';});if(numeric){const auto index=std::stoul(name);return index<size?&devices[index].id:nullptr;}for(ma_uint32 i=0;i<size;++i)if(std::string(devices[i].name).find(name)!=std::string::npos)return &devices[i].id;return nullptr;};if(!selector.empty()&&!(selected=select(selector,playback,count))){error="audio backend '"+backend()+"' found no output matching: "+selector;return false;}if(input_channels&& !input_selector.empty()&&!(selected_input=select(input_selector,capture,capture_count))){error="audio backend '"+backend()+"' found no input matching: "+input_selector;return false;}auto config=ma_device_config_init(input_channels?ma_device_type_duplex:ma_device_type_playback);config.playback.format=ma_format_f32;config.playback.channels=2;config.playback.pDeviceID=selected;if(input_channels){config.capture.format=ma_format_f32;config.capture.channels=input_channels;config.capture.pDeviceID=selected_input;}config.sampleRate=48000;config.dataCallback=&Impl::callback;config.pUserData=impl_.get();auto status=ma_device_init(&impl_->context,&config,&impl_->device);if(status!=MA_SUCCESS){error="audio backend '"+backend()+"' found the device but could not open "+std::string(input_channels?"duplex":"playback")+": "+ma_result_description(status);return false;}impl_->input_channels=input_channels;impl_->device_ready=true;status=ma_device_start(&impl_->device);if(status!=MA_SUCCESS){error="audio device opened but could not start: "+std::string(ma_result_description(status));stop();return false;}return true;
 #else
-(void)selector;error="miniaudio support was not built";return false;
+(void)selector;(void)input_selector;(void)input_channels;error="miniaudio support was not built";return false;
 #endif
 }
 void AudioDevice::stop() noexcept{
 #ifdef NEUROGENIC_HAS_MINIAUDIO
-if(impl_->device_ready){ma_device_uninit(&impl_->device);impl_->device_ready=false;}
+if(impl_->device_ready){ma_device_uninit(&impl_->device);impl_->device_ready=false;impl_->engine.recording_device_stopped();}
 #endif
 }
 }

@@ -17,6 +17,7 @@
 #include <string>
 #include <vector>
 namespace neurogenic {
+class RecordingService;
 enum class SamplePlaybackMode : std::uint8_t { one_shot, gate, toggle };
 struct SamplePlaybackSettings {
     SamplePlaybackMode mode{SamplePlaybackMode::one_shot};
@@ -102,6 +103,18 @@ class AudioEngine {
     void restart() noexcept;
     [[nodiscard]] bool set_fill(bool active) noexcept;
     void process(std::span<float> left, std::span<float> right) noexcept;
+    void process_duplex(std::span<float> left, std::span<float> right,
+                        std::span<const float> interleaved_input,
+                        std::uint16_t input_channels) noexcept;
+    void set_recording_service(RecordingService *service) noexcept {
+        recording_.store(service, std::memory_order_release);
+    }
+    void capture_external_input(std::span<const float> interleaved,
+                                std::uint16_t channels) noexcept;
+    void recording_device_stopped() noexcept;
+    [[nodiscard]] std::uint64_t callback_frame_position() const noexcept {
+        return callback_frame_.load(std::memory_order_acquire);
+    }
     void render_wav(const std::filesystem::path &, std::uint64_t frames);
     [[nodiscard]] std::uint64_t frame_position() const noexcept {
         return published_frame_.load(std::memory_order_acquire);
@@ -359,6 +372,8 @@ class AudioEngine {
     CallbackMonitor callback_monitor_;
     std::atomic<std::uint32_t> buffer_frames_{};
     std::atomic<std::uint64_t> instrument_nanoseconds_{}, effect_nanoseconds_{};
+    std::atomic<RecordingService *> recording_{};
+    std::atomic<std::uint64_t> callback_frame_{};
     SubtractiveSynth synth_;
     StereoDelay delay_;
 };

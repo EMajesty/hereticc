@@ -127,3 +127,11 @@ missing-asset count. Shift+Enter saves to an established path. Open, Save As,
 and relink use the same semantic C++ actions; a graphical embedded filesystem
 browser remains a future integration point. No project operation requires
 touch.
+
+# Recording view
+
+The Record tab shows source, destination, channel mode, state, captured frames,
+buffer usage, peak levels, and overflow/dropped counts. Enter arms, starts, or
+stops; Escape cancels. The same actions work via pointer and controllers, and
+touch is optional. Responsive layouts retain essential status at 1920×1200,
+1024×800, and 1024×600.

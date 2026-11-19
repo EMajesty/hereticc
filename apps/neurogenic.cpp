@@ -38,6 +38,7 @@ void usage() {
            "  --map NOTE=ID     map MIDI/sequencer NOTE to a loaded slot "
            "(repeatable)\n"
            "  --audio NAME      select audio output by index or name\n"
+           "  --input NAME      open a duplex audio input by index or name\n"
            "  --midi NAME       select MIDI input by index or name\n"
            "  --script FILE     Lua action for MIDI note 36\n"
            "  --timeline FILE   load a NEUROGENIC_TIMELINE version 1 file\n"
@@ -100,7 +101,7 @@ std::uint32_t unsigned_number(std::string_view value, const char *option) {
 
 int main(int argc, char **argv) {
     try {
-        std::string wav, audio_name, midi_name,
+        std::string wav, audio_name, input_name, midi_name,
             script = "examples/generate.lua", timeline_file, project_file;
         std::vector<std::pair<std::uint32_t, std::filesystem::path>> slot_files;
         std::vector<std::pair<std::uint8_t, std::uint32_t>> note_maps;
@@ -112,6 +113,8 @@ int main(int argc, char **argv) {
             const std::string arg = argv[i];
             if (arg == "--audio" && i + 1 < argc)
                 audio_name = argv[++i];
+            else if (arg == "--input" && i + 1 < argc)
+                input_name = argv[++i];
             else if (arg == "--midi" && i + 1 < argc)
                 midi_name = argv[++i];
             else if (arg == "--script" && i + 1 < argc)
@@ -176,6 +179,12 @@ int main(int argc, char **argv) {
                       << "\nAudio outputs:\n";
             std::size_t index = 0;
             for (const auto &name : audio.outputs())
+                std::cout << "  [" << index++ << "] " << name << '\n';
+            if (index == 0)
+                std::cout << "  (none discovered)\n";
+            std::cout << "Audio inputs:\n";
+            index = 0;
+            for (const auto &name : audio.inputs())
                 std::cout << "  [" << index++ << "] " << name << '\n';
             if (index == 0)
                 std::cout << "  (none discovered)\n";
@@ -312,7 +321,12 @@ int main(int argc, char **argv) {
         });
         dispatcher.start();
         std::string error;
-        if (!audio.start(audio_name, error)) {
+        const auto audio_started = input_name.empty()
+                                       ? audio.start(audio_name, error)
+                                       : audio.start_duplex(audio_name,
+                                                            input_name, 2,
+                                                            error);
+        if (!audio_started) {
             std::cerr << "audio unavailable: " << error << '\n';
             return 1;
         }
@@ -337,7 +351,8 @@ int main(int argc, char **argv) {
                 std::cerr << "GUI unavailable: " << error << '\n';
         } else if (interactive) {
             std::cout << "Commands: load ID FILE | replace ID FILE | unload ID "
-                         "| status [ID] | quit\n";
+                         "| status [ID] | record-start ID SOURCE | record-stop "
+                         "| record-status | record-save FILE [pcm16|float32] | quit\n";
             std::string line;
             while (running.load() && std::getline(std::cin, line)) {
                 std::istringstream input(line);
@@ -366,6 +381,47 @@ int main(int argc, char **argv) {
                     else
                         for (const auto &state : samples.states())
                             print_status(state);
+                } else if (command == "record-start") {
+                    std::uint32_t slot{};
+                    std::string source;
+                    input >> slot >> source;
+                    const auto select_source = application.execute(
+                        {"recording.source-select.v1", {{"source", source}}});
+                    const auto select_slot = application.execute(
+                        {"recording.destination-select.v1",
+                         {{"slot_id", static_cast<std::int64_t>(slot)}}});
+                    const auto arm = application.execute({"recording.arm.v1", {}});
+                    const auto start =
+                        application.execute({"recording.start.v1", {}});
+                    if (!select_source.accepted || !select_slot.accepted ||
+                        !arm.accepted || !start.accepted)
+                        std::cerr << "record command rejected: "
+                                  << (!select_source.error.empty()
+                                          ? select_source.error
+                                          : !select_slot.error.empty()
+                                                ? select_slot.error
+                                                : !arm.error.empty() ? arm.error
+                                                                     : start.error)
+                                  << '\n';
+                } else if (command == "record-stop") {
+                    const auto result =
+                        application.execute({"recording.stop.v1", {}});
+                    if (!result.accepted)
+                        std::cerr << result.error << '\n';
+                } else if (command == "record-status") {
+                    const auto state = application.snapshot().recording;
+                    std::cout << neurogenic::recording_state_name(state.state)
+                              << " " << state.captured_frames << "/"
+                              << state.capacity_frames << " frames, overflows="
+                              << state.overflow_count << '\n';
+                } else if (command == "record-save") {
+                    std::string path, format{"pcm16"};
+                    input >> path >> format;
+                    const auto result = application.execute(
+                        {"recording.save.v1",
+                         {{"path", path}, {"format", format}}});
+                    if (!result.accepted)
+                        std::cerr << result.error << '\n';
                 } else
                     std::cerr << "unknown command\n";
             }
