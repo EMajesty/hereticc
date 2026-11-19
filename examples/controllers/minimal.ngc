@@ -1,0 +1,9 @@
+# NEUROGENIC_CONTROLLER 1
+controller|neurogenic.minimal.v1|Minimal controller
+control|data|encoder|Data encoder
+control|enter|momentary|Enter
+control|back|momentary|Back
+control|joystick|joystick|X/Y
+bind|data|parameter|transport.tempo|label=Value
+bind|enter|action|navigation.confirm.v1|feedback=display.main
+bind|back|action|navigation.cancel.v1|feedback=display.main

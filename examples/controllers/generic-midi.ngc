@@ -1,0 +1,10 @@
+# NEUROGENIC_CONTROLLER 1
+controller|neurogenic.midi.v1|Generic MIDI controller
+control|button.1|momentary|Play
+control|button.2|momentary|Stop
+control|knob.1|pot|Knob 1
+control|fader.1|fader|Fader 1
+bind|button.1|action|transport.play.v1
+bind|button.2|action|transport.stop.v1
+bind|knob.1|parameter|performance.xy.x
+bind|fader.1|parameter|performance.xy.y

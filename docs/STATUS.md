@@ -121,3 +121,12 @@ generative examples. Commits activate at the next audio callback through the
 existing immutable plan pool. Musical-boundary commit scheduling, multiple
 patterns per track, parameter destinations, and hostile-script sandboxing remain
 future work.
+
+Task 012 adds the initial client-neutral `ApplicationService`, typed action and
+parameter registries, copied revisioned state snapshots, bounded ordered
+multi-client commands, capability-based controller profiles/mapping, feedback,
+four performance-grid modes, modifier/focus navigation, encoder-only text entry
+and normalized X/Y interaction. Three example controller profiles are parsed
+and host-tested. GUI rendering, controller firmware, MIDI learn, undo history,
+state subscriptions, complete step editing, scale layouts, slicing, pitched
+sample playback and modulation routing remain future work.

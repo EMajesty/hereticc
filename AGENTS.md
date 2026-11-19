@@ -11,6 +11,9 @@
 - Put editing, generation, mutation, validation, revisions, and observable
   state in reusable C++ application services. Lua is a thin client adapter;
   hardware, UI, MIDI, and remote operations must not require Lua execution.
+- Route controller inputs through stable semantic actions or parameters and
+  expose copied revisioned state. Adapters must not mutate engine internals or
+  encode a particular physical layout in the core.
 - Use integer musical time and deterministic offline tests.
 - Put audio/MIDI/platform details behind narrow adapters.
 - Preserve dependency pins, licenses, notices, and stable external identifiers.

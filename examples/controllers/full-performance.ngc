@@ -1,0 +1,12 @@
+# NEUROGENIC_CONTROLLER 1
+controller|neurogenic.full.v1|Full performance controller
+control|play|momentary|Play
+control|stop|momentary|Stop
+control|data|encoder|Data encoder
+control|enter|momentary|Data push
+control|fader.1|fader|Fader 1
+bind|play|action|transport.play.v1|feedback=led.play
+bind|stop|action|transport.stop.v1|feedback=led.stop
+bind|enter|action|navigation.confirm.v1|feedback=display.main
+bind|data|parameter|transport.tempo|label=Tempo
+bind|fader.1|parameter|performance.xy.x|label=X

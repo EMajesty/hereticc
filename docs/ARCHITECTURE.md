@@ -5,7 +5,7 @@ immutable compiled timeline plans. The audio thread consumes only plan pointers,
 bounded event staging, and sample memory prepared in advance.
 
 ```text
-CLI/UI -> command API -> project / Lua / MIDI mapping / sample manager
+clients -> application actions / parameters / state -> timeline / sample manager
                          | compiled, bounded PlaybackPlan snapshot
                          v
 authoritative transport -> scheduler frame range -> bounded voice pool -> DSP -> backend
@@ -13,6 +13,9 @@ authoritative transport -> scheduler frame range -> bounded voice pool -> DSP ->
 ```
 
 - `core`: stable command identifiers and application-domain boundary.
+- `application`: typed semantic actions and parameters, bounded ordered command
+  processing, immutable state snapshots, controller capabilities/mappings,
+  feedback, grid/navigation/text, and X/Y interaction models.
 - `timeline`: UI-independent tick events, tracks, arbitrary loops, transport
   metadata, compilation, and sample-accurate playback.
 - `sequencer`: the legacy 16-step compatibility scheduler and adapter, including
@@ -127,3 +130,13 @@ are C++ operations. Lua contains binding and transaction-lifetime glue only.
 No editor holds a playback-plan pointer. The application/control side may copy,
 allocate, mutate, compile, or reject timeline data. The callback sees only a
 previously compiled immutable plan-slot index, never Lua or an editable object.
+
+`ApplicationService` is the client-neutral facade over transport,
+`TimelineService`, and `SampleManager`. Its action registry exposes stable typed
+commands and honest availability; its parameter registry owns generic control
+metadata; its snapshots expose copied state with application and subsystem
+revisions. A bounded multi-producer queue assigns deterministic sequence
+numbers and rejects newest commands on overflow. Controller adapters resolve
+capability profiles into those commands, and revision-tagged feedback flows
+back without a controller directly touching engine state. See
+[CONTROLLERS.md](CONTROLLERS.md).

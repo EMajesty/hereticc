@@ -124,6 +124,13 @@ revisions, deterministic seeds, validation, and the existing bounded playback
 publication path. See the [Lua API](docs/LUA.md) and the drum, mutation,
 polyrhythm, and variation scripts under [`examples/`](examples/).
 
+Future hardware, touchscreen, desktop, MIDI, Lua and remote clients share the
+C++ application control layer: typed stable actions, generic parameters,
+revisioned state snapshots and capability-driven controller mappings. Example
+full-performance, minimal and generic-MIDI profiles live in
+[`examples/controllers`](examples/controllers). Implemented and placeholder
+operations are distinguished in the [application/controller API](docs/CONTROLLERS.md).
+
 ### Linux audio and MIDI troubleshooting
 
 `--list-devices` reports the selected miniaudio and libremidi backends. A Nix

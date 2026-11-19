@@ -21,6 +21,7 @@ include(cmake/Dependencies.cmake)
 find_package(Threads REQUIRED)
 
 add_library(neurogenic_engine
+  src/application/control.cpp src/application/controller.cpp
   src/audio/engine.cpp src/audio/sample.cpp src/audio/sample_manager.cpp src/core/command.cpp src/core/control_dispatcher.cpp
   src/dsp/purest_gain.cpp src/midi/mapping.cpp src/project/project.cpp
   src/sequencer/scheduler.cpp src/sequencer/pattern_adapter.cpp src/scripting/runtime.cpp src/timeline/edit.cpp src/timeline/io.cpp src/timeline/playback.cpp)
@@ -51,6 +52,7 @@ target_link_libraries(neurogenic PRIVATE neurogenic_engine neurogenic_live)
 install(TARGETS neurogenic RUNTIME DESTINATION bin)
 install(FILES examples/generate.lua examples/timeline_drums.lua examples/timeline_mutate.lua
   examples/timeline_polyrhythm.lua examples/timeline_variation.lua DESTINATION share/neurogenic/examples)
+install(DIRECTORY examples/controllers DESTINATION share/neurogenic/examples)
 
 if(NEUROGENIC_BUILD_TESTS)
   enable_testing()
