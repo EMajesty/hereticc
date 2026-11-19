@@ -4,12 +4,14 @@
 #include "neurogenic/dsp/processor.hpp"
 #include "neurogenic/instrument/subtractive_synth.hpp"
 #include "neurogenic/performance/monitor.hpp"
+#include "neurogenic/project/project.hpp"
 #include "neurogenic/timeline/playback.hpp"
 #include "neurogenic/ui/gui.hpp"
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -490,6 +492,25 @@ void gui_case(int width, int height) {
                iterations);
     samples.shutdown();
 }
+void project_io_case() {
+    const auto path = std::filesystem::temp_directory_path() /
+                      "neurogenic-project-benchmark";
+    std::error_code ignored;
+    std::filesystem::remove_all(path, ignored);
+    neurogenic::Project project;
+    project.name = "Benchmark";
+    project.timeline = timeline(128);
+    project.parameters["synth.cutoff"] = 4000;
+    neurogenic::ProjectIoMetrics save, load;
+    neurogenic::save_project(project, path, &save);
+    const auto restored = neurogenic::load_project(path, &load);
+    checksum += restored.timeline.tracks.size();
+    result("project_save_metadata", 48000, 256, 0,
+           save.elapsed_microseconds * 1000);
+    result("project_load_metadata", 48000, 256, 0,
+           load.elapsed_microseconds * 1000);
+    std::filesystem::remove_all(path, ignored);
+}
 } // namespace
 int main() {
     audio_case("idle", 0);
@@ -552,6 +573,7 @@ int main() {
     gui_case(1920, 1200);
     gui_case(1024, 800);
     gui_case(1024, 600);
+    project_io_case();
     std::cout << "{\"schema\":\"neurogenic.benchmark.summary.v1\",\"checksum\":"
               << checksum
               << ",\"budget_passed\":" << (budget_failed ? "false" : "true")

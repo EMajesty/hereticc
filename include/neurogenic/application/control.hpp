@@ -1,6 +1,7 @@
 #pragma once
 #include "neurogenic/audio/slicing.hpp"
 #include "neurogenic/performance/monitor.hpp"
+#include "neurogenic/project/project.hpp"
 #include "neurogenic/timeline/edit.hpp"
 #include <array>
 #include <cstdint>
@@ -174,6 +175,11 @@ struct ApplicationState {
     std::vector<SampleSlotStatus> sample_slots;
     std::uint64_t timeline_revision{};
     PerformanceSnapshot performance;
+    std::string project_name{"Untitled"};
+    std::filesystem::path project_path;
+    bool project_dirty{}, project_loading{}, project_saving{};
+    std::string project_error;
+    std::vector<std::filesystem::path> missing_assets;
 };
 struct ApplicationCommand {
     std::string action_id;
@@ -224,6 +230,7 @@ class ApplicationService {
     std::optional<TimelineTransaction> edit_group_;
     mutable std::optional<EventId> selected_event_id_;
     bool fill_momentary_{};
+    Project project_;
     mutable SystemMonitor system_monitor_;
 };
 

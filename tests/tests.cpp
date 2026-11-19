@@ -9,6 +9,7 @@
 #include "neurogenic/instrument/subtractive_synth.hpp"
 #include "neurogenic/midi/mapping.hpp"
 #include "neurogenic/performance/monitor.hpp"
+#include "neurogenic/project/project.hpp"
 #include "neurogenic/scripting/runtime.hpp"
 #include "neurogenic/sequencer/pattern_adapter.hpp"
 #include "neurogenic/timeline/edit.hpp"
@@ -876,6 +877,13 @@ void test_sample_slicing() {
               restored.pad_settings[3].stretch_ratio == 1.5F &&
               restored.pad_settings[3].source_beats == 4,
           "slice persistence round trip");
+    check(application.slices().restore_project(restored, error),
+          "slice project activation");
+    const auto activated = application.slices().snapshot(SampleSlotId{0});
+    check(activated.slices.size() == 1 && activated.slices[0].id == 42 &&
+              activated.pad_assignments[3] == 42 &&
+              activated.pad_settings[3].stretch_mode == StretchMode::realtime,
+          "slice and pad settings restoration");
     const auto legacy_path = base / "neurogenic-slices-v1.project";
     {
         std::ofstream legacy(legacy_path);
@@ -1425,6 +1433,178 @@ void test_timeline_and_tracks() {
           "legacy pattern timing adapter");
     check(compile_timeline(adapted, plan, error),
           "legacy pattern did not compile");
+}
+
+void test_unified_project_persistence() {
+    using namespace neurogenic;
+    const auto root = std::filesystem::temp_directory_path() /
+                      "neurogenic-unified-project-test";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root / "assets");
+    const auto sample_path = root / "assets" / "kick.wav";
+    write_pcm16_wav(sample_path, 44100, 1, std::vector<float>(128, 0.25F));
+
+    Project project;
+    project.name = "Round Trip";
+    project.timeline.transport = {428571, 7, 8};
+    project.timeline.generation_seed = 0x12345678;
+    Track track;
+    track.id = 77;
+    track.name = "Synth lead";
+    track.instrument_id = std::string(subtractive_instrument_id);
+    track.pattern.length = 2880;
+    MusicalEvent note{91, 120, MusicalEventType::note, 64, 0.7F, 360};
+    note.trigger_probability = 0.625F;
+    note.trigger_condition = TriggerCondition::every_nth_loop;
+    note.condition_n = 2;
+    note.condition_m = 3;
+    note.ratchet_count = 4;
+    track.pattern.events.push_back(note);
+    MusicalEvent lock{92, 120, MusicalEventType::parameter};
+    lock.parameter_destination = "synth.cutoff";
+    lock.value = 1234.0F;
+    track.pattern.events.push_back(lock);
+    project.timeline.tracks.push_back(track);
+    project.samples.sample_paths[3] = "assets/kick.wav";
+    project.samples.slices.push_back(
+        {501, SampleSlotId{3}, 0, 0, 4, 100, "Kick tail", 36, 0.8F});
+    project.samples.pads[5] = 501;
+    auto &settings = project.samples.pad_settings[5];
+    settings.mode = SamplePlaybackMode::gate;
+    settings.choke_group = 2;
+    settings.semitones = -3;
+    settings.fine_cents = 12.5F;
+    settings.reverse = true;
+    settings.stretch_mode = StretchMode::realtime;
+    settings.stretch_quality = StretchQuality::smooth;
+    settings.stretch_ratio = 1.5F;
+    settings.source_beats = 7;
+    project.parameters["synth.cutoff"] = 4321.0;
+    project.parameters["effect.delay.mix"] = 0.25;
+
+    ProjectIoMetrics save_metrics, load_metrics;
+    save_project(project, root, &save_metrics);
+    std::filesystem::create_directories(root / "generations" /
+                                        "interrupted.tmp");
+    {
+        std::ofstream partial(root / "generations" / "interrupted.tmp" /
+                              "timeline.ngt");
+        partial << "partial";
+    }
+    auto loaded = load_project(root, &load_metrics);
+    check(loaded.name == project.name && loaded.timeline.tracks.size() == 1 &&
+              loaded.timeline.tracks[0].id == 77 &&
+              loaded.timeline.tracks[0].pattern.events[0].id == 91 &&
+              loaded.timeline.tracks[0].pattern.events[0].ratchet_count == 4 &&
+              loaded.samples.slices.size() == 1 &&
+              loaded.samples.slices[0].id == 501 && loaded.samples.pads[5] == 501 &&
+              loaded.samples.pad_settings[5].stretch_mode ==
+                  StretchMode::realtime &&
+              loaded.parameters.at("synth.cutoff") == 4321.0 &&
+              loaded.missing_assets.empty() && save_metrics.metadata_bytes > 0 &&
+              load_metrics.metadata_bytes > 0,
+          "unified project round trip");
+
+    const auto invalid_target = root / "not-a-directory";
+    {
+        std::ofstream file(invalid_target);
+        file << "occupied";
+    }
+    bool write_failed{};
+    try {
+        save_project(project, invalid_target);
+    } catch (const std::filesystem::filesystem_error &) {
+        write_failed = true;
+    }
+    check(write_failed && load_project(root).name == "Round Trip",
+          "failed save damaged previous project");
+
+    const auto relocated = std::filesystem::temp_directory_path() /
+                           "neurogenic-unified-project-relocated";
+    std::filesystem::remove_all(relocated, ignored);
+    std::filesystem::rename(root, relocated);
+    loaded = load_project(relocated);
+    check(loaded.samples.sample_paths.at(3) ==
+              relocated / "assets" / "kick.wav",
+          "relative project sample relocation");
+
+    std::filesystem::remove(relocated / "assets" / "kick.wav");
+    loaded = load_project(relocated);
+    check(loaded.missing_assets.size() == 1 &&
+              loaded.samples.slices.size() == 1 && loaded.samples.pads[5] == 501,
+          "missing project asset metadata preservation");
+    save_project(loaded, relocated);
+    check(load_project(relocated).missing_assets.size() == 1,
+          "missing asset save preservation");
+    const auto replacement = relocated / "assets" / "replacement.wav";
+    write_pcm16_wav(replacement, 48000, 1, std::vector<float>(64, 0.5F));
+    std::string error;
+    check(relink_project_sample(loaded, loaded.missing_assets.front(),
+                                replacement, error) &&
+              loaded.missing_assets.empty() &&
+              loaded.samples.sample_paths.at(3) == replacement,
+          "project sample relinking");
+
+    const auto action_project = relocated / "action-project";
+    AudioEngine engine;
+    SampleManager manager(engine);
+    TimelineService service(
+        [&](const Timeline &timeline, std::string &publish_error) {
+            return engine.queue_timeline(timeline, publish_error);
+        },
+        Timeline{});
+    ApplicationService application(engine, service, manager);
+    check(application.execute({"project.new.v1", {{"name", "Actions"}}})
+                  .accepted &&
+              application.snapshot().project_dirty,
+          "new project action and dirty state");
+    check(application
+              .execute({"project.save-as.v1",
+                        {{"path", action_project.string()},
+                         {"name", std::string("Actions")}}})
+              .accepted &&
+              !application.snapshot().project_dirty,
+          "save-as action and clean state");
+    GuiModel project_gui(application);
+    for (int i = 0; i < 5; ++i)
+        project_gui.input({GuiInput::Type::key_down, GuiKey::tab}, 1920, 1200);
+    const auto &project_frame = project_gui.frame(1920, 1200);
+    check(std::any_of(project_frame.commands.begin(),
+                      project_frame.commands.end(), [](const auto &draw) {
+                          return draw.type == DrawCommand::Type::text &&
+                                 draw.text.find("PROJECT: Actions") !=
+                                     std::string::npos;
+                      }),
+          "GUI project status");
+    check(application
+              .execute({"parameter.set-normalized.v1",
+                        {{"parameter_id", std::string("synth.cutoff")},
+                         {"value", 0.25}}})
+              .accepted &&
+              application.snapshot().project_dirty,
+          "project parameter dirty tracking");
+    check(application.execute({"project.open.v1",
+                               {{"path", action_project.string()}}})
+                  .accepted &&
+              !application.snapshot().project_dirty &&
+              application.snapshot().project_name == "Actions",
+          "project open action");
+    manager.shutdown();
+    std::filesystem::remove_all(action_project, ignored);
+
+    {
+        std::ofstream bad(relocated / "manifest.ngp", std::ios::trunc);
+        bad << "NEUROGENIC_PROJECT 999\n";
+    }
+    bool rejected{};
+    try {
+        (void)load_project(relocated);
+    } catch (const std::runtime_error &) {
+        rejected = true;
+    }
+    check(rejected, "forward project version accepted");
+    std::filesystem::remove_all(relocated, ignored);
 }
 
 void test_transport_integration_and_timeline_io() {
@@ -3244,6 +3424,7 @@ int main() {
         test_expressive_sample_playback();
         test_realtime_time_stretch();
         test_timeline_and_tracks();
+        test_unified_project_persistence();
         test_transport_integration_and_timeline_io();
         test_midi_control_dispatch();
         test_timeline_editing_and_generation();

@@ -119,3 +119,11 @@ On the 2026-11-19 Ryzen 7 7800X3D Debug host, 1.5× mono/stereo measured about
 140.7 µs. Voice setup was below useful timer resolution and allocates no cache.
 These are average offline callback costs, not Pi 5/N150, worst-case or XRUN
 claims; ratio-dependent voice lifetime also affects averages.
+# Project metadata I/O
+
+`neurogenic_benchmark` reports `project_save_metadata` and
+`project_load_metadata` preparation time separately from callback processing.
+These deterministic cases cover metadata only; sample decode/resampling time is
+already measured by the existing preparation benchmarks and depends on asset
+size and storage. The figures do not establish crash durability or hardware
+real-time performance.

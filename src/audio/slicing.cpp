@@ -584,6 +584,88 @@ void SliceService::stop_preview() noexcept {
     (void)engine_.stop_slice_previews();
 }
 
+SliceProject SliceService::project_snapshot(
+    std::map<std::uint32_t, std::filesystem::path> paths) const {
+    std::lock_guard lock(mutex_);
+    SliceProject project;
+    project.sample_paths = std::move(paths);
+    project.pads = pads_;
+    project.pad_settings = pad_settings_;
+    for (const auto &[id, slot] : slots_)
+        project.slices.insert(project.slices.end(), slot.slices.begin(),
+                              slot.slices.end());
+    return project;
+}
+
+bool SliceService::restore_project(const SliceProject &project,
+                                   std::string &error) {
+    std::lock_guard lock(mutex_);
+    std::map<std::uint32_t, SlotState> restored;
+    SliceId next = 1;
+    for (auto slice : project.slices) {
+        next = std::max(next, slice.id + 1);
+        const auto status = samples_.status(slice.slot);
+        if (!status.has_sample || status.active_publication == 0)
+            continue;
+        if (slice.start_frame >= slice.end_frame ||
+            slice.end_frame > status.frames) {
+            error = "project slice is outside its restored sample";
+            return false;
+        }
+        slice.sample_revision = status.active_revision;
+        slice.sample_publication = status.active_publication;
+        auto &slot = restored[slice.slot.value];
+        slot.revision = 1;
+        slot.sample_revision = status.active_revision;
+        slot.sample_publication = status.active_publication;
+        slot.frames = status.frames;
+        slot.rate = status.engine_sample_rate;
+        slot.channels = status.channels;
+        slot.slices.push_back(std::move(slice));
+    }
+    std::array<std::optional<SliceId>, 16> pads{};
+    for (std::size_t pad = 0; pad < pads.size(); ++pad) {
+        const auto wanted = project.pads[pad];
+        const SampleSlice *slice{};
+        if (wanted)
+            for (const auto &[id, slot] : restored)
+                if (const auto found = std::find_if(
+                        slot.slices.begin(), slot.slices.end(),
+                        [&](const auto &item) { return item.id == *wanted; });
+                    found != slot.slices.end()) {
+                    slice = &*found;
+                    break;
+                }
+        const auto settings = project.pad_settings[pad];
+        if (!valid_playback_settings(settings)) {
+            error = "project contains invalid pad playback settings";
+            return false;
+        }
+        if (!(slice ? engine_.map_note_to_slice(
+                          static_cast<std::uint8_t>(36 + pad), slice->slot,
+                          slice->sample_publication, slice->start_frame,
+                          slice->end_frame, slice->gain, settings)
+                    : engine_.clear_note_slice(
+                          static_cast<std::uint8_t>(36 + pad))) ||
+            (!slice && !engine_.configure_note_playback(
+                           static_cast<std::uint8_t>(36 + pad), settings))) {
+            error = "sample mapping publication queue is full";
+            return false;
+        }
+        if (slice)
+            pads[pad] = slice->id;
+    }
+    for (auto &[id, slot] : restored)
+        if (const auto sample = samples_.active_sample(SampleSlotId{id}))
+            slot.waveform = build_waveform_peaks(*sample);
+    slots_ = std::move(restored);
+    pads_ = pads;
+    pad_settings_ = project.pad_settings;
+    next_id_ = next;
+    error.clear();
+    return true;
+}
+
 void save_slice_project(const SliceProject &project,
                         const std::filesystem::path &path) {
     std::ofstream out(path);
@@ -617,7 +699,8 @@ void save_slice_project(const SliceProject &project,
             << '\n';
     }
 }
-SliceProject load_slice_project(const std::filesystem::path &path) {
+SliceProject load_slice_project(const std::filesystem::path &path,
+                                bool require_samples) {
     std::ifstream in(path);
     std::string magic;
     unsigned version{};
@@ -632,7 +715,7 @@ SliceProject load_slice_project(const std::filesystem::path &path) {
             std::string file;
             if (!(in >> slot >> std::quoted(file)))
                 throw std::runtime_error("invalid sample reference");
-            if (!std::filesystem::exists(file))
+            if (require_samples && !std::filesystem::exists(file))
                 throw std::runtime_error("referenced sample is missing: " +
                                          file);
             result.sample_paths[slot] = file;

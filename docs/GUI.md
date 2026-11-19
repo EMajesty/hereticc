@@ -120,3 +120,10 @@ Expressive steps are marked with `*`. The inspector reports probability,
 condition/cycle values, ratchet count, and global Fill state. Semantic actions
 provide editing today; richer pointer widgets remain future work. All properties
 remain reachable through non-touch controller navigation.
+# Project status
+
+The Display view also shows the current project name/path, dirty marker, and
+missing-asset count. Shift+Enter saves to an established path. Open, Save As,
+and relink use the same semantic C++ actions; a graphical embedded filesystem
+browser remains a future integration point. No project operation requires
+touch.

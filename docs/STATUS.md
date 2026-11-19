@@ -213,3 +213,13 @@ conditions, momentary/latched Fill, and 1-8 ratchets with application actions,
 Lua fields, Undo/Redo, GUI indicators, tests, and benchmark scenarios. Advanced
 ratchet curves, conditional parameter locks, and graphical automation editing
 remain out of scope.
+
+Task 024 adds the version-1 unified project directory and shared lifecycle
+actions. Generation-based manifest replacement preserves the prior committed
+generation on ordinary write failures. Timeline/routing, generative event
+fields, sample references, slices, expressive pad/stretch settings, and native
+DSP parameters round-trip with stable IDs. Relative assets relocate with the
+project; missing assets remain inspectable, savable, and relinkable. Startup
+supports `--project`. Automatic asset copying, generation pruning, a full GUI
+filesystem browser, reopen-last preference, and power-loss durability claims
+remain deferred.

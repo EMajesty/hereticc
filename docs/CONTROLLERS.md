@@ -200,3 +200,10 @@ Fill adapters use `performance.fill-set.v1` on press/release for momentary
 operation or `performance.fill-latch.v1` for a latch. This supports a held step
 plus encoder and a focus-driven data-wheel workflow without assigning physical
 controls in the core.
+# Project actions
+
+Project New/Open/Save/Save As/Close/Relink/Query are stable semantic actions and
+can be bound by full or minimal controllers. Their path arguments are supplied
+by a client-neutral filesystem navigator; no desktop file dialog or physical
+layout is assumed. Project progress, errors, dirty state, and missing assets are
+copied application state suitable for controller feedback.

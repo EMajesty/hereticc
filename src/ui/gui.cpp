@@ -591,14 +591,20 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
         text(l.fullscreen, UiColor::text,
              settings_.fullscreen ? "WINDOWED" : "FULLSCREEN");
         text({l.content.x + 12 * l.scale, l.content.y + 220 * l.scale,
-              l.content.w - 24 * l.scale, 100 * l.scale},
+              l.content.w - 24 * l.scale, 180 * l.scale},
              UiColor::text,
              "UI scale: " +
                  (settings_.ui_scale ? std::to_string(*settings_.ui_scale)
                                      : std::string("automatic (current ") +
                                            std::to_string(l.scale) + ")") +
                  "\nKeyboard: - / + / 0, F11\nEncoder: Up/Down, Enter toggles "
-                 "fullscreen");
+                 "fullscreen\n\nPROJECT: " + state.project_name +
+                 (state.project_dirty ? " *" : "") + "\n" +
+                 (state.project_path.empty() ? "Not saved"
+                                             : state.project_path.string()) +
+                 "\nMissing assets: " +
+                 std::to_string(state.missing_assets.size()) +
+                 "  Shift+Enter: Save");
     }
     if (!l.inspector_visible)
         return;
@@ -854,10 +860,14 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
                                              state.selected_sample_slot.value)},
                              {"path", sample_path_.string()}}));
             else if (view_ == GuiView::settings) {
-                settings_.fullscreen = !settings_.fullscreen;
-                fullscreen_toggle_ = true;
-                ++ui_revision_;
-                save_settings(error_);
+                if (shift_)
+                    submit(command("project.save.v1"));
+                else {
+                    settings_.fullscreen = !settings_.fullscreen;
+                    fullscreen_toggle_ = true;
+                    ++ui_revision_;
+                    save_settings(error_);
+                }
             } else if (view_ == GuiView::parameters && shift_ &&
                        !state.parameters.empty()) {
                 const auto &parameter =

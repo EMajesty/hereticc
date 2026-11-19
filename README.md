@@ -161,6 +161,17 @@ Sample paths and routing remain separate `--slot`/`--map` configuration. See
 [`examples/multitrack.ngt`](examples/multitrack.ngt) and the
 [timeline reference](docs/TIMELINE.md).
 
+Complete sessions can be restored with `--project PATH`:
+
+```bash
+./build/dev/neurogenic --project "projects/My Set" --gui
+```
+
+The versioned directory format preserves the timeline, routing, sample/slice
+references, pad/stretch settings, and native DSP parameters without embedding
+PCM. Missing assets remain inspectable and relinkable. See
+[`docs/PROJECTS.md`](docs/PROJECTS.md).
+
 The engine provides 32 polyphonic sample voices shared across all slots by default. Embedders may set a
 different fixed capacity when constructing `AudioEngine`; exhaustion steals the
 oldest active voice deterministically. MIDI transport callbacks only enqueue

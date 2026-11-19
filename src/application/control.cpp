@@ -1,9 +1,12 @@
 #include "neurogenic/application/control.hpp"
 #include "neurogenic/dsp/parameter_destination.hpp"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <limits>
+#include <set>
 #include <stdexcept>
+#include <thread>
 
 namespace neurogenic {
 namespace {
@@ -243,6 +246,18 @@ ActionRegistry::ActionRegistry() {
     add(action("pad.stretch-quality-set.v1", "Set stretch quality", "Samples",
                {{"quality", ValueType::text}}));
     add(action("pad.stretch-reset.v1", "Reset stretch settings", "Samples"));
+    add(action("project.new.v1", "New project", "Project",
+               {{"name", ValueType::text, false}}));
+    add(action("project.open.v1", "Open project", "Project",
+               {{"path", ValueType::text}}));
+    add(action("project.save.v1", "Save project", "Project"));
+    add(action("project.save-as.v1", "Save project as", "Project",
+               {{"path", ValueType::text}, {"name", ValueType::text, false}}));
+    add(action("project.close.v1", "Close project", "Project"));
+    add(action(
+        "project.relink-sample.v1", "Relink missing sample", "Project",
+        {{"missing", ValueType::text}, {"replacement", ValueType::text}}));
+    add(action("project.query.v1", "Query project status", "Project"));
     add(action("edit.undo.v1", "Undo", "Editing"));
     add(action("edit.redo.v1", "Redo", "Editing"));
     add(action("edit.group-begin.v1", "Begin grouped edit", "Editing"));
@@ -595,6 +610,8 @@ ApplicationService::ApplicationService(AudioEngine &engine,
     synth_parameter("effect.delay.mix", "Delay mix", "", 0, 1, 0, 0.01);
     state_.step_ticks = step_resolution_ticks(state_.step_resolution);
     state_.step_duration = state_.step_ticks;
+    project_.timeline = timeline_.snapshot().timeline;
+    state_.timeline_revision = timeline_.snapshot().revision;
 }
 bool ApplicationService::submit(ApplicationCommand command) noexcept {
     try {
@@ -639,6 +656,247 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
     if (!actions_.validate(command.action_id, command.arguments, error))
         return {false, sequence, snapshot().revision, std::move(error)};
     const auto before = snapshot();
+    if (command.action_id.rfind("project.", 0) == 0) {
+        try {
+            if (command.action_id == "project.query.v1")
+                return {true, sequence, before.revision, {}};
+            if (command.action_id == "project.save.v1" ||
+                command.action_id == "project.save-as.v1") {
+                std::filesystem::path path = before.project_path;
+                if (command.action_id == "project.save-as.v1")
+                    path = *argument<std::string>(command, "path");
+                if (path.empty())
+                    return {false, sequence, before.revision,
+                            "project path is not set; use Save As"};
+                Project saving;
+                saving.name = before.project_name;
+                if (const auto found = command.arguments.find("name");
+                    found != command.arguments.end())
+                    saving.name = std::get<std::string>(found->second);
+                saving.timeline = timeline_.snapshot().timeline;
+                std::map<std::uint32_t, std::filesystem::path> paths;
+                for (const auto &slot : samples_.states())
+                    if (slot.has_sample)
+                        paths[slot.id.value] = slot.source_path;
+                for (const auto &[slot, sample] : project_.samples.sample_paths)
+                    if (!paths.contains(slot))
+                        paths[slot] = sample;
+                saving.samples = slices_.project_snapshot(std::move(paths));
+                // SliceService intentionally exposes only audio-active samples.
+                // Retain metadata that belongs to unresolved assets so a save
+                // never erases the user's intended edits or pad assignments.
+                std::set<SliceId> retained_missing_slices;
+                for (const auto &slice : project_.samples.slices) {
+                    const auto found = project_.samples.sample_paths.find(
+                        slice.slot.value);
+                    if (found != project_.samples.sample_paths.end() &&
+                        std::find(project_.missing_assets.begin(),
+                                  project_.missing_assets.end(), found->second) !=
+                            project_.missing_assets.end()) {
+                        saving.samples.slices.push_back(slice);
+                        retained_missing_slices.insert(slice.id);
+                    }
+                }
+                for (std::size_t pad = 0; pad < project_.samples.pads.size();
+                     ++pad)
+                    if (project_.samples.pads[pad] &&
+                        retained_missing_slices.contains(
+                            *project_.samples.pads[pad]))
+                        saving.samples.pads[pad] =
+                            project_.samples.pads[pad];
+                saving.missing_assets = project_.missing_assets;
+                for (const auto &parameter : parameters_.parameters())
+                    if (is_numeric(parameter.current_value) &&
+                        (parameter.id.rfind("synth.", 0) == 0 ||
+                         parameter.id.rfind("effect.", 0) == 0))
+                        saving.parameters[parameter.id] =
+                            number(parameter.current_value);
+                {
+                    std::lock_guard lock(mutex_);
+                    state_.project_saving = true;
+                    changed_locked();
+                }
+                save_project(saving, path);
+                {
+                    std::lock_guard lock(mutex_);
+                    project_ = std::move(saving);
+                    state_.project_name = project_.name;
+                    state_.project_path = path;
+                    state_.project_dirty = false;
+                    state_.timeline_revision = timeline_.snapshot().revision;
+                    state_.project_saving = false;
+                    state_.project_error.clear();
+                    state_.missing_assets = project_.missing_assets;
+                    changed_locked();
+                }
+                return {true, sequence, snapshot().revision, {}};
+            }
+            if (command.action_id == "project.open.v1") {
+                const std::filesystem::path path =
+                    *argument<std::string>(command, "path");
+                {
+                    std::lock_guard lock(mutex_);
+                    state_.project_loading = true;
+                    changed_locked();
+                }
+                auto loaded = load_project(path);
+                for (const auto &[id, value] : loaded.parameters) {
+                    const auto descriptor = parameters_.get(id);
+                    if (!descriptor || value < number(descriptor->minimum) ||
+                        value > number(descriptor->maximum))
+                        throw std::runtime_error("invalid project parameter: " +
+                                                 id);
+                }
+                engine_.stop();
+                for (const auto &[slot, sample] : loaded.samples.sample_paths)
+                    if (std::filesystem::exists(sample) &&
+                        !samples_.load(SampleSlotId{slot}, sample))
+                        throw std::runtime_error("sample load queue is full");
+                samples_.wait_idle();
+                const auto deadline =
+                    std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                while (std::chrono::steady_clock::now() < deadline) {
+                    bool pending{};
+                    for (const auto &[slot, sample] :
+                         loaded.samples.sample_paths)
+                        if (std::filesystem::exists(sample)) {
+                            const auto status =
+                                samples_.status(SampleSlotId{slot});
+                            pending |=
+                                status.state != SampleSlotLoadState::loaded &&
+                                status.state != SampleSlotLoadState::error;
+                        }
+                    if (!pending)
+                        break;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+                for (const auto &[slot, sample] : loaded.samples.sample_paths)
+                    if (std::filesystem::exists(sample)) {
+                        const auto status = samples_.status(SampleSlotId{slot});
+                        if (status.state == SampleSlotLoadState::error)
+                            throw std::runtime_error(status.error);
+                        if (status.state != SampleSlotLoadState::loaded)
+                            throw std::runtime_error(
+                                "sample activation timed out");
+                    }
+                auto edit = timeline_.edit();
+                edit.timeline() = loaded.timeline;
+                edit.set_generation_seed(loaded.timeline.generation_seed);
+                if (!timeline_.commit(std::move(edit),
+                                      TimelineCommitPolicy::next_audio_callback,
+                                      error))
+                    throw std::runtime_error(error);
+                if (!slices_.restore_project(loaded.samples, error))
+                    throw std::runtime_error(error);
+                for (const auto &[id, value] : loaded.parameters) {
+                    const auto previous = parameters_.get(id);
+                    if (!parameters_.set(id, value, error) ||
+                        !publish_dsp_parameter(engine_, parameters_, id)) {
+                        if (previous)
+                            parameters_.set(id, previous->current_value, error);
+                        throw std::runtime_error("cannot restore parameter: " +
+                                                 id);
+                    }
+                }
+                {
+                    std::lock_guard lock(mutex_);
+                    project_ = std::move(loaded);
+                    state_.project_name = project_.name;
+                    state_.project_path = path;
+                    state_.project_dirty = false;
+                    state_.timeline_revision = timeline_.snapshot().revision;
+                    state_.project_loading = false;
+                    state_.project_error.clear();
+                    state_.missing_assets = project_.missing_assets;
+                    changed_locked();
+                }
+                return {true, sequence, snapshot().revision, {}};
+            }
+            if (command.action_id == "project.relink-sample.v1") {
+                const auto missing = std::filesystem::path(
+                    *argument<std::string>(command, "missing"));
+                const auto replacement = std::filesystem::path(
+                    *argument<std::string>(command, "replacement"));
+                auto relinked = project_;
+                if (!relink_project_sample(relinked, missing, replacement,
+                                           error))
+                    return {false, sequence, before.revision, std::move(error)};
+                const auto found = std::find_if(
+                    relinked.samples.sample_paths.begin(),
+                    relinked.samples.sample_paths.end(),
+                    [&](const auto &item) { return item.second == replacement; });
+                if (found == relinked.samples.sample_paths.end() ||
+                    !samples_.load(SampleSlotId{found->first}, replacement))
+                    return {false, sequence, before.revision,
+                            "sample load queue is full"};
+                samples_.wait_idle();
+                const auto deadline = std::chrono::steady_clock::now() +
+                                      std::chrono::seconds(5);
+                for (;;) {
+                    const auto status =
+                        samples_.status(SampleSlotId{found->first});
+                    if (status.state == SampleSlotLoadState::loaded)
+                        break;
+                    if (status.state == SampleSlotLoadState::error)
+                        return {false, sequence, before.revision,
+                                status.error};
+                    if (std::chrono::steady_clock::now() >= deadline)
+                        return {false, sequence, before.revision,
+                                "sample activation timed out"};
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+                if (!slices_.restore_project(relinked.samples, error))
+                    return {false, sequence, before.revision, std::move(error)};
+                std::lock_guard lock(mutex_);
+                project_ = std::move(relinked);
+                state_.missing_assets = project_.missing_assets;
+                state_.project_dirty = true;
+                changed_locked();
+                return {true, sequence, state_.revision, {}};
+            }
+            if (command.action_id == "project.new.v1" ||
+                command.action_id == "project.close.v1") {
+                Project replacement;
+                if (const auto found = command.arguments.find("name");
+                    found != command.arguments.end())
+                    replacement.name = std::get<std::string>(found->second);
+                auto edit = timeline_.edit();
+                edit.timeline() = replacement.timeline;
+                if (!timeline_.commit(std::move(edit),
+                                      TimelineCommitPolicy::next_audio_callback,
+                                      error))
+                    return {false, sequence, before.revision, std::move(error)};
+                engine_.stop();
+                if (!slices_.restore_project(replacement.samples, error))
+                    return {false, sequence, before.revision, std::move(error)};
+                for (const auto &slot : samples_.states())
+                    if ((slot.has_sample ||
+                         slot.state != SampleSlotLoadState::empty) &&
+                        !samples_.unload(slot.id))
+                        return {false, sequence, before.revision,
+                                "sample unload queue is full"};
+                {
+                    std::lock_guard lock(mutex_);
+                    project_ = std::move(replacement);
+                    state_.project_name = project_.name;
+                    state_.project_path.clear();
+                    state_.project_dirty =
+                        command.action_id == "project.new.v1";
+                    state_.timeline_revision = timeline_.snapshot().revision;
+                    state_.missing_assets.clear();
+                    changed_locked();
+                }
+                return {true, sequence, snapshot().revision, {}};
+            }
+        } catch (const std::exception &exception) {
+            std::lock_guard lock(mutex_);
+            state_.project_loading = false;
+            state_.project_saving = false;
+            state_.project_error = exception.what();
+            changed_locked();
+            return {false, sequence, state_.revision, state_.project_error};
+        }
+    }
     if (command.action_id == "navigation.confirm.v1" &&
         before.focused_element == "steps") {
         ApplicationCommand select;
@@ -1918,6 +2176,25 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
         std::lock_guard lock(mutex_);
         changed_locked();
     }
+    if (error.empty()) {
+        const auto &id = command.action_id;
+        const auto musical_edit =
+            id.rfind("step.", 0) == 0 || id.rfind("slice.", 0) == 0 ||
+            id.rfind("sample.load", 0) == 0 ||
+            id.rfind("sample.replace", 0) == 0 ||
+            id.rfind("sample.unload", 0) == 0 ||
+            id.rfind("parameter.", 0) == 0 || id.rfind("track.mute", 0) == 0 ||
+            id.rfind("timeline.", 0) == 0 || id.rfind("edit.undo", 0) == 0 ||
+            id.rfind("edit.redo", 0) == 0 ||
+            (id.rfind("pad.", 0) == 0 && id != "pad.trigger.v1" &&
+             id != "pad.release.v1" && id != "pad.select.v1" &&
+             id != "pad.property-select.v1" && id != "pad.mode-select.v1");
+        if (musical_edit) {
+            std::lock_guard lock(mutex_);
+            state_.project_dirty = true;
+            changed_locked();
+        }
+    }
     return {error.empty(), sequence, snapshot().revision, std::move(error)};
 }
 void ApplicationService::synchronize_locked() const {
@@ -1928,6 +2205,9 @@ void ApplicationService::synchronize_locked() const {
     auto slots = samples_.states();
     auto slice_state = slices_.snapshot(state_.selected_sample_slot);
     auto parameters = parameters_.parameters();
+    if (state_.timeline_revision != timeline.revision &&
+        !state_.project_loading)
+        state_.project_dirty = true;
     bool external = state_.playing != playing ||
                     state_.transport_frame != frame ||
                     state_.timeline_revision != timeline.revision ||

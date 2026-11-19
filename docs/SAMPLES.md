@@ -164,3 +164,9 @@ offline stretching.
 
 Sidecar version 3 persists stretch mode, quality, explicit ratio, source beats
 and source BPM. Versions 1 and 2 remain readable.
+# Project references
+
+Unified projects store sample paths plus slice, pad, expressive playback, and
+stretch metadata, never PCM. Relative paths resolve from the project root.
+Missing references preserve their metadata and may be relinked through
+`project.relink-sample.v1`; unaffected slots remain usable.

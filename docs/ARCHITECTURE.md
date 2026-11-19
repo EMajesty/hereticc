@@ -26,7 +26,9 @@ authoritative transport -> scheduler -> instrument routing -> track/master DSP -
 - `scripting`: genuine Lua 5.4/sol2 `neurogenic.v1` API on a non-audio thread.
 - `instrument`: bounded native instrument contract and subtractive synth.
 - `dsp`: allocation-free processor contract, gain stage and stereo delay.
-- `project`: deliberately tiny versioned format; not a promised final schema.
+- `project`: versioned generation-directory persistence for complete control-side
+  timeline, sample/slice, pad, routing, and native parameter state. It publishes
+  only after parse/preparation and never serializes callback-owned objects.
 
 No callback operation performs I/O, locks, allocation, logging, or Lua work.
 Pattern snapshots and control-thread triggers cross into audio through bounded

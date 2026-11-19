@@ -11,6 +11,7 @@
 
 namespace neurogenic {
 using SliceId = std::uint64_t;
+struct SliceProject;
 [[nodiscard]] const char *
     sample_playback_mode_name(SamplePlaybackMode) noexcept;
 [[nodiscard]] std::optional<SamplePlaybackMode>
@@ -85,6 +86,9 @@ class SliceService {
     bool preview(SliceId, float velocity, std::string &error);
     bool preview_full(SampleSlotId, float velocity, std::string &error);
     void stop_preview() noexcept;
+    [[nodiscard]] SliceProject
+        project_snapshot(std::map<std::uint32_t, std::filesystem::path>) const;
+    bool restore_project(const SliceProject &, std::string &error);
 
   private:
     struct SlotState {
@@ -118,5 +122,6 @@ struct SliceProject {
     std::map<std::uint32_t, std::filesystem::path> sample_paths;
 };
 void save_slice_project(const SliceProject &, const std::filesystem::path &);
-SliceProject load_slice_project(const std::filesystem::path &);
+SliceProject load_slice_project(const std::filesystem::path &,
+                                bool require_samples = true);
 } // namespace neurogenic

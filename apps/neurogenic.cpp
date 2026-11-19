@@ -5,6 +5,7 @@
 #include "neurogenic/core/control_dispatcher.hpp"
 #include "neurogenic/midi/input.hpp"
 #include "neurogenic/midi/mapping.hpp"
+#include "neurogenic/project/project.hpp"
 #include "neurogenic/scripting/runtime.hpp"
 #include "neurogenic/timeline/edit.hpp"
 #include "neurogenic/timeline/io.hpp"
@@ -40,6 +41,7 @@ void usage() {
            "  --midi NAME       select MIDI input by index or name\n"
            "  --script FILE     Lua action for MIDI note 36\n"
            "  --timeline FILE   load a NEUROGENIC_TIMELINE version 1 file\n"
+           "  --project PATH    restore a versioned NEUROGENIC project\n"
            "  --interactive     accept live load/unload/status/quit commands "
            "on stdin\n"
            "  --list-devices    enumerate audio and MIDI devices\n"
@@ -99,7 +101,7 @@ std::uint32_t unsigned_number(std::string_view value, const char *option) {
 int main(int argc, char **argv) {
     try {
         std::string wav, audio_name, midi_name,
-            script = "examples/generate.lua", timeline_file;
+            script = "examples/generate.lua", timeline_file, project_file;
         std::vector<std::pair<std::uint32_t, std::filesystem::path>> slot_files;
         std::vector<std::pair<std::uint8_t, std::uint32_t>> note_maps;
         bool list = false, headless = false, interactive = false, gui = false,
@@ -116,6 +118,8 @@ int main(int argc, char **argv) {
                 script = argv[++i];
             else if (arg == "--timeline" && i + 1 < argc)
                 timeline_file = argv[++i];
+            else if (arg == "--project" && i + 1 < argc)
+                project_file = argv[++i];
             else if (arg == "--slot" && i + 1 < argc) {
                 auto [id, path] = assignment(argv[++i], "--slot");
                 slot_files.emplace_back(id, path);
@@ -185,10 +189,22 @@ int main(int argc, char **argv) {
             if (wav.empty() && slot_files.empty() && !interactive && !gui)
                 return 0;
         }
-        if (wav.empty() && slot_files.empty() && !interactive && !gui &&
-            !stats && !synth) {
+        if (wav.empty() && slot_files.empty() && project_file.empty() &&
+            !interactive && !gui && !stats && !synth) {
             usage();
             return 2;
+        }
+
+        std::optional<neurogenic::Project> startup_project;
+        if (!project_file.empty()) {
+            if (!timeline_file.empty() || !wav.empty() || !slot_files.empty())
+                throw std::invalid_argument(
+                    "--project cannot be combined with sample or timeline inputs");
+            startup_project = neurogenic::load_project(project_file);
+            for (const auto &[slot, path] :
+                 startup_project->samples.sample_paths)
+                if (std::filesystem::exists(path))
+                    slot_files.emplace_back(slot, path);
         }
 
         if (slot_files.empty() && !wav.empty())
@@ -222,7 +238,9 @@ int main(int argc, char **argv) {
         }
 
         neurogenic::Timeline editable_timeline;
-        if (timeline_file.empty()) {
+        if (startup_project)
+            editable_timeline = startup_project->timeline;
+        else if (timeline_file.empty()) {
             neurogenic::Track track;
             track.id = 1;
             track.name = synth ? "Synth" : "Drums";
@@ -252,6 +270,17 @@ int main(int argc, char **argv) {
             std::move(editable_timeline));
         neurogenic::ApplicationService application(engine, timeline_service,
                                                    samples);
+        if (startup_project) {
+            const auto restored = application.execute(
+                {"project.open.v1", {{"path", project_file}}});
+            if (!restored.accepted)
+                throw std::runtime_error("project restore failed: " +
+                                         restored.error);
+            if (!startup_project->missing_assets.empty())
+                std::cerr << "project opened with "
+                          << startup_project->missing_assets.size()
+                          << " missing sample asset(s)\n";
+        }
         if (stats) {
             std::array<float, 256> left{}, right{};
             engine.process(left, right);

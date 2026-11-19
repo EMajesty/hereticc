@@ -220,3 +220,9 @@ Trigger properties currently apply to duration-note events produced by the
 step/timeline editing services. Legacy explicit note-on/note-off pairs retain
 unconditional edge semantics. Parameter events are independent; attaching a
 lock to a conditional note as one atomic conditional group is not yet supported.
+# Unified projects
+
+The timeline remains authoritative when embedded in a version-1 project. Its
+transport, generation seed, routing, stable IDs, automation, trigger conditions,
+and ratchets are written unchanged to the committed generation. Project load
+stops transport and publishes one validated timeline; it does not auto-play.
