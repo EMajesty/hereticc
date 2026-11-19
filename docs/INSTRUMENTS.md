@@ -1,0 +1,53 @@
+# Native instruments and DSP
+
+Timeline, MIDI and controller clients emit semantic note and parameter events.
+Timeline tracks route those events to a stable instrument ID; the first IDs are
+`sample.main` and `synth.subtractive.v1`. Routing is compiled with the timeline,
+so the callback performs integer dispatch and never resolves strings or owns an
+editable track. Multiple tracks may share the synth instance. Invalid IDs are
+rejected before publication.
+
+`Instrument` defines preparation/control operations, note-on/off, bounded block
+processing, parameters, reset and copied state inspection. The current audio
+engine uses concrete dispatch for its built-in synth, avoiding virtual calls in
+the per-sample loop. This is an extension boundary, not a plugin ABI.
+`AudioProcessor` similarly defines channel layout, parameters, bypass, reset and
+bounded block processing. The first processor is a preallocated stereo delay.
+
+## Subtractive synthesizer
+
+The built-in synth provides 32 voices by default, deterministic idle-then-oldest
+allocation, exact note-owner release, sine/triangle/PolyBLEP saw and pulse
+oscillators, pulse width, velocity response, ADSR amplitude, a resonant low-pass
+filter and master gain. Saw and pulse discontinuities use PolyBLEP; triangle and
+filter implementations are deliberately lightweight and are not oversampled.
+Parameters are clamped, finite-checked and smoothed at control rate. Extreme
+resonance is bounded for numerical stability.
+
+```sh
+./build/dev/neurogenic --synth
+./build/dev/neurogenic --synth --headless
+```
+
+The demo timeline targets MIDI note 60. Incoming MIDI note-on/off messages play
+the synth. In the GUI, click the track instrument field to switch the selected
+track between the sample instrument and synth; the Parameters view exposes the
+synth and delay controls. Generic application commands use
+`track.instrument-set.v1` and the existing parameter actions. No GUI or
+controller touches DSP objects directly.
+
+## Real-time ownership
+
+Synth voices and delay storage are allocated when the engine is constructed.
+The audio callback consumes bounded note and DSP-command queues, updates atomic
+targets, and processes preallocated state. It does not allocate, destroy, lock,
+log, perform I/O or start threads. A full DSP queue rejects the newest update;
+the application parameter value is rolled back so visible state cannot claim a
+change the engine did not accept. Instrument routing changes use the existing
+immutable timeline-plan publication and retirement mechanism.
+
+Stop, restart and timeline replacement currently reset synth voices. A future
+instrument registry will permit multiple instances and control-side lifetime
+publication; the current vertical slice has one sample instrument, one synth
+instance and one master delay. There are no per-track effect chains, presets,
+audio-rate modulation, plugin ABI or oversampling.

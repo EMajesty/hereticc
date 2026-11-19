@@ -98,6 +98,7 @@ struct TrackSummary {
     bool muted{};
     MusicalTick pattern_length{};
     std::uint8_t target_note{36};
+    std::string instrument_id{sample_instrument_id};
     std::vector<MusicalEvent> events;
 };
 struct SelectedEventState {

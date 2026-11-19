@@ -111,6 +111,13 @@ been tested or implement MIDI learn.
 
 ## Performance grid
 
+The generic parameter actions expose stable `synth.*` and `effect.delay.*` IDs.
+Eight encoders or a single data wheel can adjust the same native DSP parameters
+without Lua or direct engine access. MIDI notes and timeline STEP events can
+target `synth.subtractive.v1`. The 16 NOTES and 16 LEVELS modes define note and
+velocity semantics; translating those semantic grid events into live instrument
+commands remains an application-mapping extension.
+
 `PerformanceGrid` converts any virtual or physical index 0..15 to semantic
 events independently of MIDI notes or button placement:
 

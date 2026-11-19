@@ -4,9 +4,9 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
-#include <thread>
 #include <mutex>
 #include <string>
+#include <thread>
 
 namespace neurogenic {
 struct AudioCallbackStatistics {
@@ -24,7 +24,10 @@ struct EngineStatistics {
     std::uint64_t dropped_triggers{}, dropped_patterns{}, dropped_timelines{},
         timeline_event_overruns{}, dropped_legacy_events{},
         dropped_transport_commands{}, dropped_sample_updates{},
-        missing_slot_triggers{}, stolen_voices{}, rejected_commands{};
+        missing_slot_triggers{}, stolen_voices{}, rejected_commands{},
+        dropped_dsp_commands{}, synth_stolen_voices{}, instrument_nanoseconds{},
+        effect_nanoseconds{};
+    std::size_t active_synth_voices{}, maximum_synth_voices{};
 };
 
 struct SystemStatistics {
@@ -40,16 +43,17 @@ struct PerformanceSnapshot {
     EngineStatistics engine;
     SystemStatistics system;
 };
-[[nodiscard]] std::string performance_json(const PerformanceSnapshot&);
+[[nodiscard]] std::string performance_json(const PerformanceSnapshot &);
 [[nodiscard]] SystemStatistics sample_system_now() noexcept;
 
 [[nodiscard]] double cpu_percent(std::uint64_t work_delta_nanoseconds,
                                  std::uint64_t wall_delta_nanoseconds) noexcept;
-void saturating_increment(std::atomic<std::uint64_t>& value) noexcept;
+void saturating_increment(std::atomic<std::uint64_t> &value) noexcept;
 
 class CallbackMonitor {
   public:
-    explicit CallbackMonitor(bool enabled = true) noexcept : enabled_(enabled) {}
+    explicit CallbackMonitor(bool enabled = true) noexcept
+        : enabled_(enabled) {}
     void record(std::uint64_t elapsed_nanoseconds, std::uint32_t frames,
                 std::uint32_t sample_rate, std::size_t active_voices) noexcept;
     [[nodiscard]] AudioCallbackStatistics snapshot() const noexcept;
@@ -68,11 +72,11 @@ class CallbackMonitor {
 
 class SystemMonitor {
   public:
-    explicit SystemMonitor(std::chrono::milliseconds interval =
-                               std::chrono::milliseconds(500));
+    explicit SystemMonitor(
+        std::chrono::milliseconds interval = std::chrono::milliseconds(500));
     ~SystemMonitor();
-    SystemMonitor(const SystemMonitor&) = delete;
-    SystemMonitor& operator=(const SystemMonitor&) = delete;
+    SystemMonitor(const SystemMonitor &) = delete;
+    SystemMonitor &operator=(const SystemMonitor &) = delete;
     [[nodiscard]] SystemStatistics snapshot() const noexcept;
     [[nodiscard]] std::uint64_t generation() const noexcept {
         return generation_.load(std::memory_order_acquire);
@@ -92,4 +96,4 @@ class SystemMonitor {
     std::mutex wait_mutex_;
     std::condition_variable wake_;
 };
-}
+} // namespace neurogenic

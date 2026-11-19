@@ -6,7 +6,10 @@
 #include <limits>
 
 namespace neurogenic {
-UiPoint window_to_drawable(const DisplayMetrics& display,float x,float y) noexcept{return {x*display.pixel_ratio_x,y*display.pixel_ratio_y};}
+UiPoint window_to_drawable(const DisplayMetrics &display, float x,
+                           float y) noexcept {
+    return {x * display.pixel_ratio_x, y * display.pixel_ratio_y};
+}
 namespace {
 ApplicationCommand
 command(std::string id,
@@ -65,14 +68,16 @@ GuiSettings GuiModel::load_settings(const std::filesystem::path &path,
                         throw std::out_of_range("scale");
                     result.ui_scale = scale;
                 } catch (...) {
-                    error = "invalid ui_scale in GUI settings; using automatic scale";
+                    error = "invalid ui_scale in GUI settings; using automatic "
+                            "scale";
                     result.ui_scale.reset();
                 }
             }
         } else if (key == "fullscreen") {
             int value{};
             if (!(input >> value) || (value != 0 && value != 1)) {
-                error = "invalid fullscreen value in GUI settings; using windowed mode";
+                error = "invalid fullscreen value in GUI settings; using "
+                        "windowed mode";
                 result.fullscreen = false;
                 input.clear();
             } else
@@ -154,18 +159,18 @@ GuiLayout GuiModel::layout(int width, int height) const {
     };
     const float top_height = 64, nav_height = 54, margin = 16;
     const float content_y = top_height + nav_height + 12;
-    const float content_height = std::max(360.0F, logical_height - content_y - margin);
-    const float inspector_width = result.inspector_visible
-                                      ? (result.breakpoint == GuiBreakpoint::wide
-                                             ? 300.0F
-                                             : 232.0F)
-                                      : 0.0F;
+    const float content_height =
+        std::max(360.0F, logical_height - content_y - margin);
+    const float inspector_width =
+        result.inspector_visible
+            ? (result.breakpoint == GuiBreakpoint::wide ? 300.0F : 232.0F)
+            : 0.0F;
     const float gap = result.inspector_visible ? 16.0F : 0.0F;
     result.top = r(0, 0, logical_width, top_height);
     result.nav = r(0, top_height, logical_width, nav_height);
-    result.content = r(margin, content_y,
-                       logical_width - margin * 2 - inspector_width - gap,
-                       content_height);
+    result.content =
+        r(margin, content_y, logical_width - margin * 2 - inspector_width - gap,
+          content_height);
     result.parameters = result.inspector_visible
                             ? r(logical_width - margin - inspector_width,
                                 content_y, inspector_width, content_height)
@@ -177,6 +182,7 @@ GuiLayout GuiModel::layout(int width, int height) const {
     result.page_next = r(100, content_y + 12, 64, 42);
     result.resolution = r(172, content_y + 12, 100, 42);
     result.target_note = r(280, content_y + 12, 100, 42);
+    result.instrument = r(388, content_y + 12, 180, 42);
     const float row_y = content_y + 66;
     const float row_width = result.content.w / result.scale - 24;
     for (int i = 0; i < 8; ++i)
@@ -187,7 +193,8 @@ GuiLayout GuiModel::layout(int width, int height) const {
     const float grid_width = result.content.w / result.scale - 24;
     const float cell_gap = 8;
     const float cell = (grid_width - cell_gap * 7) / 8;
-    const float grid_height = std::max(52.0F,
+    const float grid_height = std::max(
+        52.0F,
         std::min(92.0F, (logical_height - grid_top - margin - cell_gap) / 2));
     for (int i = 0; i < 16; ++i)
         result.grid.push_back(r(28 + (i % 8) * (cell + cell_gap),
@@ -204,8 +211,8 @@ const GuiFrame &GuiModel::frame(int width, int height) {
     const auto state = application_.snapshot();
     if (frame_.state_revision != state.revision ||
         frame_.performance_generation != state.performance.generation ||
-        frame_.ui_revision != ui_revision_ ||
-        frame_.viewport_width != width || frame_.viewport_height != height) {
+        frame_.ui_revision != ui_revision_ || frame_.viewport_width != width ||
+        frame_.viewport_height != height) {
         frame_.state_revision = state.revision;
         frame_.performance_generation = state.performance.generation;
         frame_.viewport_width = width;
@@ -245,16 +252,26 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
              (state.playing ? "PLAY" : "STOP") + "   TRACK " +
              std::to_string(state.selected_track) + "   " +
              pad_mode_name(state.pad_mode));
-    const auto& perf=state.performance;
-    text({l.top.x + l.top.w - 510 * l.scale,l.top.y + 38 * l.scale,
-          500 * l.scale,20 * l.scale},UiColor::muted,
-         "AUDIO " + std::to_string(static_cast<int>(perf.audio.current_load_percent)) +
-         "%  CPU " + (perf.system.process_cpu_available?std::to_string(static_cast<int>(perf.system.process_cpu_percent)):"n/a") +
-         "%  MEM " + (perf.system.resident_memory_available?std::to_string(perf.system.resident_memory_bytes/(1024*1024)):"n/a") +
-         " MiB  VOICES " + std::to_string(perf.engine.active_voices) + "/" +
-         std::to_string(perf.engine.maximum_voices));
-    const char *names[]{"SEQUENCER", "SAMPLES", "PARAMETERS", "X/Y",
-                        "PERF", "DISPLAY"};
+    const auto &perf = state.performance;
+    text({l.top.x + l.top.w - 510 * l.scale, l.top.y + 38 * l.scale,
+          500 * l.scale, 20 * l.scale},
+         UiColor::muted,
+         "AUDIO " +
+             std::to_string(static_cast<int>(perf.audio.current_load_percent)) +
+             "%  CPU " +
+             (perf.system.process_cpu_available
+                  ? std::to_string(
+                        static_cast<int>(perf.system.process_cpu_percent))
+                  : "n/a") +
+             "%  MEM " +
+             (perf.system.resident_memory_available
+                  ? std::to_string(perf.system.resident_memory_bytes /
+                                   (1024 * 1024))
+                  : "n/a") +
+             " MiB  VOICES " + std::to_string(perf.engine.active_voices) + "/" +
+             std::to_string(perf.engine.maximum_voices));
+    const char *names[]{"SEQUENCER", "SAMPLES", "PARAMETERS",
+                        "X/Y",       "PERF",    "DISPLAY"};
     for (std::size_t i = 0; i < l.tabs.size(); ++i) {
         rect(l.tabs[i], i == static_cast<std::size_t>(view_) ? UiColor::selected
                                                              : UiColor::panel);
@@ -269,8 +286,8 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
               l.content.w - 24 * l.scale, 28 * l.scale},
              UiColor::accent,
              "TIMELINE / PAGE " + std::to_string(state.step_page + 1));
-        for (const auto control :
-             {l.page_previous, l.page_next, l.resolution, l.target_note})
+        for (const auto control : {l.page_previous, l.page_next, l.resolution,
+                                   l.target_note, l.instrument})
             rect(control, UiColor::background);
         text(l.page_previous, UiColor::text, "< PAGE");
         text(l.page_next, UiColor::text, "PAGE >");
@@ -278,6 +295,8 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
              step_resolution_name(state.step_resolution));
         text(l.target_note, UiColor::text,
              "NOTE " + std::to_string(track ? track->target_note : 0));
+        text(l.instrument, UiColor::text,
+             track ? track->instrument_id : "NO INSTRUMENT");
         for (std::size_t i = 0;
              i < std::min<std::size_t>(3, state.tracks.size()); ++i) {
             const auto &item = state.tracks[i];
@@ -286,6 +305,7 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
                                 : UiColor::background);
             text(l.rows[i], item.muted ? UiColor::muted : UiColor::text,
                  std::to_string(item.id) + "  " + item.name + "  " +
+                     item.instrument_id + "  " +
                      std::to_string(item.pattern_length) + " ticks" +
                      (item.muted ? "  MUTED" : ""));
         }
@@ -375,20 +395,65 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
               pad.y + static_cast<float>(y) * pad.h - 10 * l.scale,
               20 * l.scale, 20 * l.scale},
              UiColor::accent);
-    } else if(view_==GuiView::performance){
-        const auto micros=[](std::uint64_t ns){return std::to_string(ns/1000)+" us";};
-        text({l.content.x+12*l.scale,l.content.y+8*l.scale,l.content.w-24*l.scale,28*l.scale},UiColor::accent,"PERFORMANCE MONITOR");
-        const std::string rows[]{
-          "Audio load current / average / peak: " + std::to_string(perf.audio.current_load_percent) + "% / " + std::to_string(perf.audio.average_load_percent) + "% / " + std::to_string(perf.audio.peak_load_percent) + "%",
-          "Callback current / average / peak: " + micros(perf.audio.current_nanoseconds) + " / " + micros(perf.audio.average_nanoseconds) + " / " + micros(perf.audio.peak_nanoseconds),
-          "Deadline: " + micros(perf.audio.deadline_nanoseconds) + "  measured overruns: " + std::to_string(perf.audio.deadline_overruns) + " (not backend XRUNs)",
-          "Audio: " + std::to_string(perf.engine.sample_rate) + " Hz / " + std::to_string(perf.engine.buffer_frames) + " frames  voices " + std::to_string(perf.engine.active_voices) + "/" + std::to_string(perf.engine.maximum_voices),
-          "Process CPU: " + (perf.system.process_cpu_available?std::to_string(perf.system.process_cpu_percent)+"% of one core":"unavailable") + "  System CPU: " + (perf.system.system_cpu_available?std::to_string(perf.system.system_cpu_percent)+"%":"unavailable"),
-          "Resident / system memory: " + (perf.system.resident_memory_available?std::to_string(perf.system.resident_memory_bytes/(1024*1024))+" MiB":"unavailable") + " / " + (perf.system.total_memory_available?std::to_string(perf.system.total_memory_bytes/(1024*1024))+" MiB":"unavailable"),
-          "Queue overflow: triggers " + std::to_string(perf.engine.dropped_triggers) + ", timelines " + std::to_string(perf.engine.dropped_timelines) + ", commands " + std::to_string(perf.engine.rejected_commands),
-          "Backend XRUN counter: unavailable"
+    } else if (view_ == GuiView::performance) {
+        const auto micros = [](std::uint64_t ns) {
+            return std::to_string(ns / 1000) + " us";
         };
-        for(std::size_t i=0;i<std::size(rows)&&i<l.rows.size();++i){rect(l.rows[i],UiColor::background);text(l.rows[i],UiColor::text,rows[i]);}
+        text({l.content.x + 12 * l.scale, l.content.y + 8 * l.scale,
+              l.content.w - 24 * l.scale, 28 * l.scale},
+             UiColor::accent, "PERFORMANCE MONITOR");
+        const std::string rows[]{
+            "Audio load current / average / peak: " +
+                std::to_string(perf.audio.current_load_percent) + "% / " +
+                std::to_string(perf.audio.average_load_percent) + "% / " +
+                std::to_string(perf.audio.peak_load_percent) + "%",
+            "Callback current / average / peak: " +
+                micros(perf.audio.current_nanoseconds) + " / " +
+                micros(perf.audio.average_nanoseconds) + " / " +
+                micros(perf.audio.peak_nanoseconds),
+            "Deadline: " + micros(perf.audio.deadline_nanoseconds) +
+                "  measured overruns: " +
+                std::to_string(perf.audio.deadline_overruns) +
+                " (not backend XRUNs)",
+            "Audio: " + std::to_string(perf.engine.sample_rate) + " Hz / " +
+                std::to_string(perf.engine.buffer_frames) + " frames  voices " +
+                std::to_string(perf.engine.active_voices) + "/" +
+                std::to_string(perf.engine.maximum_voices),
+            "Process CPU: " +
+                (perf.system.process_cpu_available
+                     ? std::to_string(perf.system.process_cpu_percent) +
+                           "% of one core"
+                     : "unavailable") +
+                "  System CPU: " +
+                (perf.system.system_cpu_available
+                     ? std::to_string(perf.system.system_cpu_percent) + "%"
+                     : "unavailable"),
+            "Resident / system memory: " +
+                (perf.system.resident_memory_available
+                     ? std::to_string(perf.system.resident_memory_bytes /
+                                      (1024 * 1024)) +
+                           " MiB"
+                     : "unavailable") +
+                " / " +
+                (perf.system.total_memory_available
+                     ? std::to_string(perf.system.total_memory_bytes /
+                                      (1024 * 1024)) +
+                           " MiB"
+                     : "unavailable"),
+            "Queues trig/timeline/DSP " +
+                std::to_string(perf.engine.dropped_triggers) + "/" +
+                std::to_string(perf.engine.dropped_timelines) + "/" +
+                std::to_string(perf.engine.dropped_dsp_commands) + "  synth " +
+                std::to_string(perf.engine.active_synth_voices) + "/" +
+                std::to_string(perf.engine.maximum_synth_voices) + " steals " +
+                std::to_string(perf.engine.synth_stolen_voices) + "  inst/fx " +
+                micros(perf.engine.instrument_nanoseconds) + "/" +
+                micros(perf.engine.effect_nanoseconds),
+            "Backend XRUN counter: unavailable"};
+        for (std::size_t i = 0; i < std::size(rows) && i < l.rows.size(); ++i) {
+            rect(l.rows[i], UiColor::background);
+            text(l.rows[i], UiColor::text, rows[i]);
+        }
     } else {
         text({l.content.x + 12 * l.scale, l.content.y + 8 * l.scale,
               l.content.w - 24 * l.scale, 28 * l.scale},
@@ -408,7 +473,8 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
                  (settings_.ui_scale ? std::to_string(*settings_.ui_scale)
                                      : std::string("automatic (current ") +
                                            std::to_string(l.scale) + ")") +
-                 "\nKeyboard: - / + / 0, F11\nEncoder: Up/Down, Enter toggles fullscreen");
+                 "\nKeyboard: - / + / 0, F11\nEncoder: Up/Down, Enter toggles "
+                 "fullscreen");
     }
     if (!l.inspector_visible)
         return;
@@ -468,12 +534,12 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
         if (input.key == GuiKey::scale_up || input.key == GuiKey::scale_down ||
             input.key == GuiKey::scale_reset) {
             std::string settings_error;
-            const bool accepted = input.key == GuiKey::scale_reset
-                                      ? set_ui_scale(std::nullopt, settings_error)
-                                      : adjust_ui_scale(input.key == GuiKey::scale_up
-                                                            ? 0.1F
-                                                            : -0.1F,
-                                                        settings_error);
+            const bool accepted =
+                input.key == GuiKey::scale_reset
+                    ? set_ui_scale(std::nullopt, settings_error)
+                    : adjust_ui_scale(input.key == GuiKey::scale_up ? 0.1F
+                                                                    : -0.1F,
+                                      settings_error);
             error_ = accepted ? std::string{} : std::move(settings_error);
             return true;
         }
@@ -590,10 +656,8 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
         if ((input.key == GuiKey::up || input.key == GuiKey::down) &&
             view_ == GuiView::settings) {
             std::string settings_error;
-            const auto accepted = adjust_ui_scale(input.key == GuiKey::up
-                                                      ? 0.1F
-                                                      : -0.1F,
-                                                  settings_error);
+            const auto accepted = adjust_ui_scale(
+                input.key == GuiKey::up ? 0.1F : -0.1F, settings_error);
             error_ = accepted ? std::string{} : std::move(settings_error);
             return true;
         }
@@ -664,6 +728,15 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
                     command("track.note-target-set.v1",
                             {{"note", static_cast<std::int64_t>(std::min<int>(
                                           127, track->target_note + 1))}}));
+                return true;
+            }
+            if (l.instrument.contains(input.x, input.y) && track) {
+                submit(
+                    command("track.instrument-set.v1",
+                            {{"instrument_id",
+                              track->instrument_id == subtractive_instrument_id
+                                  ? std::string(sample_instrument_id)
+                                  : std::string(subtractive_instrument_id)}}));
                 return true;
             }
             for (std::size_t i = 0;

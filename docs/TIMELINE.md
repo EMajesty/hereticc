@@ -12,6 +12,9 @@ Events have stable 64-bit identifiers and support duration notes, explicit
 note-on/note-off, and stable 32-bit parameter identifiers with values. Tracks
 have stable 64-bit identifiers, mute state, and one initial looping pattern. A
 track is an event container, not an instrument, sample slot, or MIDI channel.
+Each track nevertheless has an explicit stable routing target. `sample.main`
+retains sample-slot note mapping and `synth.subtractive.v1` targets the native
+synth; routing does not change the shared track or event representation.
 At equal frame positions playback orders by track ID, note-off before note-on
 within a track, then event ID.
 

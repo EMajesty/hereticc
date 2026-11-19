@@ -61,6 +61,7 @@ class TimelineTransaction {
     bool set_track_name(TrackId, std::string, std::string &error);
     bool set_track_length(TrackId, MusicalTick, std::string &error);
     bool set_track_muted(TrackId, bool, std::string &error);
+    bool set_track_instrument(TrackId, std::string, std::string &error);
     bool add_note(TrackId, EventId, MusicalTick, std::uint8_t, float,
                   MusicalTick, std::string &error);
     bool modify_note(TrackId, EventId, MusicalTick, std::uint8_t, float,

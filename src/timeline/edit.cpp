@@ -140,6 +140,23 @@ bool TimelineTransaction::set_track_muted(TrackId id, bool muted,
     error.clear();
     return true;
 }
+bool TimelineTransaction::set_track_instrument(TrackId id,
+                                               std::string instrument,
+                                               std::string &error) {
+    auto *track = find_track(id);
+    if (!track) {
+        error = "track does not exist";
+        return false;
+    }
+    if (instrument != sample_instrument_id &&
+        instrument != subtractive_instrument_id) {
+        error = "instrument is unavailable";
+        return false;
+    }
+    track->instrument_id = std::move(instrument);
+    error.clear();
+    return true;
+}
 bool TimelineTransaction::add_note(TrackId track_id, EventId id,
                                    MusicalTick tick, std::uint8_t pitch,
                                    float velocity, MusicalTick duration,

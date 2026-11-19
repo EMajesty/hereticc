@@ -4,6 +4,8 @@
 #include "neurogenic/audio/sample_manager.hpp"
 #include "neurogenic/core/control_dispatcher.hpp"
 #include "neurogenic/core/spsc_queue.hpp"
+#include "neurogenic/dsp/processor.hpp"
+#include "neurogenic/instrument/subtractive_synth.hpp"
 #include "neurogenic/midi/mapping.hpp"
 #include "neurogenic/performance/monitor.hpp"
 #include "neurogenic/scripting/runtime.hpp"
@@ -60,7 +62,8 @@ void test_performance_monitoring() {
     check(std::fabs(cpu_percent(250'000'000, 1'000'000'000) - 25.0) < 0.001 &&
               cpu_percent(1, 0) == 0,
           "process CPU calculation");
-    std::atomic<std::uint64_t> saturated{std::numeric_limits<std::uint64_t>::max()};
+    std::atomic<std::uint64_t> saturated{
+        std::numeric_limits<std::uint64_t>::max()};
     saturating_increment(saturated);
     check(saturated.load() == std::numeric_limits<std::uint64_t>::max(),
           "performance counter saturation");
@@ -71,13 +74,15 @@ void test_performance_monitoring() {
             concurrent.record(static_cast<std::uint64_t>(i + 1), 64, 48000, 4);
         done.store(true);
     });
-    while (!done.load()) (void)concurrent.snapshot();
+    while (!done.load())
+        (void)concurrent.snapshot();
     writer.get();
     check(concurrent.snapshot().callback_count == 10000,
           "concurrent performance snapshots");
     const auto system = sample_system_now();
 #ifdef __linux__
-    check(system.resident_memory_available && system.resident_memory_bytes > 0 &&
+    check(system.resident_memory_available &&
+              system.resident_memory_bytes > 0 &&
               system.total_memory_available && system.total_memory_bytes > 0,
           "Linux memory reporting");
 #else
@@ -92,6 +97,171 @@ void test_performance_monitoring() {
                   std::string::npos &&
               json.find("\"sample_rate\":48000") != std::string::npos,
           "machine-readable performance output");
+}
+
+void test_native_synthesis_and_dsp() {
+    using namespace neurogenic;
+    for (int waveform = 0; waveform < 4; ++waveform) {
+        SubtractiveSynth synth(48000, 4);
+        check(synth.set_parameter(
+                  static_cast<std::uint32_t>(SynthParameter::waveform),
+                  static_cast<float>(waveform)),
+              "synth waveform parameter");
+        synth.note_on(69, 1);
+        std::vector<float> left(2048), right(2048);
+        synth.process(left, right);
+        check(std::all_of(left.begin(), left.end(),
+                          [](float value) { return std::isfinite(value); }) &&
+                  std::any_of(
+                      left.begin(), left.end(),
+                      [](float value) { return std::abs(value) > 1e-5F; }),
+              "synth waveform stability");
+    }
+    SubtractiveSynth frequency(48000, 4);
+    frequency.set_parameter(
+        static_cast<std::uint32_t>(SynthParameter::waveform), 0);
+    frequency.set_parameter(static_cast<std::uint32_t>(SynthParameter::attack),
+                            0.001F);
+    frequency.note_on(69, 1);
+    std::vector<float> wave(48000), other(48000);
+    frequency.process(wave, other);
+    std::size_t crossings{};
+    for (std::size_t i = 1; i < wave.size(); ++i)
+        if (wave[i - 1] <= 0 && wave[i] > 0)
+            ++crossings;
+    check(crossings >= 438 && crossings <= 442, "synth oscillator frequency");
+    frequency.note_off(69);
+    frequency.process(wave, other);
+    check(frequency.state().active_voices == 0, "synth ADSR release");
+    SubtractiveSynth poly(48000, 2);
+    poly.note_on(60, 0.2F, {1, 1, 0});
+    poly.note_on(64, 1, {1, 2, 0});
+    poly.note_on(67, 1, {1, 3, 0});
+    check(poly.state().active_voices == 2 && poly.state().stolen_voices == 1,
+          "synth deterministic voice stealing");
+    poly.note_off(64, {1, 2, 0});
+    check(poly.state().active_voices == 2,
+          "stolen synth owner released unrelated voice");
+    poly.set_parameter(static_cast<std::uint32_t>(SynthParameter::cutoff),
+                       20000);
+    poly.set_parameter(static_cast<std::uint32_t>(SynthParameter::resonance),
+                       0.95F);
+    std::array<float, 512> stable_left{}, stable_right{};
+    poly.process(stable_left, stable_right);
+    check(std::all_of(stable_left.begin(), stable_left.end(),
+                      [](float value) { return std::isfinite(value); }),
+          "synth filter stability");
+    poly.set_sample_rate(44100);
+    check(poly.state().active_voices == 0, "synth sample-rate reset");
+    StereoDelay delay(48000, 0.1F);
+    std::array<float, 6000> dl{}, dr{};
+    dl[0] = dr[0] = 1;
+    delay.set_bypass(true);
+    delay.process(dl, dr);
+    check(dl[0] == 1 && std::all_of(dl.begin() + 1, dl.end(),
+                                    [](float value) { return value == 0; }),
+          "effect bypass");
+    delay.set_bypass(false);
+    delay.set_parameter(static_cast<std::uint32_t>(DelayParameter::mix), 1);
+    delay.reset();
+    dl.fill(0);
+    dr.fill(0);
+    dl[0] = dr[0] = 1;
+    delay.process(dl, dr);
+    check(std::any_of(dl.begin() + 40, dl.end(),
+                      [](float value) { return std::abs(value) > 1e-5F; }),
+          "stereo delay processing");
+    AudioEngine routed(48000, 8);
+    Timeline synth_timeline;
+    Track synth_track;
+    synth_track.id = 1;
+    synth_track.instrument_id = std::string(subtractive_instrument_id);
+    synth_track.pattern.length = 960;
+    synth_track.pattern.events.push_back(
+        {1, 0, MusicalEventType::note, 60, 1, 480});
+    synth_timeline.tracks.push_back(synth_track);
+    std::string error;
+    check(routed.queue_timeline(synth_timeline, error),
+          "synth timeline routing");
+    std::array<float, 256> left{}, right{};
+    routed.process(left, right);
+    check(std::any_of(left.begin(), left.end(),
+                      [](float value) { return std::abs(value) > 1e-5F; }) &&
+              routed.synth_state().active_voices == 1,
+          "timeline did not trigger synth");
+    AudioEngine mixed(48000, 8);
+    mixed.set_sample({48000, 1, std::vector<float>(512, 0.25F)});
+    Timeline mixed_timeline = synth_timeline;
+    Track sample_track;
+    sample_track.id = 2;
+    sample_track.pattern.length = 960;
+    sample_track.pattern.events.push_back(
+        {2, 0, MusicalEventType::note, 36, 1, 240});
+    mixed_timeline.tracks.push_back(sample_track);
+    check(mixed.queue_timeline(mixed_timeline, error),
+          "mixed instrument timeline");
+    mixed.process(left, right);
+    check(mixed.active_voice_count() > 0 &&
+              mixed.synth_state().active_voices > 0,
+          "mixed sample and synth playback");
+    synth_timeline.tracks[0].muted = true;
+    AudioEngine muted;
+    check(muted.queue_timeline(synth_timeline, error), "muted synth timeline");
+    muted.process(left, right);
+    check(std::all_of(left.begin(), left.end(),
+                      [](float value) { return value == 0; }),
+          "synth track mute");
+    TimelineService service(
+        [&](const Timeline &value, std::string &publish_error) {
+            return routed.queue_timeline(value, publish_error);
+        },
+        synth_timeline);
+    SampleManager samples(routed);
+    ApplicationService app(routed, service, samples);
+    ApplicationCommand instrument;
+    instrument.action_id = "track.instrument-set.v1";
+    instrument.arguments = {
+        {"instrument_id", std::string(sample_instrument_id)}};
+    check(app.execute(instrument).accepted &&
+              service.snapshot().timeline.tracks[0].instrument_id ==
+                  sample_instrument_id,
+          "application instrument routing action");
+    ApplicationCommand cutoff;
+    cutoff.action_id = "parameter.set-normalized.v1";
+    cutoff.arguments = {{"parameter_id", std::string("synth.cutoff")},
+                        {"value", 0.5}};
+    check(app.execute(cutoff).accepted, "application synth parameter command");
+    routed.process(left, right);
+    check(routed.dropped_dsp_commands() == 0, "DSP parameter publication");
+    AudioEngine saturated_engine;
+    TimelineService saturated_timeline(
+        [](const Timeline &, std::string &) { return true; }, synth_timeline);
+    SampleManager saturated_samples(saturated_engine);
+    ApplicationService saturated_app(saturated_engine, saturated_timeline,
+                                     saturated_samples);
+    for (std::size_t i = 0; i < 128; ++i)
+        check(saturated_engine.set_synth_parameter(SynthParameter::cutoff,
+                                                   1000.0F),
+              "fill DSP parameter queue");
+    const auto old_cutoff =
+        saturated_app.parameters().get("synth.cutoff")->current_value;
+    const auto rejected = saturated_app.execute(cutoff);
+    check(!rejected.accepted &&
+              saturated_app.parameters().get("synth.cutoff")->current_value ==
+                  old_cutoff &&
+              saturated_engine.dropped_dsp_commands() == 1,
+          "DSP queue overflow rolls back application parameter state");
+    saturated_samples.shutdown();
+    MidiMapper midi;
+    bool on{}, off{};
+    midi.set_note_event_handler([&](std::uint8_t, float, bool active) {
+        active ? on = true : off = true;
+    });
+    check(midi.receive({0x90, 60, 100, 0}) && midi.receive({0x80, 60, 0, 1}),
+          "MIDI synth note input");
+    midi.dispatch_pending();
+    check(on && off, "MIDI synth note-on/off dispatch");
+    samples.shutdown();
 }
 
 neurogenic::Sample constant_sample(std::size_t frames, float value = 1.0F) {
@@ -1088,7 +1258,9 @@ void test_midi_control_dispatch() {
     check(actions == 0, "action ran in MIDI callback");
     check(mapper.dispatch_pending() == 1 && notes == 1 && actions == 1,
           "deterministic MIDI dispatch");
-    check(!mapper.receive({0x80, 12, 1, 0}), "MIDI note-off filtering");
+    check(mapper.receive({0x80, 12, 1, 0}) && mapper.dispatch_pending() == 1 &&
+              notes == 1 && actions == 1,
+          "MIDI note-off semantic dispatch");
 
     MidiMapper threaded;
     std::promise<void> delivered;
@@ -1742,26 +1914,24 @@ void test_undo_redo_and_step_properties() {
     check(!app.snapshot().can_undo && !app.snapshot().can_redo &&
               app.snapshot().history_capacity == 32,
           "initial history state");
-    check(app.execute({"step.toggle.v1", {{"step", std::int64_t{1}}}})
-              .accepted,
+    check(app.execute({"step.toggle.v1", {{"step", std::int64_t{1}}}}).accepted,
           "step insertion for history");
     check(app.execute({"edit.undo.v1"}).accepted, "undo step insertion");
     const auto after_insert_undo = timeline.snapshot();
-    check(std::none_of(after_insert_undo.timeline.tracks[0].pattern.events.begin(),
-                       after_insert_undo.timeline.tracks[0].pattern.events.end(),
-                       [](const MusicalEvent &event) {
-                           return event.type == MusicalEventType::note &&
-                                  event.tick == 240 && event.pitch == 36;
-                       }),
+    check(std::none_of(
+              after_insert_undo.timeline.tracks[0].pattern.events.begin(),
+              after_insert_undo.timeline.tracks[0].pattern.events.end(),
+              [](const MusicalEvent &event) {
+                  return event.type == MusicalEventType::note &&
+                         event.tick == 240 && event.pitch == 36;
+              }),
           "undo step insertion state");
-    check(app.execute({"edit.redo.v1"}).accepted,
-          "redo step insertion");
-    check(app.execute({"step.toggle.v1", {{"step", std::int64_t{1}}}})
-              .accepted &&
-              app.execute({"edit.undo.v1"}).accepted,
-          "undo step removal");
-    check(app.execute({"edit.redo.v1"}).accepted,
-          "redo step removal");
+    check(app.execute({"edit.redo.v1"}).accepted, "redo step insertion");
+    check(
+        app.execute({"step.toggle.v1", {{"step", std::int64_t{1}}}}).accepted &&
+            app.execute({"edit.undo.v1"}).accepted,
+        "undo step removal");
+    check(app.execute({"edit.redo.v1"}).accepted, "redo step removal");
     check(app.execute(
                  {"step.event-select.v1",
                   {{"step", std::int64_t{0}}, {"event_id", std::int64_t{2}}}})
@@ -1899,8 +2069,8 @@ void test_gui_model() {
          false,
          {3840, {{1, 0, MusicalEventType::note, 36, 1, 120, 0, 0, 0}}}},
         {2, "hat", true, {1920, {}}}};
-    TimelineService timeline([](const Timeline &, std::string &) { return true; },
-                             initial);
+    TimelineService timeline(
+        [](const Timeline &, std::string &) { return true; }, initial);
     SampleManager samples(engine);
     ApplicationService application(engine, timeline, samples);
     GuiModel gui(application);
@@ -1942,18 +2112,17 @@ void test_gui_model() {
               gui.frame(1600, 900).layout.scale == *gui.settings().ui_scale,
           "runtime scale adjustment and invalidation");
     std::string settings_error;
-    check(!gui.set_ui_scale(3.0F, settings_error) &&
-              !settings_error.empty(),
+    check(!gui.set_ui_scale(3.0F, settings_error) && !settings_error.empty(),
           "invalid runtime scale accepted");
-    check(gui.input({GuiInput::Type::key_down, GuiKey::scale_reset}, 1600,
-                    900) &&
-              !gui.settings().ui_scale,
-          "runtime scale reset");
+    check(
+        gui.input({GuiInput::Type::key_down, GuiKey::scale_reset}, 1600, 900) &&
+            !gui.settings().ui_scale,
+        "runtime scale reset");
     for (const auto viewport :
-         {std::pair{1920, 1200}, std::pair{1024, 800},
-          std::pair{1024, 600}}) {
+         {std::pair{1920, 1200}, std::pair{1024, 800}, std::pair{1024, 600}}) {
         GuiModel hit_model(application);
-        const auto hit_layout = hit_model.layout(viewport.first, viewport.second);
+        const auto hit_layout =
+            hit_model.layout(viewport.first, viewport.second);
         const auto revision = timeline.snapshot().revision;
         GuiInput hit{GuiInput::Type::pointer_down};
         hit.x = hit_layout.grid[7].x + hit_layout.grid[7].w * 0.5F;
@@ -1970,6 +2139,14 @@ void test_gui_model() {
           "number step selection");
     (void)application.dispatch_pending();
     check(application.snapshot().selected_step == 4, "GUI step selection");
+    GuiInput instrument_click;
+    instrument_click.type = GuiInput::Type::pointer_down;
+    instrument_click.x = small.instrument.x + 2;
+    instrument_click.y = small.instrument.y + 2;
+    check(gui.input(instrument_click, 1024, 600) &&
+              timeline.snapshot().timeline.tracks[0].instrument_id ==
+                  subtractive_instrument_id,
+          "GUI semantic instrument selection");
     const auto before_pointer = timeline.snapshot().revision;
     GuiInput step_click;
     step_click.type = GuiInput::Type::pointer_down;
@@ -2033,7 +2210,8 @@ void test_gui_model() {
           "GUI performance view selection");
     const auto &performance_frame = gui.frame(1024, 600);
     check(std::any_of(performance_frame.commands.begin(),
-                      performance_frame.commands.end(), [](const auto &item) {
+                      performance_frame.commands.end(),
+                      [](const auto &item) {
                           return item.text.find("PERFORMANCE MONITOR") !=
                                  std::string::npos;
                       }) &&
@@ -2041,21 +2219,29 @@ void test_gui_model() {
           "GUI performance state synchronization");
     const auto settings_path = std::filesystem::temp_directory_path() /
                                "neurogenic-gui-settings-test.conf";
-    { GuiModel persistent(application, GuiSettings{1.7F, true}, settings_path);
-      check(persistent.save_settings(settings_error), "GUI settings save"); }
+    {
+        GuiModel persistent(application, GuiSettings{1.7F, true},
+                            settings_path);
+        check(persistent.save_settings(settings_error), "GUI settings save");
+    }
     const auto loaded = GuiModel::load_settings(settings_path, settings_error);
     check(loaded.ui_scale && std::fabs(*loaded.ui_scale - 1.7F) < 0.001F &&
               loaded.fullscreen,
           "GUI settings persistence");
-    { std::ofstream invalid(settings_path); invalid << "ui_scale 9\nfullscreen x\n"; }
-    const auto recovered = GuiModel::load_settings(settings_path, settings_error);
+    {
+        std::ofstream invalid(settings_path);
+        invalid << "ui_scale 9\nfullscreen x\n";
+    }
+    const auto recovered =
+        GuiModel::load_settings(settings_path, settings_error);
     check(!recovered.ui_scale && !recovered.fullscreen &&
               !settings_error.empty(),
           "invalid GUI settings recovery");
     std::filesystem::remove(settings_path);
-    check(gui.input({GuiInput::Type::key_down, GuiKey::fullscreen}, 1024, 600) &&
-              gui.take_fullscreen_toggle(),
-          "runtime fullscreen transition request");
+    check(
+        gui.input({GuiInput::Type::key_down, GuiKey::fullscreen}, 1024, 600) &&
+            gui.take_fullscreen_toggle(),
+        "runtime fullscreen transition request");
     std::string error;
     const auto folder =
         std::filesystem::temp_directory_path() / "neurogenic-gui-browser";
@@ -2226,6 +2412,7 @@ void test_lua_and_offline() {
 int main() {
     try {
         test_performance_monitoring();
+        test_native_synthesis_and_dsp();
         test_queue_and_scheduler();
         test_polyphony_and_events();
         test_sample_slots();

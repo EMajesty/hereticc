@@ -68,6 +68,13 @@ CPU/memory availability, and the explicit absence of backend XRUN data. It is
 refreshed from `ApplicationState` generations and never reads audio-owned state.
 At compact resolutions it remains a separate view, avoiding sequencer clutter.
 
+The Sequencer instrument field displays the selected track's stable routing ID
+and toggles between `sample.main` and `synth.subtractive.v1`. The Parameters
+view discovers the native synth and delay controls through `ParameterRegistry`;
+it does not hold DSP pointers. The Performance view also reports synth
+polyphony, voice steals, rejected DSP commands and bounded instrument/effect
+processing measurements. Compact displays use the same semantic controls.
+
 CI covers 1920 × 1200 at 1.0×, 1.5× and 2.0×, both compact resolutions,
 high-DPI coordinate conversion, resize, live scale/fullscreen requests,
 persistence recovery, keyboard, pointer, touch-equivalent and encoder paths,

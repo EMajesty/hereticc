@@ -50,7 +50,9 @@ CPU model, architecture, OS/kernel, compiler/build type, sample rate, buffer
 size, preparation time, processing nanoseconds per buffer, real-time factor,
 resident memory, and iteration count. Workloads cover idle, 8/16/32 voices,
 44.1/48 kHz playback, dense scheduling, rapid publication, 44.1-to-48 kHz
-preparation, and GUI frame construction at 1920×1200, 1024×800 and 1024×600.
+preparation, native synth at 1/8/16/32 voices, filter and delay enabled/bypassed,
+mixed sample/synth playback, and GUI frame construction at 1920×1200, 1024×800
+and 1024×600.
 Preparation is excluded from audio processing measurements. GUI measurements
 cover snapshot synchronization, layout and draw-command construction; GPU
 execution and presentation latency are not measured.
@@ -71,3 +73,9 @@ Example Debug output from the 2026-11-19 development host included roughly
 8.8 µs idle, 9.6/14.0/23.1 µs for 8/16/32 voices, and 3.2–3.7 µs for GUI frame
 construction. These offline averages are neither worst-case analysis nor
 evidence of Pi 5, N150, physical audio, GPU, XRUN, or thermal performance.
+
+Task 018 Debug measurements on the same x86-64 development host were about
+7.7/30.7/54.7/104.9 µs for 1/8/16/32 filtered synth voices, 49.4 µs for 16
+voices with the filter bypassed, 1.1 µs for enabled delay processing, and
+110.6 µs for mixed sample/synth playback. These are scenario examples, not
+portable thresholds or ARM measurements.

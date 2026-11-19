@@ -34,6 +34,40 @@ double number(const ApplicationValue &value) {
         return static_cast<double>(*integer);
     return std::get<double>(value);
 }
+bool publish_dsp_parameter(AudioEngine &engine, ParameterRegistry &parameters,
+                           const std::string &id) {
+    const auto descriptor = parameters.get(id);
+    if (!descriptor ||
+        !std::holds_alternative<double>(descriptor->current_value))
+        return true;
+    const auto value =
+        static_cast<float>(std::get<double>(descriptor->current_value));
+    if (id == "synth.waveform")
+        return engine.set_synth_parameter(SynthParameter::waveform, value);
+    if (id == "synth.attack")
+        return engine.set_synth_parameter(SynthParameter::attack, value);
+    if (id == "synth.decay")
+        return engine.set_synth_parameter(SynthParameter::decay, value);
+    if (id == "synth.sustain")
+        return engine.set_synth_parameter(SynthParameter::sustain, value);
+    if (id == "synth.release")
+        return engine.set_synth_parameter(SynthParameter::release, value);
+    if (id == "synth.cutoff")
+        return engine.set_synth_parameter(SynthParameter::cutoff, value);
+    if (id == "synth.resonance")
+        return engine.set_synth_parameter(SynthParameter::resonance, value);
+    if (id == "synth.pulse-width")
+        return engine.set_synth_parameter(SynthParameter::pulse_width, value);
+    if (id == "synth.gain")
+        return engine.set_synth_parameter(SynthParameter::gain, value);
+    if (id == "effect.delay.time")
+        return engine.set_delay_parameter(DelayParameter::time, value);
+    if (id == "effect.delay.feedback")
+        return engine.set_delay_parameter(DelayParameter::feedback, value);
+    if (id == "effect.delay.mix")
+        return engine.set_delay_parameter(DelayParameter::mix, value);
+    return true;
+}
 } // namespace
 
 ActionRegistry::ActionRegistry() {
@@ -50,6 +84,8 @@ ActionRegistry::ActionRegistry() {
     add(action("track.next.v1", "Next track", "Tracks"));
     add(action("track.previous.v1", "Previous track", "Tracks"));
     add(action("track.mute-toggle.v1", "Toggle track mute", "Tracks"));
+    add(action("track.instrument-set.v1", "Set track instrument", "Tracks",
+               {{"instrument_id", ValueType::text}}));
     add(action("pattern.select.v1", "Select pattern", "Sequencer",
                {{"pattern_id", ValueType::integer}}));
     add(action("step.select.v1", "Select step", "Sequencer",
@@ -404,6 +440,39 @@ ApplicationService::ApplicationService(AudioEngine &engine,
                                     true,
                                     {}},
                                    error);
+    const auto synth_parameter =
+        [&](std::string id, std::string name, std::string unit, double minimum,
+            double maximum, double initial, double step) {
+            parameters_.register_parameter({std::move(id),
+                                            std::move(name),
+                                            std::move(unit),
+                                            ParameterType::real,
+                                            minimum,
+                                            maximum,
+                                            initial,
+                                            initial,
+                                            step,
+                                            true,
+                                            true,
+                                            false,
+                                            {}},
+                                           error);
+        };
+    synth_parameter("synth.waveform", "Waveform", "", 0, 3, 2, 1);
+    synth_parameter("synth.attack", "Attack", "s", 0.001, 5, 0.005, 0.01);
+    synth_parameter("synth.decay", "Decay", "s", 0.001, 5, 0.12, 0.01);
+    synth_parameter("synth.sustain", "Sustain", "", 0, 1, 0.75, 0.01);
+    synth_parameter("synth.release", "Release", "s", 0.001, 10, 0.25, 0.01);
+    synth_parameter("synth.cutoff", "Cutoff", "Hz", 20, 20000, 8000, 100);
+    synth_parameter("synth.resonance", "Resonance", "", 0, 0.95, 0.15, 0.01);
+    synth_parameter("synth.pulse-width", "Pulse width", "", 0.05, 0.95, 0.5,
+                    0.01);
+    synth_parameter("synth.gain", "Synth gain", "", 0, 1, 0.25, 0.01);
+    synth_parameter("effect.delay.time", "Delay time", "s", 0.001, 2, 0.25,
+                    0.01);
+    synth_parameter("effect.delay.feedback", "Delay feedback", "", 0, 0.95, 0.3,
+                    0.01);
+    synth_parameter("effect.delay.mix", "Delay mix", "", 0, 1, 0, 0.01);
     state_.step_ticks = step_resolution_ticks(state_.step_resolution);
     state_.step_duration = state_.step_ticks;
 }
@@ -586,6 +655,16 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             } else {
                 changed_locked();
             }
+        } else if (command.action_id == "track.instrument-set.v1") {
+            auto transaction = timeline_.edit();
+            if (!transaction.set_track_instrument(
+                    state_.selected_track,
+                    *argument<std::string>(command, "instrument_id"), error) ||
+                !timeline_.commit(std::move(transaction),
+                                  TimelineCommitPolicy::next_audio_callback,
+                                  error)) {
+            } else
+                changed_locked();
         } else if (command.action_id == "pattern.select.v1") {
             const auto id = *argument<std::int64_t>(command, "pattern_id");
             if (id < 0)
@@ -1030,19 +1109,46 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 "text:" + *argument<std::string>(command, "text");
             changed_locked();
         } else if (command.action_id == "parameter.set-normalized.v1") {
+            const auto id = *argument<std::string>(command, "parameter_id");
+            const auto previous = parameters_.get(id);
             if (parameters_.set_normalized(
-                    *argument<std::string>(command, "parameter_id"),
-                    *argument<double>(command, "value"), error))
-                changed_locked();
+                    id, *argument<double>(command, "value"), error)) {
+                if (!publish_dsp_parameter(engine_, parameters_, id)) {
+                    std::string rollback_error;
+                    if (previous)
+                        parameters_.set(id, previous->current_value,
+                                        rollback_error);
+                    error = "DSP parameter queue is full";
+                } else
+                    changed_locked();
+            }
         } else if (command.action_id == "parameter.adjust.v1") {
-            if (parameters_.adjust(
-                    *argument<std::string>(command, "parameter_id"),
-                    *argument<double>(command, "steps"), error))
-                changed_locked();
+            const auto id = *argument<std::string>(command, "parameter_id");
+            const auto previous = parameters_.get(id);
+            if (parameters_.adjust(id, *argument<double>(command, "steps"),
+                                   error)) {
+                if (!publish_dsp_parameter(engine_, parameters_, id)) {
+                    std::string rollback_error;
+                    if (previous)
+                        parameters_.set(id, previous->current_value,
+                                        rollback_error);
+                    error = "DSP parameter queue is full";
+                } else
+                    changed_locked();
+            }
         } else if (command.action_id == "parameter.reset.v1") {
-            if (parameters_.reset(
-                    *argument<std::string>(command, "parameter_id"), error))
-                changed_locked();
+            const auto id = *argument<std::string>(command, "parameter_id");
+            const auto previous = parameters_.get(id);
+            if (parameters_.reset(id, error)) {
+                if (!publish_dsp_parameter(engine_, parameters_, id)) {
+                    std::string rollback_error;
+                    if (previous)
+                        parameters_.set(id, previous->current_value,
+                                        rollback_error);
+                    error = "DSP parameter queue is full";
+                } else
+                    changed_locked();
+            }
         } else if (command.action_id == "modifier.shift.v1") {
             state_.modifiers.shift = *argument<bool>(command, "active");
             if (const auto *latched = argument<bool>(command, "latched"))
@@ -1139,7 +1245,7 @@ void ApplicationService::synchronize_locked() const {
                                 : fallback;
         state_.tracks.push_back({track.id, track.name, track.muted,
                                  track.pattern.length, target,
-                                 track.pattern.events});
+                                 track.instrument_id, track.pattern.events});
     }
     state_.selected_event.reset();
     if (selected_event_id_) {
@@ -1186,15 +1292,30 @@ void ApplicationService::synchronize_locked() const {
     state_.sample_slots = std::move(slots);
     state_.parameters = std::move(parameters);
     state_.performance.generation = system_monitor_.generation();
-    state_.performance.monotonic_milliseconds = system_monitor_.monotonic_milliseconds();
+    state_.performance.monotonic_milliseconds =
+        system_monitor_.monotonic_milliseconds();
     state_.performance.audio = engine_.callback_statistics();
-    state_.performance.engine = {
-        engine_.sample_rate(), engine_.buffer_frames(), engine_.active_voice_count(),
-        engine_.voice_capacity(), engine_.playing(), engine_.dropped_triggers(),
-        engine_.dropped_patterns(), engine_.dropped_timelines(),
-        engine_.timeline_event_overruns(), engine_.dropped_legacy_events(),
-        engine_.dropped_transport_commands(), engine_.dropped_sample_updates(),
-        engine_.missing_slot_triggers(), engine_.stolen_voices(), rejected_};
+    state_.performance.engine = {engine_.sample_rate(),
+                                 engine_.buffer_frames(),
+                                 engine_.active_voice_count(),
+                                 engine_.voice_capacity(),
+                                 engine_.playing(),
+                                 engine_.dropped_triggers(),
+                                 engine_.dropped_patterns(),
+                                 engine_.dropped_timelines(),
+                                 engine_.timeline_event_overruns(),
+                                 engine_.dropped_legacy_events(),
+                                 engine_.dropped_transport_commands(),
+                                 engine_.dropped_sample_updates(),
+                                 engine_.missing_slot_triggers(),
+                                 engine_.stolen_voices(),
+                                 rejected_,
+                                 engine_.dropped_dsp_commands(),
+                                 engine_.synth_state().stolen_voices,
+                                 engine_.instrument_nanoseconds(),
+                                 engine_.effect_nanoseconds(),
+                                 engine_.synth_state().active_voices,
+                                 engine_.synth_state().maximum_voices};
     state_.performance.system = system_monitor_.snapshot();
     state_.available_actions.clear();
     for (const auto &value : actions_.actions())

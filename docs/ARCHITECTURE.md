@@ -8,7 +8,7 @@ bounded event staging, and sample memory prepared in advance.
 clients -> application actions / parameters / state -> timeline / sample manager
                          | compiled, bounded PlaybackPlan snapshot
                          v
-authoritative transport -> scheduler frame range -> bounded voice pool -> DSP -> backend
+authoritative transport -> scheduler -> instrument routing -> track/master DSP -> backend
                                                     \-> offline WAV
 ```
 
@@ -24,7 +24,8 @@ authoritative transport -> scheduler frame range -> bounded voice pool -> DSP ->
 - `midi`: timestamped messages, stable action mappings, simulated input, and a
   libremidi adapter. MIDI timing does not drive the musical clock.
 - `scripting`: genuine Lua 5.4/sol2 `neurogenic.v1` API on a non-audio thread.
-- `dsp`: allocation-free effect interface and first gain stage.
+- `instrument`: bounded native instrument contract and subtractive synth.
+- `dsp`: allocation-free processor contract, gain stage and stereo delay.
 - `project`: deliberately tiny versioned format; not a promised final schema.
 
 No callback operation performs I/O, locks, allocation, logging, or Lua work.
@@ -178,3 +179,19 @@ active voices; no observer calls into callback-owned structures. A Linux
 availability-tagged `PerformanceSnapshot`. GUI, CLI and future remote clients
 consume that snapshot rather than engine internals. Monitoring never changes
 scheduling, voice ownership, publication, or backend synchronization.
+
+## Instruments and DSP
+
+Compiled tracks carry a stable numeric instrument key derived from their stable
+string ID. The shared scheduler preserves note identity, velocity, duration and
+exact frame offset, then dispatches to the sample voice pool or subtractive
+synth. Both paths use the authoritative transport. Unsupported routing is
+rejected during control-side compilation.
+
+The current built-ins are statically owned and preallocated by `AudioEngine`.
+Synth notes use `(track, event, occurrence)` ownership, while external MIDI
+notes retain bounded identities. Atomic targets and a bounded DSP-command queue
+separate application updates from processing. The native delay processes the
+mixed output after the gain stage. Concrete hot paths avoid virtual dispatch per
+sample; abstract interfaces remain preparation and extension boundaries. See
+[INSTRUMENTS.md](INSTRUMENTS.md).

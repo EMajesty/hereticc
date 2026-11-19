@@ -1,5 +1,15 @@
 # Implementation status
 
+Task 018 adds stable track-to-instrument routing, a bounded native instrument
+interface, a playable 32-voice subtractive synth, a reusable DSP processor
+interface and preallocated stereo delay. Timeline and MIDI notes share
+scheduling with sample playback; synth/effect controls use the application
+parameter registry and bounded callback queue. GUI selection, parameters,
+voice/steal statistics and deterministic DSP benchmarks are host-tested. There
+is currently one synth instance and one master delay; dynamic instances,
+per-track chains, presets and plugins remain future work. Physical audio/MIDI
+playability and subjective sound quality are not hardware-tested.
+
 Task 017 adds optional bounded callback timing/load statistics, active-voice
 and existing overflow diagnostics, a 2 Hz Linux process/system sampler, copied
 application performance snapshots, JSON headless diagnostics, a compact GUI

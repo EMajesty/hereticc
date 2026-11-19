@@ -23,6 +23,11 @@ Step edits support shared bounded Undo/Redo, grouped transactions, and stable
 event editing of velocity, duration, pitch, and tick-relative timing. GUI and
 controller clients call the same C++ timeline service; Lua is optional.
 
+Timeline and MIDI notes can also drive the first native subtractive synthesizer
+through the same scheduler. It provides bounded polyphony, four oscillator
+shapes, ADSR, a resonant low-pass filter, velocity response and a native stereo
+delay. See the [instrument and DSP architecture](docs/INSTRUMENTS.md).
+
 ## Build and run
 
 ### Nix development environment
@@ -43,6 +48,7 @@ ctest --preset sanitize
 ./build/dev/neurogenic --stats
 ./build/dev/neurogenic --list-devices
 ./build/dev/neurogenic --headless --list-devices
+./build/dev/neurogenic --synth --headless
 ./build/dev/neurogenic path/to/sample.wav
 ./build/dev/neurogenic --interactive
 ./build/dev/neurogenic --gui --headless
