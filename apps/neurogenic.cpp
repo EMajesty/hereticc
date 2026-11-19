@@ -115,9 +115,9 @@ int main(int argc,char** argv){
     }
 
     neurogenic::Timeline editable_timeline;
-    neurogenic::Pattern initial;for(auto step:{0U,4U,8U,12U})initial.steps[step]={true,36,1.0F};initial.revision=1;
-    if(timeline_file.empty()){if(!engine.queue_pattern(initial))throw std::runtime_error("initial pattern queue failed");}
-    else {editable_timeline=neurogenic::load_timeline(timeline_file);std::string timeline_error;if(!engine.queue_timeline(editable_timeline,timeline_error))throw std::runtime_error("timeline queue failed: "+timeline_error);}
+    if(timeline_file.empty()){neurogenic::Track track;track.id=1;track.name="Drums";track.pattern.length=neurogenic::ticks_per_quarter*4;neurogenic::EventId id=1;for(const auto tick:{0,960,1920,2880})track.pattern.events.push_back({id++,tick,neurogenic::MusicalEventType::note,36,1.0F,240,0,0,0});editable_timeline.tracks.push_back(std::move(track));}
+    else editable_timeline=neurogenic::load_timeline(timeline_file);
+    {std::string timeline_error;if(!engine.queue_timeline(editable_timeline,timeline_error))throw std::runtime_error("timeline queue failed: "+timeline_error);}
     neurogenic::TimelineService timeline_service([&](const auto& timeline,std::string& error){return engine.queue_timeline(timeline,error);},std::move(editable_timeline));
     neurogenic::ApplicationService application(engine,timeline_service,samples);
     neurogenic::ScriptRuntime lua([&](auto pattern){return engine.queue_pattern(pattern);},[&]{return engine.frame_position();},&timeline_service);

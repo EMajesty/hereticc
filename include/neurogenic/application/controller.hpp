@@ -33,7 +33,8 @@ struct GridEvent {GridEventType type{GridEventType::unsupported};std::uint64_t i
 class PerformanceGrid {
 public:
   void set_mode(PadMode mode) noexcept{mode_=mode;}void set_step_page(std::uint64_t page) noexcept{page_=page;}void set_selected_slot(SampleSlotId slot) noexcept{slot_=slot;}void set_root_note(std::uint8_t note) noexcept{root_=note;}
-  [[nodiscard]] GridEvent press(std::size_t pad,bool edit=false) const;
+  [[nodiscard]] GridEvent press(std::size_t pad,bool select_only=false) const;
 private:PadMode mode_{PadMode::step};std::uint64_t page_{};SampleSlotId slot_{};std::uint8_t root_{60};
 };
+[[nodiscard]] std::optional<ApplicationCommand> grid_application_command(const GridEvent&,std::string source_id={},std::uint64_t sequence=0);
 }

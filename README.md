@@ -46,6 +46,9 @@ ctest --preset sanitize
 
 The SDL3 graphical frontend is optional; omit `--gui` for the existing CLI or
 headless application. See [docs/GUI.md](docs/GUI.md) for controls and scaling.
+In the Sequencer view, click/tap a cell or select it with arrows and press
+Enter to toggle a note. Shift+arrows change page or target note; the resolution
+control cycles quarter through 32nd-note straight and triplet grids.
 
 With direnv installed, run `direnv allow` once; `.envrc` enters the same flake
 shell. Build the installable package with `nix build`, run it with

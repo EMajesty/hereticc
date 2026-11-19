@@ -109,6 +109,22 @@ commits replace the editable snapshot only after the complete playback plan is
 accepted. Rapid commits are bounded by the existing playback-plan pool; a full
 pool rejects the newest commit without changing editable state.
 
+## Step editing adapter
+
+`ApplicationService` maps step actions onto timeline transactions instead of
+maintaining another pattern. Resolutions are 1/4, 1/8, 1/16 (default), 1/32
+and their triplet forms, represented as exact 960-PPQ tick counts. Step `n`
+starts at `n * resolution`. A non-divisible track length exposes the final
+start tick inside the pattern and rejects the following step.
+
+Each track has an application-level MIDI note target, defaulting to notes 36,
+37, and so on by track order. Toggling removes the matching duration note at
+that tick and pitch, or inserts one with a new stable ID, velocity and duration.
+Unrelated events and tracks retain their identifiers. Commits become audible
+at the next callback; validation, conflicts and publication failures leave the
+prior timeline intact. Note-target project persistence and musical-boundary
+publication remain future work.
+
 Application adapters use stable semantic action IDs
 `timeline.generate.v1`, `timeline.mutate-track.v1`,
 `timeline.regenerate.v1`, `timeline.variation.v1`, `timeline.commit.v1`,

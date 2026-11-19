@@ -54,15 +54,17 @@ private:bool valid_value(const ParameterDescriptor&,const ApplicationValue&,std:
 };
 
 enum class PadMode:std::uint8_t{step,pad,levels,notes};
+enum class StepResolution:std::uint8_t{quarter,eighth,sixteenth,thirty_second,quarter_triplet,eighth_triplet,sixteenth_triplet,thirty_second_triplet};
 enum class Modifier:std::uint8_t{shift,select};
 struct ModifierState {bool shift{},select{},shift_latched{},select_latched{};};
-struct TrackSummary {TrackId id{};std::string name;bool muted{};MusicalTick pattern_length{};std::vector<MusicalTick> event_ticks;};
+struct TrackSummary {TrackId id{};std::string name;bool muted{};MusicalTick pattern_length{};std::uint8_t target_note{36};std::vector<MusicalEvent> events;};
 struct ApplicationState {
   std::uint64_t revision{};
-  bool playing{};std::uint64_t transport_frame{};
+  bool playing{};std::uint64_t transport_frame{};MusicalTick transport_tick{};
   double tempo_bpm{120};std::uint16_t time_signature_numerator{4},time_signature_denominator{4};
   TrackId selected_track{};SampleSlotId selected_sample_slot{};
   std::uint64_t selected_pattern{};std::int64_t selected_step{};std::uint64_t step_page{};
+  StepResolution step_resolution{StepResolution::sixteenth};MusicalTick step_ticks{ticks_per_quarter/4};float step_velocity{1.0F};MusicalTick step_duration{ticks_per_quarter/4};
   PadMode pad_mode{PadMode::step};std::string parameter_page{"main"},focused_element{"transport"};
   ModifierState modifiers;std::vector<std::string> available_actions;
   std::vector<ParameterDescriptor> parameters;
@@ -87,7 +89,7 @@ private:
   CommandResult execute_locked(const ApplicationCommand&,std::uint64_t);
   void synchronize_locked() const;void changed_locked();
   AudioEngine& engine_;TimelineService& timeline_;SampleManager& samples_;ActionRegistry actions_;ParameterRegistry parameters_;const std::size_t capacity_;
-  mutable std::mutex mutex_;mutable ApplicationState state_;std::deque<std::pair<std::uint64_t,ApplicationCommand>> queue_;std::uint64_t next_sequence_{1},rejected_{};
+  mutable std::mutex mutex_;mutable ApplicationState state_;std::map<TrackId,std::uint8_t> track_targets_;std::deque<std::pair<std::uint64_t,ApplicationCommand>> queue_;std::uint64_t next_sequence_{1},rejected_{};
 };
 
 struct TextEntryState {std::string text;std::size_t cursor{};char selected{'A'};bool active{},committed{},discarded{};};
@@ -106,4 +108,7 @@ public:
 private:XYBehavior behavior_;NormalizedXY value_{0.5,0.5};
 };
 [[nodiscard]] const char* pad_mode_name(PadMode) noexcept;
+[[nodiscard]] const char* step_resolution_name(StepResolution) noexcept;
+[[nodiscard]] MusicalTick step_resolution_ticks(StepResolution) noexcept;
+[[nodiscard]] std::optional<StepResolution> parse_step_resolution(std::string_view) noexcept;
 }

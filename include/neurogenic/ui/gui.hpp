@@ -7,10 +7,10 @@
 namespace neurogenic {
 enum class GuiView:std::uint8_t{sequencer,samples,parameters,xy};
 struct UiRect {float x{},y{},w{},h{};[[nodiscard]] bool contains(float px,float py) const noexcept{return px>=x&&py>=y&&px<x+w&&py<y+h;}};
-struct GuiLayout {float scale{1},offset_x{},offset_y{};UiRect top,nav,content,parameters;std::vector<UiRect> tabs,grid,rows;};
+struct GuiLayout {float scale{1},offset_x{},offset_y{};UiRect top,nav,content,parameters,page_previous,page_next,resolution,target_note;std::vector<UiRect> tabs,grid,rows;};
 enum class UiColor:std::uint8_t{background,panel,text,muted,accent,selected,error,unavailable};
 struct DrawCommand {enum class Type:std::uint8_t{rectangle,text,line};Type type{};UiRect rect;UiColor color{};std::string text;};
-struct GuiFrame {std::uint64_t state_revision{};GuiLayout layout;std::vector<DrawCommand> commands;};
+struct GuiFrame {std::uint64_t state_revision{};int viewport_width{},viewport_height{};GuiLayout layout;std::vector<DrawCommand> commands;};
 enum class GuiKey:std::uint8_t{left,right,up,down,enter,escape,tab,space,shift,number};
 struct GuiInput {enum class Type:std::uint8_t{key_down,key_up,pointer_down,pointer_up,pointer_move,touch_down,touch_up,touch_move};Type type{};GuiKey key{};int number{};float x{},y{};std::uint64_t timestamp_ms{};};
 

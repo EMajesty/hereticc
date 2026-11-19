@@ -1,9 +1,16 @@
 # Implementation status
 
+Task 014 adds a timeline-backed step editor: straight/triplet quarter through
+32nd grids, partial and independent track lengths, per-track MIDI note targets,
+16-cell paging, Select-versus-toggle grid semantics, pointer/keyboard/encoder
+workflows, active-step/playhead rendering, responsive resize invalidation, and
+safe live publication. Note-target persistence, undo, parameter locks and
+musical-boundary publication remain future work.
+
 Task 013 adds an optional SDL3 graphical client with a resolution-independent
 1024 × 600 logical layout, sequencer, sample-slot, parameter and X/Y views,
 fullscreen mode, state-revision synchronization, keyboard/mouse/touch input,
-and offscreen initialization tests. Step mutation, graphical text entry,
+and offscreen initialization tests. Graphical text entry,
 waveform editing and DSP parameter bindings remain unavailable. Physical HDMI
 and touchscreen behavior has not been hardware-tested.
 

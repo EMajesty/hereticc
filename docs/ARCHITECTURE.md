@@ -146,3 +146,9 @@ The optional `neurogenic_gui` target is another client of this facade.
 commands; the SDL3 adapter only owns windowing, events and rendering. It never
 accesses real-time playback structures. X/Y dragging is coalesced to a bounded
 125 Hz command rate. Headless operation does not depend on SDL3.
+
+The step editor is an `ApplicationService` adapter. Selection, resolution and
+per-track target context are application state; each musical toggle is a
+detached `TimelineService` transaction. Successful commits publish one complete
+immutable plan, while conflicts and publication failures preserve the prior
+plan. GUI and `PerformanceGrid` clients emit the same stable actions.

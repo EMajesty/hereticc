@@ -22,11 +22,11 @@ string ID, display name, description, category, typed argument schema,
 availability and an explicit unavailable reason. `ApplicationValue` supports
 booleans, 64-bit integers, doubles, text and normalized X/Y values.
 
-Implemented actions cover transport, track selection/navigation/mute, pattern
-and step selection, sample slot selection/load/replace/unload, pad modes,
+Implemented actions cover transport, track selection/navigation/mute and note
+targeting, pattern/step selection, toggling/resolution/pages, sample slot selection/load/replace/unload, pad modes,
 focus/confirm/cancel, text input, modifiers and X/Y input. Undo, redo, direct
-step mutation and underspecified generation/mutation requests are discoverable
-but unavailable. This is intentional: discovery never implies an operation is
+underspecified generation/mutation requests are discoverable but unavailable.
+This is intentional: discovery never implies an operation is
 implemented.
 
 `ApplicationService` accepts `ApplicationCommand` values through a bounded
@@ -39,7 +39,7 @@ methods; no command mutates callback-owned data.
 
 ## Observable state
 
-`ApplicationState` is a value snapshot containing transport state and frame,
+`ApplicationState` is a value snapshot containing transport state, frame and tick,
 tempo and time signature, selected track/sample/pattern/step, step page, pad
 mode, parameter page, focus, modifier state, currently available action IDs,
 sample loading snapshots and timeline revision. Frontends receive copies, not
@@ -113,8 +113,9 @@ been tested or implement MIDI learn.
 `PerformanceGrid` converts any virtual or physical index 0..15 to semantic
 events independently of MIDI notes or button placement:
 
-- STEP selects `page * 16 + pad`; an explicit edit gesture produces a distinct
-  toggle event. Pages permit arbitrary pattern lengths.
+- STEP normally toggles `page * 16 + pad`; Select produces selection only.
+  `grid_application_command` maps both to shared application actions. Pages
+  permit arbitrary pattern lengths.
 - PAD resolves an initial pad/sample semantic event. Sample/instrument triggers
   are supported by the engine; slicing is not.
 - 16 LEVELS targets the selected slot with 16 velocity values. The semantics
@@ -127,8 +128,10 @@ command. A controller without 16 buttons can present the same grid virtually.
 
 ## Navigation, text and X/Y
 
-Focus next/previous, confirm and cancel are semantic actions, so a data encoder
-with push and Back can reach the essential focus model. Shift and Select each
+Focus next/previous, relative adjust, confirm and cancel are semantic actions.
+The minimal profile uses Enter to move Transport → Tracks → Steps, the encoder
+to select a track or step, Enter to toggle, and Back to return one level.
+Shift and Select each
 have momentary and latched state. Mapping layers resolve before an action is
 emitted, preventing a mode change from implicitly firing the base binding.
 
@@ -149,7 +152,7 @@ An unbound Shift or Select layer falls back to its base binding by default;
 profiles can disable this with `fallback_to_base`. Step selection and step
 toggling remain distinct semantic actions.
 
-There is no device firmware, MIDI learn, project persistence for profiles,
-state-delta subscription, undo history, full step editor, modulation matrix,
+There is no device firmware, MIDI learn, project persistence for note targets
+or profiles, state-delta subscription, undo history, parameter locks, modulation matrix,
 scale engine, slicing or pitch shifting. The profile files are validated
 examples, not a commitment to a particular master-controller layout.
