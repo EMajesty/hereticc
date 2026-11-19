@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/readme/vibeslop.png" alt="Absolute vibeslop" width="512">
+</p>
+
 # NEUROGENIC
 
 NEUROGENIC is an open-source, hardware-independent C++20 audio and MIDI
