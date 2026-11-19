@@ -463,6 +463,22 @@ void AudioEngine::start_voice(std::uint8_t note, float velocity, TrackId track,
     voice.increment = std::exp2(
         (settings.semitones + settings.fine_cents / 100.0F + pitch_offset) /
         12.0F);
+    const auto time_ratio = std::clamp(
+        RealtimeTimeStretcher::resolve_time_ratio(
+            settings.stretch_ratio, settings.source_beats, settings.source_bpm,
+            end - start, rate_, project_tempo_bpm_),
+        0.25F, 4.0F);
+    voice.stretch_configuration = {settings.stretch_mode,
+                                   settings.stretch_quality, time_ratio,
+                                   static_cast<float>(voice.increment), rate_};
+    voice.stretched = !settings.reverse &&
+                      settings.stretch_mode == StretchMode::realtime &&
+                      RealtimeTimeStretcher::valid(voice.stretch_configuration);
+    if (voice.stretched) {
+        RealtimeTimeStretcher::reset(voice.stretch_state,
+                                     voice.stretch_configuration);
+        voice.stretch_duration = static_cast<double>(end - start) * time_ratio;
+    }
     voice.gain = velocity * settings.gain * (slice ? slice->gain : 1.0F);
     voice.sustain = settings.sustain;
     if (settings.attack_seconds > 0) {
@@ -599,6 +615,8 @@ void AudioEngine::process(std::span<float> left,
         auto *timeline = next.plan.get();
         timeline_scheduler_.set_plan(timeline, transport_frame_);
         scheduler_.set_tempo(timeline->transport.microseconds_per_quarter);
+        project_tempo_bpm_ = static_cast<float>(
+            60000000.0 / timeline->transport.microseconds_per_quarter);
         next.state.store(PlanState::active, std::memory_order_release);
         if (active_timeline_slot_ >= 0)
             timeline_plans_[static_cast<std::size_t>(active_timeline_slot_)]
@@ -726,27 +744,43 @@ void AudioEngine::process(std::span<float> left,
             if (!voice.active)
                 continue;
             const auto &sample = *voice.sample;
-            if (voice.position < static_cast<double>(voice.start_frame) ||
-                voice.position >= static_cast<double>(voice.end_frame)) {
+            if ((voice.stretched &&
+                 voice.stretch_state.output_frame >= voice.stretch_duration) ||
+                (!voice.stretched &&
+                 (voice.position < static_cast<double>(voice.start_frame) ||
+                  voice.position >= static_cast<double>(voice.end_frame)))) {
                 voice.active = false;
                 continue;
             }
-            const auto base = static_cast<std::uint64_t>(voice.position);
-            const auto fraction = static_cast<float>(voice.position - base);
-            const auto adjacent =
-                voice.reverse ? (base > voice.start_frame ? base - 1 : base)
-                              : (base + 1 < voice.end_frame ? base + 1 : base);
-            const auto interpolate = [&](std::uint16_t channel) {
-                const auto actual = sample.channels > 1 ? channel : 0;
-                const auto first =
-                    sample.interleaved[base * sample.channels + actual];
-                const auto second =
-                    sample.interleaved[adjacent * sample.channels + actual];
-                return first + (second - first) * fraction;
-            };
+            float sample_left{}, sample_right{};
+            if (voice.stretched) {
+                sample_left = RealtimeTimeStretcher::process_channel(
+                    sample, voice.start_frame, voice.end_frame,
+                    voice.stretch_configuration, voice.stretch_state, 0);
+                sample_right = RealtimeTimeStretcher::process_channel(
+                    sample, voice.start_frame, voice.end_frame,
+                    voice.stretch_configuration, voice.stretch_state, 1);
+            } else {
+                const auto base = static_cast<std::uint64_t>(voice.position);
+                const auto fraction = static_cast<float>(voice.position - base);
+                const auto adjacent =
+                    voice.reverse
+                        ? (base > voice.start_frame ? base - 1 : base)
+                        : (base + 1 < voice.end_frame ? base + 1 : base);
+                const auto interpolate = [&](std::uint16_t channel) {
+                    const auto actual = sample.channels > 1 ? channel : 0;
+                    const auto first =
+                        sample.interleaved[base * sample.channels + actual];
+                    const auto second =
+                        sample.interleaved[adjacent * sample.channels + actual];
+                    return first + (second - first) * fraction;
+                };
+                sample_left = interpolate(0);
+                sample_right = interpolate(1);
+            }
             const auto level = voice.gain * voice.envelope_level;
-            left[frame] += interpolate(0) * level;
-            right[frame] += interpolate(1) * level;
+            left[frame] += sample_left * level;
+            right[frame] += sample_right * level;
             if (voice.envelope_stage == Voice::EnvelopeStage::attack) {
                 voice.envelope_level += voice.attack_step;
                 if (voice.envelope_level >= 1.0F) {
@@ -767,8 +801,11 @@ void AudioEngine::process(std::span<float> left,
                     continue;
                 }
             }
-            voice.position +=
-                voice.reverse ? -voice.increment : voice.increment;
+            if (voice.stretched)
+                RealtimeTimeStretcher::advance(voice.stretch_state);
+            else
+                voice.position +=
+                    voice.reverse ? -voice.increment : voice.increment;
         }
         const auto synth_sample = synth_.render_sample();
         left[frame] += synth_sample;

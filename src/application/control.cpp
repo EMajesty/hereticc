@@ -232,6 +232,17 @@ ActionRegistry::ActionRegistry() {
                 {"decay", ValueType::real},
                 {"sustain", ValueType::real},
                 {"release", ValueType::real}}));
+    add(action("pad.stretch-mode-set.v1", "Set pad stretch mode", "Samples",
+               {{"mode", ValueType::text}}));
+    add(action("pad.stretch-ratio-set.v1", "Set pad time ratio", "Samples",
+               {{"ratio", ValueType::real}}));
+    add(action("pad.source-beats-set.v1", "Set source beat length", "Samples",
+               {{"beats", ValueType::real}}));
+    add(action("pad.source-bpm-set.v1", "Set source tempo", "Samples",
+               {{"bpm", ValueType::real}}));
+    add(action("pad.stretch-quality-set.v1", "Set stretch quality", "Samples",
+               {{"quality", ValueType::text}}));
+    add(action("pad.stretch-reset.v1", "Reset stretch settings", "Samples"));
     add(action("edit.undo.v1", "Undo", "Editing"));
     add(action("edit.redo.v1", "Redo", "Editing"));
     add(action("edit.group-begin.v1", "Begin grouped edit", "Editing"));
@@ -736,6 +747,33 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
         } else if (before.selected_pad_property == "reverse") {
             edit.action_id = "pad.reverse-set.v1";
             edit.arguments = {{"reverse", !p.reverse}};
+        } else if (before.selected_pad_property == "stretch-mode") {
+            edit.action_id = "pad.stretch-mode-set.v1";
+            edit.arguments = {
+                {"mode",
+                 std::string(p.stretch_mode == StretchMode::off ? "realtime"
+                                                                : "off")}};
+        } else if (before.selected_pad_property == "stretch-ratio") {
+            edit.action_id = "pad.stretch-ratio-set.v1";
+            edit.arguments = {
+                {"ratio", static_cast<double>(std::clamp(
+                              p.stretch_ratio + delta * .05, .25, 4.0))}};
+        } else if (before.selected_pad_property == "beats") {
+            edit.action_id = "pad.source-beats-set.v1";
+            edit.arguments = {
+                {"beats", static_cast<double>(std::clamp(
+                              p.source_beats + delta * .25, 0.0, 1024.0))}};
+        } else if (before.selected_pad_property == "source-bpm") {
+            edit.action_id = "pad.source-bpm-set.v1";
+            edit.arguments = {{"bpm", static_cast<double>(std::clamp(
+                                          p.source_bpm + delta, 0.0, 1000.0))}};
+        } else if (before.selected_pad_property == "stretch-quality") {
+            const auto current = static_cast<int>(p.stretch_quality);
+            const auto next = (current + (delta < 0 ? 2 : 1)) % 3;
+            edit.action_id = "pad.stretch-quality-set.v1";
+            edit.arguments = {
+                {"quality", std::string(stretch_quality_name(
+                                static_cast<StretchQuality>(next)))}};
         } else {
             auto attack = p.attack_seconds;
             auto decay = p.decay_seconds;
@@ -1390,6 +1428,12 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 state_.pad_settings = value.pad_settings;
                 state_.selected_pad_settings =
                     value.pad_settings[state_.selected_pad];
+                state_.stretch_latency_frames =
+                    RealtimeTimeStretcher::latency_frames(
+                        {state_.selected_pad_settings.stretch_mode,
+                         state_.selected_pad_settings.stretch_quality,
+                         state_.selected_pad_settings.stretch_ratio, 1.0F,
+                         engine_.sample_rate()});
                 state_.waveform_peaks = value.waveform;
                 state_.slices.clear();
                 for (const auto &slice : value.slices)
@@ -1528,12 +1572,14 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     state_.selected_pad = static_cast<std::size_t>(pad);
             } else if (command.action_id == "pad.property-select.v1") {
                 static constexpr std::string_view properties[]{
-                    "mode",    "choke",  "pitch", "fine",    "gain",
-                    "reverse", "attack", "decay", "sustain", "release"};
+                    "mode",    "choke",      "pitch",          "fine",
+                    "gain",    "reverse",    "attack",         "decay",
+                    "sustain", "release",    "stretch-mode",   "stretch-ratio",
+                    "beats",   "source-bpm", "stretch-quality"};
                 const auto &property =
                     *argument<std::string>(command, "property");
-                if (std::find(properties, properties + 10, property) ==
-                    properties + 10)
+                if (std::find(properties, properties + 15, property) ==
+                    properties + 15)
                     error = "unknown pad playback property";
                 else {
                     state_.selected_pad_property = property;
@@ -1603,6 +1649,35 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                         *argument<double>(command, "sustain"));
                     settings.release_seconds = static_cast<float>(
                         *argument<double>(command, "release"));
+                } else if (command.action_id == "pad.stretch-mode-set.v1") {
+                    const auto mode = parse_stretch_mode(
+                        *argument<std::string>(command, "mode"));
+                    if (!mode)
+                        error = "unknown stretch mode";
+                    else
+                        settings.stretch_mode = *mode;
+                } else if (command.action_id == "pad.stretch-ratio-set.v1")
+                    settings.stretch_ratio =
+                        static_cast<float>(*argument<double>(command, "ratio"));
+                else if (command.action_id == "pad.source-beats-set.v1")
+                    settings.source_beats =
+                        static_cast<float>(*argument<double>(command, "beats"));
+                else if (command.action_id == "pad.source-bpm-set.v1")
+                    settings.source_bpm =
+                        static_cast<float>(*argument<double>(command, "bpm"));
+                else if (command.action_id == "pad.stretch-quality-set.v1") {
+                    const auto quality = parse_stretch_quality(
+                        *argument<std::string>(command, "quality"));
+                    if (!quality)
+                        error = "unknown stretch quality";
+                    else
+                        settings.stretch_quality = *quality;
+                } else if (command.action_id == "pad.stretch-reset.v1") {
+                    settings.stretch_mode = StretchMode::off;
+                    settings.stretch_quality = StretchQuality::balanced;
+                    settings.stretch_ratio = 1;
+                    settings.source_beats = 0;
+                    settings.source_bpm = 0;
                 } else
                     error = "unsupported pad action";
                 if (error.empty())
@@ -1689,15 +1764,17 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                                      destinations.size()];
             } else if (state_.focused_element == "pad-playback") {
                 static constexpr std::string_view properties[]{
-                    "mode",    "choke",  "pitch", "fine",    "gain",
-                    "reverse", "attack", "decay", "sustain", "release"};
-                const auto found = std::find(properties, properties + 10,
+                    "mode",    "choke",      "pitch",          "fine",
+                    "gain",    "reverse",    "attack",         "decay",
+                    "sustain", "release",    "stretch-mode",   "stretch-ratio",
+                    "beats",   "source-bpm", "stretch-quality"};
+                const auto found = std::find(properties, properties + 15,
                                              state_.selected_pad_property);
                 const auto index =
-                    found == properties + 10
+                    found == properties + 15
                         ? 0
                         : (static_cast<std::size_t>(found - properties) + 1) %
-                              10;
+                              15;
                 state_.selected_pad_property = properties[index];
             } else
                 state_.focused_element += ".confirmed";
@@ -1900,6 +1977,34 @@ void ApplicationService::synchronize_locked() const {
     state_.pad_settings = slice_state.pad_settings;
     state_.selected_pad_settings =
         slice_state.pad_settings[state_.selected_pad];
+    state_.effective_stretch_ratio = state_.selected_pad_settings.stretch_ratio;
+    const auto current_tempo =
+        60'000'000.0 / timeline.timeline.transport.microseconds_per_quarter;
+    auto stretch_source_frames = slice_state.sample_frames;
+    if (const auto assigned = slice_state.pad_assignments[state_.selected_pad])
+        if (const auto found = std::find_if(
+                slice_state.slices.begin(), slice_state.slices.end(),
+                [&](const auto &slice) { return slice.id == *assigned; });
+            found != slice_state.slices.end())
+            stretch_source_frames = found->end_frame - found->start_frame;
+    const auto source_seconds =
+        slice_state.sample_rate > 0
+            ? static_cast<double>(stretch_source_frames) /
+                  slice_state.sample_rate
+            : 0.0;
+    if (state_.selected_pad_settings.source_beats > 0 && source_seconds > 0)
+        state_.effective_stretch_ratio =
+            static_cast<float>(state_.selected_pad_settings.source_beats *
+                               60.0 / current_tempo / source_seconds);
+    else if (state_.selected_pad_settings.source_bpm > 0)
+        state_.effective_stretch_ratio =
+            state_.selected_pad_settings.source_bpm / current_tempo;
+    state_.effective_stretch_ratio =
+        std::clamp(state_.effective_stretch_ratio, 0.25F, 4.0F);
+    state_.stretch_latency_frames = RealtimeTimeStretcher::latency_frames(
+        {state_.selected_pad_settings.stretch_mode,
+         state_.selected_pad_settings.stretch_quality,
+         state_.effective_stretch_ratio, 1.0F, engine_.sample_rate()});
     state_.waveform_peaks = std::move(slice_state.waveform);
     state_.slices.clear();
     state_.slices.reserve(slice_state.slices.size());

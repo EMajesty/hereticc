@@ -3,6 +3,7 @@
 #include "neurogenic/core/spsc_queue.hpp"
 #include "neurogenic/dsp/processor.hpp"
 #include "neurogenic/dsp/purest_gain.hpp"
+#include "neurogenic/dsp/time_stretch.hpp"
 #include "neurogenic/instrument/subtractive_synth.hpp"
 #include "neurogenic/performance/monitor.hpp"
 #include "neurogenic/sequencer/scheduler.hpp"
@@ -24,6 +25,10 @@ struct SamplePlaybackSettings {
     float semitones{}, fine_cents{}, gain{1.0F};
     std::int16_t root_note{-1};
     bool reverse{};
+    StretchMode stretch_mode{StretchMode::off};
+    StretchQuality stretch_quality{StretchQuality::balanced};
+    float stretch_ratio{1.0F};
+    float source_beats{}, source_bpm{};
     float attack_seconds{}, decay_seconds{}, sustain{1.0F};
     float release_seconds{0.005F};
     friend bool operator==(const SamplePlaybackSettings &,
@@ -198,6 +203,9 @@ class AudioEngine {
         const Sample *sample{};
         std::size_t sample_version{};
         double position{}, increment{1.0};
+        TimeStretchConfiguration stretch_configuration;
+        TimeStretchState stretch_state;
+        double stretch_duration{};
         std::uint64_t start_frame{}, end_frame{};
         float gain{}, envelope_level{1.0F};
         enum class EnvelopeStage : std::uint8_t {
@@ -215,7 +223,8 @@ class AudioEngine {
         std::uint8_t pitch{};
         std::uint8_t trigger_note{}, choke_group{};
         SamplePlaybackMode mode{SamplePlaybackMode::one_shot};
-        bool choke_release{}, reverse{}, timeline_owned{}, preview{}, active{};
+        bool choke_release{}, reverse{}, stretched{}, timeline_owned{},
+            preview{}, active{};
     };
     enum class SampleVersionState : std::uint8_t {
         free,
@@ -342,6 +351,7 @@ class AudioEngine {
     std::size_t pending_trigger_count_{};
     std::uint64_t next_voice_age_{};
     std::uint64_t transport_frame_{};
+    float project_tempo_bpm_{120.0F};
     bool transport_playing_{true};
     std::atomic<bool> processing_started_{};
     std::atomic<bool> published_playing_{true};

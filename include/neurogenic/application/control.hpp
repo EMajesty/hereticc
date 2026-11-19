@@ -140,6 +140,8 @@ struct ApplicationState {
     SliceId selected_slice{};
     std::size_t selected_pad{};
     SamplePlaybackSettings selected_pad_settings;
+    float effective_stretch_ratio{1.0F};
+    std::uint32_t stretch_latency_frames{};
     std::string selected_pad_property{"gain"};
     std::array<SamplePlaybackSettings, 16> pad_settings{};
     std::uint64_t slice_revision{}, sample_frames{};

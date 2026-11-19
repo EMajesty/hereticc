@@ -1,5 +1,13 @@
 # Implementation status
 
+Task 023 adds optional bounded realtime pitch-preserving stretch for full
+samples and slices, independent time/pitch ratios, beat/BPM tempo sync, three
+window/latency presets, semantic actions, GUI/controller access, v3 persistence
+and deterministic benchmarks. The ordinary playback-rate path remains default
+and reverse stretch falls back to it. Prepared caching, reverse stretch,
+transient matching, warp markers and hardware Pi 5/N150 measurements remain
+future work.
+
 Task 022 makes pads and slices expressive instruments with one-shot, Gate and
 Toggle modes, deterministic choke groups, fractional playback-rate pitch,
 reverse boundaries, gain and bounded per-voice ADSR. Settings are revisioned in

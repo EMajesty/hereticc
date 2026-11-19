@@ -454,14 +454,23 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
                 "ATTACK " + std::to_string(p.attack_seconds) + " s",
                 "DECAY " + std::to_string(p.decay_seconds) + " s",
                 "SUSTAIN " + std::to_string(p.sustain),
-                "RELEASE " + std::to_string(p.release_seconds) + " s"};
+                "RELEASE " + std::to_string(p.release_seconds) + " s",
+                std::string("STRETCH ") + stretch_mode_name(p.stretch_mode),
+                "TIME " + std::to_string(state.effective_stretch_ratio) + "x",
+                "SOURCE " + std::to_string(p.source_beats) + " beats",
+                "SOURCE " + std::to_string(p.source_bpm) + " BPM",
+                std::string("QUALITY ") +
+                    stretch_quality_name(p.stretch_quality) + " / " +
+                    std::to_string(state.stretch_latency_frames) + " fr"};
             static constexpr std::string_view properties[]{
-                "mode",    "choke",  "pitch", "fine",    "gain",
-                "reverse", "attack", "decay", "sustain", "release"};
-            for (std::size_t i = 0; i < 10; ++i) {
+                "mode",    "choke",      "pitch",          "fine",
+                "gain",    "reverse",    "attack",         "decay",
+                "sustain", "release",    "stretch-mode",   "stretch-ratio",
+                "beats",   "source-bpm", "stretch-quality"};
+            for (std::size_t i = 0; i < 15; ++i) {
                 UiRect row{l.parameters.x + 12 * l.scale,
-                           l.parameters.y + (48 + i * 40) * l.scale,
-                           l.parameters.w - 24 * l.scale, 32 * l.scale};
+                           l.parameters.y + (48 + i * 27) * l.scale,
+                           l.parameters.w - 24 * l.scale, 23 * l.scale};
                 rect(row, state.focused_element == "pad-playback" &&
                                   state.selected_pad_property == properties[i]
                               ? UiColor::selected
@@ -1046,16 +1055,19 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
         }
         if (view_ == GuiView::samples) {
             if (l.inspector_visible) {
-                for (std::size_t i = 0; i < 10; ++i) {
+                for (std::size_t i = 0; i < 15; ++i) {
                     UiRect row{l.parameters.x + 12 * l.scale,
-                               l.parameters.y + (48 + i * 40) * l.scale,
-                               l.parameters.w - 24 * l.scale, 32 * l.scale};
+                               l.parameters.y + (48 + i * 27) * l.scale,
+                               l.parameters.w - 24 * l.scale, 23 * l.scale};
                     if (!row.contains(input.x, input.y))
                         continue;
                     const auto &p = state.selected_pad_settings;
                     static constexpr const char *properties[]{
-                        "mode",    "choke",  "pitch", "fine",    "gain",
-                        "reverse", "attack", "decay", "sustain", "release"};
+                        "mode",    "choke",        "pitch",
+                        "fine",    "gain",         "reverse",
+                        "attack",  "decay",        "sustain",
+                        "release", "stretch-mode", "stretch-ratio",
+                        "beats",   "source-bpm",   "stretch-quality"};
                     submit(command("pad.property-select.v1",
                                    {{"property", std::string(properties[i])}}));
                     if (i == 0) {
@@ -1094,7 +1106,7 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
                     else if (i == 5)
                         submit(command("pad.reverse-set.v1",
                                        {{"reverse", !p.reverse}}));
-                    else {
+                    else if (i < 10) {
                         auto attack = p.attack_seconds;
                         auto decay = p.decay_seconds;
                         auto sustain = p.sustain;
@@ -1114,6 +1126,41 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
                              {"decay", static_cast<double>(decay)},
                              {"sustain", static_cast<double>(sustain)},
                              {"release", static_cast<double>(release)}}));
+                    } else if (i == 10)
+                        submit(command(
+                            "pad.stretch-mode-set.v1",
+                            {{"mode",
+                              std::string(p.stretch_mode == StretchMode::off
+                                              ? "realtime"
+                                              : "off")}}));
+                    else if (i == 11)
+                        submit(command(
+                            "pad.stretch-ratio-set.v1",
+                            {{"ratio",
+                              static_cast<double>(std::clamp(
+                                  p.stretch_ratio + (shift_ ? -0.05F : 0.05F),
+                                  0.25F, 4.0F))}}));
+                    else if (i == 12)
+                        submit(command(
+                            "pad.source-beats-set.v1",
+                            {{"beats",
+                              static_cast<double>(std::max(
+                                  0.0F, p.source_beats +
+                                            (shift_ ? -0.25F : 0.25F)))}}));
+                    else if (i == 13)
+                        submit(command(
+                            "pad.source-bpm-set.v1",
+                            {{"bpm",
+                              static_cast<double>(std::max(
+                                  0.0F,
+                                  p.source_bpm + (shift_ ? -1.0F : 1.0F)))}}));
+                    else {
+                        const auto next = static_cast<StretchQuality>(
+                            (static_cast<unsigned>(p.stretch_quality) + 1) % 3);
+                        submit(command(
+                            "pad.stretch-quality-set.v1",
+                            {{"quality",
+                              std::string(stretch_quality_name(next))}}));
                     }
                     return true;
                 }

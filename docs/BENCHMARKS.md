@@ -110,3 +110,12 @@ On the 2026-11-19 Ryzen 7 7800X3D Debug run, these averaged about 19.2, 26.6,
 19.7, 13.5 and 23.3 µs per 256-frame buffer respectively. The comparable
 16/32-voice legacy slice cases measured 25.1/36.1 µs in the same run; workload
 lifetimes differ, so this is regression context rather than a claimed speedup.
+
+Task 023 adds mono/stereo realtime stretch at 0.5×, 1.5× and 2×, 8/16
+simultaneous voices, mixed ordinary/stretched playback and voice-state setup.
+On the 2026-11-19 Ryzen 7 7800X3D Debug host, 1.5× mono/stereo measured about
+24.3/26.1 µs, while 8/16 voices at 2× measured about 138.7/264.2 µs per
+256-frame buffer (real-time factors 38.5×/20.2×). The mixed 8+8 case measured
+140.7 µs. Voice setup was below useful timer resolution and allocates no cache.
+These are average offline callback costs, not Pi 5/N150, worst-case or XRUN
+claims; ratio-dependent voice lifetime also affects averages.

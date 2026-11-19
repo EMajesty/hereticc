@@ -47,6 +47,12 @@ inspector and the same semantic application actions expose these controls; PAD,
 16 LEVELS and 16 NOTES respectively trigger the selected assignment, apply
 sixteen velocities, or apply chromatic playback-rate offsets.
 
+Optional realtime pitch-preserving time stretching uses a bounded two-grain
+overlap/add path while the original playback-rate path remains the default.
+Pads may use an explicit 0.25–4× duration ratio or derive it from source beats
+or BPM and project tempo, with independent pitch. See
+[sample stretching](docs/SAMPLES.md#pitch-preserving-time-stretching).
+
 ## Build and run
 
 ### Nix development environment

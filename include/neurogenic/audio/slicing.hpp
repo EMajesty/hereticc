@@ -15,6 +15,12 @@ using SliceId = std::uint64_t;
     sample_playback_mode_name(SamplePlaybackMode) noexcept;
 [[nodiscard]] std::optional<SamplePlaybackMode>
     parse_sample_playback_mode(std::string_view) noexcept;
+[[nodiscard]] const char *stretch_mode_name(StretchMode) noexcept;
+[[nodiscard]] std::optional<StretchMode>
+    parse_stretch_mode(std::string_view) noexcept;
+[[nodiscard]] const char *stretch_quality_name(StretchQuality) noexcept;
+[[nodiscard]] std::optional<StretchQuality>
+    parse_stretch_quality(std::string_view) noexcept;
 
 struct SampleSlice {
     SliceId id{};
@@ -105,7 +111,7 @@ class SliceService {
 };
 
 struct SliceProject {
-    static constexpr unsigned version = 2;
+    static constexpr unsigned version = 3;
     std::vector<SampleSlice> slices;
     std::array<std::optional<SliceId>, 16> pads{};
     std::array<SamplePlaybackSettings, 16> pad_settings{};

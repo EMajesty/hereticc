@@ -189,6 +189,11 @@ pitch/fine, gain, reverse and envelope actions plus `pad.trigger.v1` and
 sixteen velocities to that pad, and 16 NOTES supplies chromatic playback-rate
 offsets relative to its configurable layout root (C4/60 is unity). A mapping may bind these to encoders/buttons or use the same
 focus/data-wheel navigation; the core contains no physical layout.
+Stretch mappings use `pad.stretch-mode-set.v1`,
+`pad.stretch-ratio-set.v1`, source-beats/source-BPM, quality and reset actions.
+Eight encoders may bind them directly; a minimal controller focuses
+`pad-playback`, cycles fields with Enter and adjusts with its wheel. PAD, STEP
+and 16 NOTES all reach the same copied pad settings.
 Trigger editing uses stable actions `step.probability-set.v1`,
 `step.condition-set.v1`, `step.ratchet-set.v1`, and `step.trigger-reset.v1`.
 Fill adapters use `performance.fill-set.v1` on press/release for momentary

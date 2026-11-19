@@ -107,6 +107,10 @@ One-shot/Gate/Toggle mode, choke group, semitone and cent tuning, gain, reverse,
 and ADSR. Pointer rows dispatch semantic actions. Non-touch clients focus
 `pad-playback`, use relative navigation to adjust the selected property, and
 press Enter to cycle properties; the GUI contains no playback implementation.
+It also exposes Stretch Off/Realtime, effective time ratio, source beats/BPM,
+quality and reported latency. Pointer rows and the same focus/data-wheel flow
+dispatch shared actions. At compact sizes the denser inspector preserves the
+waveform and essential navigation without requiring touch.
 
 Edits publish at the next audio callback as complete validated plans. A final
 partial step is available when its start tick lies inside a non-grid-aligned

@@ -784,14 +784,37 @@ void test_sample_slicing() {
               application.execute({"pad.reverse-set.v1", {{"reverse", true}}})
                   .accepted,
           "pad playback setting actions");
+    check(
+        application
+                .execute({"pad.stretch-mode-set.v1",
+                          {{"mode", std::string{"realtime"}}}})
+                .accepted &&
+            application.execute({"pad.stretch-ratio-set.v1", {{"ratio", 1.5}}})
+                .accepted &&
+            application.execute({"pad.source-beats-set.v1", {{"beats", 4.0}}})
+                .accepted &&
+            application
+                .execute({"pad.stretch-quality-set.v1",
+                          {{"quality", std::string{"smooth"}}}})
+                .accepted,
+        "stretch application actions");
     auto application_state = application.snapshot();
     check(application_state.selected_pad == 3 &&
               application_state.selected_pad_settings.mode ==
                   SamplePlaybackMode::gate &&
               application_state.selected_pad_settings.semitones == 7 &&
               application_state.selected_pad_settings.gain == 1.25F &&
-              application_state.selected_pad_settings.reverse,
+              application_state.selected_pad_settings.reverse &&
+              application_state.selected_pad_settings.stretch_mode ==
+                  StretchMode::realtime &&
+              application_state.selected_pad_settings.stretch_quality ==
+                  StretchQuality::smooth &&
+              application_state.stretch_latency_frames == 512,
           "pad playback observable state");
+    check(application.execute({"pad.stretch-reset.v1", {}}).accepted &&
+              application.snapshot().selected_pad_settings.stretch_mode ==
+                  StretchMode::off,
+          "stretch reset action");
     check(
         !application
              .execute({"pad.choke-group-set.v1", {{"group", std::int64_t{17}}}})
@@ -806,6 +829,12 @@ void test_sample_slicing() {
                           return item.type == DrawCommand::Type::line;
                       }),
           "slice GUI waveform rendering");
+    check(std::any_of(gui_frame.commands.begin(), gui_frame.commands.end(),
+                      [](const auto &item) {
+                          return item.type == DrawCommand::Type::text &&
+                                 item.text.rfind("STRETCH ", 0) == 0;
+                      }),
+          "stretch GUI inspector rendering");
 #ifdef NEUROGENIC_HAS_LUA
     ScriptRuntime lua([](Pattern) { return true; }, [] { return 0ULL; },
                       &timeline, &application.slices());
@@ -829,6 +858,10 @@ void test_sample_slicing() {
     project.pad_settings[3].choke_group = 4;
     project.pad_settings[3].semitones = -5;
     project.pad_settings[3].reverse = true;
+    project.pad_settings[3].stretch_mode = StretchMode::realtime;
+    project.pad_settings[3].stretch_quality = StretchQuality::smooth;
+    project.pad_settings[3].stretch_ratio = 1.5F;
+    project.pad_settings[3].source_beats = 4;
     const auto project_path = base / "neurogenic-slices.project";
     save_slice_project(project, project_path);
     const auto restored = load_slice_project(project_path);
@@ -836,7 +869,12 @@ void test_sample_slicing() {
               restored.pads[3] == 42 &&
               restored.pad_settings[3].mode == SamplePlaybackMode::toggle &&
               restored.pad_settings[3].choke_group == 4 &&
-              restored.pad_settings[3].reverse,
+              restored.pad_settings[3].reverse &&
+              restored.pad_settings[3].stretch_mode == StretchMode::realtime &&
+              restored.pad_settings[3].stretch_quality ==
+                  StretchQuality::smooth &&
+              restored.pad_settings[3].stretch_ratio == 1.5F &&
+              restored.pad_settings[3].source_beats == 4,
           "slice persistence round trip");
     const auto legacy_path = base / "neurogenic-slices-v1.project";
     {
@@ -850,6 +888,17 @@ void test_sample_slicing() {
     check(legacy.slices.size() == 1 && legacy.pads[0] == 7 &&
               legacy.pad_settings[0] == SamplePlaybackSettings{},
           "version-one slice sidecar compatibility");
+    const auto version_two_path = base / "neurogenic-slices-v2.project";
+    {
+        std::ofstream version_two(version_two_path);
+        version_two << "NEUROGENIC_SLICES 2\n"
+                    << "sample 0 " << std::quoted(wav.string()) << "\n"
+                    << "playback 0 1 2 1 3 4 1 -1 0 0 0 1 .005\n";
+    }
+    const auto version_two = load_slice_project(version_two_path);
+    check(version_two.pad_settings[0].mode == SamplePlaybackMode::gate &&
+              version_two.pad_settings[0].stretch_mode == StretchMode::off,
+          "version-two slice sidecar compatibility");
     std::filesystem::remove(wav);
     bool missing = false;
     try {
@@ -860,6 +909,7 @@ void test_sample_slicing() {
     check(missing, "missing slice sample reference accepted");
     std::filesystem::remove(project_path);
     std::filesystem::remove(legacy_path);
+    std::filesystem::remove(version_two_path);
 }
 
 void test_expressive_sample_playback() {
@@ -976,6 +1026,105 @@ void test_expressive_sample_playback() {
     check(engine->trigger_pad(36, 0, false), "ADSR release command");
     engine->process({left.data(), 3}, {right.data(), 3});
     check(engine->active_voice_count() == 0, "ADSR release stage");
+}
+
+void test_realtime_time_stretch() {
+    using namespace neurogenic;
+    Sample sine;
+    sine.sample_rate = 48000;
+    sine.channels = 2;
+    sine.interleaved.resize(4800 * 2);
+    constexpr double pi = 3.14159265358979323846;
+    for (std::size_t frame = 0; frame < 4800; ++frame) {
+        const auto value =
+            static_cast<float>(std::sin(2.0 * pi * 440.0 * frame / 48000.0));
+        sine.interleaved[frame * 2] = value;
+        sine.interleaved[frame * 2 + 1] = value;
+    }
+    TimeStretchConfiguration configuration{
+        StretchMode::realtime, StretchQuality::balanced, 1.5F, 1.0F, 48000};
+    check(RealtimeTimeStretcher::valid(configuration),
+          "valid realtime stretch rejected");
+    check(RealtimeTimeStretcher::latency_frames(configuration) == 256,
+          "balanced stretch latency");
+    TimeStretchState state;
+    RealtimeTimeStretcher::reset(state, configuration);
+    std::vector<float> output(7200);
+    for (auto &value : output) {
+        value = RealtimeTimeStretcher::process_channel(sine, 0, sine.frames(),
+                                                       configuration, state, 0);
+        const auto right = RealtimeTimeStretcher::process_channel(
+            sine, 0, sine.frames(), configuration, state, 1);
+        check(std::abs(value - right) < 1.0e-6F,
+              "stereo stretch channel drift");
+        check(std::isfinite(value), "stretch produced non-finite output");
+        RealtimeTimeStretcher::advance(state);
+    }
+    std::size_t crossings{};
+    for (std::size_t i = 1025; i < output.size(); ++i)
+        crossings += output[i - 1] <= 0 && output[i] > 0;
+    const auto measured = crossings * 48000.0 / (output.size() - 1025);
+    check(measured > 390 && measured < 490,
+          "realtime stretch did not preserve pitch");
+    near(RealtimeTimeStretcher::resolve_time_ratio(1, 4, 0, 96000, 48000, 120),
+         1, "beat-length tempo ratio");
+    near(RealtimeTimeStretcher::resolve_time_ratio(1, 0, 90, 48000, 48000, 120),
+         .75F, "source BPM tempo ratio");
+    for (const auto ratio : {.5F, 1.5F, 2.0F, .25F, 4.0F}) {
+        configuration.time_ratio = ratio;
+        check(RealtimeTimeStretcher::valid(configuration),
+              "supported stretch ratio rejected");
+    }
+    configuration.time_ratio = .1F;
+    check(!RealtimeTimeStretcher::valid(configuration),
+          "invalid stretch ratio accepted");
+    configuration.time_ratio = 1;
+    RealtimeTimeStretcher::reset(state, configuration);
+    std::array<float, 32> block_left{}, block_right{};
+    check(RealtimeTimeStretcher::process_block(sine, 0, sine.frames(),
+                                               configuration, state, block_left,
+                                               block_right, 12) == 12 &&
+              state.output_frame == 12,
+          "bounded stretch block processing");
+
+    AudioEngine engine(48000, 4);
+    Sample ramp;
+    ramp.sample_rate = 48000;
+    ramp.channels = 1;
+    ramp.interleaved.resize(1024);
+    for (std::size_t i = 0; i < ramp.frames(); ++i)
+        ramp.interleaved[i] = static_cast<float>(i % 16) / 16.0F;
+    engine.set_sample(std::move(ramp));
+    SamplePlaybackSettings settings;
+    settings.stretch_mode = StretchMode::realtime;
+    settings.stretch_ratio = 2;
+    check(engine.configure_note_playback(36, settings),
+          "stretch settings publication");
+    std::vector<float> left(2048), right(2048);
+    engine.process({left.data(), 0}, {right.data(), 0});
+    check(engine.trigger_pad(36, 1), "stretched voice trigger");
+    engine.process(left, right);
+    check(engine.active_voice_count() == 1,
+          "stretched voice ended before configured duration");
+    std::array<float, 1> tail_left{}, tail_right{};
+    engine.process(tail_left, tail_right);
+    check(engine.active_voice_count() == 0,
+          "stretched voice exceeded configured duration");
+
+    AudioEngine reverse_engine(48000, 2);
+    Sample reverse_sample;
+    reverse_sample.sample_rate = 48000;
+    reverse_sample.channels = 1;
+    reverse_sample.interleaved = {0.1F, 0.2F, 0.3F, 0.4F};
+    reverse_engine.set_sample(std::move(reverse_sample));
+    settings.reverse = true;
+    check(reverse_engine.configure_note_playback(36, settings),
+          "reverse stretch fallback publication");
+    reverse_engine.process({tail_left.data(), 0}, {tail_right.data(), 0});
+    check(reverse_engine.trigger_pad(36, 1), "reverse fallback trigger");
+    reverse_engine.process(tail_left, tail_right);
+    check(tail_left[0] > 0.25F,
+          "reverse did not fall back to playback-rate processing");
 }
 
 void test_sample_slots() {
@@ -3093,6 +3242,7 @@ int main() {
         test_live_sample_management_and_resampling();
         test_sample_slicing();
         test_expressive_sample_playback();
+        test_realtime_time_stretch();
         test_timeline_and_tracks();
         test_transport_integration_and_timeline_io();
         test_midi_control_dispatch();

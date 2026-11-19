@@ -132,3 +132,35 @@ sustain level. Gain is 0–4 before the existing output stage. Defaults preserve
 one-shot drum behavior: zero attack/decay/release, sustain one, unity gain,
 forward playback and no choke. Old voices retain their immutable sample and
 their copied settings across replacement/unload; only new triggers see updates.
+
+## Pitch-preserving time stretching
+
+Stretch Off is the default and does not execute stretch code. Realtime mode is
+a deterministic two-grain overlap/add processor: 50%-overlapped Hann grains
+read immutable mono/stereo PCM with shared positions, linear interpolation and
+no callback allocation. Economy, Balanced and Smooth use 256, 512 and 1024
+frame windows and report algorithmic latencies of 128, 256 and 512 frames.
+Economy uses a triangular crossfade, Balanced a smooth polynomial, and Smooth
+a Hann crossfade. Larger windows reduce modulation but smear transients; Smooth
+also spends more CPU on trigonometric window evaluation. Every preset remains
+bounded to two reads per output channel.
+
+The supported time and pitch ratios are 0.25–4×. Time ratio controls output
+duration (`source frames × ratio`); semitone/cent controls set the independent
+within-grain pitch ratio. A source beat length derives the ratio from slice
+duration and current project BPM; otherwise source BPM derives
+`source BPM / project BPM`; otherwise the explicit ratio is used. Values are
+clamped to the supported 0.25–4× range and snapshotted when a voice starts. A later tempo change affects new voices, not an
+already sounding voice. There is no four-bar assumption.
+
+Full samples and slices support One-shot, Gate/Toggle release, choke, ADSR,
+velocity, probability and ratchets through the existing voice/scheduler paths.
+Reverse plus stretch intentionally falls back to the established reverse
+playback-rate path. Prepared/cache mode, warp markers and transient alignment
+are not implemented. This lightweight granular method can produce flamming,
+phasiness and boundary coloration, especially on sustained tones or extreme
+ratios; it is intended as an initial rhythmic-loop algorithm, not professional
+offline stretching.
+
+Sidecar version 3 persists stretch mode, quality, explicit ratio, source beats
+and source BPM. Versions 1 and 2 remain readable.

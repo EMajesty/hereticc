@@ -209,6 +209,10 @@ One-shot ignores the scheduled note-off, Gate enters its release at the note
 duration, and Toggle responds to successive semantic note-ons. Probability,
 conditions and ratchets decide/schedule those note-ons before the sample voice
 applies its copied pad settings. Parameter automation remains independent.
+Tempo-synchronized stretch resolves source beats/BPM against the authoritative
+timeline tempo at note-on. Active voices retain that ratio across a later plan
+or tempo replacement; subsequent notes use the new tempo. Timeline event
+placement and note ownership are unchanged.
 duration notes preserve scheduler ordering, velocity, probability, conditions,
 ratchets and ownership. Without an assignment, existing slot mapping applies.
 

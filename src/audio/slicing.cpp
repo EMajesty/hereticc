@@ -28,6 +28,36 @@ parse_sample_playback_mode(std::string_view value) noexcept {
         return SamplePlaybackMode::toggle;
     return std::nullopt;
 }
+const char *stretch_mode_name(StretchMode mode) noexcept {
+    return mode == StretchMode::realtime ? "Realtime" : "Off";
+}
+std::optional<StretchMode> parse_stretch_mode(std::string_view value) noexcept {
+    if (value == "off" || value == "Off")
+        return StretchMode::off;
+    if (value == "realtime" || value == "Realtime")
+        return StretchMode::realtime;
+    return std::nullopt;
+}
+const char *stretch_quality_name(StretchQuality quality) noexcept {
+    switch (quality) {
+    case StretchQuality::economy:
+        return "Economy";
+    case StretchQuality::smooth:
+        return "Smooth";
+    default:
+        return "Balanced";
+    }
+}
+std::optional<StretchQuality>
+parse_stretch_quality(std::string_view value) noexcept {
+    if (value == "economy" || value == "Economy")
+        return StretchQuality::economy;
+    if (value == "balanced" || value == "Balanced")
+        return StretchQuality::balanced;
+    if (value == "smooth" || value == "Smooth")
+        return StretchQuality::smooth;
+    return std::nullopt;
+}
 std::vector<WaveformPeak> build_waveform_peaks(const Sample &sample,
                                                std::size_t count) {
     if ((sample.channels != 1 && sample.channels != 2) ||
@@ -99,7 +129,11 @@ bool valid_playback_settings(const SamplePlaybackSettings &value) {
            value.decay_seconds <= 30 && std::isfinite(value.sustain) &&
            value.sustain >= 0 && value.sustain <= 1 &&
            std::isfinite(value.release_seconds) && value.release_seconds >= 0 &&
-           value.release_seconds <= 30;
+           value.release_seconds <= 30 && std::isfinite(value.stretch_ratio) &&
+           value.stretch_ratio >= 0.25F && value.stretch_ratio <= 4.0F &&
+           std::isfinite(value.source_beats) && value.source_beats >= 0 &&
+           value.source_beats <= 1024 && std::isfinite(value.source_bpm) &&
+           value.source_bpm >= 0 && value.source_bpm <= 1000;
 }
 } // namespace
 
@@ -577,6 +611,9 @@ void save_slice_project(const SliceProject &project,
             << s.fine_cents << ' ' << s.gain << ' ' << s.root_note << ' '
             << (s.reverse ? 1 : 0) << ' ' << s.attack_seconds << ' '
             << s.decay_seconds << ' ' << s.sustain << ' ' << s.release_seconds
+            << ' ' << static_cast<unsigned>(s.stretch_mode) << ' '
+            << static_cast<unsigned>(s.stretch_quality) << ' '
+            << s.stretch_ratio << ' ' << s.source_beats << ' ' << s.source_bpm
             << '\n';
     }
 }
@@ -585,7 +622,7 @@ SliceProject load_slice_project(const std::filesystem::path &path) {
     std::string magic;
     unsigned version{};
     if (!(in >> magic >> version) || magic != "NEUROGENIC_SLICES" ||
-        (version != 1 && version != SliceProject::version))
+        (version < 1 || version > SliceProject::version))
         throw std::runtime_error("unsupported slice project format");
     SliceProject result;
     std::string kind;
@@ -634,6 +671,17 @@ SliceProject load_slice_project(const std::filesystem::path &path) {
             settings.choke_group = static_cast<std::uint8_t>(group);
             settings.choke_release = choke_release != 0;
             settings.reverse = reverse != 0;
+            if (version >= 3) {
+                unsigned stretch_mode{}, stretch_quality{};
+                if (!(in >> stretch_mode >> stretch_quality >>
+                      settings.stretch_ratio >> settings.source_beats >>
+                      settings.source_bpm) ||
+                    stretch_mode > 1 || stretch_quality > 2)
+                    throw std::runtime_error("invalid stretch playback record");
+                settings.stretch_mode = static_cast<StretchMode>(stretch_mode);
+                settings.stretch_quality =
+                    static_cast<StretchQuality>(stretch_quality);
+            }
             if (!valid_playback_settings(settings))
                 throw std::runtime_error("invalid pad playback settings");
             result.pad_settings[pad] = settings;
