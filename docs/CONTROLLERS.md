@@ -24,8 +24,9 @@ booleans, 64-bit integers, doubles, text and normalized X/Y values.
 
 Implemented actions cover transport, track selection/navigation/mute and note
 targeting, pattern/step selection, toggling/resolution/pages, sample slot selection/load/replace/unload, pad modes,
-focus/confirm/cancel, text input, modifiers and X/Y input. Undo, redo, direct
-underspecified generation/mutation requests are discoverable but unavailable.
+focus/confirm/cancel, text input, modifiers and X/Y input. Undo, redo, grouped
+timeline editing, and selected-event property editing are implemented. Direct
+underspecified generation/mutation requests remain unavailable.
 This is intentional: discovery never implies an operation is
 implemented.
 
@@ -129,8 +130,12 @@ command. A controller without 16 buttons can present the same grid virtually.
 ## Navigation, text and X/Y
 
 Focus next/previous, relative adjust, confirm and cancel are semantic actions.
-The minimal profile uses Enter to move Transport → Tracks → Steps, the encoder
-to select a track or step, Enter to toggle, and Back to return one level.
+The minimal profile uses Enter to move Transport → Tracks → Steps and the
+encoder to select a track or step. Enter on a step selects its note (creating
+the target note when empty) and opens properties. Encoder turns adjust the
+active property, Enter cycles velocity/duration/pitch/timing, and Back returns
+one level. Full controllers can map Select+grid to event selection, encoders to
+property actions, and buttons to Undo/Redo.
 Shift and Select each
 have momentary and latched state. Mapping layers resolve before an action is
 emitted, preventing a mode change from implicitly firing the base binding.
@@ -153,6 +158,6 @@ profiles can disable this with `fallback_to_base`. Step selection and step
 toggling remain distinct semantic actions.
 
 There is no device firmware, MIDI learn, project persistence for note targets
-or profiles, state-delta subscription, undo history, parameter locks, modulation matrix,
+or profiles, state-delta subscription, parameter locks, modulation matrix,
 scale engine, slicing or pitch shifting. The profile files are validated
 examples, not a commitment to a particular master-controller layout.

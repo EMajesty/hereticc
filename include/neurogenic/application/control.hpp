@@ -13,102 +13,221 @@
 #include <vector>
 
 namespace neurogenic {
-struct NormalizedXY {double x{},y{};friend bool operator==(const NormalizedXY&,const NormalizedXY&)=default;};
-using ApplicationValue=std::variant<std::monostate,bool,std::int64_t,double,std::string,NormalizedXY>;
-enum class ValueType:std::uint8_t{none,boolean,integer,real,text,xy};
-struct ArgumentSpec {std::string name;ValueType type{ValueType::none};bool required{true};};
+struct NormalizedXY {
+    double x{}, y{};
+    friend bool operator==(const NormalizedXY &,
+                           const NormalizedXY &) = default;
+};
+using ApplicationValue = std::variant<std::monostate, bool, std::int64_t,
+                                      double, std::string, NormalizedXY>;
+enum class ValueType : std::uint8_t { none, boolean, integer, real, text, xy };
+struct ArgumentSpec {
+    std::string name;
+    ValueType type{ValueType::none};
+    bool required{true};
+};
 struct ActionDescriptor {
-  std::string id,name,description,category;
-  std::vector<ArgumentSpec> arguments;
-  bool available{};
-  std::string context,unavailable_reason;
+    std::string id, name, description, category;
+    std::vector<ArgumentSpec> arguments;
+    bool available{};
+    std::string context, unavailable_reason;
 };
 class ActionRegistry {
-public:
-  ActionRegistry();
-  bool register_action(ActionDescriptor,std::string& error);
-  [[nodiscard]] const ActionDescriptor* find(std::string_view) const noexcept;
-  [[nodiscard]] const std::vector<ActionDescriptor>& actions() const noexcept{return actions_;}
-  bool validate(std::string_view,const std::map<std::string,ApplicationValue>&,std::string& error) const;
-private:std::vector<ActionDescriptor> actions_;
+  public:
+    ActionRegistry();
+    bool register_action(ActionDescriptor, std::string &error);
+    [[nodiscard]] const ActionDescriptor *find(std::string_view) const noexcept;
+    [[nodiscard]] const std::vector<ActionDescriptor> &
+    actions() const noexcept {
+        return actions_;
+    }
+    bool validate(std::string_view,
+                  const std::map<std::string, ApplicationValue> &,
+                  std::string &error) const;
+
+  private:
+    std::vector<ActionDescriptor> actions_;
 };
 
-enum class ParameterType:std::uint8_t{boolean,integer,real,enumeration};
+enum class ParameterType : std::uint8_t { boolean, integer, real, enumeration };
 struct ParameterDescriptor {
-  std::string id,name,unit;
-  ParameterType type{ParameterType::real};
-  ApplicationValue minimum,maximum,default_value,current_value;
-  double step{1};bool continuous{},automatable{},modulatable{};
-  std::vector<std::string> choices;
+    std::string id, name, unit;
+    ParameterType type{ParameterType::real};
+    ApplicationValue minimum, maximum, default_value, current_value;
+    double step{1};
+    bool continuous{}, automatable{}, modulatable{};
+    std::vector<std::string> choices;
 };
 class ParameterRegistry {
-public:
-  bool register_parameter(ParameterDescriptor,std::string& error);
-  bool set(std::string_view,const ApplicationValue&,std::string& error);
-  bool set_normalized(std::string_view,double,std::string& error);
-  bool adjust(std::string_view,double steps,std::string& error);
-  bool reset(std::string_view,std::string& error);
-  [[nodiscard]] std::optional<ParameterDescriptor> get(std::string_view) const;
-  [[nodiscard]] std::vector<ParameterDescriptor> parameters() const;
-private:bool valid_value(const ParameterDescriptor&,const ApplicationValue&,std::string&) const;mutable std::mutex mutex_;std::map<std::string,ParameterDescriptor,std::less<>> values_;
+  public:
+    bool register_parameter(ParameterDescriptor, std::string &error);
+    bool set(std::string_view, const ApplicationValue &, std::string &error);
+    bool set_normalized(std::string_view, double, std::string &error);
+    bool adjust(std::string_view, double steps, std::string &error);
+    bool reset(std::string_view, std::string &error);
+    [[nodiscard]] std::optional<ParameterDescriptor>
+        get(std::string_view) const;
+    [[nodiscard]] std::vector<ParameterDescriptor> parameters() const;
+
+  private:
+    bool valid_value(const ParameterDescriptor &, const ApplicationValue &,
+                     std::string &) const;
+    mutable std::mutex mutex_;
+    std::map<std::string, ParameterDescriptor, std::less<>> values_;
 };
 
-enum class PadMode:std::uint8_t{step,pad,levels,notes};
-enum class StepResolution:std::uint8_t{quarter,eighth,sixteenth,thirty_second,quarter_triplet,eighth_triplet,sixteenth_triplet,thirty_second_triplet};
-enum class Modifier:std::uint8_t{shift,select};
-struct ModifierState {bool shift{},select{},shift_latched{},select_latched{};};
-struct TrackSummary {TrackId id{};std::string name;bool muted{};MusicalTick pattern_length{};std::uint8_t target_note{36};std::vector<MusicalEvent> events;};
-struct ApplicationState {
-  std::uint64_t revision{};
-  bool playing{};std::uint64_t transport_frame{};MusicalTick transport_tick{};
-  double tempo_bpm{120};std::uint16_t time_signature_numerator{4},time_signature_denominator{4};
-  TrackId selected_track{};SampleSlotId selected_sample_slot{};
-  std::uint64_t selected_pattern{};std::int64_t selected_step{};std::uint64_t step_page{};
-  StepResolution step_resolution{StepResolution::sixteenth};MusicalTick step_ticks{ticks_per_quarter/4};float step_velocity{1.0F};MusicalTick step_duration{ticks_per_quarter/4};
-  PadMode pad_mode{PadMode::step};std::string parameter_page{"main"},focused_element{"transport"};
-  ModifierState modifiers;std::vector<std::string> available_actions;
-  std::vector<ParameterDescriptor> parameters;
-  std::vector<TrackSummary> tracks;
-  std::vector<SampleSlotStatus> sample_slots;std::uint64_t timeline_revision{};
+enum class PadMode : std::uint8_t { step, pad, levels, notes };
+enum class StepResolution : std::uint8_t {
+    quarter,
+    eighth,
+    sixteenth,
+    thirty_second,
+    quarter_triplet,
+    eighth_triplet,
+    sixteenth_triplet,
+    thirty_second_triplet
 };
-struct ApplicationCommand {std::string action_id;std::map<std::string,ApplicationValue> arguments;std::string source_id;std::uint64_t source_sequence{};};
-struct CommandResult {bool accepted{};std::uint64_t sequence{},state_revision{};std::string error;};
+enum class Modifier : std::uint8_t { shift, select };
+struct ModifierState {
+    bool shift{}, select{}, shift_latched{}, select_latched{};
+};
+struct TrackSummary {
+    TrackId id{};
+    std::string name;
+    bool muted{};
+    MusicalTick pattern_length{};
+    std::uint8_t target_note{36};
+    std::vector<MusicalEvent> events;
+};
+struct SelectedEventState {
+    TrackId track_id{};
+    EventId event_id{};
+    std::int64_t step{};
+    MusicalTick tick{}, timing_offset{};
+    std::uint8_t pitch{};
+    float velocity{};
+    MusicalTick duration{};
+    std::size_t index_at_step{}, events_at_step{};
+};
+struct ApplicationState {
+    std::uint64_t revision{};
+    bool playing{};
+    std::uint64_t transport_frame{};
+    MusicalTick transport_tick{};
+    double tempo_bpm{120};
+    std::uint16_t time_signature_numerator{4}, time_signature_denominator{4};
+    TrackId selected_track{};
+    SampleSlotId selected_sample_slot{};
+    std::uint64_t selected_pattern{};
+    std::int64_t selected_step{};
+    std::uint64_t step_page{};
+    StepResolution step_resolution{StepResolution::sixteenth};
+    MusicalTick step_ticks{ticks_per_quarter / 4};
+    float step_velocity{1.0F};
+    MusicalTick step_duration{ticks_per_quarter / 4};
+    std::optional<SelectedEventState> selected_event;
+    std::string selected_step_property{"velocity"};
+    bool edit_group_active{}, can_undo{}, can_redo{};
+    std::size_t undo_depth{}, redo_depth{}, history_capacity{};
+    PadMode pad_mode{PadMode::step};
+    std::string parameter_page{"main"}, focused_element{"transport"};
+    ModifierState modifiers;
+    std::vector<std::string> available_actions;
+    std::vector<ParameterDescriptor> parameters;
+    std::vector<TrackSummary> tracks;
+    std::vector<SampleSlotStatus> sample_slots;
+    std::uint64_t timeline_revision{};
+};
+struct ApplicationCommand {
+    std::string action_id;
+    std::map<std::string, ApplicationValue> arguments;
+    std::string source_id;
+    std::uint64_t source_sequence{};
+};
+struct CommandResult {
+    bool accepted{};
+    std::uint64_t sequence{}, state_revision{};
+    std::string error;
+};
 
 class ApplicationService {
-public:
-  static constexpr std::size_t default_queue_capacity=256;
-  ApplicationService(AudioEngine&,TimelineService&,SampleManager&,std::size_t queue_capacity=default_queue_capacity);
-  [[nodiscard]] const ActionRegistry& actions() const noexcept{return actions_;}
-  [[nodiscard]] ParameterRegistry& parameters() noexcept{return parameters_;}
-  [[nodiscard]] bool submit(ApplicationCommand) noexcept;
-  [[nodiscard]] std::vector<CommandResult> dispatch_pending();
-  [[nodiscard]] CommandResult execute(const ApplicationCommand&);
-  [[nodiscard]] ApplicationState snapshot() const;
-  [[nodiscard]] std::uint64_t rejected_commands() const noexcept;
-private:
-  CommandResult execute_locked(const ApplicationCommand&,std::uint64_t);
-  void synchronize_locked() const;void changed_locked();
-  AudioEngine& engine_;TimelineService& timeline_;SampleManager& samples_;ActionRegistry actions_;ParameterRegistry parameters_;const std::size_t capacity_;
-  mutable std::mutex mutex_;mutable ApplicationState state_;std::map<TrackId,std::uint8_t> track_targets_;std::deque<std::pair<std::uint64_t,ApplicationCommand>> queue_;std::uint64_t next_sequence_{1},rejected_{};
+  public:
+    static constexpr std::size_t default_queue_capacity = 256;
+    ApplicationService(AudioEngine &, TimelineService &, SampleManager &,
+                       std::size_t queue_capacity = default_queue_capacity);
+    [[nodiscard]] const ActionRegistry &actions() const noexcept {
+        return actions_;
+    }
+    [[nodiscard]] ParameterRegistry &parameters() noexcept {
+        return parameters_;
+    }
+    [[nodiscard]] bool submit(ApplicationCommand) noexcept;
+    [[nodiscard]] std::vector<CommandResult> dispatch_pending();
+    [[nodiscard]] CommandResult execute(const ApplicationCommand &);
+    [[nodiscard]] ApplicationState snapshot() const;
+    [[nodiscard]] std::uint64_t rejected_commands() const noexcept;
+
+  private:
+    CommandResult execute_locked(const ApplicationCommand &, std::uint64_t);
+    void synchronize_locked() const;
+    void changed_locked();
+    AudioEngine &engine_;
+    TimelineService &timeline_;
+    SampleManager &samples_;
+    ActionRegistry actions_;
+    ParameterRegistry parameters_;
+    const std::size_t capacity_;
+    mutable std::mutex mutex_;
+    mutable ApplicationState state_;
+    std::map<TrackId, std::uint8_t> track_targets_;
+    std::deque<std::pair<std::uint64_t, ApplicationCommand>> queue_;
+    std::uint64_t next_sequence_{1}, rejected_{};
+    std::optional<TimelineTransaction> edit_group_;
+    mutable std::optional<EventId> selected_event_id_;
 };
 
-struct TextEntryState {std::string text;std::size_t cursor{};char selected{'A'};bool active{},committed{},discarded{};};
+struct TextEntryState {
+    std::string text;
+    std::size_t cursor{};
+    char selected{'A'};
+    bool active{}, committed{}, discarded{};
+};
 class TextEntryModel {
-public:
-  void begin(std::string initial={});void direct(std::string_view);void select_relative(int);void insert();void erase_or_cancel();void move_cursor(int);void commit();void discard();
-  [[nodiscard]] const TextEntryState& state() const noexcept{return state_;}
-private:TextEntryState state_;
+  public:
+    void begin(std::string initial = {});
+    void direct(std::string_view);
+    void select_relative(int);
+    void insert();
+    void erase_or_cancel();
+    void move_cursor(int);
+    void commit();
+    void discard();
+    [[nodiscard]] const TextEntryState &state() const noexcept {
+        return state_;
+    }
+
+  private:
+    TextEntryState state_;
 };
 
-struct XYBehavior {bool spring_to_center{},latching{},relative{},invert_x{},invert_y{};double scale_x{1},scale_y{1};};
-class XYControl {
-public:
-  explicit XYControl(XYBehavior behavior={}):behavior_(behavior){}
-  [[nodiscard]] NormalizedXY apply(double x,double y);void release();[[nodiscard]] NormalizedXY value() const noexcept{return value_;}
-private:XYBehavior behavior_;NormalizedXY value_{0.5,0.5};
+struct XYBehavior {
+    bool spring_to_center{}, latching{}, relative{}, invert_x{}, invert_y{};
+    double scale_x{1}, scale_y{1};
 };
-[[nodiscard]] const char* pad_mode_name(PadMode) noexcept;
-[[nodiscard]] const char* step_resolution_name(StepResolution) noexcept;
+class XYControl {
+  public:
+    explicit XYControl(XYBehavior behavior = {}) : behavior_(behavior) {}
+    [[nodiscard]] NormalizedXY apply(double x, double y);
+    void release();
+    [[nodiscard]] NormalizedXY value() const noexcept { return value_; }
+
+  private:
+    XYBehavior behavior_;
+    NormalizedXY value_{0.5, 0.5};
+};
+[[nodiscard]] const char *pad_mode_name(PadMode) noexcept;
+[[nodiscard]] const char *step_resolution_name(StepResolution) noexcept;
 [[nodiscard]] MusicalTick step_resolution_ticks(StepResolution) noexcept;
-[[nodiscard]] std::optional<StepResolution> parse_step_resolution(std::string_view) noexcept;
-}
+[[nodiscard]] std::optional<StepResolution>
+    parse_step_resolution(std::string_view) noexcept;
+} // namespace neurogenic

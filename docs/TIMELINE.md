@@ -125,6 +125,27 @@ at the next callback; validation, conflicts and publication failures leave the
 prior timeline intact. Note-target project persistence and musical-boundary
 publication remain future work.
 
+## Undo, grouping, and step properties
+
+`TimelineService` owns one bounded snapshot history shared by native actions
+and Lua timeline commits. The default capacity is 64 committed states and is
+configurable at construction. Memory scales with history capacity times the
+editable timeline size. Successful new commits record the previous timeline
+and generation seed and clear redo. Validation, revision-conflict, and
+publication failures change neither current state nor history. Undo and redo
+publish a complete candidate through the same next-callback path before the
+control snapshot changes.
+
+`edit.group-begin.v1`, `edit.group-commit.v1`, and
+`edit.group-cancel.v1` collect several mutations into one undo entry. Playback
+never sees the working copy before commit. `step.event-select.v1` selects a
+stable duration-note event ID; an explicit ID disambiguates multiple notes in
+one cell. Velocity, duration, pitch, and tick-relative timing actions preserve
+that ID and leave other notes, parameter events, and explicit note-on/off pairs
+untouched. Durations may exceed one cell. Timing remains within one resolution
+of the nominal step and inside the pattern. Toggle remains exact-grid and
+target-note-specific.
+
 Application adapters use stable semantic action IDs
 `timeline.generate.v1`, `timeline.mutate-track.v1`,
 `timeline.regenerate.v1`, `timeline.variation.v1`, `timeline.commit.v1`,

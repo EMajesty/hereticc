@@ -19,6 +19,10 @@ events, arbitrary pattern lengths, independent tracks, mute state, duration
 notes, and deterministic sample-accurate loop scheduling. The 16-step Lua API
 is retained as a compatibility workflow rather than the fundamental data model.
 
+Step edits support shared bounded Undo/Redo, grouped transactions, and stable
+event editing of velocity, duration, pitch, and tick-relative timing. GUI and
+controller clients call the same C++ timeline service; Lua is optional.
+
 ## Build and run
 
 ### Nix development environment

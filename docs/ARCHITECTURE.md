@@ -152,3 +152,9 @@ per-track target context are application state; each musical toggle is a
 detached `TimelineService` transaction. Successful commits publish one complete
 immutable plan, while conflicts and publication failures preserve the prior
 plan. GUI and `PerformanceGrid` clients emit the same stable actions.
+
+Timeline history also belongs to `TimelineService`, so GUI, controllers,
+native generators, and Lua timeline commits share it. Snapshot history and
+grouped working copies stay on the control side. Commit, Undo, and Redo publish
+immutable plans through the existing bounded handoff; the callback never
+allocates, locks, or destroys history.

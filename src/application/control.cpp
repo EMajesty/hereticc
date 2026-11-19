@@ -6,262 +6,1077 @@
 
 namespace neurogenic {
 namespace {
-ActionDescriptor action(std::string id,std::string name,std::string category,std::vector<ArgumentSpec> arguments={},bool available=true,std::string reason={}){auto description=name+" application action";return{std::move(id),std::move(name),std::move(description),std::move(category),std::move(arguments),available,{},std::move(reason)};}
-template<class T>const T* argument(const ApplicationCommand& command,std::string_view name){const auto found=command.arguments.find(std::string(name));return found==command.arguments.end()?nullptr:std::get_if<T>(&found->second);}
-bool is_numeric(const ApplicationValue& value){return std::holds_alternative<std::int64_t>(value)||std::holds_alternative<double>(value);}
-double number(const ApplicationValue& value){if(const auto* integer=std::get_if<std::int64_t>(&value))return static_cast<double>(*integer);return std::get<double>(value);}
+ActionDescriptor action(std::string id, std::string name, std::string category,
+                        std::vector<ArgumentSpec> arguments = {},
+                        bool available = true, std::string reason = {}) {
+    auto description = name + " application action";
+    return {std::move(id),
+            std::move(name),
+            std::move(description),
+            std::move(category),
+            std::move(arguments),
+            available,
+            {},
+            std::move(reason)};
+}
+template <class T>
+const T *argument(const ApplicationCommand &command, std::string_view name) {
+    const auto found = command.arguments.find(std::string(name));
+    return found == command.arguments.end() ? nullptr
+                                            : std::get_if<T>(&found->second);
+}
+bool is_numeric(const ApplicationValue &value) {
+    return std::holds_alternative<std::int64_t>(value) ||
+           std::holds_alternative<double>(value);
+}
+double number(const ApplicationValue &value) {
+    if (const auto *integer = std::get_if<std::int64_t>(&value))
+        return static_cast<double>(*integer);
+    return std::get<double>(value);
+}
+} // namespace
+
+ActionRegistry::ActionRegistry() {
+    std::string error;
+    const auto add = [&](ActionDescriptor value) {
+        if (!register_action(std::move(value), error))
+            throw std::logic_error(error);
+    };
+    add(action("transport.play.v1", "Play", "Transport"));
+    add(action("transport.stop.v1", "Stop", "Transport"));
+    add(action("transport.restart.v1", "Restart", "Transport"));
+    add(action("track.select.v1", "Select track", "Tracks",
+               {{"track_id", ValueType::integer}}));
+    add(action("track.next.v1", "Next track", "Tracks"));
+    add(action("track.previous.v1", "Previous track", "Tracks"));
+    add(action("track.mute-toggle.v1", "Toggle track mute", "Tracks"));
+    add(action("pattern.select.v1", "Select pattern", "Sequencer",
+               {{"pattern_id", ValueType::integer}}));
+    add(action("step.select.v1", "Select step", "Sequencer",
+               {{"step", ValueType::integer}}));
+    add(action("step.toggle.v1", "Toggle step", "Sequencer",
+               {{"step", ValueType::integer, false},
+                {"velocity", ValueType::real, false},
+                {"duration_ticks", ValueType::integer, false}}));
+    add(action("step.event-select.v1", "Select event at step", "Sequencer",
+               {{"step", ValueType::integer, false},
+                {"event_id", ValueType::integer, false}}));
+    add(action("step.property-select.v1", "Select step property", "Sequencer",
+               {{"property", ValueType::text}}));
+    add(action("step.velocity-set.v1", "Set step velocity", "Sequencer",
+               {{"velocity", ValueType::real}}));
+    add(action("step.duration-set.v1", "Set step duration", "Sequencer",
+               {{"duration_ticks", ValueType::integer}}));
+    add(action("step.pitch-set.v1", "Set step pitch", "Sequencer",
+               {{"pitch", ValueType::integer}}));
+    add(action("step.timing-offset-set.v1", "Set step timing offset",
+               "Sequencer", {{"offset_ticks", ValueType::integer}}));
+    add(action("step.property-reset.v1", "Reset step property", "Sequencer",
+               {{"property", ValueType::text}}));
+    add(action("step.page-next.v1", "Next step page", "Sequencer"));
+    add(action("step.page-previous.v1", "Previous step page", "Sequencer"));
+    add(action("step.resolution-set.v1", "Set step resolution", "Sequencer",
+               {{"resolution", ValueType::text}}));
+    add(action("track.note-target-set.v1", "Set track note target", "Tracks",
+               {{"note", ValueType::integer}}));
+    add(action("sample.slot-select.v1", "Select sample slot", "Samples",
+               {{"slot_id", ValueType::integer}}));
+    add(action("sample.load.v1", "Load sample", "Samples",
+               {{"slot_id", ValueType::integer}, {"path", ValueType::text}}));
+    add(action("sample.replace.v1", "Replace sample", "Samples",
+               {{"slot_id", ValueType::integer}, {"path", ValueType::text}}));
+    add(action("sample.unload.v1", "Unload sample", "Samples",
+               {{"slot_id", ValueType::integer}}));
+    add(action("edit.undo.v1", "Undo", "Editing"));
+    add(action("edit.redo.v1", "Redo", "Editing"));
+    add(action("edit.group-begin.v1", "Begin grouped edit", "Editing"));
+    add(action("edit.group-commit.v1", "Commit grouped edit", "Editing"));
+    add(action("edit.group-cancel.v1", "Cancel grouped edit", "Editing"));
+    add(action("timeline.generate.v1", "Generate timeline", "Generation", {},
+               false,
+               "a generator choice and transaction payload are required"));
+    add(action(
+        "timeline.mutate-track.v1", "Mutate track", "Generation", {}, false,
+        "mutation settings are not represented by this initial command"));
+    add(action("pad.mode-select.v1", "Select pad mode", "Performance",
+               {{"mode", ValueType::text}}));
+    add(action("navigation.focus-next.v1", "Focus next", "Navigation"));
+    add(action("navigation.focus-previous.v1", "Focus previous", "Navigation"));
+    add(action("navigation.adjust.v1", "Adjust focused item", "Navigation",
+               {{"steps", ValueType::real}}));
+    add(action("navigation.confirm.v1", "Confirm", "Navigation"));
+    add(action("navigation.cancel.v1", "Cancel", "Navigation"));
+    add(action("text.input.v1", "Text input", "Text",
+               {{"text", ValueType::text}}));
+    add(action("modulation.xy.v1", "X/Y control", "Modulation",
+               {{"position", ValueType::xy}}));
+    add(action(
+        "parameter.set-normalized.v1", "Set parameter", "Parameters",
+        {{"parameter_id", ValueType::text}, {"value", ValueType::real}}));
+    add(action(
+        "parameter.adjust.v1", "Adjust parameter", "Parameters",
+        {{"parameter_id", ValueType::text}, {"steps", ValueType::real}}));
+    add(action("parameter.reset.v1", "Reset parameter", "Parameters",
+               {{"parameter_id", ValueType::text}}));
+    add(action("modifier.shift.v1", "Shift", "Modifiers",
+               {{"active", ValueType::boolean},
+                {"latched", ValueType::boolean, false}}));
+    add(action("modifier.select.v1", "Select modifier", "Modifiers",
+               {{"active", ValueType::boolean},
+                {"latched", ValueType::boolean, false}}));
+}
+bool ActionRegistry::register_action(ActionDescriptor value,
+                                     std::string &error) {
+    if (value.id.empty() || value.name.empty()) {
+        error = "action ID and name are required";
+        return false;
+    }
+    if (find(value.id)) {
+        error = "duplicate action ID: " + value.id;
+        return false;
+    }
+    actions_.push_back(std::move(value));
+    error.clear();
+    return true;
+}
+const ActionDescriptor *
+ActionRegistry::find(std::string_view id) const noexcept {
+    for (const auto &value : actions_)
+        if (value.id == id)
+            return &value;
+    return nullptr;
+}
+bool ActionRegistry::validate(
+    std::string_view id, const std::map<std::string, ApplicationValue> &values,
+    std::string &error) const {
+    const auto *descriptor = find(id);
+    if (!descriptor) {
+        error = "unknown action: " + std::string(id);
+        return false;
+    }
+    if (!descriptor->available) {
+        error = descriptor->unavailable_reason.empty()
+                    ? "action is unavailable"
+                    : descriptor->unavailable_reason;
+        return false;
+    }
+    for (const auto &spec : descriptor->arguments) {
+        const auto found = values.find(spec.name);
+        if (found == values.end()) {
+            if (spec.required) {
+                error = "missing argument: " + spec.name;
+                return false;
+            }
+            continue;
+        }
+        const auto type = found->second.index();
+        const auto expected = static_cast<std::size_t>(spec.type);
+        if (type != expected) {
+            error = "invalid type for argument: " + spec.name;
+            return false;
+        }
+    }
+    for (const auto &[name, value] : values) {
+        (void)value;
+        if (std::none_of(descriptor->arguments.begin(),
+                         descriptor->arguments.end(),
+                         [&](const auto &spec) { return spec.name == name; })) {
+            error = "unexpected argument: " + name;
+            return false;
+        }
+    }
+    error.clear();
+    return true;
 }
 
-ActionRegistry::ActionRegistry(){std::string error;
-  const auto add=[&](ActionDescriptor value){if(!register_action(std::move(value),error))throw std::logic_error(error);};
-  add(action("transport.play.v1","Play","Transport"));add(action("transport.stop.v1","Stop","Transport"));add(action("transport.restart.v1","Restart","Transport"));
-  add(action("track.select.v1","Select track","Tracks",{{"track_id",ValueType::integer}}));add(action("track.next.v1","Next track","Tracks"));add(action("track.previous.v1","Previous track","Tracks"));add(action("track.mute-toggle.v1","Toggle track mute","Tracks"));
-  add(action("pattern.select.v1","Select pattern","Sequencer",{{"pattern_id",ValueType::integer}}));add(action("step.select.v1","Select step","Sequencer",{{"step",ValueType::integer}}));add(action("step.toggle.v1","Toggle step","Sequencer",{{"step",ValueType::integer,false},{"velocity",ValueType::real,false},{"duration_ticks",ValueType::integer,false}}));
-  add(action("step.page-next.v1","Next step page","Sequencer"));add(action("step.page-previous.v1","Previous step page","Sequencer"));add(action("step.resolution-set.v1","Set step resolution","Sequencer",{{"resolution",ValueType::text}}));add(action("track.note-target-set.v1","Set track note target","Tracks",{{"note",ValueType::integer}}));
-  add(action("sample.slot-select.v1","Select sample slot","Samples",{{"slot_id",ValueType::integer}}));add(action("sample.load.v1","Load sample","Samples",{{"slot_id",ValueType::integer},{"path",ValueType::text}}));add(action("sample.replace.v1","Replace sample","Samples",{{"slot_id",ValueType::integer},{"path",ValueType::text}}));add(action("sample.unload.v1","Unload sample","Samples",{{"slot_id",ValueType::integer}}));
-  add(action("edit.undo.v1","Undo","Editing",{},false,"undo history is not implemented"));add(action("edit.redo.v1","Redo","Editing",{},false,"redo history is not implemented"));
-  add(action("timeline.generate.v1","Generate timeline","Generation",{},false,"a generator choice and transaction payload are required"));add(action("timeline.mutate-track.v1","Mutate track","Generation",{},false,"mutation settings are not represented by this initial command"));
-  add(action("pad.mode-select.v1","Select pad mode","Performance",{{"mode",ValueType::text}}));add(action("navigation.focus-next.v1","Focus next","Navigation"));add(action("navigation.focus-previous.v1","Focus previous","Navigation"));add(action("navigation.adjust.v1","Adjust focused item","Navigation",{{"steps",ValueType::real}}));add(action("navigation.confirm.v1","Confirm","Navigation"));add(action("navigation.cancel.v1","Cancel","Navigation"));
-  add(action("text.input.v1","Text input","Text",{{"text",ValueType::text}}));add(action("modulation.xy.v1","X/Y control","Modulation",{{"position",ValueType::xy}}));
-  add(action("parameter.set-normalized.v1","Set parameter","Parameters",{{"parameter_id",ValueType::text},{"value",ValueType::real}}));add(action("parameter.adjust.v1","Adjust parameter","Parameters",{{"parameter_id",ValueType::text},{"steps",ValueType::real}}));add(action("parameter.reset.v1","Reset parameter","Parameters",{{"parameter_id",ValueType::text}}));
-  add(action("modifier.shift.v1","Shift","Modifiers",{{"active",ValueType::boolean},{"latched",ValueType::boolean,false}}));add(action("modifier.select.v1","Select modifier","Modifiers",{{"active",ValueType::boolean},{"latched",ValueType::boolean,false}}));
+bool ParameterRegistry::valid_value(const ParameterDescriptor &parameter,
+                                    const ApplicationValue &value,
+                                    std::string &error) const {
+    switch (parameter.type) {
+    case ParameterType::boolean:
+        if (!std::holds_alternative<bool>(value)) {
+            error = "parameter requires a boolean";
+            return false;
+        }
+        break;
+    case ParameterType::integer:
+    case ParameterType::enumeration:
+        if (!std::holds_alternative<std::int64_t>(value)) {
+            error = "parameter requires an integer";
+            return false;
+        }
+        break;
+    case ParameterType::real:
+        if (!is_numeric(value)) {
+            error = "parameter requires a number";
+            return false;
+        }
+        break;
+    }
+    if (parameter.type != ParameterType::boolean) {
+        const auto current = number(value), minimum = number(parameter.minimum),
+                   maximum = number(parameter.maximum);
+        if (!std::isfinite(current) || current < minimum || current > maximum) {
+            error = "parameter value is outside its range";
+            return false;
+        }
+        if (parameter.type == ParameterType::enumeration &&
+            static_cast<std::size_t>(std::get<std::int64_t>(value)) >=
+                parameter.choices.size()) {
+            error = "enumeration value has no choice";
+            return false;
+        }
+    }
+    error.clear();
+    return true;
 }
-bool ActionRegistry::register_action(ActionDescriptor value,std::string& error){if(value.id.empty()||value.name.empty()){error="action ID and name are required";return false;}if(find(value.id)){error="duplicate action ID: "+value.id;return false;}actions_.push_back(std::move(value));error.clear();return true;}
-const ActionDescriptor* ActionRegistry::find(std::string_view id) const noexcept{for(const auto& value:actions_)if(value.id==id)return&value;return nullptr;}
-bool ActionRegistry::validate(std::string_view id,const std::map<std::string,ApplicationValue>& values,std::string& error) const{const auto* descriptor=find(id);if(!descriptor){error="unknown action: "+std::string(id);return false;}if(!descriptor->available){error=descriptor->unavailable_reason.empty()?"action is unavailable":descriptor->unavailable_reason;return false;}for(const auto& spec:descriptor->arguments){const auto found=values.find(spec.name);if(found==values.end()){if(spec.required){error="missing argument: "+spec.name;return false;}continue;}const auto type=found->second.index();const auto expected=static_cast<std::size_t>(spec.type);if(type!=expected){error="invalid type for argument: "+spec.name;return false;}}for(const auto& [name,value]:values){(void)value;if(std::none_of(descriptor->arguments.begin(),descriptor->arguments.end(),[&](const auto& spec){return spec.name==name;})){error="unexpected argument: "+name;return false;}}error.clear();return true;}
+bool ParameterRegistry::register_parameter(ParameterDescriptor value,
+                                           std::string &error) {
+    std::lock_guard lock(mutex_);
+    if (value.id.empty() || value.name.empty() || values_.contains(value.id)) {
+        error = "parameter ID/name is empty or duplicated";
+        return false;
+    }
+    if (value.step <= 0 || !std::isfinite(value.step)) {
+        error = "parameter step must be positive";
+        return false;
+    }
+    if (!valid_value(value, value.default_value, error) ||
+        !valid_value(value, value.current_value, error))
+        return false;
+    values_.emplace(value.id, std::move(value));
+    error.clear();
+    return true;
+}
+bool ParameterRegistry::set(std::string_view id, const ApplicationValue &value,
+                            std::string &error) {
+    std::lock_guard lock(mutex_);
+    auto found = values_.find(id);
+    if (found == values_.end()) {
+        error = "unknown parameter";
+        return false;
+    }
+    if (!valid_value(found->second, value, error))
+        return false;
+    found->second.current_value = value;
+    return true;
+}
+bool ParameterRegistry::set_normalized(std::string_view id, double normalized,
+                                       std::string &error) {
+    std::lock_guard lock(mutex_);
+    auto found = values_.find(id);
+    if (found == values_.end()) {
+        error = "unknown parameter";
+        return false;
+    }
+    if (!std::isfinite(normalized) || normalized < 0 || normalized > 1) {
+        error = "normalized parameter value must be 0..1";
+        return false;
+    }
+    auto &parameter = found->second;
+    if (parameter.type == ParameterType::boolean)
+        parameter.current_value = normalized >= 0.5;
+    else {
+        const auto scaled =
+            number(parameter.minimum) +
+            (number(parameter.maximum) - number(parameter.minimum)) *
+                normalized;
+        if (parameter.type == ParameterType::real)
+            parameter.current_value = scaled;
+        else
+            parameter.current_value =
+                static_cast<std::int64_t>(std::llround(scaled));
+    }
+    error.clear();
+    return true;
+}
+bool ParameterRegistry::adjust(std::string_view id, double steps,
+                               std::string &error) {
+    std::lock_guard lock(mutex_);
+    auto found = values_.find(id);
+    if (found == values_.end()) {
+        error = "unknown parameter";
+        return false;
+    }
+    auto &parameter = found->second;
+    if (parameter.type == ParameterType::boolean) {
+        if (steps != 0)
+            parameter.current_value = !std::get<bool>(parameter.current_value);
+        error.clear();
+        return true;
+    }
+    if (!std::isfinite(steps)) {
+        error = "relative adjustment must be finite";
+        return false;
+    }
+    const auto minimum = number(parameter.minimum),
+               maximum = number(parameter.maximum);
+    auto updated =
+        std::clamp(number(parameter.current_value) + steps * parameter.step,
+                   minimum, maximum);
+    if (parameter.type != ParameterType::real)
+        parameter.current_value =
+            static_cast<std::int64_t>(std::llround(updated));
+    else
+        parameter.current_value = updated;
+    error.clear();
+    return true;
+}
+bool ParameterRegistry::reset(std::string_view id, std::string &error) {
+    std::lock_guard lock(mutex_);
+    auto found = values_.find(id);
+    if (found == values_.end()) {
+        error = "unknown parameter";
+        return false;
+    }
+    found->second.current_value = found->second.default_value;
+    error.clear();
+    return true;
+}
+std::optional<ParameterDescriptor>
+ParameterRegistry::get(std::string_view id) const {
+    std::lock_guard lock(mutex_);
+    const auto found = values_.find(id);
+    return found == values_.end()
+               ? std::nullopt
+               : std::optional<ParameterDescriptor>(found->second);
+}
+std::vector<ParameterDescriptor> ParameterRegistry::parameters() const {
+    std::lock_guard lock(mutex_);
+    std::vector<ParameterDescriptor> result;
+    result.reserve(values_.size());
+    for (const auto &[id, value] : values_) {
+        (void)id;
+        result.push_back(value);
+    }
+    return result;
+}
 
-bool ParameterRegistry::valid_value(const ParameterDescriptor& parameter,const ApplicationValue& value,std::string& error) const{switch(parameter.type){case ParameterType::boolean:if(!std::holds_alternative<bool>(value)){error="parameter requires a boolean";return false;}break;case ParameterType::integer:case ParameterType::enumeration:if(!std::holds_alternative<std::int64_t>(value)){error="parameter requires an integer";return false;}break;case ParameterType::real:if(!is_numeric(value)){error="parameter requires a number";return false;}break;}if(parameter.type!=ParameterType::boolean){const auto current=number(value),minimum=number(parameter.minimum),maximum=number(parameter.maximum);if(!std::isfinite(current)||current<minimum||current>maximum){error="parameter value is outside its range";return false;}if(parameter.type==ParameterType::enumeration&&static_cast<std::size_t>(std::get<std::int64_t>(value))>=parameter.choices.size()){error="enumeration value has no choice";return false;}}error.clear();return true;}
-bool ParameterRegistry::register_parameter(ParameterDescriptor value,std::string& error){std::lock_guard lock(mutex_);if(value.id.empty()||value.name.empty()||values_.contains(value.id)){error="parameter ID/name is empty or duplicated";return false;}if(value.step<=0||!std::isfinite(value.step)){error="parameter step must be positive";return false;}if(!valid_value(value,value.default_value,error)||!valid_value(value,value.current_value,error))return false;values_.emplace(value.id,std::move(value));error.clear();return true;}
-bool ParameterRegistry::set(std::string_view id,const ApplicationValue& value,std::string& error){std::lock_guard lock(mutex_);auto found=values_.find(id);if(found==values_.end()){error="unknown parameter";return false;}if(!valid_value(found->second,value,error))return false;found->second.current_value=value;return true;}
-bool ParameterRegistry::set_normalized(std::string_view id,double normalized,std::string& error){std::lock_guard lock(mutex_);auto found=values_.find(id);if(found==values_.end()){error="unknown parameter";return false;}if(!std::isfinite(normalized)||normalized<0||normalized>1){error="normalized parameter value must be 0..1";return false;}auto& parameter=found->second;if(parameter.type==ParameterType::boolean)parameter.current_value=normalized>=0.5;else{const auto scaled=number(parameter.minimum)+(number(parameter.maximum)-number(parameter.minimum))*normalized;if(parameter.type==ParameterType::real)parameter.current_value=scaled;else parameter.current_value=static_cast<std::int64_t>(std::llround(scaled));}error.clear();return true;}
-bool ParameterRegistry::adjust(std::string_view id,double steps,std::string& error){std::lock_guard lock(mutex_);auto found=values_.find(id);if(found==values_.end()){error="unknown parameter";return false;}auto& parameter=found->second;if(parameter.type==ParameterType::boolean){if(steps!=0)parameter.current_value=!std::get<bool>(parameter.current_value);error.clear();return true;}if(!std::isfinite(steps)){error="relative adjustment must be finite";return false;}const auto minimum=number(parameter.minimum),maximum=number(parameter.maximum);auto updated=std::clamp(number(parameter.current_value)+steps*parameter.step,minimum,maximum);if(parameter.type!=ParameterType::real)parameter.current_value=static_cast<std::int64_t>(std::llround(updated));else parameter.current_value=updated;error.clear();return true;}
-bool ParameterRegistry::reset(std::string_view id,std::string& error){std::lock_guard lock(mutex_);auto found=values_.find(id);if(found==values_.end()){error="unknown parameter";return false;}found->second.current_value=found->second.default_value;error.clear();return true;}
-std::optional<ParameterDescriptor> ParameterRegistry::get(std::string_view id) const{std::lock_guard lock(mutex_);const auto found=values_.find(id);return found==values_.end()?std::nullopt:std::optional<ParameterDescriptor>(found->second);}
-std::vector<ParameterDescriptor> ParameterRegistry::parameters() const{std::lock_guard lock(mutex_);std::vector<ParameterDescriptor> result;result.reserve(values_.size());for(const auto& [id,value]:values_){(void)id;result.push_back(value);}return result;}
-
-ApplicationService::ApplicationService(AudioEngine& engine,TimelineService& timeline,SampleManager& samples,std::size_t capacity):engine_(engine),timeline_(timeline),samples_(samples),capacity_(capacity){if(capacity_==0)throw std::invalid_argument("application command capacity must be positive");std::string error;parameters_.register_parameter({"transport.tempo","Tempo","BPM",ParameterType::real,20.0,300.0,120.0,120.0,0.1,true,false,false,{}},error);parameters_.register_parameter({"performance.xy.x","X axis","",ParameterType::real,0.0,1.0,0.5,0.5,0.01,true,false,true,{}},error);parameters_.register_parameter({"performance.xy.y","Y axis","",ParameterType::real,0.0,1.0,0.5,0.5,0.01,true,false,true,{}},error);state_.step_ticks=step_resolution_ticks(state_.step_resolution);state_.step_duration=state_.step_ticks;}
-bool ApplicationService::submit(ApplicationCommand command) noexcept{try{std::lock_guard lock(mutex_);if(queue_.size()>=capacity_){++rejected_;return false;}queue_.emplace_back(next_sequence_++,std::move(command));return true;}catch(...){return false;}}
-std::vector<CommandResult> ApplicationService::dispatch_pending(){std::vector<CommandResult> result;for(;;){std::pair<std::uint64_t,ApplicationCommand> item;{std::lock_guard lock(mutex_);if(queue_.empty())break;item=std::move(queue_.front());queue_.pop_front();}result.push_back(execute_locked(item.second,item.first));}return result;}
-CommandResult ApplicationService::execute(const ApplicationCommand& command){std::uint64_t sequence;{std::lock_guard lock(mutex_);sequence=next_sequence_++;}return execute_locked(command,sequence);}
-CommandResult ApplicationService::execute_locked(const ApplicationCommand& command,std::uint64_t sequence){std::string error;if(!actions_.validate(command.action_id,command.arguments,error))return{false,sequence,snapshot().revision,std::move(error)};if(command.action_id=="navigation.confirm.v1"&&snapshot().focused_element=="steps"){ApplicationCommand toggle;toggle.action_id="step.toggle.v1";toggle.source_id=command.source_id;toggle.source_sequence=command.source_sequence;return execute_locked(toggle,sequence);}bool changed=false;
-  if(command.action_id=="transport.play.v1"){engine_.play();changed=true;}else if(command.action_id=="transport.stop.v1"){engine_.stop();changed=true;}else if(command.action_id=="transport.restart.v1"){engine_.restart();changed=true;}
-  else if(command.action_id=="sample.load.v1"||command.action_id=="sample.replace.v1"){const auto slot=*argument<std::int64_t>(command,"slot_id");if(slot<0||slot>std::numeric_limits<std::uint32_t>::max())error="sample slot is outside its range";else if(!samples_.load(SampleSlotId{static_cast<std::uint32_t>(slot)},*argument<std::string>(command,"path")))error="sample command queue rejected the request";else changed=true;}
-  else if(command.action_id=="sample.unload.v1"){const auto slot=*argument<std::int64_t>(command,"slot_id");if(slot<0||slot>std::numeric_limits<std::uint32_t>::max())error="sample slot is outside its range";else if(!samples_.unload(SampleSlotId{static_cast<std::uint32_t>(slot)}))error="sample command queue rejected the request";else changed=true;}
-  else {std::lock_guard lock(mutex_);synchronize_locked();
-    if(command.action_id=="track.select.v1"){const auto id=*argument<std::int64_t>(command,"track_id");const auto timeline=timeline_.snapshot();if(id<=0||std::none_of(timeline.timeline.tracks.begin(),timeline.timeline.tracks.end(),[&](const Track& track){return track.id==static_cast<TrackId>(id);})){error="track does not exist";}else{state_.selected_track=static_cast<TrackId>(id);changed_locked();}}
-    else if(command.action_id=="track.next.v1"||command.action_id=="track.previous.v1"){const auto timeline=timeline_.snapshot();if(timeline.timeline.tracks.empty())error="no tracks are available";else{auto found=std::find_if(timeline.timeline.tracks.begin(),timeline.timeline.tracks.end(),[&](const Track& track){return track.id==state_.selected_track;});auto index=found==timeline.timeline.tracks.end()?0:static_cast<std::size_t>(found-timeline.timeline.tracks.begin());if(command.action_id=="track.next.v1")index=(index+1)%timeline.timeline.tracks.size();else index=(index+timeline.timeline.tracks.size()-1)%timeline.timeline.tracks.size();state_.selected_track=timeline.timeline.tracks[index].id;changed_locked();}}
-    else if(command.action_id=="track.mute-toggle.v1"){auto transaction=timeline_.edit();auto* track=transaction.find_track(state_.selected_track);if(!track)error="selected track does not exist";else if(!transaction.set_track_muted(track->id,!track->muted,error)||!timeline_.commit(std::move(transaction),TimelineCommitPolicy::next_audio_callback,error)){}else{changed_locked();}}
-    else if(command.action_id=="pattern.select.v1"){const auto id=*argument<std::int64_t>(command,"pattern_id");if(id<0)error="pattern ID must be nonnegative";else{state_.selected_pattern=static_cast<std::uint64_t>(id);changed_locked();}}
-    else if(command.action_id=="step.select.v1"){const auto step=*argument<std::int64_t>(command,"step");if(step<0)error="step must be nonnegative";else{state_.selected_step=step;state_.step_page=static_cast<std::uint64_t>(step)/16;changed_locked();}
-    } else if (command.action_id == "step.page-next.v1" ||
-               command.action_id == "step.page-previous.v1") {
-        const auto snapshot = timeline_.snapshot();
-        const auto found = std::find_if(
-            snapshot.timeline.tracks.begin(), snapshot.timeline.tracks.end(),
-            [&](const Track &track) {
-                return track.id == state_.selected_track;
-            });
-        const auto steps =
-            found == snapshot.timeline.tracks.end()
-                ? 0
-                : static_cast<std::uint64_t>(
-                      (found->pattern.length + state_.step_ticks - 1) /
-                      state_.step_ticks);
-        if (steps == 0)
-            error = "selected track has no editable steps";
-        else {
-            const auto pages = (steps + 15) / 16;
-            if (command.action_id == "step.page-next.v1")
-                state_.step_page = (state_.step_page + 1) % pages;
-            else
-                state_.step_page = (state_.step_page + pages - 1) % pages;
-            state_.selected_step = static_cast<std::int64_t>(
-                std::min<std::uint64_t>(state_.step_page * 16, steps - 1));
-            changed_locked();
+ApplicationService::ApplicationService(AudioEngine &engine,
+                                       TimelineService &timeline,
+                                       SampleManager &samples,
+                                       std::size_t capacity)
+    : engine_(engine), timeline_(timeline), samples_(samples),
+      capacity_(capacity) {
+    if (capacity_ == 0)
+        throw std::invalid_argument(
+            "application command capacity must be positive");
+    std::string error;
+    parameters_.register_parameter({"transport.tempo",
+                                    "Tempo",
+                                    "BPM",
+                                    ParameterType::real,
+                                    20.0,
+                                    300.0,
+                                    120.0,
+                                    120.0,
+                                    0.1,
+                                    true,
+                                    false,
+                                    false,
+                                    {}},
+                                   error);
+    parameters_.register_parameter({"performance.xy.x",
+                                    "X axis",
+                                    "",
+                                    ParameterType::real,
+                                    0.0,
+                                    1.0,
+                                    0.5,
+                                    0.5,
+                                    0.01,
+                                    true,
+                                    false,
+                                    true,
+                                    {}},
+                                   error);
+    parameters_.register_parameter({"performance.xy.y",
+                                    "Y axis",
+                                    "",
+                                    ParameterType::real,
+                                    0.0,
+                                    1.0,
+                                    0.5,
+                                    0.5,
+                                    0.01,
+                                    true,
+                                    false,
+                                    true,
+                                    {}},
+                                   error);
+    state_.step_ticks = step_resolution_ticks(state_.step_resolution);
+    state_.step_duration = state_.step_ticks;
+}
+bool ApplicationService::submit(ApplicationCommand command) noexcept {
+    try {
+        std::lock_guard lock(mutex_);
+        if (queue_.size() >= capacity_) {
+            ++rejected_;
+            return false;
         }
-    } else if (command.action_id == "step.resolution-set.v1") {
-        const auto resolution = parse_step_resolution(
-            *argument<std::string>(command, "resolution"));
-        if (!resolution)
-            error = "unknown step resolution";
-        else {
-            state_.step_resolution = *resolution;
-            state_.step_ticks = step_resolution_ticks(*resolution);
-            state_.step_duration = state_.step_ticks;
-            state_.step_page = 0;
-            state_.selected_step = 0;
-            changed_locked();
+        queue_.emplace_back(next_sequence_++, std::move(command));
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+std::vector<CommandResult> ApplicationService::dispatch_pending() {
+    std::vector<CommandResult> result;
+    for (;;) {
+        std::pair<std::uint64_t, ApplicationCommand> item;
+        {
+            std::lock_guard lock(mutex_);
+            if (queue_.empty())
+                break;
+            item = std::move(queue_.front());
+            queue_.pop_front();
         }
-    } else if (command.action_id == "track.note-target-set.v1") {
-        const auto note = *argument<std::int64_t>(command, "note");
-        const auto snapshot = timeline_.snapshot();
-        if (note < 0 || note > 127)
-            error = "track note target must be 0..127";
-        else if (std::none_of(snapshot.timeline.tracks.begin(),
-                              snapshot.timeline.tracks.end(),
-                              [&](const Track &track) {
-                                  return track.id == state_.selected_track;
-                              }))
-            error = "selected track does not exist";
-        else {
-            track_targets_[state_.selected_track] =
-                static_cast<std::uint8_t>(note);
-            changed_locked();
+        result.push_back(execute_locked(item.second, item.first));
+    }
+    return result;
+}
+CommandResult ApplicationService::execute(const ApplicationCommand &command) {
+    std::uint64_t sequence;
+    {
+        std::lock_guard lock(mutex_);
+        sequence = next_sequence_++;
+    }
+    return execute_locked(command, sequence);
+}
+CommandResult
+ApplicationService::execute_locked(const ApplicationCommand &command,
+                                   std::uint64_t sequence) {
+    std::string error;
+    if (!actions_.validate(command.action_id, command.arguments, error))
+        return {false, sequence, snapshot().revision, std::move(error)};
+    const auto before = snapshot();
+    if (command.action_id == "navigation.confirm.v1" &&
+        before.focused_element == "steps") {
+        ApplicationCommand select;
+        select.action_id = "step.event-select.v1";
+        auto result = execute_locked(select, sequence);
+        if (!result.accepted) {
+            ApplicationCommand toggle;
+            toggle.action_id = "step.toggle.v1";
+            result = execute_locked(toggle, sequence);
+            if (result.accepted)
+                result = execute_locked(select, sequence);
         }
-    } else if (command.action_id == "step.toggle.v1") {
-        auto transaction = timeline_.edit();
-        auto *track = transaction.find_track(state_.selected_track);
-        const auto requested = argument<std::int64_t>(command, "step");
-        const auto step = requested ? *requested : state_.selected_step;
-        const auto velocity = argument<double>(command, "velocity");
-        const auto duration = argument<std::int64_t>(command, "duration_ticks");
-        if (!track)
-            error = "selected track does not exist";
-        else if (step < 0 || step > std::numeric_limits<MusicalTick>::max() /
-                                        state_.step_ticks)
-            error = "step is outside its range";
-        else {
-            const auto tick = step * state_.step_ticks;
-            const auto count = (track->pattern.length + state_.step_ticks - 1) /
-                               state_.step_ticks;
-            if (step >= count || tick >= track->pattern.length)
-                error = "step is outside the selected track";
-            else if (velocity && (!std::isfinite(*velocity) || *velocity < 0 ||
-                                  *velocity > 1))
-                error = "step velocity must be 0..1";
-            else if (duration && *duration <= 0)
-                error = "step duration must be positive";
+        if (result.accepted) {
+            std::lock_guard lock(mutex_);
+            state_.focused_element = "step-properties";
+            changed_locked();
+            result.state_revision = state_.revision;
+        }
+        return result;
+    }
+    if (command.action_id == "navigation.adjust.v1" &&
+        before.focused_element == "step-properties" && before.selected_event) {
+        const auto delta = *argument<double>(command, "steps");
+        ApplicationCommand edit;
+        const auto &event = *before.selected_event;
+        if (before.selected_step_property == "velocity") {
+            edit.action_id = "step.velocity-set.v1";
+            edit.arguments = {
+                {"velocity",
+                 std::clamp(static_cast<double>(event.velocity) + delta * 0.05,
+                            0.0, 1.0)}};
+        } else if (before.selected_step_property == "duration") {
+            edit.action_id = "step.duration-set.v1";
+            edit.arguments = {
+                {"duration_ticks",
+                 static_cast<std::int64_t>(std::max<MusicalTick>(
+                     1, event.duration + static_cast<MusicalTick>(delta) *
+                                             before.step_ticks / 4))}};
+        } else if (before.selected_step_property == "pitch") {
+            edit.action_id = "step.pitch-set.v1";
+            edit.arguments = {
+                {"pitch", static_cast<std::int64_t>(std::clamp<int>(
+                              event.pitch + (delta < 0 ? -1 : 1), 0, 127))}};
+        } else {
+            edit.action_id = "step.timing-offset-set.v1";
+            edit.arguments = {
+                {"offset_ticks",
+                 static_cast<std::int64_t>(std::clamp<MusicalTick>(
+                     event.timing_offset + static_cast<MusicalTick>(delta) * 10,
+                     -before.step_ticks + 1, before.step_ticks - 1))}};
+        }
+        return execute_locked(edit, sequence);
+    }
+    bool changed = false;
+    if (command.action_id == "transport.play.v1") {
+        engine_.play();
+        changed = true;
+    } else if (command.action_id == "transport.stop.v1") {
+        engine_.stop();
+        changed = true;
+    } else if (command.action_id == "transport.restart.v1") {
+        engine_.restart();
+        changed = true;
+    } else if (command.action_id == "sample.load.v1" ||
+               command.action_id == "sample.replace.v1") {
+        const auto slot = *argument<std::int64_t>(command, "slot_id");
+        if (slot < 0 || slot > std::numeric_limits<std::uint32_t>::max())
+            error = "sample slot is outside its range";
+        else if (!samples_.load(SampleSlotId{static_cast<std::uint32_t>(slot)},
+                                *argument<std::string>(command, "path")))
+            error = "sample command queue rejected the request";
+        else
+            changed = true;
+    } else if (command.action_id == "sample.unload.v1") {
+        const auto slot = *argument<std::int64_t>(command, "slot_id");
+        if (slot < 0 || slot > std::numeric_limits<std::uint32_t>::max())
+            error = "sample slot is outside its range";
+        else if (!samples_.unload(
+                     SampleSlotId{static_cast<std::uint32_t>(slot)}))
+            error = "sample command queue rejected the request";
+        else
+            changed = true;
+    } else {
+        std::lock_guard lock(mutex_);
+        synchronize_locked();
+        if (command.action_id == "track.select.v1") {
+            const auto id = *argument<std::int64_t>(command, "track_id");
+            const auto timeline = timeline_.snapshot();
+            if (id <= 0 || std::none_of(timeline.timeline.tracks.begin(),
+                                        timeline.timeline.tracks.end(),
+                                        [&](const Track &track) {
+                                            return track.id ==
+                                                   static_cast<TrackId>(id);
+                                        })) {
+                error = "track does not exist";
+            } else {
+                state_.selected_track = static_cast<TrackId>(id);
+                changed_locked();
+            }
+        } else if (command.action_id == "track.next.v1" ||
+                   command.action_id == "track.previous.v1") {
+            const auto timeline = timeline_.snapshot();
+            if (timeline.timeline.tracks.empty())
+                error = "no tracks are available";
             else {
-                const auto track_index = static_cast<std::size_t>(
-                    track - transaction.timeline().tracks.data());
-                const auto target =
-                    track_targets_.contains(track->id)
-                        ? track_targets_[track->id]
-                        : static_cast<std::uint8_t>(
-                              std::min<std::size_t>(127, 36 + track_index));
-                std::vector<EventId> matching;
-                for(const auto& event:track->pattern.events)if(event.type==MusicalEventType::note&&event.tick==tick&&event.pitch==target)matching.push_back(event.id);
-                bool edited = false;
-                if(!matching.empty()){
-                    edited=true;for(const auto id:matching)if(!transaction.remove_event(track->id,id,error)){edited=false;break;}
-                } else
-                    edited = transaction.add_note(
-                        track->id, transaction.next_event_id(), tick, target,
-                        static_cast<float>(velocity ? *velocity
-                                                    : state_.step_velocity),
-                        duration ? *duration : state_.step_duration, error);
-                if (edited &&
-                    timeline_.commit(std::move(transaction),
-                                     TimelineCommitPolicy::next_audio_callback,
-                                     error)) {
+                auto found = std::find_if(
+                    timeline.timeline.tracks.begin(),
+                    timeline.timeline.tracks.end(), [&](const Track &track) {
+                        return track.id == state_.selected_track;
+                    });
+                auto index =
+                    found == timeline.timeline.tracks.end()
+                        ? 0
+                        : static_cast<std::size_t>(
+                              found - timeline.timeline.tracks.begin());
+                if (command.action_id == "track.next.v1")
+                    index = (index + 1) % timeline.timeline.tracks.size();
+                else
+                    index = (index + timeline.timeline.tracks.size() - 1) %
+                            timeline.timeline.tracks.size();
+                state_.selected_track = timeline.timeline.tracks[index].id;
+                changed_locked();
+            }
+        } else if (command.action_id == "track.mute-toggle.v1") {
+            auto transaction = timeline_.edit();
+            auto *track = transaction.find_track(state_.selected_track);
+            if (!track)
+                error = "selected track does not exist";
+            else if (!transaction.set_track_muted(track->id, !track->muted,
+                                                  error) ||
+                     !timeline_.commit(
+                         std::move(transaction),
+                         TimelineCommitPolicy::next_audio_callback, error)) {
+            } else {
+                changed_locked();
+            }
+        } else if (command.action_id == "pattern.select.v1") {
+            const auto id = *argument<std::int64_t>(command, "pattern_id");
+            if (id < 0)
+                error = "pattern ID must be nonnegative";
+            else {
+                state_.selected_pattern = static_cast<std::uint64_t>(id);
+                changed_locked();
+            }
+        } else if (command.action_id == "step.select.v1") {
+            const auto step = *argument<std::int64_t>(command, "step");
+            if (step < 0)
+                error = "step must be nonnegative";
+            else {
+                state_.selected_step = step;
+                state_.step_page = static_cast<std::uint64_t>(step) / 16;
+                selected_event_id_.reset();
+                changed_locked();
+            }
+        } else if (command.action_id == "step.event-select.v1") {
+            const auto step_arg = argument<std::int64_t>(command, "step");
+            const auto event_arg = argument<std::int64_t>(command, "event_id");
+            const auto step = step_arg ? *step_arg : state_.selected_step;
+            const auto snapshot = timeline_.snapshot();
+            const auto track = std::find_if(
+                snapshot.timeline.tracks.begin(),
+                snapshot.timeline.tracks.end(), [&](const Track &value) {
+                    return value.id == state_.selected_track;
+                });
+            if (step < 0 || track == snapshot.timeline.tracks.end())
+                error = step < 0 ? "step must be nonnegative"
+                                 : "selected track does not exist";
+            else {
+                const auto begin = step * state_.step_ticks;
+                const auto end = std::min<MusicalTick>(
+                    begin + state_.step_ticks, track->pattern.length);
+                const MusicalEvent *selected = nullptr;
+                for (const auto &event : track->pattern.events)
+                    if (event.type == MusicalEventType::note &&
+                        event.tick >= begin && event.tick < end &&
+                        (!event_arg ||
+                         (*event_arg > 0 &&
+                          event.id == static_cast<EventId>(*event_arg)))) {
+                        if (!selected || event.id < selected->id)
+                            selected = &event;
+                    }
+                if (!selected)
+                    error = "no selectable note event at step";
+                else {
+                    state_.selected_step = step;
+                    state_.step_page = static_cast<std::uint64_t>(step) / 16;
+                    selected_event_id_ = selected->id;
+                    changed_locked();
+                }
+            }
+        } else if (command.action_id == "step.property-select.v1") {
+            const auto &property = *argument<std::string>(command, "property");
+            if (property != "velocity" && property != "duration" &&
+                property != "pitch" && property != "timing")
+                error = "unknown step property";
+            else {
+                state_.selected_step_property = property;
+                state_.focused_element = "step-properties";
+                changed_locked();
+            }
+        } else if (command.action_id == "edit.undo.v1" ||
+                   command.action_id == "edit.redo.v1") {
+            if (edit_group_)
+                error = "finish or cancel the grouped edit first";
+            else {
+                const bool ok =
+                    command.action_id == "edit.undo.v1"
+                        ? timeline_.undo(
+                              TimelineCommitPolicy::next_audio_callback, error)
+                        : timeline_.redo(
+                              TimelineCommitPolicy::next_audio_callback, error);
+                if (ok) {
+                    selected_event_id_.reset();
+                    changed_locked();
+                }
+            }
+        } else if (command.action_id == "edit.group-begin.v1") {
+            if (edit_group_)
+                error = "a grouped edit is already active";
+            else {
+                edit_group_ = timeline_.edit();
+                state_.edit_group_active = true;
+                changed_locked();
+            }
+        } else if (command.action_id == "edit.group-cancel.v1") {
+            if (!edit_group_)
+                error = "no grouped edit is active";
+            else {
+                edit_group_.reset();
+                state_.edit_group_active = false;
+                changed_locked();
+            }
+        } else if (command.action_id == "edit.group-commit.v1") {
+            if (!edit_group_)
+                error = "no grouped edit is active";
+            else if (timeline_.commit(*edit_group_,
+                                      TimelineCommitPolicy::next_audio_callback,
+                                      error)) {
+                edit_group_.reset();
+                state_.edit_group_active = false;
+                changed_locked();
+            }
+        } else if (command.action_id == "step.velocity-set.v1" ||
+                   command.action_id == "step.duration-set.v1" ||
+                   command.action_id == "step.pitch-set.v1" ||
+                   command.action_id == "step.timing-offset-set.v1" ||
+                   command.action_id == "step.property-reset.v1") {
+            if (!selected_event_id_)
+                error = "no note event is selected";
+            else {
+                auto transaction =
+                    edit_group_ ? *edit_group_ : timeline_.edit();
+                auto *track = transaction.find_track(state_.selected_track);
+                MusicalEvent *event = nullptr;
+                if (track)
+                    for (auto &candidate : track->pattern.events)
+                        if (candidate.id == *selected_event_id_ &&
+                            candidate.type == MusicalEventType::note) {
+                            event = &candidate;
+                            break;
+                        }
+                if (!event)
+                    error = "selected note event no longer exists";
+                else {
+                    auto tick = event->tick;
+                    auto pitch = event->pitch;
+                    auto velocity = event->velocity;
+                    auto duration = event->duration;
+                    const auto base = state_.selected_step * state_.step_ticks;
+                    if (command.action_id == "step.velocity-set.v1") {
+                        const auto value =
+                            *argument<double>(command, "velocity");
+                        if (!std::isfinite(value) || value < 0 || value > 1)
+                            error = "step velocity must be 0..1";
+                        else
+                            velocity = static_cast<float>(value);
+                    } else if (command.action_id == "step.duration-set.v1") {
+                        const auto value =
+                            *argument<std::int64_t>(command, "duration_ticks");
+                        if (value <= 0)
+                            error = "step duration must be positive";
+                        else
+                            duration = value;
+                    } else if (command.action_id == "step.pitch-set.v1") {
+                        const auto value =
+                            *argument<std::int64_t>(command, "pitch");
+                        if (value < 0 || value > 127)
+                            error = "step pitch must be 0..127";
+                        else
+                            pitch = static_cast<std::uint8_t>(value);
+                    } else if (command.action_id ==
+                               "step.timing-offset-set.v1") {
+                        const auto value =
+                            *argument<std::int64_t>(command, "offset_ticks");
+                        if (value <= -state_.step_ticks ||
+                            value >= state_.step_ticks || base + value < 0 ||
+                            base + value >= track->pattern.length)
+                            error = "timing offset must remain within one step "
+                                    "and the pattern";
+                        else
+                            tick = base + value;
+                    } else {
+                        const auto &property =
+                            *argument<std::string>(command, "property");
+                        if (property == "velocity")
+                            velocity = state_.step_velocity;
+                        else if (property == "duration")
+                            duration = state_.step_duration;
+                        else if (property == "pitch")
+                            pitch = track_targets_.contains(track->id)
+                                        ? track_targets_[track->id]
+                                        : 36;
+                        else if (property == "timing")
+                            tick = base;
+                        else
+                            error = "unknown step property";
+                    }
+                    if (error.empty() && transaction.modify_note(
+                                             track->id, event->id, tick, pitch,
+                                             velocity, duration, error)) {
+                        if (edit_group_) {
+                            edit_group_ = std::move(transaction);
+                            changed_locked();
+                        } else if (timeline_.commit(std::move(transaction),
+                                                    TimelineCommitPolicy::
+                                                        next_audio_callback,
+                                                    error))
+                            changed_locked();
+                    }
+                }
+            }
+        } else if (command.action_id == "step.page-next.v1" ||
+                   command.action_id == "step.page-previous.v1") {
+            const auto snapshot = timeline_.snapshot();
+            const auto found = std::find_if(
+                snapshot.timeline.tracks.begin(),
+                snapshot.timeline.tracks.end(), [&](const Track &track) {
+                    return track.id == state_.selected_track;
+                });
+            const auto steps =
+                found == snapshot.timeline.tracks.end()
+                    ? 0
+                    : static_cast<std::uint64_t>(
+                          (found->pattern.length + state_.step_ticks - 1) /
+                          state_.step_ticks);
+            if (steps == 0)
+                error = "selected track has no editable steps";
+            else {
+                const auto pages = (steps + 15) / 16;
+                if (command.action_id == "step.page-next.v1")
+                    state_.step_page = (state_.step_page + 1) % pages;
+                else
+                    state_.step_page = (state_.step_page + pages - 1) % pages;
+                state_.selected_step = static_cast<std::int64_t>(
+                    std::min<std::uint64_t>(state_.step_page * 16, steps - 1));
+                changed_locked();
+            }
+        } else if (command.action_id == "step.resolution-set.v1") {
+            const auto resolution = parse_step_resolution(
+                *argument<std::string>(command, "resolution"));
+            if (!resolution)
+                error = "unknown step resolution";
+            else {
+                state_.step_resolution = *resolution;
+                state_.step_ticks = step_resolution_ticks(*resolution);
+                state_.step_duration = state_.step_ticks;
+                state_.step_page = 0;
+                state_.selected_step = 0;
+                changed_locked();
+            }
+        } else if (command.action_id == "track.note-target-set.v1") {
+            const auto note = *argument<std::int64_t>(command, "note");
+            const auto snapshot = timeline_.snapshot();
+            if (note < 0 || note > 127)
+                error = "track note target must be 0..127";
+            else if (std::none_of(snapshot.timeline.tracks.begin(),
+                                  snapshot.timeline.tracks.end(),
+                                  [&](const Track &track) {
+                                      return track.id == state_.selected_track;
+                                  }))
+                error = "selected track does not exist";
+            else {
+                track_targets_[state_.selected_track] =
+                    static_cast<std::uint8_t>(note);
+                changed_locked();
+            }
+        } else if (command.action_id == "step.toggle.v1") {
+            auto transaction = edit_group_ ? *edit_group_ : timeline_.edit();
+            auto *track = transaction.find_track(state_.selected_track);
+            const auto requested = argument<std::int64_t>(command, "step");
+            const auto step = requested ? *requested : state_.selected_step;
+            const auto velocity = argument<double>(command, "velocity");
+            const auto duration =
+                argument<std::int64_t>(command, "duration_ticks");
+            if (!track)
+                error = "selected track does not exist";
+            else if (step < 0 ||
+                     step > std::numeric_limits<MusicalTick>::max() /
+                                state_.step_ticks)
+                error = "step is outside its range";
+            else {
+                const auto tick = step * state_.step_ticks;
+                const auto count =
+                    (track->pattern.length + state_.step_ticks - 1) /
+                    state_.step_ticks;
+                if (step >= count || tick >= track->pattern.length)
+                    error = "step is outside the selected track";
+                else if (velocity && (!std::isfinite(*velocity) ||
+                                      *velocity < 0 || *velocity > 1))
+                    error = "step velocity must be 0..1";
+                else if (duration && *duration <= 0)
+                    error = "step duration must be positive";
+                else {
+                    const auto track_index = static_cast<std::size_t>(
+                        track - transaction.timeline().tracks.data());
+                    const auto target =
+                        track_targets_.contains(track->id)
+                            ? track_targets_[track->id]
+                            : static_cast<std::uint8_t>(
+                                  std::min<std::size_t>(127, 36 + track_index));
+                    std::vector<EventId> matching;
+                    for (const auto &event : track->pattern.events)
+                        if (event.type == MusicalEventType::note &&
+                            event.tick == tick && event.pitch == target)
+                            matching.push_back(event.id);
+                    bool edited = false;
+                    if (!matching.empty()) {
+                        edited = true;
+                        for (const auto id : matching)
+                            if (!transaction.remove_event(track->id, id,
+                                                          error)) {
+                                edited = false;
+                                break;
+                            }
+                    } else
+                        edited = transaction.add_note(
+                            track->id, transaction.next_event_id(), tick,
+                            target,
+                            static_cast<float>(velocity ? *velocity
+                                                        : state_.step_velocity),
+                            duration ? *duration : state_.step_duration, error);
+                    if (edited &&
+                        (edit_group_ ||
+                         timeline_.commit(
+                             transaction,
+                             TimelineCommitPolicy::next_audio_callback,
+                             error))) {
+                        if (edit_group_)
+                            edit_group_ = std::move(transaction);
+                        state_.selected_step = step;
+                        state_.step_page =
+                            static_cast<std::uint64_t>(step) / 16;
+                        selected_event_id_.reset();
+                        changed_locked();
+                    }
+                }
+            }
+        } else if (command.action_id == "sample.slot-select.v1") {
+            const auto id = *argument<std::int64_t>(command, "slot_id");
+            if (id < 0 || id > std::numeric_limits<std::uint32_t>::max())
+                error = "sample slot is outside its range";
+            else {
+                state_.selected_sample_slot =
+                    SampleSlotId{static_cast<std::uint32_t>(id)};
+                changed_locked();
+            }
+        } else if (command.action_id == "pad.mode-select.v1") {
+            const auto &mode = *argument<std::string>(command, "mode");
+            if (mode == "step")
+                state_.pad_mode = PadMode::step;
+            else if (mode == "pad")
+                state_.pad_mode = PadMode::pad;
+            else if (mode == "levels")
+                state_.pad_mode = PadMode::levels;
+            else if (mode == "notes")
+                state_.pad_mode = PadMode::notes;
+            else
+                error = "unknown pad mode";
+            if (error.empty())
+                changed_locked();
+        } else if (command.action_id == "navigation.focus-next.v1" ||
+                   command.action_id == "navigation.focus-previous.v1") {
+            static constexpr std::string_view focus[]{"transport", "tracks",
+                                                      "samples", "parameters"};
+            auto found = std::find(focus, focus + 4, state_.focused_element);
+            std::size_t index = found == focus + 4
+                                    ? 0
+                                    : static_cast<std::size_t>(found - focus);
+            index = command.action_id == "navigation.focus-next.v1"
+                        ? (index + 1) % 4
+                        : (index + 3) % 4;
+            state_.focused_element = focus[index];
+            changed_locked();
+        } else if (command.action_id == "navigation.confirm.v1") {
+            if (state_.focused_element == "transport")
+                state_.focused_element = "tracks";
+            else if (state_.focused_element == "tracks")
+                state_.focused_element = "steps";
+            else if (state_.focused_element == "step-properties") {
+                static constexpr std::string_view properties[]{
+                    "velocity", "duration", "pitch", "timing"};
+                const auto found = std::find(properties, properties + 4,
+                                             state_.selected_step_property);
+                const auto index =
+                    found == properties + 4
+                        ? 0
+                        : (static_cast<std::size_t>(found - properties) + 1) %
+                              4;
+                state_.selected_step_property = properties[index];
+            } else
+                state_.focused_element += ".confirmed";
+            changed_locked();
+        } else if (command.action_id == "navigation.cancel.v1") {
+            state_.focused_element =
+                state_.focused_element == "step-properties" ? "steps"
+                : state_.focused_element == "steps"         ? "tracks"
+                                                            : "transport";
+            changed_locked();
+        } else if (command.action_id == "navigation.adjust.v1") {
+            const auto delta = *argument<double>(command, "steps");
+            const auto direction = delta < 0 ? -1 : delta > 0 ? 1 : 0;
+            if (!std::isfinite(delta))
+                error = "navigation adjustment must be finite";
+            else if (direction == 0) {
+            } else if (state_.focused_element == "tracks") {
+                const auto timeline = timeline_.snapshot();
+                if (timeline.timeline.tracks.empty())
+                    error = "no tracks are available";
+                else {
+                    auto found = std::find_if(timeline.timeline.tracks.begin(),
+                                              timeline.timeline.tracks.end(),
+                                              [&](const Track &track) {
+                                                  return track.id ==
+                                                         state_.selected_track;
+                                              });
+                    auto index =
+                        found == timeline.timeline.tracks.end()
+                            ? 0
+                            : static_cast<std::size_t>(
+                                  found - timeline.timeline.tracks.begin());
+                    index =
+                        direction > 0
+                            ? (index + 1) % timeline.timeline.tracks.size()
+                            : (index + timeline.timeline.tracks.size() - 1) %
+                                  timeline.timeline.tracks.size();
+                    state_.selected_track = timeline.timeline.tracks[index].id;
+                    state_.selected_step = 0;
+                    state_.step_page = 0;
+                    changed_locked();
+                }
+            } else if (state_.focused_element == "steps") {
+                const auto track =
+                    std::find_if(state_.tracks.begin(), state_.tracks.end(),
+                                 [&](const TrackSummary &value) {
+                                     return value.id == state_.selected_track;
+                                 });
+                if (track == state_.tracks.end())
+                    error = "selected track does not exist";
+                else {
+                    const auto steps =
+                        (track->pattern_length + state_.step_ticks - 1) /
+                        state_.step_ticks;
+                    auto step = state_.selected_step + direction;
+                    if (step < 0)
+                        step = steps - 1;
+                    if (step >= steps)
+                        step = 0;
                     state_.selected_step = step;
                     state_.step_page = static_cast<std::uint64_t>(step) / 16;
                     changed_locked();
                 }
+            } else if (state_.focused_element == "transport") {
+                if (parameters_.adjust("transport.tempo", delta, error))
+                    changed_locked();
+            }
+        } else if (command.action_id == "text.input.v1") {
+            state_.focused_element =
+                "text:" + *argument<std::string>(command, "text");
+            changed_locked();
+        } else if (command.action_id == "parameter.set-normalized.v1") {
+            if (parameters_.set_normalized(
+                    *argument<std::string>(command, "parameter_id"),
+                    *argument<double>(command, "value"), error))
+                changed_locked();
+        } else if (command.action_id == "parameter.adjust.v1") {
+            if (parameters_.adjust(
+                    *argument<std::string>(command, "parameter_id"),
+                    *argument<double>(command, "steps"), error))
+                changed_locked();
+        } else if (command.action_id == "parameter.reset.v1") {
+            if (parameters_.reset(
+                    *argument<std::string>(command, "parameter_id"), error))
+                changed_locked();
+        } else if (command.action_id == "modifier.shift.v1") {
+            state_.modifiers.shift = *argument<bool>(command, "active");
+            if (const auto *latched = argument<bool>(command, "latched"))
+                state_.modifiers.shift_latched = *latched;
+            changed_locked();
+        } else if (command.action_id == "modifier.select.v1") {
+            state_.modifiers.select = *argument<bool>(command, "active");
+            if (const auto *latched = argument<bool>(command, "latched"))
+                state_.modifiers.select_latched = *latched;
+            changed_locked();
+        } else if (command.action_id == "modulation.xy.v1") {
+            const auto position = *argument<NormalizedXY>(command, "position");
+            if (position.x < 0 || position.x > 1 || position.y < 0 ||
+                position.y > 1)
+                error = "X/Y position must be normalized";
+            else {
+                parameters_.set("performance.xy.x", position.x, error);
+                if (error.empty())
+                    parameters_.set("performance.xy.y", position.y, error);
+                if (error.empty())
+                    changed_locked();
             }
         }
-    } else if (command.action_id == "sample.slot-select.v1") {
-        const auto id = *argument<std::int64_t>(command, "slot_id");
-        if (id < 0 || id > std::numeric_limits<std::uint32_t>::max())
-            error = "sample slot is outside its range";
-        else {
-            state_.selected_sample_slot =
-                SampleSlotId{static_cast<std::uint32_t>(id)};
-            changed_locked();
-        }
-    } else if (command.action_id == "pad.mode-select.v1") {
-        const auto &mode = *argument<std::string>(command, "mode");
-        if (mode == "step")
-            state_.pad_mode = PadMode::step;
-        else if (mode == "pad")
-            state_.pad_mode = PadMode::pad;
-        else if (mode == "levels")
-            state_.pad_mode = PadMode::levels;
-        else if (mode == "notes")
-            state_.pad_mode = PadMode::notes;
-        else
-            error = "unknown pad mode";
-        if (error.empty())
-            changed_locked();
-    } else if (command.action_id == "navigation.focus-next.v1" ||
-               command.action_id == "navigation.focus-previous.v1") {
-        static constexpr std::string_view focus[]{"transport", "tracks",
-                                                  "samples", "parameters"};
-        auto found = std::find(focus, focus + 4, state_.focused_element);
-        std::size_t index =
-            found == focus + 4 ? 0 : static_cast<std::size_t>(found - focus);
-        index = command.action_id == "navigation.focus-next.v1"
-                    ? (index + 1) % 4
-                    : (index + 3) % 4;
-        state_.focused_element = focus[index];
-        changed_locked();
-    } else if (command.action_id == "navigation.confirm.v1") {
-        if (state_.focused_element == "transport")
-            state_.focused_element = "tracks";
-        else if (state_.focused_element == "tracks")
-            state_.focused_element = "steps";
-        else
-            state_.focused_element += ".confirmed";
-        changed_locked();
-    } else if (command.action_id == "navigation.cancel.v1") {
-        state_.focused_element = state_.focused_element == "steps" ? "tracks" : "transport";
-        changed_locked();
-    } else if (command.action_id == "navigation.adjust.v1") {
-        const auto delta=*argument<double>(command,"steps");
-        const auto direction=delta<0?-1:delta>0?1:0;
-        if(!std::isfinite(delta))error="navigation adjustment must be finite";
-        else if(direction==0){}
-        else if(state_.focused_element=="tracks"){
-            const auto timeline=timeline_.snapshot();if(timeline.timeline.tracks.empty())error="no tracks are available";else{auto found=std::find_if(timeline.timeline.tracks.begin(),timeline.timeline.tracks.end(),[&](const Track& track){return track.id==state_.selected_track;});auto index=found==timeline.timeline.tracks.end()?0:static_cast<std::size_t>(found-timeline.timeline.tracks.begin());index=direction>0?(index+1)%timeline.timeline.tracks.size():(index+timeline.timeline.tracks.size()-1)%timeline.timeline.tracks.size();state_.selected_track=timeline.timeline.tracks[index].id;state_.selected_step=0;state_.step_page=0;changed_locked();}
-        }else if(state_.focused_element=="steps"){
-            const auto track=std::find_if(state_.tracks.begin(),state_.tracks.end(),[&](const TrackSummary& value){return value.id==state_.selected_track;});if(track==state_.tracks.end())error="selected track does not exist";else{const auto steps=(track->pattern_length+state_.step_ticks-1)/state_.step_ticks;auto step=state_.selected_step+direction;if(step<0)step=steps-1;if(step>=steps)step=0;state_.selected_step=step;state_.step_page=static_cast<std::uint64_t>(step)/16;changed_locked();}
-        }else if(state_.focused_element=="transport"){if(parameters_.adjust("transport.tempo",delta,error))changed_locked();}
-    } else if (command.action_id == "text.input.v1") {
-        state_.focused_element =
-            "text:" + *argument<std::string>(command, "text");
-        changed_locked();
-    } else if (command.action_id == "parameter.set-normalized.v1") {
-        if (parameters_.set_normalized(
-                *argument<std::string>(command, "parameter_id"),
-                *argument<double>(command, "value"), error))
-            changed_locked();
-    } else if (command.action_id == "parameter.adjust.v1") {
-        if (parameters_.adjust(*argument<std::string>(command, "parameter_id"),
-                               *argument<double>(command, "steps"), error))
-            changed_locked();
-    } else if (command.action_id == "parameter.reset.v1") {
-        if (parameters_.reset(*argument<std::string>(command, "parameter_id"),
-                              error))
-            changed_locked();
-    } else if (command.action_id == "modifier.shift.v1") {
-        state_.modifiers.shift = *argument<bool>(command, "active");
-        if (const auto *latched = argument<bool>(command, "latched"))
-            state_.modifiers.shift_latched = *latched;
-        changed_locked();
-    } else if (command.action_id == "modifier.select.v1") {
-        state_.modifiers.select = *argument<bool>(command, "active");
-        if (const auto *latched = argument<bool>(command, "latched"))
-            state_.modifiers.select_latched = *latched;
-        changed_locked();
-    } else if (command.action_id == "modulation.xy.v1") {
-        const auto position = *argument<NormalizedXY>(command, "position");
-        if (position.x < 0 || position.x > 1 || position.y < 0 ||
-            position.y > 1)
-            error = "X/Y position must be normalized";
-        else {
-            parameters_.set("performance.xy.x", position.x, error);
-            if (error.empty())
-                parameters_.set("performance.xy.y", position.y, error);
-            if (error.empty())
-                changed_locked();
-        }
     }
-  }
-  if(changed&&(command.action_id.rfind("sample.",0)==0||command.action_id.rfind("transport.",0)==0)){std::lock_guard lock(mutex_);changed_locked();}
-  return{error.empty(),sequence,snapshot().revision,std::move(error)};
+    if (changed && (command.action_id.rfind("sample.", 0) == 0 ||
+                    command.action_id.rfind("transport.", 0) == 0)) {
+        std::lock_guard lock(mutex_);
+        changed_locked();
+    }
+    return {error.empty(), sequence, snapshot().revision, std::move(error)};
 }
 void ApplicationService::synchronize_locked() const {
     const auto timeline = timeline_.snapshot();
+    const auto history = timeline_.history_status();
     const auto playing = engine_.playing();
     const auto frame = engine_.frame_position();
     auto slots = samples_.states();
@@ -269,6 +1084,10 @@ void ApplicationService::synchronize_locked() const {
     bool external = state_.playing != playing ||
                     state_.transport_frame != frame ||
                     state_.timeline_revision != timeline.revision ||
+                    state_.can_undo != history.can_undo ||
+                    state_.can_redo != history.can_redo ||
+                    state_.undo_depth != history.undo_depth ||
+                    state_.redo_depth != history.redo_depth ||
                     state_.sample_slots.size() != slots.size() ||
                     state_.parameters.size() != parameters.size();
     if (!external)
@@ -288,9 +1107,20 @@ void ApplicationService::synchronize_locked() const {
             }
     state_.playing = playing;
     state_.transport_frame = frame;
-    const auto transport_tick=(static_cast<long double>(frame)*ticks_per_quarter*1'000'000.0L)/(static_cast<long double>(engine_.sample_rate())*timeline.timeline.transport.microseconds_per_quarter);
-    state_.transport_tick=transport_tick>=std::numeric_limits<MusicalTick>::max()?std::numeric_limits<MusicalTick>::max():static_cast<MusicalTick>(transport_tick);
+    const auto transport_tick =
+        (static_cast<long double>(frame) * ticks_per_quarter * 1'000'000.0L) /
+        (static_cast<long double>(engine_.sample_rate()) *
+         timeline.timeline.transport.microseconds_per_quarter);
+    state_.transport_tick =
+        transport_tick >= std::numeric_limits<MusicalTick>::max()
+            ? std::numeric_limits<MusicalTick>::max()
+            : static_cast<MusicalTick>(transport_tick);
     state_.timeline_revision = timeline.revision;
+    state_.can_undo = history.can_undo;
+    state_.can_redo = history.can_redo;
+    state_.undo_depth = history.undo_depth;
+    state_.redo_depth = history.redo_depth;
+    state_.history_capacity = history.capacity;
     state_.tempo_bpm =
         60'000'000.0 / timeline.timeline.transport.microseconds_per_quarter;
     state_.time_signature_numerator =
@@ -311,33 +1141,209 @@ void ApplicationService::synchronize_locked() const {
                                  track.pattern.length, target,
                                  track.pattern.events});
     }
+    state_.selected_event.reset();
+    if (selected_event_id_) {
+        const auto track = std::find_if(
+            timeline.timeline.tracks.begin(), timeline.timeline.tracks.end(),
+            [&](const Track &value) {
+                return value.id == state_.selected_track;
+            });
+        if (track != timeline.timeline.tracks.end()) {
+            const auto selected = std::find_if(
+                track->pattern.events.begin(), track->pattern.events.end(),
+                [&](const MusicalEvent &event) {
+                    return event.id == *selected_event_id_ &&
+                           event.type == MusicalEventType::note;
+                });
+            if (selected != track->pattern.events.end()) {
+                const auto base = state_.selected_step * state_.step_ticks;
+                std::size_t index_at_step{}, events_at_step{};
+                for (const auto &event : track->pattern.events)
+                    if (event.type == MusicalEventType::note &&
+                        event.tick >= base &&
+                        event.tick <
+                            std::min<MusicalTick>(base + state_.step_ticks,
+                                                  track->pattern.length)) {
+                        if (event.id == selected->id)
+                            index_at_step = events_at_step;
+                        ++events_at_step;
+                    }
+                state_.selected_event =
+                    SelectedEventState{track->id,
+                                       selected->id,
+                                       state_.selected_step,
+                                       selected->tick,
+                                       selected->tick - base,
+                                       selected->pitch,
+                                       selected->velocity,
+                                       selected->duration,
+                                       index_at_step,
+                                       events_at_step};
+            } else
+                selected_event_id_.reset();
+        }
+    }
     state_.sample_slots = std::move(slots);
     state_.parameters = std::move(parameters);
     state_.available_actions.clear();
     for (const auto &value : actions_.actions())
-        if (value.available)
+        if (value.available &&
+            (value.id != "edit.undo.v1" || history.can_undo) &&
+            (value.id != "edit.redo.v1" || history.can_redo))
             state_.available_actions.push_back(value.id);
     if (external)
         ++state_.revision;
 }
-void ApplicationService::changed_locked(){++state_.revision;}
-ApplicationState ApplicationService::snapshot() const{std::lock_guard lock(mutex_);synchronize_locked();return state_;}
-std::uint64_t ApplicationService::rejected_commands() const noexcept{std::lock_guard lock(mutex_);return rejected_;}
-
-const char* step_resolution_name(StepResolution value) noexcept{switch(value){case StepResolution::quarter:return"1/4";case StepResolution::eighth:return"1/8";case StepResolution::sixteenth:return"1/16";case StepResolution::thirty_second:return"1/32";case StepResolution::quarter_triplet:return"1/4T";case StepResolution::eighth_triplet:return"1/8T";case StepResolution::sixteenth_triplet:return"1/16T";case StepResolution::thirty_second_triplet:return"1/32T";}return"1/16";}
-MusicalTick step_resolution_ticks(StepResolution value) noexcept{switch(value){case StepResolution::quarter:return 960;case StepResolution::eighth:return 480;case StepResolution::sixteenth:return 240;case StepResolution::thirty_second:return 120;case StepResolution::quarter_triplet:return 640;case StepResolution::eighth_triplet:return 320;case StepResolution::sixteenth_triplet:return 160;case StepResolution::thirty_second_triplet:return 80;}return 240;}
-std::optional<StepResolution> parse_step_resolution(std::string_view value) noexcept{for(const auto resolution:{StepResolution::quarter,StepResolution::eighth,StepResolution::sixteenth,StepResolution::thirty_second,StepResolution::quarter_triplet,StepResolution::eighth_triplet,StepResolution::sixteenth_triplet,StepResolution::thirty_second_triplet})if(value==step_resolution_name(resolution))return resolution;return std::nullopt;}
-
-void TextEntryModel::begin(std::string initial){state_={std::move(initial),0,'A',true,false,false};state_.cursor=state_.text.size();}
-void TextEntryModel::direct(std::string_view text){if(!state_.active)return;state_.text.insert(state_.cursor,text);state_.cursor+=text.size();}
-void TextEntryModel::select_relative(int delta){if(!state_.active)return;constexpr std::string_view characters=" ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.";auto found=characters.find(state_.selected);auto index=found==std::string_view::npos?0:static_cast<int>(found);index=(index+delta%static_cast<int>(characters.size())+static_cast<int>(characters.size()))%static_cast<int>(characters.size());state_.selected=characters[static_cast<std::size_t>(index)];}
-void TextEntryModel::insert(){if(state_.active){state_.text.insert(state_.cursor,1,state_.selected);++state_.cursor;}}
-void TextEntryModel::erase_or_cancel(){if(!state_.active)return;if(state_.cursor>0){state_.text.erase(--state_.cursor,1);}else discard();}
-void TextEntryModel::move_cursor(int delta){if(!state_.active)return;const auto position=static_cast<std::int64_t>(state_.cursor)+delta;state_.cursor=static_cast<std::size_t>(std::clamp<std::int64_t>(position,0,static_cast<std::int64_t>(state_.text.size())));}
-void TextEntryModel::commit(){if(state_.active){state_.active=false;state_.committed=true;}}
-void TextEntryModel::discard(){if(state_.active){state_.active=false;state_.discarded=true;}}
-
-NormalizedXY XYControl::apply(double x,double y){if(behavior_.relative){x+=value_.x;y+=value_.y;}if(behavior_.invert_x)x=1-x;if(behavior_.invert_y)y=1-y;value_.x=std::clamp(0.5+(x-0.5)*behavior_.scale_x,0.0,1.0);value_.y=std::clamp(0.5+(y-0.5)*behavior_.scale_y,0.0,1.0);return value_;}
-void XYControl::release(){if(behavior_.spring_to_center&&!behavior_.latching)value_={0.5,0.5};}
-const char* pad_mode_name(PadMode mode) noexcept{switch(mode){case PadMode::step:return"step";case PadMode::pad:return"pad";case PadMode::levels:return"levels";case PadMode::notes:return"notes";}return"unknown";}
+void ApplicationService::changed_locked() { ++state_.revision; }
+ApplicationState ApplicationService::snapshot() const {
+    std::lock_guard lock(mutex_);
+    synchronize_locked();
+    return state_;
 }
+std::uint64_t ApplicationService::rejected_commands() const noexcept {
+    std::lock_guard lock(mutex_);
+    return rejected_;
+}
+
+const char *step_resolution_name(StepResolution value) noexcept {
+    switch (value) {
+    case StepResolution::quarter:
+        return "1/4";
+    case StepResolution::eighth:
+        return "1/8";
+    case StepResolution::sixteenth:
+        return "1/16";
+    case StepResolution::thirty_second:
+        return "1/32";
+    case StepResolution::quarter_triplet:
+        return "1/4T";
+    case StepResolution::eighth_triplet:
+        return "1/8T";
+    case StepResolution::sixteenth_triplet:
+        return "1/16T";
+    case StepResolution::thirty_second_triplet:
+        return "1/32T";
+    }
+    return "1/16";
+}
+MusicalTick step_resolution_ticks(StepResolution value) noexcept {
+    switch (value) {
+    case StepResolution::quarter:
+        return 960;
+    case StepResolution::eighth:
+        return 480;
+    case StepResolution::sixteenth:
+        return 240;
+    case StepResolution::thirty_second:
+        return 120;
+    case StepResolution::quarter_triplet:
+        return 640;
+    case StepResolution::eighth_triplet:
+        return 320;
+    case StepResolution::sixteenth_triplet:
+        return 160;
+    case StepResolution::thirty_second_triplet:
+        return 80;
+    }
+    return 240;
+}
+std::optional<StepResolution>
+parse_step_resolution(std::string_view value) noexcept {
+    for (const auto resolution :
+         {StepResolution::quarter, StepResolution::eighth,
+          StepResolution::sixteenth, StepResolution::thirty_second,
+          StepResolution::quarter_triplet, StepResolution::eighth_triplet,
+          StepResolution::sixteenth_triplet,
+          StepResolution::thirty_second_triplet})
+        if (value == step_resolution_name(resolution))
+            return resolution;
+    return std::nullopt;
+}
+
+void TextEntryModel::begin(std::string initial) {
+    state_ = {std::move(initial), 0, 'A', true, false, false};
+    state_.cursor = state_.text.size();
+}
+void TextEntryModel::direct(std::string_view text) {
+    if (!state_.active)
+        return;
+    state_.text.insert(state_.cursor, text);
+    state_.cursor += text.size();
+}
+void TextEntryModel::select_relative(int delta) {
+    if (!state_.active)
+        return;
+    constexpr std::string_view characters =
+        " ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.";
+    auto found = characters.find(state_.selected);
+    auto index = found == std::string_view::npos ? 0 : static_cast<int>(found);
+    index = (index + delta % static_cast<int>(characters.size()) +
+             static_cast<int>(characters.size())) %
+            static_cast<int>(characters.size());
+    state_.selected = characters[static_cast<std::size_t>(index)];
+}
+void TextEntryModel::insert() {
+    if (state_.active) {
+        state_.text.insert(state_.cursor, 1, state_.selected);
+        ++state_.cursor;
+    }
+}
+void TextEntryModel::erase_or_cancel() {
+    if (!state_.active)
+        return;
+    if (state_.cursor > 0) {
+        state_.text.erase(--state_.cursor, 1);
+    } else
+        discard();
+}
+void TextEntryModel::move_cursor(int delta) {
+    if (!state_.active)
+        return;
+    const auto position = static_cast<std::int64_t>(state_.cursor) + delta;
+    state_.cursor = static_cast<std::size_t>(std::clamp<std::int64_t>(
+        position, 0, static_cast<std::int64_t>(state_.text.size())));
+}
+void TextEntryModel::commit() {
+    if (state_.active) {
+        state_.active = false;
+        state_.committed = true;
+    }
+}
+void TextEntryModel::discard() {
+    if (state_.active) {
+        state_.active = false;
+        state_.discarded = true;
+    }
+}
+
+NormalizedXY XYControl::apply(double x, double y) {
+    if (behavior_.relative) {
+        x += value_.x;
+        y += value_.y;
+    }
+    if (behavior_.invert_x)
+        x = 1 - x;
+    if (behavior_.invert_y)
+        y = 1 - y;
+    value_.x = std::clamp(0.5 + (x - 0.5) * behavior_.scale_x, 0.0, 1.0);
+    value_.y = std::clamp(0.5 + (y - 0.5) * behavior_.scale_y, 0.0, 1.0);
+    return value_;
+}
+void XYControl::release() {
+    if (behavior_.spring_to_center && !behavior_.latching)
+        value_ = {0.5, 0.5};
+}
+const char *pad_mode_name(PadMode mode) noexcept {
+    switch (mode) {
+    case PadMode::step:
+        return "step";
+    case PadMode::pad:
+        return "pad";
+    case PadMode::levels:
+        return "levels";
+    case PadMode::notes:
+        return "notes";
+    }
+    return "unknown";
+}
+} // namespace neurogenic

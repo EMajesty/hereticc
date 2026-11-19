@@ -33,6 +33,12 @@ and number keys for step selection. Mouse and touch select views and controls.
 X/Y dragging is limited to 125 commands per second. All input passes through
 `ApplicationService`; rendering never runs in or blocks the audio callback.
 
+Shift+number or Shift+click selects an existing note without toggling it. The
+step inspector shows event ID, velocity, duration, pitch, timing offset, and
+the selected note's index when a cell contains several notes. Click a property
+and use Up/Down to adjust it; Enter cycles properties in the encoder-only
+workflow. Undo and Redo buttons reflect the shared timeline history.
+
 CI runs the renderer-independent interaction suite and an SDL dummy-video
 smoke test. The AArch64 cross-check compiles the portable model with the SDL
 adapter disabled; native AArch64 flake outputs include SDL3. Physical
@@ -41,5 +47,5 @@ subjective stage readability remain unverified.
 
 Edits publish at the next audio callback as complete validated plans. A final
 partial step is available when its start tick lies inside a non-grid-aligned
-pattern. Undo, parameter locks, drag-painting and boundary-quantized publication
-are not implemented.
+pattern. Parameter locks, drag-painting and boundary-quantized publication are
+not implemented.

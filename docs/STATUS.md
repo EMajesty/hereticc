@@ -1,10 +1,16 @@
 # Implementation status
 
+Task 015 adds shared bounded timeline Undo/Redo, atomic grouped edits, stable
+multi-note event selection, and velocity, duration, pitch, and tick-relative
+timing editing. The SDL inspector and minimal-controller flow use the same C++
+semantic actions. These paths are host-tested; physical controller interaction
+remains untested.
+
 Task 014 adds a timeline-backed step editor: straight/triplet quarter through
 32nd grids, partial and independent track lengths, per-track MIDI note targets,
 16-cell paging, Select-versus-toggle grid semantics, pointer/keyboard/encoder
 workflows, active-step/playhead rendering, responsive resize invalidation, and
-safe live publication. Note-target persistence, undo, parameter locks and
+safe live publication. Note-target persistence, parameter locks and
 musical-boundary publication remain future work.
 
 Task 013 adds an optional SDL3 graphical client with a resolution-independent
