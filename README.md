@@ -64,6 +64,7 @@ ctest --preset dev
   --slot 2=hihat.wav --map 52=2
 ./build/dev/neurogenic --timeline examples/multitrack.ngt \
   --slot 0=kick.wav --slot 1=snare.wav --slot 2=hihat.wav
+./build/dev/neurogenic --script examples/timeline_drums.lua --interactive
 ```
 
 Omit `--audio` or `--midi` to select the first/default device. Selectors are
@@ -112,6 +113,12 @@ CI and diagnostic enumeration without an audio device, not normal playback.
 
 The dependency-free build remains useful for core/offline development, but live
 audio, MIDI, and genuine Lua require `NEUROGENIC_FETCH_DEPENDENCIES=ON`.
+
+Lua and native clients can create and mutate authoritative multitrack timeline
+working copies through the shared C++ `TimelineService`. Commits use explicit
+revisions, deterministic seeds, validation, and the existing bounded playback
+publication path. See the [Lua API](docs/LUA.md) and the drum, mutation,
+polyrhythm, and variation scripts under [`examples/`](examples/).
 
 ### Linux audio and MIDI troubleshooting
 

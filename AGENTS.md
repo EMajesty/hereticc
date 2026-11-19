@@ -8,6 +8,9 @@
 - Keep frontend sample metadata callback-acknowledged: active fields describe
   the audio-active version, pending fields describe the newest command, and an
   older completion must never overwrite a newer revision's visible state.
+- Put editing, generation, mutation, validation, revisions, and observable
+  state in reusable C++ application services. Lua is a thin client adapter;
+  hardware, UI, MIDI, and remote operations must not require Lua execution.
 - Use integer musical time and deterministic offline tests.
 - Put audio/MIDI/platform details behind narrow adapters.
 - Preserve dependency pins, licenses, notices, and stable external identifiers.

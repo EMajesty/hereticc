@@ -92,3 +92,26 @@ plan, parameter events are scheduled but have no destination yet, and timeline
 replacement takes effect at the next callback rather than a musical boundary.
 Callback staging is finite and observable. Arrangement, recording, editing
 interfaces, tempo maps, and asynchronous sample replacement are future work.
+
+## Editing and generation service
+
+`TimelineService` exposes hardware-independent snapshots and working-copy
+transactions. A transaction contains the authoritative `Timeline` value, its
+base revision, and a reproducible generation seed. Track/event creation,
+deletion, naming, mute, loop length, notes, tempo, and time signature are C++
+operations. The same service supplies deterministic RNG, Euclidean generation,
+and timing/pitch/velocity transformations to Lua and future native clients.
+
+Commit performs limit checks and `compile_timeline` validation before calling
+the publication callback. It rejects stale base revisions, so concurrent
+controllers must refresh and intentionally reapply their edit. Successful
+commits replace the editable snapshot only after the complete playback plan is
+accepted. Rapid commits are bounded by the existing playback-plan pool; a full
+pool rejects the newest commit without changing editable state.
+
+Application adapters use stable semantic action IDs
+`timeline.generate.v1`, `timeline.mutate-track.v1`,
+`timeline.regenerate.v1`, `timeline.variation.v1`, `timeline.commit.v1`,
+`timeline.discard.v1`, and `timeline.query.v1`. These identify controller/UI
+intent; parameters and selection context belong to the calling adapter and the
+shared C++ service, not to a physical control layout or Lua script.

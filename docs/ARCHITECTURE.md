@@ -113,3 +113,17 @@ on both supported 64-bit Linux targets. Public musical and serialized values
 use fixed-width integer types; container indices remain process-local
 `std::size_t`. The supported AArch64 target is little-endian Linux, matching
 the RIFF/WAVE byte order used by the current decoder.
+
+## Application editing services
+
+Hardware, touchscreen, desktop, Lua, MIDI, and remote clients sit above shared
+C++ command/query/state services. `TimelineService` is the first complete
+musical editing service: it returns detached transactions and observable
+snapshots, owns optimistic revision checks, validates through the authoritative
+timeline compiler, and publishes complete plans through the existing bounded
+audio-engine path. Built-in generators, deterministic RNG, and transformations
+are C++ operations. Lua contains binding and transaction-lifetime glue only.
+
+No editor holds a playback-plan pointer. The application/control side may copy,
+allocate, mutate, compile, or reject timeline data. The callback sees only a
+previously compiled immutable plan-slot index, never Lua or an editable object.

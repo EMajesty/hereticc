@@ -23,7 +23,7 @@ find_package(Threads REQUIRED)
 add_library(neurogenic_engine
   src/audio/engine.cpp src/audio/sample.cpp src/audio/sample_manager.cpp src/core/command.cpp src/core/control_dispatcher.cpp
   src/dsp/purest_gain.cpp src/midi/mapping.cpp src/project/project.cpp
-  src/sequencer/scheduler.cpp src/sequencer/pattern_adapter.cpp src/scripting/runtime.cpp src/timeline/io.cpp src/timeline/playback.cpp)
+  src/sequencer/scheduler.cpp src/sequencer/pattern_adapter.cpp src/scripting/runtime.cpp src/timeline/edit.cpp src/timeline/io.cpp src/timeline/playback.cpp)
 target_include_directories(neurogenic_engine PUBLIC include)
 target_compile_options(neurogenic_engine PRIVATE -Wall -Wextra -Wpedantic)
 target_link_libraries(neurogenic_engine PUBLIC Threads::Threads)
@@ -49,12 +49,14 @@ endif()
 add_executable(neurogenic apps/neurogenic.cpp)
 target_link_libraries(neurogenic PRIVATE neurogenic_engine neurogenic_live)
 install(TARGETS neurogenic RUNTIME DESTINATION bin)
-install(FILES examples/generate.lua DESTINATION share/neurogenic/examples)
+install(FILES examples/generate.lua examples/timeline_drums.lua examples/timeline_mutate.lua
+  examples/timeline_polyrhythm.lua examples/timeline_variation.lua DESTINATION share/neurogenic/examples)
 
 if(NEUROGENIC_BUILD_TESTS)
   enable_testing()
   add_executable(neurogenic_tests tests/tests.cpp)
   target_link_libraries(neurogenic_tests PRIVATE neurogenic_engine)
+  target_compile_definitions(neurogenic_tests PRIVATE NEUROGENIC_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
   add_test(NAME neurogenic_tests COMMAND neurogenic_tests)
   add_executable(neurogenic_benchmark benchmarks/timeline_benchmark.cpp)
   target_link_libraries(neurogenic_benchmark PRIVATE neurogenic_engine)

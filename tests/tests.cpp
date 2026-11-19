@@ -5,6 +5,7 @@
 #include "neurogenic/midi/mapping.hpp"
 #include "neurogenic/sequencer/pattern_adapter.hpp"
 #include "neurogenic/scripting/runtime.hpp"
+#include "neurogenic/timeline/edit.hpp"
 #include "neurogenic/timeline/playback.hpp"
 #include "neurogenic/timeline/io.hpp"
 #include <array>
@@ -342,9 +343,28 @@ void test_midi_control_dispatch(){
   check(full.dropped_messages()==44,"MIDI queue overflow count");check(full.dispatch_pending()==256,"MIDI queue capacity");
 }
 
+void test_timeline_editing_and_generation(){
+  using namespace neurogenic;std::string error;Timeline published;std::size_t publications{};
+  TimelineService service([&](const Timeline& timeline,std::string&){published=timeline;++publications;return true;});
+  auto edit=service.edit();check(edit.create_track(1,"drums",960,error),"track creation");check(edit.create_track(2,"hats",720,error),"independent track creation");
+  const auto first_id=edit.next_event_id();check(edit.add_note(1,first_id,13,36,0.8F,120,error),"note insertion");check(edit.modify_note(1,first_id,17,38,0.5F,180,error),"note modification");const auto parameter_id=edit.next_event_id();check(edit.add_parameter(1,parameter_id,120,42,0.25F,error)&&edit.modify_parameter(1,parameter_id,240,42,0.5F,error),"parameter event editing");check(edit.add_note(2,edit.next_event_id(),0,42,0.7F,60,error),"second-track insertion");check(edit.set_track_muted(2,true,error),"track mute");check(edit.set_tempo_bpm(123,error)&&edit.set_time_signature(7,8,error),"transport editing");edit.set_generation_seed(77);
+  check(service.commit(std::move(edit),TimelineCommitPolicy::next_audio_callback,error),"timeline transaction commit");auto snapshot=service.snapshot();check(snapshot.revision==2&&snapshot.generation_seed==77&&snapshot.timeline.tracks.size()==2&&snapshot.timeline.tracks[0].pattern.events[0].id==first_id&&snapshot.timeline.tracks[1].pattern.length==720,"committed timeline state");check(publications==1&&published.tracks.size()==2,"timeline publication callback");
+
+  auto invalid=service.edit();check(!invalid.set_track_length(1,10,error),"invalid shortening accepted");check(service.snapshot().revision==2&&service.snapshot().timeline.tracks[0].pattern.length==960,"invalid edit escaped working copy");
+  auto winner=service.edit(),stale=service.edit();check(winner.set_track_name(1,"winner",error)&&service.commit(std::move(winner),TimelineCommitPolicy::next_audio_callback,error),"winning concurrent edit");check(stale.set_track_name(1,"stale",error)&&!service.commit(std::move(stale),TimelineCommitPolicy::next_audio_callback,error)&&error.find("conflict")!=std::string::npos,"stale edit silently overwrote winner");
+  auto removal=service.edit();check(removal.remove_event(1,first_id,error)&&removal.remove_event(1,parameter_id,error)&&removal.delete_track(2,error)&&service.commit(std::move(removal),TimelineCommitPolicy::next_audio_callback,error),"event and track deletion");check(service.snapshot().timeline.tracks.size()==1&&service.snapshot().timeline.tracks[0].pattern.events.empty(),"deletion state");
+
+  MusicalPattern pattern;pattern.length=960;pattern.events={{1,13,MusicalEventType::note,60,0.5F,120,0,0,0},{2,240,MusicalEventType::note,64,1.0F,120,0,0,0}};
+  check(quantize(pattern,120,error)&&pattern.events[0].tick==0,"quantization boundary");check(rotate(pattern,120,error)&&pattern.events[0].tick==120,"pattern rotation");check(reverse(pattern,error)&&pattern.events[0].tick==840,"pattern reversal");check(transpose(pattern,12,error)&&pattern.events[0].pitch==72,"transpose");check(scale_velocities(pattern,0.5,error)&&std::fabs(pattern.events[1].velocity-0.5F)<0.0001F,"velocity scaling");EventId next=3;const std::array<MusicalTick,1> offsets{240};check(duplicate(pattern,offsets,next,error)&&pattern.events.size()==4&&pattern.events[2].id==3,"event duplication IDs");
+  DeterministicRandom random_a(12345),random_b(12345);for(int i=0;i<100;++i)check(random_a.next_u64()==random_b.next_u64(),"deterministic random stream");auto rhythm=euclidean_rhythm(8,3,0,error);check(rhythm.size()==8&&rhythm[0]&&rhythm[3]&&rhythm[6],"Euclidean rhythm");check(!euclidean_rhythm(8,9,0,error).size(),"invalid Euclidean rhythm accepted");
+  DeterministicRandom human_a(9),human_b(9);auto first=pattern,second=pattern;check(humanize(first,human_a,12,0.1,error)&&humanize(second,human_b,12,0.1,error)&&first.events[0].tick==second.events[0].tick&&first.events[0].velocity==second.events[0].velocity,"deterministic humanize");
+
+  AudioEngine engine;TimelineService live([&](const Timeline& timeline,std::string& message){return engine.queue_timeline(timeline,message);});for(int i=0;i<50;++i){auto transaction=live.edit();if(transaction.timeline().tracks.empty())check(transaction.create_track(1,"live",960,error),"live track creation");check(transaction.set_track_name(1,"revision-"+std::to_string(i),error),"rapid edit");check(live.commit(std::move(transaction),TimelineCommitPolicy::next_audio_callback,error),"rapid live commit");std::array<float,1> left{},right{};engine.process(left,right);}check(live.snapshot().revision==51,"rapid commit revision");
+}
+
 void test_lua_and_offline(){
   using namespace neurogenic;
-  bool submitted=false;ScriptRuntime lua([&](Pattern pattern){submitted=pattern.steps[0].enabled&&pattern.steps[0].note==64;return true;},[]{return 123ULL;});std::string error;
+  bool submitted=false;Timeline lua_published;TimelineService timeline([&](const Timeline& value,std::string&){lua_published=value;return true;});ScriptRuntime lua([&](Pattern pattern){submitted=pattern.steps[0].enabled&&pattern.steps[0].note==64;return true;},[]{return 123ULL;},&timeline);std::string error;
 #ifdef NEUROGENIC_HAS_LUA
   check(lua.execute("local p=neurogenic.v1.pattern.new();p:set_step(1,true,64,0.75);neurogenic.v1.pattern.queue(p)",error)&&submitted,"Lua execution");
   check(!lua.execute("this is not lua",error)&&!error.empty(),"invalid Lua accepted");
@@ -352,6 +372,17 @@ void test_lua_and_offline(){
   const auto script_path=std::filesystem::temp_directory_path()/"neurogenic-script-test.lua";
   {std::ofstream script(script_path);script<<"local p=neurogenic.v1.pattern.new(); p:set_step(1,true,64,1); neurogenic.v1.pattern.queue(p)\n";}
   submitted=false;check(lua.execute_file(script_path,error)&&submitted,"Lua file execution");std::filesystem::remove(script_path);
+  check(lua.execute("local p=neurogenic.v1.timeline.current(); local a=p:create_track(1,'kick',3840); a:add_note{tick=0,pitch=36,velocity=1,duration=120}; local b=p:create_track(2,'hat',720); b:generate_euclidean(6,3,0,42,0.7,60); p:set_tempo(110); p:set_time_signature(4,4); p:set_seed(123); p:commit()",error),error.c_str());
+  auto timeline_state=timeline.snapshot();check(timeline_state.revision==2&&timeline_state.generation_seed==123&&timeline_state.timeline.tracks.size()==2&&timeline_state.timeline.tracks[1].pattern.length==720,"Lua multitrack generation");
+  const auto preserved=timeline_state.timeline.tracks[1].pattern.events;check(lua.execute("local p=neurogenic.v1.timeline.current(); local t=p:track(1); t:transpose(2); t:quantize(120); p:commit()",error),error.c_str());timeline_state=timeline.snapshot();check(timeline_state.timeline.tracks[0].pattern.events[0].pitch==38&&timeline_state.timeline.tracks[1].pattern.events.size()==preserved.size()&&timeline_state.timeline.tracks[1].pattern.events[0].pitch==preserved[0].pitch,"Lua mutation did not preserve unchanged track");
+  const auto before_error=timeline.snapshot();check(!lua.execute("local p=neurogenic.v1.timeline.current(); p:track(1):set_name('must rollback'); p:commit(); error('after commit')",error),"Lua error after staged commit accepted");check(timeline.snapshot().revision==before_error.revision&&timeline.snapshot().timeline.tracks[0].name==before_error.timeline.tracks[0].name,"Lua error failed to roll back transaction");
+  check(!lua.execute("local p=neurogenic.v1.timeline.current(); p:track(1):add_note{tick=-1,pitch=36,duration=10}; p:commit()",error),"invalid Lua timeline edit accepted");
+  auto conflicting=timeline.edit();check(conflicting.set_track_name(1,"external",error)&&timeline.commit(std::move(conflicting),TimelineCommitPolicy::next_audio_callback,error),"external edit before Lua conflict test");
+  check(!lua.execute("local first=neurogenic.v1.timeline.current(); local second=neurogenic.v1.timeline.current(); first:track(1):set_name('first'); first:commit(); second:track(1):set_name('stale'); second:commit()",error),"multiple Lua commits accepted");check(timeline.snapshot().timeline.tracks[0].name=="external","failed Lua execution published a partial edit");
+  check(!lua.execute("while true do end",error)&&error.find("instruction limit")!=std::string::npos,"Lua instruction limit");
+  check(lua.execute("local a=neurogenic.random(99); local b=neurogenic.random(99); for i=1,100 do assert(a:integer(1,100000)==b:integer(1,100000)) end",error),"Lua deterministic random stream");
+  auto run_examples=[](const std::vector<std::string>& scripts){TimelineService example_service([](const Timeline&,std::string&){return true;});ScriptRuntime runtime([](Pattern){return true;},[]{return 0ULL;},&example_service);std::string example_error;for(const auto& script:scripts)check(runtime.execute_file(std::filesystem::path(NEUROGENIC_SOURCE_DIR)/"examples"/script,example_error),example_error.c_str());return example_service.snapshot();};
+  const auto drum_example=run_examples({"timeline_drums.lua","timeline_mutate.lua"});check(drum_example.timeline.tracks.size()==4&&drum_example.revision==3,"drum and mutation examples");const auto poly_example=run_examples({"timeline_polyrhythm.lua"});check(poly_example.timeline.tracks.size()==3&&poly_example.timeline.tracks[0].pattern.length!=poly_example.timeline.tracks[1].pattern.length,"polyrhythm example");const auto variation_example=run_examples({"timeline_variation.lua"});check(variation_example.generation_seed==20261119&&variation_example.timeline.tracks.size()==1,"variation example");
 #else
   check(!lua.execute("return 1",error)&&!error.empty(),"Lua unexpectedly available");
 #endif
@@ -363,6 +394,6 @@ void test_lua_and_offline(){
 }
 
 int main(){
-  try{test_queue_and_scheduler();test_polyphony_and_events();test_sample_slots();test_live_sample_management_and_resampling();test_timeline_and_tracks();test_transport_integration_and_timeline_io();test_midi_control_dispatch();test_lua_and_offline();std::cout<<"all tests passed\n";return 0;}
+  try{test_queue_and_scheduler();test_polyphony_and_events();test_sample_slots();test_live_sample_management_and_resampling();test_timeline_and_tracks();test_transport_integration_and_timeline_io();test_midi_control_dispatch();test_timeline_editing_and_generation();test_lua_and_offline();std::cout<<"all tests passed\n";return 0;}
   catch(const std::exception& error){std::cerr<<"TEST FAILURE: "<<error.what()<<'\n';return 1;}
 }

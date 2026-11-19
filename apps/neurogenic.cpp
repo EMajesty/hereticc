@@ -6,6 +6,7 @@
 #include "neurogenic/midi/input.hpp"
 #include "neurogenic/midi/mapping.hpp"
 #include "neurogenic/scripting/runtime.hpp"
+#include "neurogenic/timeline/edit.hpp"
 #include "neurogenic/timeline/io.hpp"
 #include <array>
 #include <atomic>
@@ -108,10 +109,12 @@ int main(int argc,char** argv){
       for(const auto& [id,path]:slot_files){(void)path;print_status(samples.status(neurogenic::SampleSlotId{id}));}
     }
 
-    neurogenic::ScriptRuntime lua([&](auto pattern){return engine.queue_pattern(pattern);},[&]{return engine.frame_position();});
+    neurogenic::Timeline editable_timeline;
     neurogenic::Pattern initial;for(auto step:{0U,4U,8U,12U})initial.steps[step]={true,36,1.0F};initial.revision=1;
     if(timeline_file.empty()){if(!engine.queue_pattern(initial))throw std::runtime_error("initial pattern queue failed");}
-    else {auto timeline=neurogenic::load_timeline(timeline_file);std::string timeline_error;if(!engine.queue_timeline(timeline,timeline_error))throw std::runtime_error("timeline queue failed: "+timeline_error);}
+    else {editable_timeline=neurogenic::load_timeline(timeline_file);std::string timeline_error;if(!engine.queue_timeline(editable_timeline,timeline_error))throw std::runtime_error("timeline queue failed: "+timeline_error);}
+    neurogenic::TimelineService timeline_service([&](const auto& timeline,std::string& error){return engine.queue_timeline(timeline,error);},std::move(editable_timeline));
+    neurogenic::ScriptRuntime lua([&](auto pattern){return engine.queue_pattern(pattern);},[&]{return engine.frame_position();},&timeline_service);
     mapper.set_note_handler([&](auto note,auto velocity){engine.trigger(note,velocity);});
     mapper.map_button(0,36,"pattern.generate",[&]{std::string error;if(lua.execute_file(script,error))std::cout<<"Lua pattern queued for next bar\n";else std::cerr<<"Lua error: "<<error<<'\n';});
     dispatcher.start();std::string error;

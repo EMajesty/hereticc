@@ -113,3 +113,11 @@ GCC/Clang 128-bit integers supported by both targets. CI is configured with a
 native AArch64 hosted runner and an x86-hosted AArch64 compilation-only check.
 A successful native AArch64 CI run is host-runtime evidence only; physical ARM
 audio/MIDI devices, latency, and subjective playback remain unverified.
+
+Task 011 adds the control-side `TimelineService`, detached revisioned
+transactions, deterministic SplitMix64 streams, reusable transformations and
+Euclidean generation, thin `neurogenic.v1.timeline` Lua bindings, and four
+generative examples. Commits activate at the next audio callback through the
+existing immutable plan pool. Musical-boundary commit scheduling, multiple
+patterns per track, parameter destinations, and hostile-script sandboxing remain
+future work.
