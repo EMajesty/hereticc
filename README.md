@@ -2,6 +2,10 @@
   <img src="docs/assets/readme/vibeslop.png" alt="Absolute vibeslop" width="512">
 </p>
 
+check out
+[neurogenic-control](https://github.com/EMajesty/neurogenic-control)
+[neurogenic-audio](https://github.com/EMajesty/neurogenic-audio)
+
 # NEUROGENIC
 
 NEUROGENIC is an open-source, hardware-independent C++20 audio and MIDI
