@@ -238,6 +238,11 @@ does no string lookup and dispatches bounded due events to the preallocated
 synth or master delay before simultaneous note-ons. Application lock actions,
 GUI, controllers and Lua all call `TimelineTransaction` rather than duplicating
 destination validation or maintaining another pattern model.
+
+Modulation is a numeric layer after stored base and timeline automation.
+Global and per-track source banks are distinct; track banks own independent
+phase, envelope, retrigger, and seeded random state. See
+[MODULATION.md](MODULATION.md).
 Trigger probability and conditions are immutable compiled-plan metadata.
 Scheduling uses a stateless integer hash rather than a callback RNG, and Fill
 crosses into the audio thread through the bounded transport queue. Ratchets are

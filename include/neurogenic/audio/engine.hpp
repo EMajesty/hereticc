@@ -3,6 +3,7 @@
 #include "neurogenic/audio/sample.hpp"
 #include "neurogenic/core/spsc_queue.hpp"
 #include "neurogenic/dsp/processor.hpp"
+#include "neurogenic/dsp/modulation.hpp"
 #include "neurogenic/dsp/purest_gain.hpp"
 #include "neurogenic/dsp/time_stretch.hpp"
 #include "neurogenic/instrument/subtractive_synth.hpp"
@@ -97,6 +98,12 @@ class AudioEngine {
     [[nodiscard]] bool set_synth_parameter(SynthParameter, float) noexcept;
     [[nodiscard]] bool set_delay_parameter(DelayParameter, float) noexcept;
     [[nodiscard]] bool set_delay_bypass(bool) noexcept;
+    [[nodiscard]] bool
+    publish_modulation(const ModulationConfiguration &configuration) noexcept;
+    [[nodiscard]] bool set_modulation_input(ModulationSourceId, float) noexcept;
+    [[nodiscard]] ModulationSnapshot modulation_snapshot() const noexcept {
+        return modulation_.snapshot();
+    }
     [[nodiscard]] bool publish_mixer(const MixerConfiguration &configuration,
                                      std::string &error) noexcept {
         return mixer_.publish(configuration, error);
@@ -219,7 +226,12 @@ class AudioEngine {
         bool note_on{};
     };
     struct DspCommand {
-        enum class Target : std::uint8_t { synth, delay, delay_bypass };
+        enum class Target : std::uint8_t {
+            synth,
+            delay,
+            delay_bypass,
+            modulation_input
+        };
         Target target{};
         std::uint32_t parameter{};
         float value{};
@@ -347,6 +359,7 @@ class AudioEngine {
     SpscQueue<Trigger, 65> triggers_;
     SpscQueue<SynthTrigger, 65> synth_triggers_;
     SpscQueue<DspCommand, 129> dsp_commands_;
+    SpscQueue<ModulationConfiguration, 5> modulation_configurations_;
     SpscQueue<Pattern, 9> patterns_;
     static constexpr std::size_t timeline_plan_slot_count = 4;
     SpscQueue<std::uint8_t, 4> timelines_;
@@ -388,6 +401,7 @@ class AudioEngine {
     std::atomic<std::uint64_t> callback_frame_{};
     SubtractiveSynth synth_;
     StereoDelay delay_;
+    ModulationEngine modulation_;
     Mixer mixer_;
     const float *duplex_input_{};
     std::size_t duplex_input_samples_{};

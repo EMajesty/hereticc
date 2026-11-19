@@ -231,3 +231,10 @@ Recording beat/bar quantization derives its boundary from this same transport;
 there is no recording-only clock. Fixed bars are converted to frames at arm
 time. A stopped transport accepts immediate recording but rejects quantized
 start, and project replacement cancels an active capture.
+
+# Modulation interaction
+
+Discrete automation and step locks remain authoritative timeline events. Their
+latest value becomes the matrix's automation/base layer; enabled routes are
+then summed and clamped without modifying or disabling the lock.
+Tempo-synchronized sources follow the same authoritative transport tempo.

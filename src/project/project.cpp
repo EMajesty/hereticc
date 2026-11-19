@@ -177,6 +177,84 @@ MixerConfiguration load_mixer(const std::filesystem::path &path) {
     result.revision = 1;
     return result;
 }
+std::string serialize_modulation(const ModulationConfiguration &configuration) {
+    std::ostringstream out;
+    out << "NEUROGENIC_MODULATION 1\n" << std::setprecision(9)
+        << "interval " << configuration.update_interval << '\n';
+    for (std::size_t i = 0; i < configuration.source_count; ++i) {
+        const auto &source = configuration.sources[i];
+        out << "source " << i << ' ' << static_cast<unsigned>(source.waveform)
+            << ' ' << source.rate_hz << ' ' << source.tempo_sync << ' '
+            << source.beats_per_cycle << ' ' << source.retrigger << ' '
+            << static_cast<unsigned>(source.scope) << ' '
+            << source.attack_seconds << ' ' << source.decay_seconds << ' '
+            << source.sustain << ' ' << source.release_seconds << ' '
+            << source.seed << '\n';
+    }
+    out << "routes " << configuration.route_count << '\n';
+    for (std::size_t i = 0; i < configuration.route_count; ++i) {
+        const auto &route = configuration.routes[i];
+        out << route.id << ' ' << static_cast<unsigned>(route.source) << ' '
+            << static_cast<unsigned>(route.destination.target) << ' '
+            << route.destination.parameter << ' ' << route.minimum << ' '
+            << route.maximum << ' ' << route.base_value << ' ' << route.depth
+            << ' ' << route.enabled << ' '
+            << static_cast<unsigned>(route.polarity) << ' '
+            << static_cast<unsigned>(route.scope) << ' ' << route.track_id
+            << '\n';
+    }
+    return out.str();
+}
+ModulationConfiguration load_modulation(const std::filesystem::path &path) {
+    bounded(path);
+    std::ifstream input(path);
+    std::string magic, label;
+    unsigned version{};
+    ModulationConfiguration result;
+    if (!(input >> magic >> version) || magic != "NEUROGENIC_MODULATION" ||
+        version != 1 || !(input >> label >> result.update_interval) ||
+        label != "interval")
+        throw std::runtime_error("unsupported or malformed modulation metadata");
+    for (std::size_t i = 0; i < result.source_count; ++i) {
+        std::size_t index{};
+        unsigned waveform{}, scope{};
+        auto &source = result.sources[i];
+        if (!(input >> label >> index >> waveform >> source.rate_hz >>
+              source.tempo_sync >> source.beats_per_cycle >> source.retrigger >>
+              scope >> source.attack_seconds >> source.decay_seconds >>
+              source.sustain >> source.release_seconds >> source.seed) ||
+            label != "source" || index != i ||
+            waveform > static_cast<unsigned>(LfoWaveform::random) ||
+            scope > static_cast<unsigned>(ModulationScope::voice))
+            throw std::runtime_error("malformed modulation source");
+        source.waveform = static_cast<LfoWaveform>(waveform);
+        source.scope = static_cast<ModulationScope>(scope);
+    }
+    if (!(input >> label >> result.route_count) || label != "routes" ||
+        result.route_count > result.routes.size())
+        throw std::runtime_error("malformed modulation route count");
+    for (std::size_t i = 0; i < result.route_count; ++i) {
+        unsigned source{}, target{}, polarity{}, scope{};
+        auto &route = result.routes[i];
+        if (!(input >> route.id >> source >> target >>
+              route.destination.parameter >> route.minimum >> route.maximum >>
+              route.base_value >> route.depth >> route.enabled >> polarity >>
+              scope >> route.track_id) ||
+            source >= static_cast<unsigned>(ModulationSourceId::count) ||
+            target > static_cast<unsigned>(ParameterTarget::stereo_delay) ||
+            polarity > static_cast<unsigned>(ModulationPolarity::unipolar) ||
+            scope > static_cast<unsigned>(ModulationScope::voice))
+            throw std::runtime_error("malformed modulation route");
+        route.source = static_cast<ModulationSourceId>(source);
+        route.destination.target = static_cast<ParameterTarget>(target);
+        route.polarity = static_cast<ModulationPolarity>(polarity);
+        route.scope = static_cast<ModulationScope>(scope);
+    }
+    ModulationEngine validation;
+    if (!validation.configure(result))
+        throw std::runtime_error("invalid modulation configuration");
+    return result;
+}
 } // namespace
 
 void save_project(const Project &project,
@@ -212,6 +290,14 @@ void save_project(const Project &project,
                          return scene.id == project.active_routing_scene;
                      }))
         throw std::invalid_argument("active routing scene does not exist");
+    ModulationEngine modulation_validation;
+    if (!modulation_validation.configure(project.modulation))
+        throw std::invalid_argument("invalid project modulation configuration");
+    for (std::size_t i = 0; i < project.modulation.route_count; ++i)
+        if (!valid_legacy_parameter(
+                project.modulation.routes[i].destination.target,
+                project.modulation.routes[i].destination.parameter))
+            throw std::invalid_argument("invalid modulation destination");
     std::filesystem::create_directories(directory / "generations");
     const auto generation = generation_name();
     const auto temporary = directory / "generations" / (generation + ".tmp");
@@ -247,6 +333,8 @@ void save_project(const Project &project,
             checked_write(temporary / file, serialize_mixer(scene.mixer));
         }
         checked_write(temporary / "scenes.ngr", scenes.str());
+        checked_write(temporary / "modulation.ngm",
+                      serialize_modulation(project.modulation));
         std::filesystem::rename(temporary, committed);
         std::ostringstream manifest;
         manifest << "NEUROGENIC_PROJECT " << Project::format_version << '\n'
@@ -271,7 +359,8 @@ void save_project(const Project &project,
             std::filesystem::file_size(committed / "samples.ngs") +
             std::filesystem::file_size(committed / "parameters.ngp") +
             std::filesystem::file_size(committed / "mixer.ngm") +
-            std::filesystem::file_size(committed / "scenes.ngr");
+            std::filesystem::file_size(committed / "scenes.ngr") +
+            std::filesystem::file_size(committed / "modulation.ngm");
     }
 }
 
@@ -329,6 +418,8 @@ Project load_project(const std::filesystem::path &directory,
                          }))
             throw std::runtime_error("active routing scene was not found");
     }
+    if (std::filesystem::exists(files / "modulation.ngm"))
+        result.modulation = load_modulation(files / "modulation.ngm");
     for (auto &[slot, path] : result.samples.sample_paths) {
         path = resolve_reference(directory, path);
         if (!std::filesystem::exists(path))
@@ -361,6 +452,9 @@ Project load_project(const std::filesystem::path &directory,
                  : 0) +
             (std::filesystem::exists(files / "scenes.ngr")
                  ? std::filesystem::file_size(files / "scenes.ngr")
+                 : 0) +
+            (std::filesystem::exists(files / "modulation.ngm")
+                 ? std::filesystem::file_size(files / "modulation.ngm")
                  : 0);
     }
     return result;

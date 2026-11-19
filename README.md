@@ -47,6 +47,11 @@ through the same scheduler. It provides bounded polyphony, four oscillator
 shapes, ADSR, a resonant low-pass filter, velocity response and a native stereo
 delay. See the [instrument and DSP architecture](docs/INSTRUMENTS.md).
 
+A bounded [modulation matrix](docs/MODULATION.md) combines stored base values,
+timeline automation and bipolar modulation without overwriting edits. Sources
+have explicit global or independent per-track scope; voice scope is reserved
+and rejected until its polyphonic destination path is complete.
+
 The Samples view provides the first complete chopping workflow: immutable
 loaded samples are displayed through cached waveform peaks, slices use prepared
 engine-rate frame coordinates, and pads 1–16 map independently to slices while

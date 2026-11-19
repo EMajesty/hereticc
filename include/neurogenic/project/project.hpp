@@ -1,6 +1,7 @@
 #pragma once
 #include "neurogenic/audio/mixer.hpp"
 #include "neurogenic/audio/slicing.hpp"
+#include "neurogenic/dsp/modulation.hpp"
 #include "neurogenic/timeline/model.hpp"
 #include <filesystem>
 #include <map>
@@ -17,6 +18,7 @@ struct Project {
     MixerConfiguration mixer;
     std::vector<RoutingScene> routing_scenes;
     std::uint64_t active_routing_scene{};
+    ModulationConfiguration modulation;
     std::vector<std::filesystem::path> missing_assets;
 };
 

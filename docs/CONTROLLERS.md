@@ -227,3 +227,11 @@ Source, destination, channel mode, quantization, fixed bars, monitoring,
 arm/start/stop/cancel, save, and pad assignment are semantic actions. A minimal
 data-wheel client can operate the Record view with Enter/Back; full controllers
 may bind dedicated controls without changing recording logic.
+
+# Modulation actions
+
+Adapters use `modulation.route-create/delete/select/depth/enable.v1`,
+`modulation.source-configure/reset.v1`, `modulation.xy.v1`, and
+`modulation.midi-cc.v1`. Scope and track ID are semantic route data, not a
+physical layout. Eight encoders may address settings directly; a minimal wheel
+navigates the MOD route list and reads copied source/effective feedback.

@@ -678,6 +678,63 @@ void external_fx_case() {
                    .count() /
                iterations);
 }
+void modulation_case(std::string name, std::size_t route_count,
+                     bool tempo_sync = false) {
+    neurogenic::AudioEngine engine(48000, 32);
+    neurogenic::ModulationConfiguration configuration;
+    configuration.route_count = std::min(route_count,
+                                         configuration.routes.size());
+    configuration.update_interval = 32;
+    for (std::size_t source = 0; source < 4; ++source) {
+        configuration.sources[source].waveform =
+            static_cast<neurogenic::LfoWaveform>(source);
+        configuration.sources[source].rate_hz = 0.5F + source * 0.25F;
+        configuration.sources[source].tempo_sync = tempo_sync;
+        configuration.sources[source].beats_per_cycle = 1.0F + source;
+    }
+    for (std::size_t route = 0; route < configuration.route_count; ++route) {
+        auto &value = configuration.routes[route];
+        value.id = static_cast<neurogenic::ModulationRouteId>(route + 1);
+        value.source = static_cast<neurogenic::ModulationSourceId>(route % 4);
+        value.depth = (route & 1U) ? -0.1F : 0.1F;
+        if (route % 3 == 0) {
+            value.destination = {
+                neurogenic::ParameterTarget::subtractive_synth,
+                static_cast<std::uint32_t>(neurogenic::SynthParameter::cutoff)};
+            value.minimum = 20;
+            value.maximum = 20000;
+            value.base_value = 8000;
+        } else if (route % 3 == 1) {
+            value.destination = {
+                neurogenic::ParameterTarget::subtractive_synth,
+                static_cast<std::uint32_t>(
+                    neurogenic::SynthParameter::resonance)};
+            value.minimum = 0;
+            value.maximum = 0.95F;
+            value.base_value = 0.15F;
+        } else {
+            value.destination = {
+                neurogenic::ParameterTarget::stereo_delay,
+                static_cast<std::uint32_t>(neurogenic::DelayParameter::mix)};
+            value.minimum = 0;
+            value.maximum = 1;
+            value.base_value = 0.2F;
+        }
+    }
+    (void)engine.publish_modulation(configuration);
+    std::vector<float> left(256), right(256);
+    engine.process(left, right);
+    const auto begin = Clock::now();
+    for (std::size_t i = 0; i < iterations; ++i) {
+        engine.process(left, right);
+        checksum += engine.modulation_snapshot().generation != 0;
+    }
+    result(std::move(name), 48000, 256,
+           std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
+                                                                begin)
+                   .count() /
+               iterations);
+}
 } // namespace
 int main(int argc, char **argv) {
     for (int argument = 1; argument < argc; ++argument) {
@@ -765,6 +822,9 @@ int main(int argc, char **argv) {
     mixer_case(16, true, true);
     mixer_publication_case();
     external_fx_case();
+    modulation_case("modulation_lfos_routes_16", 16);
+    modulation_case("modulation_routes_32", 32);
+    modulation_case("modulation_tempo_sync", 16, true);
     std::cout << "{\"schema\":\"neurogenic.benchmark.summary.v1\",\"checksum\":"
               << checksum
               << ",\"budget_passed\":" << (budget_failed ? "false" : "true")

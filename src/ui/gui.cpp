@@ -175,8 +175,8 @@ GuiLayout GuiModel::layout(int width, int height) const {
                             ? r(logical_width - margin - inspector_width,
                                 content_y, inspector_width, content_height)
                             : UiRect{};
-    const float tab_width = (logical_width - 32) / 9;
-    for (int i = 0; i < 9; ++i)
+    const float tab_width = (logical_width - 32) / 10;
+    for (int i = 0; i < 10; ++i)
         result.tabs.push_back(r(16 + i * tab_width, 72, tab_width - 8, 38));
     result.page_previous = r(28, content_y + 12, 64, 42);
     result.page_next = r(100, content_y + 12, 64, 42);
@@ -274,8 +274,9 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
                   : "n/a") +
              " MiB  VOICES " + std::to_string(perf.engine.active_voices) + "/" +
              std::to_string(perf.engine.maximum_voices));
-    const char *names[]{"SEQUENCER", "SAMPLES", "PARAMETERS", "X/Y",    "PERF",
-                        "DISPLAY",   "RECORD",  "MIXER",      "ROUTING"};
+    const char *names[]{"SEQUENCER", "SAMPLES", "PARAMETERS", "X/Y",
+                        "PERF",      "DISPLAY", "RECORD",     "MIXER",
+                        "ROUTING",   "MOD"};
     for (std::size_t i = 0; i < l.tabs.size(); ++i) {
         rect(l.tabs[i], i == static_cast<std::size_t>(view_) ? UiColor::selected
                                                              : UiColor::panel);
@@ -682,7 +683,7 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
             rect(l.rows[i], UiColor::background);
             text(l.rows[i], UiColor::text, rows[i]);
         }
-    } else {
+    } else if (view_ == GuiView::settings) {
         text({l.content.x + 12 * l.scale, l.content.y + 8 * l.scale,
               l.content.w - 24 * l.scale, 28 * l.scale},
              UiColor::accent, "DISPLAY SETTINGS");
@@ -709,8 +710,48 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
                  "\nMissing assets: " +
                  std::to_string(state.missing_assets.size()) +
                  "  Shift+Enter: Save");
+    } else if (view_ == GuiView::modulation) {
+        text({l.content.x + 12 * l.scale, l.content.y + 8 * l.scale,
+              l.content.w - 24 * l.scale, 28 * l.scale},
+             UiColor::accent, "MODULATION MATRIX");
+        const auto source_name = [](ModulationSourceId source) {
+            static constexpr const char *names[]{
+                "LFO 1", "LFO 2", "LFO 3", "LFO 4", "ENV", "S&H",
+                "SMOOTH", "X", "Y", "VELOCITY", "MIDI CC"};
+            return names[static_cast<std::size_t>(source)];
+        };
+        const auto destination_name = [&](ParameterDestination destination) {
+            for (const auto &parameter : state.parameters) {
+                const auto resolved =
+                    resolve_parameter_destination(parameter.id);
+                if (resolved && resolved->target == destination.target &&
+                    resolved->parameter == destination.parameter)
+                    return parameter.name;
+            }
+            return std::string("Unavailable destination");
+        };
+        for (std::size_t i = 0;
+             i < std::min(state.modulation.route_count, l.rows.size()); ++i) {
+            const auto &route = state.modulation.routes[i];
+            rect(l.rows[i], route.id == state.selected_modulation_route
+                                ? UiColor::selected
+                                : UiColor::background);
+            text(l.rows[i], route.enabled ? UiColor::text : UiColor::muted,
+                 std::string(source_name(route.source)) + " -> " +
+                     destination_name(route.destination) + "  " +
+                     std::to_string(route.depth) +
+                     (route.scope == ModulationScope::track
+                          ? "  TRACK " + std::to_string(route.track_id)
+                          : "  GLOBAL") +
+                     "  EFF " + std::to_string(
+                         state.modulation_runtime.effective_values[i]));
+        }
+        if (state.modulation.route_count == 0)
+            text(l.rows[0], UiColor::muted,
+                 "No routes. Use semantic route actions or a controller.");
     }
     if (view_ == GuiView::mixer || view_ == GuiView::routing ||
+        view_ == GuiView::modulation ||
         !l.inspector_visible)
         return;
     text({l.parameters.x + 12, l.parameters.y + 12, l.parameters.w - 24,
@@ -953,7 +994,7 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
         }
         if (input.key == GuiKey::tab) {
             view_ =
-                static_cast<GuiView>((static_cast<unsigned>(view_) + 1) % 9);
+                static_cast<GuiView>((static_cast<unsigned>(view_) + 1) % 10);
             frame_.state_revision = std::numeric_limits<std::uint64_t>::max();
             return true;
         }
@@ -992,6 +1033,21 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
                     submit(command("recording.arm.v1"));
                     submit(command("recording.start.v1"));
                 }
+            } else if (view_ == GuiView::modulation &&
+                       state.selected_modulation_route) {
+                const auto found = std::find_if(
+                    state.modulation.routes.begin(),
+                    state.modulation.routes.begin() +
+                        state.modulation.route_count,
+                    [&](const auto &route) {
+                        return route.id == state.selected_modulation_route;
+                    });
+                if (found != state.modulation.routes.begin() +
+                                 state.modulation.route_count)
+                    submit(command(
+                        "modulation.route-enable.v1",
+                        {{"route_id", static_cast<std::int64_t>(found->id)},
+                         {"enabled", !found->enabled}}));
             } else if (view_ == GuiView::samples && !sample_path_.empty())
                 submit(
                     command("sample.replace.v1",
@@ -1053,6 +1109,46 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
                                         mixer_external_fx_count;
             submit(command("mixer.fx-loop-select.v1",
                            {{"index", static_cast<std::int64_t>(next)}}));
+            return true;
+        }
+        if ((input.key == GuiKey::up || input.key == GuiKey::down) &&
+            view_ == GuiView::modulation &&
+            state.modulation.route_count != 0) {
+            std::size_t current{};
+            for (std::size_t i = 0; i < state.modulation.route_count; ++i)
+                if (state.modulation.routes[i].id ==
+                    state.selected_modulation_route)
+                    current = i;
+            const auto next = input.key == GuiKey::down
+                                  ? (current + 1) %
+                                        state.modulation.route_count
+                                  : (current + state.modulation.route_count - 1) %
+                                        state.modulation.route_count;
+            submit(command(
+                "modulation.route-select.v1",
+                {{"route_id", static_cast<std::int64_t>(
+                                  state.modulation.routes[next].id)}}));
+            return true;
+        }
+        if ((input.key == GuiKey::left || input.key == GuiKey::right) &&
+            view_ == GuiView::modulation &&
+            state.selected_modulation_route) {
+            const auto found = std::find_if(
+                state.modulation.routes.begin(),
+                state.modulation.routes.begin() + state.modulation.route_count,
+                [&](const auto &route) {
+                    return route.id == state.selected_modulation_route;
+                });
+            if (found != state.modulation.routes.begin() +
+                             state.modulation.route_count)
+                submit(command(
+                    "modulation.route-depth.v1",
+                    {{"route_id", static_cast<std::int64_t>(found->id)},
+                     {"depth", static_cast<double>(std::clamp(
+                                   found->depth +
+                                       (input.key == GuiKey::right ? 0.05F
+                                                                   : -0.05F),
+                                   -1.0F, 1.0F))}}));
             return true;
         }
         if ((input.key == GuiKey::left || input.key == GuiKey::right) &&

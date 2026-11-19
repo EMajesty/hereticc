@@ -148,3 +148,10 @@ and the master meter. Up/Down selects a strip, Left/Right adjusts gain, Enter
 toggles mute and Shift+Enter toggles solo. Pointer selection invokes the same
 semantic actions. Detailed input/aux/output setup currently uses the shared
 action API rather than dedicated widgets.
+
+# Modulation view
+
+The `MOD` tab lists routes with source, destination, explicit scope, depth,
+enabled state, and effective value. Up/Down selects, Left/Right adjusts bipolar
+depth, and Enter toggles the route. The same workflow works with a minimal data
+wheel at every display breakpoint; the GUI owns no parallel modulation graph.

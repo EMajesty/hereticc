@@ -95,6 +95,9 @@ bool SubtractiveSynth::set_parameter(std::uint32_t raw, float value) noexcept {
     case SynthParameter::filter_enabled:
         filter_enabled_.store(value >= 0.5F);
         break;
+    case SynthParameter::pitch:
+        pitch_.store(std::clamp(value, -24.0F, 24.0F));
+        break;
     default:
         return false;
     }
@@ -106,7 +109,8 @@ float SubtractiveSynth::smooth(std::atomic<float> &target,
     return current;
 }
 float SubtractiveSynth::oscillator(Voice &voice) noexcept {
-    const float frequency = midi_frequency(voice.note),
+    const auto pitch = smooth(pitch_, pitch_current_);
+    const float frequency = midi_frequency(voice.note) * std::exp2(pitch / 12.0F),
                 increment = std::min(0.49F, frequency / rate_);
     float phase = static_cast<float>(voice.phase), out{};
     const auto wave = static_cast<OscillatorWaveform>(

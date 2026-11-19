@@ -85,6 +85,12 @@ count are visible; Shift+Enter invokes Save. Open, Save As, and relinking are
 available through semantic actions, while a complete embedded filesystem
 browser is still deferred.
 
+Version-1 projects may include `modulation.ngm`. This optional versioned file
+stores source definitions, deterministic seeds, explicit scopes, and stable
+routes. Absence means an empty matrix for backward compatibility. Unsafe or
+unavailable destinations and unsupported voice routes are rejected before
+publication.
+
 Legacy `.ngt` timelines and version 1-3 slice sidecars remain accepted by their
 existing loaders. They can be assembled into a project through the shared C++
 services; there is not yet a one-click GUI migration wizard.

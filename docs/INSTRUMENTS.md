@@ -24,6 +24,10 @@ filter implementations are deliberately lightweight and are not oversampled.
 Parameters are clamped, finite-checked and smoothed at control rate. Extreme
 resonance is bounded for numerical stability.
 
+The modulation matrix targets pitch, oscillator/filter/envelope controls, and
+gain through numeric destinations. Per-track sources are independent. Routable
+per-voice modulation remains a future extension rather than a global singleton.
+
 ```sh
 ./build/dev/neurogenic --synth
 ./build/dev/neurogenic --synth --headless

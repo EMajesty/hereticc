@@ -15,7 +15,8 @@ enum class SynthParameter : std::uint32_t {
     pulse_width,
     velocity_sensitivity,
     gain,
-    filter_enabled
+    filter_enabled,
+    pitch
 };
 class SubtractiveSynth final : public Instrument {
   public:
@@ -59,11 +60,12 @@ class SubtractiveSynth final : public Instrument {
     std::vector<Voice> voices_;
     std::atomic<float> waveform_{2}, attack_{0.005F}, decay_{0.12F},
         sustain_{0.75F}, release_{0.25F}, cutoff_{8000}, resonance_{0.15F},
-        pulse_width_{0.5F}, velocity_{1}, gain_{0.25F}, filter_enabled_{1};
+        pulse_width_{0.5F}, velocity_{1}, gain_{0.25F}, filter_enabled_{1},
+        pitch_{};
     float attack_current_{0.005F}, decay_current_{0.12F},
         sustain_current_{0.75F}, release_current_{0.25F}, cutoff_current_{8000},
         resonance_current_{0.15F}, pulse_current_{0.5F}, velocity_current_{1},
-        gain_current_{0.25F};
+        gain_current_{0.25F}, pitch_current_{};
     std::uint64_t age_{}, stolen_{};
 };
 } // namespace neurogenic

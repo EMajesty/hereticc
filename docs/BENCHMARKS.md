@@ -157,3 +157,11 @@ sends, simulated six-channel I/O and rapid routing publication. On the
 1.2 µs and its idle 16-channel processing pass 12.5 µs. Resident process memory
 was about 35.8 MiB. These are deterministic offline averages, not worst-case,
 physical-device, Pi 5, N150 or XRUN claims.
+
+Task 028 adds bounded scenarios for four active LFOs with 16 routes, 32 routes,
+and tempo synchronization. Processing covers callback modulation and numeric
+destination delivery; configuration preparation remains outside the timed
+region. These are offline regression measurements, not Pi 5/N150 or XRUN data.
+On the 2026-11-20 Ryzen 7 7800X3D Debug host, the 16-route, 32-route, and
+tempo-sync scenarios averaged approximately 13.5, 15.9, and 13.9 µs per
+256-frame buffer. They are averages, not worst-case or hardware claims.

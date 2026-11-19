@@ -33,6 +33,9 @@ resolve_parameter_destination(std::string_view id) noexcept {
     if (id == "synth.gain")
         return {{ParameterTarget::subtractive_synth,
                  static_cast<std::uint32_t>(S::gain)}};
+    if (id == "synth.pitch")
+        return {{ParameterTarget::subtractive_synth,
+                 static_cast<std::uint32_t>(S::pitch)}};
     if (id == "effect.delay.time")
         return {{ParameterTarget::stereo_delay,
                  static_cast<std::uint32_t>(D::time)}};

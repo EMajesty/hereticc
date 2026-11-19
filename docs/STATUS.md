@@ -248,3 +248,11 @@ semantic actions, GUI status, tests, and benchmarks. Physical duplex hardware,
 independent-device clock correction and subjective monitoring remain unverified
 or deferred. Task 026 adds track/aux taps and simulated six-channel routing;
 physical multichannel hardware remains unverified.
+
+Task 028 adds a fixed-capacity modulation matrix with four LFOs, ADSR,
+deterministic random, X/Y, velocity, and MIDI CC. Sources have explicit
+global/track/voice scope; global and per-track instances are implemented with
+independent phase, gate, retrigger, and seeded random state. Voice routes are
+rejected pending a polyphonic destination path. Synth/delay destinations,
+projects, semantic actions/state, GUI inspection, tests, and benchmarks are
+implemented; audio-rate and prepared sample/mixer modulation remain future.

@@ -61,6 +61,7 @@ struct ParameterDescriptor {
     double step{1};
     bool continuous{}, automatable{}, modulatable{};
     std::vector<std::string> choices;
+    ApplicationValue effective_value{};
 };
 class ParameterRegistry {
   public:
@@ -187,6 +188,9 @@ struct ApplicationState {
     std::size_t selected_external_fx_loop{};
     std::vector<RoutingScene> routing_scenes;
     std::uint64_t active_routing_scene{};
+    ModulationConfiguration modulation;
+    ModulationSnapshot modulation_runtime;
+    ModulationRouteId selected_modulation_route{};
 };
 struct ApplicationCommand {
     std::string action_id;
@@ -232,6 +236,8 @@ class ApplicationService {
     RecordingConfiguration recording_configuration_;
     std::uint64_t recording_fixed_bars_{};
     mutable MixerConfiguration mixer_configuration_;
+    ModulationConfiguration modulation_configuration_;
+    ModulationRouteId next_modulation_route_id_{1};
     ActionRegistry actions_;
     ParameterRegistry parameters_;
     const std::size_t capacity_;

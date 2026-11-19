@@ -5,6 +5,7 @@
 #include "neurogenic/core/control_dispatcher.hpp"
 #include "neurogenic/core/spsc_queue.hpp"
 #include "neurogenic/dsp/parameter_destination.hpp"
+#include "neurogenic/dsp/modulation.hpp"
 #include "neurogenic/dsp/processor.hpp"
 #include "neurogenic/instrument/subtractive_synth.hpp"
 #include "neurogenic/midi/mapping.hpp"
@@ -40,6 +41,156 @@ void check(bool value, const char *message) {
 void near(float actual, float expected, const char *message) {
     if (std::fabs(actual - expected) > 0.0001F)
         throw std::runtime_error(message);
+}
+
+void test_modulation_engine() {
+    using namespace neurogenic;
+    ModulationConfiguration configuration;
+    configuration.update_interval = 4;
+    configuration.sources[0].waveform = LfoWaveform::saw;
+    configuration.sources[0].rate_hz = 10.0F;
+    configuration.sources[0].scope = ModulationScope::track;
+    configuration.sources[0].retrigger = true;
+    configuration.route_count = 2;
+    configuration.routes[0] = {
+        1, ModulationSourceId::lfo_1,
+        {ParameterTarget::subtractive_synth,
+         static_cast<std::uint32_t>(SynthParameter::cutoff)},
+        20, 20000, 10000, 0.5F, true, ModulationPolarity::bipolar,
+        ModulationScope::track, 10};
+    configuration.routes[1] = configuration.routes[0];
+    configuration.routes[1].id = 2;
+    configuration.routes[1].destination.parameter =
+        static_cast<std::uint32_t>(SynthParameter::resonance);
+    configuration.routes[1].minimum = 0;
+    configuration.routes[1].maximum = 1;
+    configuration.routes[1].base_value = 0.5F;
+    configuration.routes[1].track_id = 20;
+    ModulationEngine engine(1000);
+    check(engine.configure(configuration), "track modulation configuration");
+    float cutoff{}, resonance{};
+    const auto process = [&](int frames) {
+        for (int i = 0; i < frames; ++i)
+            engine.process_frame([&](ParameterDestination destination,
+                                     float value) {
+                if (destination.parameter ==
+                    static_cast<std::uint32_t>(SynthParameter::cutoff))
+                    cutoff = value;
+                else
+                    resonance = value;
+            });
+    };
+    process(40);
+    engine.note_on(10, 1.0F);
+    process(4);
+    check(cutoff < 6000 && resonance > 0.1F,
+          "track LFOs maintain independent retrigger phase");
+
+    ModulationConfiguration summed;
+    summed.update_interval = 1;
+    summed.route_count = 2;
+    summed.routes[0] = {1,
+                        ModulationSourceId::xy_x,
+                        {ParameterTarget::stereo_delay,
+                         static_cast<std::uint32_t>(DelayParameter::mix)},
+                        0,
+                        1,
+                        0.25F,
+                        0.25F};
+    summed.routes[1] = summed.routes[0];
+    summed.routes[1].id = 2;
+    summed.routes[1].source = ModulationSourceId::xy_y;
+    check(engine.configure(summed), "summed modulation configuration");
+    engine.set_input(ModulationSourceId::xy_x, 1);
+    engine.set_input(ModulationSourceId::xy_y, 1);
+    float effective{};
+    engine.process_frame([&](ParameterDestination, float value) {
+        effective = value;
+    });
+    near(effective, 0.75F, "multiple route normalized summation");
+    engine.set_automation(
+        {ParameterTarget::stereo_delay,
+         static_cast<std::uint32_t>(DelayParameter::mix)},
+        0.1F);
+    engine.process_frame([&](ParameterDestination, float value) {
+        effective = value;
+    });
+    near(effective, 0.6F, "automation and modulation remain separate");
+    summed.routes[0].enabled = false;
+    summed.routes[1].depth = -1.0F;
+    check(engine.configure(summed), "bypass modulation configuration");
+    engine.set_input(ModulationSourceId::xy_y, 1);
+    engine.process_frame([&](ParameterDestination, float value) {
+        effective = value;
+    });
+    near(effective, 0.0F, "bipolar modulation clamps destination");
+
+    auto invalid = summed;
+    invalid.sources[static_cast<std::size_t>(ModulationSourceId::xy_y)].scope =
+        ModulationScope::voice;
+    check(!engine.configure(invalid),
+          "unsupported per-voice scope rejected explicitly");
+
+    ModulationConfiguration random_configuration;
+    random_configuration.update_interval = 1;
+    auto &random_source = random_configuration.sources[static_cast<std::size_t>(
+        ModulationSourceId::sample_hold)];
+    random_source.rate_hz = 100;
+    random_source.seed = 12345;
+    random_configuration.route_count = 1;
+    random_configuration.routes[0] = {
+        1, ModulationSourceId::sample_hold,
+        {ParameterTarget::stereo_delay,
+         static_cast<std::uint32_t>(DelayParameter::feedback)},
+        0, 1, 0.5F, 0.5F};
+    ModulationEngine first(1000), second(1000);
+    check(first.configure(random_configuration) &&
+              second.configure(random_configuration),
+          "deterministic random modulation configuration");
+    float a{}, b{};
+    for (int i = 0; i < 25; ++i) {
+        first.process_frame(
+            [&](ParameterDestination, float value) { a = value; });
+        second.process_frame(
+            [&](ParameterDestination, float value) { b = value; });
+    }
+    near(a, b, "sample-and-hold seed reproducibility");
+
+    AudioEngine audio(1000);
+    TimelineService timeline([&](const Timeline &value, std::string &error) {
+        return audio.queue_timeline(value, error);
+    });
+    SampleManager samples(audio);
+    ApplicationService application(audio, timeline, samples);
+    auto created = application.execute(
+        {"modulation.route-create.v1",
+         {{"source", std::int64_t{static_cast<std::int64_t>(
+                         ModulationSourceId::xy_x)}},
+          {"destination", std::string("synth.cutoff")},
+          {"depth", 0.25},
+          {"scope", std::int64_t{static_cast<std::int64_t>(
+                        ModulationScope::global)}}}});
+    check(created.accepted &&
+              application.snapshot().modulation.route_count == 1 &&
+              application.snapshot().project_dirty,
+          "semantic modulation route creation");
+    check(application
+                  .execute({"modulation.xy.v1",
+                            {{"position", NormalizedXY{1.0, 0.5}}}})
+                  .accepted,
+          "XY modulation action");
+    std::array<float, 64> left{}, right{};
+    audio.process(left, right);
+    check(audio.modulation_snapshot().effective_values[0] > 8000,
+          "application modulation reached audio engine");
+    check(!application
+                   .execute({"modulation.route-create.v1",
+                             {{"source", std::int64_t{0}},
+                              {"destination", std::string("transport.tempo")},
+                              {"depth", 0.5},
+                              {"scope", std::int64_t{0}}}})
+                   .accepted,
+          "unsafe modulation destination rejection");
 }
 
 void test_performance_monitoring() {
@@ -1482,6 +1633,15 @@ void test_unified_project_persistence() {
     settings.source_beats = 7;
     project.parameters["synth.cutoff"] = 4321.0;
     project.parameters["effect.delay.mix"] = 0.25;
+    project.modulation.sources[0].waveform = LfoWaveform::triangle;
+    project.modulation.sources[0].tempo_sync = true;
+    project.modulation.sources[0].beats_per_cycle = 2;
+    project.modulation.route_count = 1;
+    project.modulation.routes[0] = {
+        81, ModulationSourceId::lfo_1,
+        {ParameterTarget::subtractive_synth,
+         static_cast<std::uint32_t>(SynthParameter::cutoff)},
+        20, 20000, 4321, -0.25F};
 
     ProjectIoMetrics save_metrics, load_metrics;
     save_project(project, root, &save_metrics);
@@ -1503,6 +1663,9 @@ void test_unified_project_persistence() {
               loaded.samples.pad_settings[5].stretch_mode ==
                   StretchMode::realtime &&
               loaded.parameters.at("synth.cutoff") == 4321.0 &&
+              loaded.modulation.route_count == 1 &&
+              loaded.modulation.routes[0].id == 81 &&
+              loaded.modulation.sources[0].tempo_sync &&
               loaded.missing_assets.empty() &&
               save_metrics.metadata_bytes > 0 &&
               load_metrics.metadata_bytes > 0,
@@ -3830,6 +3993,11 @@ void test_mixer_and_routing() {
             gui.input({GuiInput::Type::key_down, GuiKey::right}, 1920, 1200) &&
             !gui.frame(1024, 600).commands.empty(),
         "headless external routing GUI interaction");
+    check(gui.input({GuiInput::Type::key_down, GuiKey::tab}, 1920, 1200) &&
+              gui.view() == GuiView::modulation &&
+              !gui.frame(1920, 1200).commands.empty() &&
+              gui.input({GuiInput::Type::key_down, GuiKey::tab}, 1024, 600),
+          "responsive modulation GUI navigation");
 }
 
 void test_lua_and_offline() {
@@ -4015,6 +4183,7 @@ void test_lua_and_offline() {
 int main() {
     try {
         test_performance_monitoring();
+        test_modulation_engine();
         test_native_synthesis_and_dsp();
         test_queue_and_scheduler();
         test_polyphony_and_events();

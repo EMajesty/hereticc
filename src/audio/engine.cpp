@@ -20,7 +20,7 @@ AudioEngine::AudioEngine(std::uint32_t rate, std::size_t voice_capacity,
       sample_version_capacity_(sample_version_capacity),
       voices_(voice_capacity), legacy_events_(event_staging_capacity),
       timeline_events_(event_staging_capacity), synth_(rate, voice_capacity),
-      delay_(rate), mixer_(rate) {
+      delay_(rate), modulation_(rate), mixer_(rate) {
     if (rate == 0 || voice_capacity == 0 || event_staging_capacity == 0 ||
         sample_version_capacity == 0)
         throw std::invalid_argument(
@@ -329,6 +329,23 @@ bool AudioEngine::set_delay_bypass(bool value) noexcept {
     }
     return true;
 }
+bool AudioEngine::publish_modulation(
+    const ModulationConfiguration &configuration) noexcept {
+    if (!modulation_configurations_.push(configuration)) {
+        dropped_dsp_commands_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    return true;
+}
+bool AudioEngine::set_modulation_input(ModulationSourceId source,
+                                       float value) noexcept {
+    if (!dsp_commands_.push({DspCommand::Target::modulation_input,
+                             static_cast<std::uint32_t>(source), value})) {
+        dropped_dsp_commands_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    return true;
+}
 
 bool AudioEngine::queue_pattern(const Pattern &pattern) noexcept {
     if (!valid_pattern(pattern))
@@ -604,14 +621,20 @@ void AudioEngine::process(std::span<float> left,
     }
 
     Pattern pattern;
+    ModulationConfiguration modulation_configuration;
+    while (modulation_configurations_.pop(modulation_configuration))
+        (void)modulation_.configure(modulation_configuration);
     DspCommand dsp;
     while (dsp_commands_.pop(dsp)) {
         if (dsp.target == DspCommand::Target::synth)
             synth_.set_parameter(dsp.parameter, dsp.value);
         else if (dsp.target == DspCommand::Target::delay)
             delay_.set_parameter(dsp.parameter, dsp.value);
-        else
+        else if (dsp.target == DspCommand::Target::delay_bypass)
             delay_.set_bypass(dsp.value >= 0.5F);
+        else
+            modulation_.set_input(
+                static_cast<ModulationSourceId>(dsp.parameter), dsp.value);
     }
     SynthTrigger synth_trigger;
     while (synth_triggers_.pop(synth_trigger)) {
@@ -619,6 +642,10 @@ void AudioEngine::process(std::span<float> left,
             synth_.note_on(synth_trigger.note, synth_trigger.velocity);
         else
             synth_.note_off(synth_trigger.note);
+        if (synth_trigger.note_on)
+            modulation_.note_on(0, synth_trigger.velocity);
+        else
+            modulation_.note_off(0);
     }
     while (patterns_.pop(pattern))
         scheduler_.request_pattern(pattern);
@@ -631,6 +658,8 @@ void AudioEngine::process(std::span<float> left,
         scheduler_.set_tempo(timeline->transport.microseconds_per_quarter);
         project_tempo_bpm_ = static_cast<float>(
             60000000.0 / timeline->transport.microseconds_per_quarter);
+        modulation_.set_tempo(project_tempo_bpm_);
+        modulation_.clear_automation();
         next.state.store(PlanState::active, std::memory_order_release);
         if (active_timeline_slot_ >= 0)
             timeline_plans_[static_cast<std::size_t>(active_timeline_slot_)]
@@ -644,10 +673,12 @@ void AudioEngine::process(std::span<float> left,
         else if (command == TransportCommand::stop) {
             transport_playing_ = false;
             stop_voices();
+            modulation_.clear_automation();
         } else if (command == TransportCommand::restart) {
             transport_frame_ = 0;
             transport_playing_ = true;
             stop_voices();
+            modulation_.restart();
         } else {
             const auto fill = command == TransportCommand::fill_on;
             timeline_scheduler_.set_fill(fill);
@@ -700,6 +731,13 @@ void AudioEngine::process(std::span<float> left,
         mixer_tracks[i] = mixer_.active_track_id(i);
 
     for (std::size_t frame = 0; frame < frames; ++frame) {
+        modulation_.process_frame([&](ParameterDestination destination,
+                                      float value) noexcept {
+            if (destination.target == ParameterTarget::subtractive_synth)
+                (void)synth_.set_parameter(destination.parameter, value);
+            else if (destination.target == ParameterTarget::stereo_delay)
+                (void)delay_.set_parameter(destination.parameter, value);
+        });
         while (external_index < pending_trigger_count_ &&
                pending_triggers_[external_index].frame_offset == frame) {
             const auto &event = pending_triggers_[external_index++];
@@ -738,6 +776,10 @@ void AudioEngine::process(std::span<float> left,
                timeline_events_[timeline_index].frame == frame) {
             const auto &event = timeline_events_[timeline_index++];
             if (event.type == MusicalEventType::parameter) {
+                modulation_.set_automation(
+                    {static_cast<ParameterTarget>(event.parameter_target),
+                     event.parameter_id},
+                    event.value);
                 if (event.parameter_target ==
                     static_cast<std::uint32_t>(
                         ParameterTarget::subtractive_synth))
@@ -749,6 +791,10 @@ void AudioEngine::process(std::span<float> left,
                     synth_.note_on(event.pitch, event.value, owner);
                 else if (event.type == MusicalEventType::note_off)
                     synth_.note_off(event.pitch, owner);
+                if (event.type == MusicalEventType::note_on)
+                    modulation_.note_on(event.track, event.value);
+                else if (event.type == MusicalEventType::note_off)
+                    modulation_.note_off(event.track);
             } else if (event.instrument == sample_instrument_key) {
                 if (event.type == MusicalEventType::note_on)
                     start_voice(event.pitch, event.value, event.track,
