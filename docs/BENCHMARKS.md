@@ -1,5 +1,14 @@
 # Performance monitoring and benchmarks
 
+Task 049 adds light (4 tracks), medium (16), heavy (32), and stress (32
+tracks/128 routes) integration tiers. A 2026-11-20 Ryzen 7 7800X3D Debug run
+measured average/worst callback times of 0.054/0.147, 0.177/0.332, 1.161/1.878
+and 1.356/2.301 ms. It observed no deadline misses, MIDI drops or recording
+overflows and about 47.4 MiB peak RSS. Callback sizes cycle through 256, 127, 65
+and 191 frames; project preparation is excluded. These are regression results,
+not Pi 5, N150 or XRUN claims. See
+[INTEGRATION_VALIDATION.md](INTEGRATION_VALIDATION.md).
+
 `arrangement_recording_4096_events` separates bounded capture cost from
 control-side validation/commit cost for rapid launches and dense automation.
 Callback acknowledgement remains a fixed queue push. Results are host

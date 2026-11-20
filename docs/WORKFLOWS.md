@@ -1,5 +1,10 @@
 # End-to-end workflows
 
+These procedures are complemented by the four-tier
+[integrated engine validation](INTEGRATION_VALIDATION.md), which uses production
+engine and persistence paths headlessly and emits machine-readable timing and
+queue diagnostics.
+
 ## Record a live pattern performance
 
 Arm arrangement recording, choose replace or overdub, optionally enable

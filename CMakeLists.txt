@@ -161,6 +161,16 @@ if(NEUROGENIC_BUILD_TESTS)
   set_tests_properties(neurogenic_workflows PROPERTIES
     PASS_REGULAR_EXPRESSION "neurogenic.workflow.summary.v1 passed=4"
     TIMEOUT 30)
+  add_executable(neurogenic_integration_validation
+    tests/integration_validation.cpp)
+  target_link_libraries(neurogenic_integration_validation PRIVATE
+    neurogenic_engine)
+  add_test(NAME neurogenic_integration_validation
+    COMMAND neurogenic_integration_validation)
+  set_tests_properties(neurogenic_integration_validation PROPERTIES
+    PASS_REGULAR_EXPRESSION
+      "neurogenic.integration-validation.summary.v1 passed=4"
+    TIMEOUT 30)
   add_executable(neurogenic_benchmark benchmarks/timeline_benchmark.cpp)
   target_link_libraries(neurogenic_benchmark PRIVATE neurogenic_engine neurogenic_gui)
   # CTest validates every scenario and runs it under sanitizers, but does not

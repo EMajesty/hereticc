@@ -1,5 +1,14 @@
 # Implementation status
 
+Task 049 adds a deterministic four-tier integrated engine suite covering
+sample/synth playback, maximum track/group routing, native FX, aux sends, dense
+modulation, macro morphs, variable callbacks, MIDI clock, internal recording,
+six-channel processing and project round-trip together. Numeric audio, resource
+and queue assertions produce JSON reports. Focused suites remain authoritative
+for pattern chains, arrangement capture, external clock, voice modulation,
+external FX and migration edge cases. Long-duration and physical N150/Pi 5,
+audio-interface, MIDI and touchscreen testing remain outstanding.
+
 Task 046 adds bounded live arrangement capture with callback-acknowledged launch
 timing, pattern/chain/follow clip construction, replace/overdub, count-in,
 instance-aware discrete automation thinning, one-transaction undo/redo,

@@ -1,5 +1,11 @@
 # Architecture
 
+Integrated ownership and publication are exercised by the headless four-tier
+harness in [INTEGRATION_VALIDATION.md](INTEGRATION_VALIDATION.md). It combines
+immutable samples, compiled timelines, prepared mixer/effect/modulation
+snapshots, bounded MIDI and recording queues, and callback macro morphs while
+keeping project I/O and preparation on the control side.
+
 Live arrangement capture uses a bounded callback-to-control acknowledgement
 queue. The callback emits only the exact activation frame; the application
 thread converts it to musical time, builds clips/automation, validates a full
