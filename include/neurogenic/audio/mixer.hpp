@@ -132,6 +132,9 @@ class Mixer {
     [[nodiscard]] std::size_t active_track_count() const noexcept {
         return active_.track_count;
     }
+    [[nodiscard]] std::size_t active_input_count() const noexcept {
+        return active_.input_count;
+    }
     [[nodiscard]] TrackId active_track_id(std::size_t index) const noexcept {
         return index < active_.track_count ? active_.tracks[index].track : 0;
     }
@@ -146,6 +149,11 @@ class Mixer {
     track_right(std::size_t) const noexcept;
     [[nodiscard]] std::span<const float> aux_left(std::size_t) const noexcept;
     [[nodiscard]] std::span<const float> aux_right(std::size_t) const noexcept;
+    [[nodiscard]] std::span<const float> input(std::size_t index) const noexcept {
+        return index < active_.input_count
+                   ? std::span<const float>{physical_input_[index].data(), frames_}
+                   : std::span<const float>{};
+    }
     [[nodiscard]] std::span<const float>
     external_return_left(std::size_t) const noexcept;
     [[nodiscard]] std::span<const float>

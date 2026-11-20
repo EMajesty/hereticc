@@ -1,5 +1,12 @@
 # Performance monitoring and benchmarks
 
+Task 040 adds 16/32, 32/64 and 64/128 instance/connection graph workloads plus
+a 64-node deep acyclic chain. On the 2026-11-20 x86-64 Debug host (Ryzen 7
+7800X3D, GCC 15.3, 48 kHz, 256 frames, 200 iterations), callback averages were
+28.7, 72.0, 208.2 and 88.4 microseconds per buffer. Graph preparation took
+5.8, 7.9, 19.6 and 14.6 microseconds respectively; resident process memory was
+76.6 MB. These are offline host regressions, not Pi 5 or N150 measurements.
+
 Task 039 adds bounded 8-, 32- and 64-instance scenarios; the last uses 128
 dense routes. They measure callback work after control-side preparation and do
 not constitute Raspberry Pi 5 measurements.

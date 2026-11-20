@@ -420,6 +420,126 @@ void test_modulation_engine() {
          partition_b.snapshot().modulator_values[0],
          "dynamic modulator callback partition independence");
 
+    ModulationConfiguration graph;
+    graph.update_interval = 1;
+    graph.modulator_count = 3;
+    graph.modulators[0].id = 30;
+    graph.modulators[0].type = ModulatorType::xy_manual;
+    graph.modulators[0].owner_kind = ModulatorOwnerKind::track;
+    graph.modulators[0].owner_id = 1;
+    graph.modulators[0].shared = true;
+    graph.modulators[1].id = 10;
+    graph.modulators[1].type = ModulatorType::lfo;
+    graph.modulators[1].owner_kind = ModulatorOwnerKind::track;
+    graph.modulators[1].owner_id = 2;
+    graph.modulators[1].settings.rate_hz = 1;
+    graph.modulators[2].id = 20;
+    graph.modulators[2].type = ModulatorType::lfo;
+    graph.modulators[2].owner_kind = ModulatorOwnerKind::master;
+    graph.route_count = 1;
+    auto &graph_edge = graph.routes[0];
+    graph_edge.id = 101;
+    graph_edge.source_instance = 30;
+    graph_edge.destination_kind =
+        ModulationDestinationKind::modulator_parameter;
+    graph_edge.destination_modulator = 10;
+    graph_edge.destination_modulator_parameter = ModulatorParameterId::rate;
+    graph_edge.depth = 0.5F;
+    graph_edge.minimum = -1;
+    graph_edge.maximum = 1;
+    graph_edge.scope = ModulationScope::track;
+    graph_edge.track_id = 1;
+    graph_edge.destination_owner_explicit = true;
+    graph_edge.destination_owner_kind = ModulatorOwnerKind::track;
+    graph_edge.destination_owner_id = 2;
+    ModulationGraphDiagnostics graph_diagnostics;
+    check(validate_modulation_graph(graph, graph_diagnostics) &&
+              graph_diagnostics.evaluation_count == 3 &&
+              graph_diagnostics.evaluation_order[0] == 20 &&
+              graph_diagnostics.evaluation_order[1] == 30 &&
+              graph_diagnostics.evaluation_order[2] == 10,
+          "stable topological order and explicit cross-track sharing");
+    auto hidden_cross_track = graph;
+    hidden_cross_track.modulators[0].shared = false;
+    check(!validate_modulation_graph(hidden_cross_track, graph_diagnostics) &&
+              graph_diagnostics.message.find("shared") != std::string::npos,
+          "implicit cross-track visibility rejected");
+    auto omitted_destination_owner = graph;
+    omitted_destination_owner.routes[0].destination_owner_explicit = false;
+    check(!validate_modulation_graph(omitted_destination_owner,
+                                     graph_diagnostics) &&
+              graph_diagnostics.message.find("shared") != std::string::npos,
+          "cross-track modulator destination owner must be explicit");
+    auto direct_cycle = graph;
+    direct_cycle.routes[0].source_instance = 10;
+    direct_cycle.routes[0].destination_modulator = 10;
+    direct_cycle.routes[0].track_id = 2;
+    check(!validate_modulation_graph(direct_cycle, graph_diagnostics) &&
+              graph_diagnostics.message.find("direct") != std::string::npos,
+          "direct modulation cycle rejected");
+    auto indirect_cycle = graph;
+    indirect_cycle.route_count = 2;
+    indirect_cycle.modulators[1].shared = true;
+    indirect_cycle.modulators[2].shared = true;
+    indirect_cycle.routes[0].source_instance = 20;
+    indirect_cycle.routes[1] = indirect_cycle.routes[0];
+    indirect_cycle.routes[1].id = 102;
+    indirect_cycle.routes[1].source_instance = 10;
+    indirect_cycle.routes[1].destination_modulator = 20;
+    indirect_cycle.routes[1].destination_owner_kind =
+        ModulatorOwnerKind::master;
+    indirect_cycle.routes[1].destination_owner_id = 0;
+    indirect_cycle.routes[1].track_id = 2;
+    check(!validate_modulation_graph(indirect_cycle, graph_diagnostics) &&
+              graph_diagnostics.message.find("indirect") != std::string::npos,
+          "indirect modulation cycle rejected");
+    auto disabled_cycle = indirect_cycle;
+    disabled_cycle.routes[1].enabled = false;
+    check(validate_modulation_graph(disabled_cycle, graph_diagnostics),
+          "disabled connection does not participate in graph cycle");
+    auto over_budget = graph;
+    over_budget.modulator_count =
+        ModulationConfiguration::maximum_modulators + 1;
+    check(!validate_modulation_graph(over_budget, graph_diagnostics) &&
+              graph_diagnostics.message.find("budget") != std::string::npos,
+          "graph capacity exhaustion preserves active configuration");
+    auto prepared_graph = graph;
+    check(prepare_modulation_graph(prepared_graph, graph_diagnostics) &&
+              prepared_graph.graph_prepared &&
+              prepared_graph.prepared_count == graph.modulator_count &&
+              engine.configure(prepared_graph),
+          "control-side graph preparation produces callback-ready order");
+    check(engine.configure(graph), "compiled modulation graph configuration");
+    engine.set_input(ModulationSourceId::xy_x, 1.0F);
+    process(2);
+    const auto graph_value = engine.snapshot().modulator_values[1];
+    check(graph_value != 0.0F,
+          "modulator parameter input evaluated before destination");
+    check(engine.configure(graph), "modulator automation reset configuration");
+    engine.set_input(ModulationSourceId::xy_x, 1.0F);
+    engine.set_modulator_automation(10, ModulatorParameterId::rate, 20.0F);
+    process(2);
+    check(engine.snapshot().modulator_values[1] > graph_value,
+          "modulator base automation composes before graph modulation");
+
+    ModulationConfiguration tapped;
+    tapped.update_interval = 1;
+    tapped.modulator_count = 1;
+    tapped.modulators[0].id = 1;
+    tapped.modulators[0].type = ModulatorType::envelope_follower;
+    tapped.modulators[0].owner_kind = ModulatorOwnerKind::auxiliary;
+    tapped.modulators[0].owner_id = 0;
+    tapped.modulators[0].settings.follower_tap = FollowerTapKind::track;
+    tapped.modulators[0].settings.follower_tap_id = 9;
+    check(engine.configure(tapped), "audio follower tap configuration");
+    engine.set_follower_input(FollowerTapKind::track, 8, 1.0F);
+    process(1);
+    const auto ignored_tap = engine.snapshot().modulator_values[0];
+    engine.set_follower_input(FollowerTapKind::track, 9, 1.0F);
+    process(1);
+    check(engine.snapshot().modulator_values[0] > ignored_tap,
+          "envelope follower stable tap selection");
+
     Mixer numeric_mixer(1000);
     MixerConfiguration numeric_config;
     numeric_config.revision = 1;
@@ -644,6 +764,17 @@ void test_modulation_engine() {
           "semantic modulator duplication with stable identity");
     std::array<float, 64> left{}, right{};
     audio.process(left, right); // acknowledge bounded configuration publications
+    check(application
+              .execute({"modulation.connection-create.v1",
+                        {{"source_id", std::int64_t{1}},
+                         {"destination_id", std::int64_t{2}},
+                         {"parameter", std::int64_t{static_cast<std::int64_t>(
+                                           ModulatorParameterId::rate)}},
+                         {"depth", 0.25}}})
+              .accepted &&
+              application.snapshot().modulation_graph.valid,
+          "semantic modulator graph connection");
+    audio.process(left, right);
     auto created = application.execute(
         {"modulation.route-create.v1",
          {{"source",
@@ -653,7 +784,7 @@ void test_modulation_engine() {
           {"scope",
            std::int64_t{static_cast<std::int64_t>(ModulationScope::global)}}}});
     check(created.accepted &&
-              application.snapshot().modulation.route_count == 2 &&
+              application.snapshot().modulation.route_count == 3 &&
               application.snapshot().project_dirty,
           "semantic modulation route creation");
     check(application
@@ -669,7 +800,7 @@ void test_modulation_engine() {
               .accepted,
           "XY modulation action");
     audio.process(left, right);
-    check(audio.modulation_snapshot().effective_values[1] > 8000,
+    check(audio.modulation_snapshot().effective_values[2] > 8000,
           "application modulation reached audio engine");
     check(application
               .execute({"modulation.route-create.v1",
@@ -2634,9 +2765,26 @@ void test_unified_project_persistence() {
     project.modulation.modulators[0].type = ModulatorType::lfo;
     project.modulation.modulators[0].owner_kind = ModulatorOwnerKind::master;
     project.modulation.modulators[0].settings = project.modulation.sources[0];
+    project.modulation.modulators[0].shared = true;
     std::copy_n("Project LFO", 11,
                 project.modulation.modulators[0].display_name.begin());
     project.modulation.routes[0].source_instance = 9001;
+    project.modulation.modulator_count = 2;
+    project.modulation.modulators[1].id = 9002;
+    project.modulation.modulators[1].type = ModulatorType::lfo;
+    project.modulation.modulators[1].owner_kind = ModulatorOwnerKind::master;
+    project.modulation.modulators[1].settings.rate_hz = 0.5F;
+    project.modulation.route_count = 2;
+    project.modulation.routes[1].id = 82;
+    project.modulation.routes[1].source_instance = 9001;
+    project.modulation.routes[1].destination_kind =
+        ModulationDestinationKind::modulator_parameter;
+    project.modulation.routes[1].destination_modulator = 9002;
+    project.modulation.routes[1].destination_modulator_parameter =
+        ModulatorParameterId::rate;
+    project.modulation.routes[1].minimum = -1;
+    project.modulation.routes[1].maximum = 1;
+    project.modulation.routes[1].depth = 0.2F;
     project.midi.clock_source = MidiClockSource::external;
     project.midi.forward_external_clock = true;
     project.midi.route_count = 1;
@@ -2670,14 +2818,18 @@ void test_unified_project_persistence() {
               loaded.mixer.effects.instances[0].type ==
                   EffectProcessorType::low_pass_filter &&
               loaded.mixer.effects.master.instances[0] == 700 &&
-              loaded.modulation.route_count == 1 &&
+              loaded.modulation.route_count == 2 &&
               loaded.modulation.routes[0].id == 81 &&
               loaded.modulation.routes[0].destination.instance == 2 &&
               loaded.modulation.routes[0].source_instance == 9001 &&
-              loaded.modulation.modulator_count == 1 &&
+              loaded.modulation.modulator_count == 2 &&
               loaded.modulation.modulators[0].id == 9001 &&
               std::string(loaded.modulation.modulators[0].display_name.data()) ==
                   "Project LFO" &&
+              loaded.modulation.modulators[0].shared &&
+              loaded.modulation.routes[1].destination_kind ==
+                  ModulationDestinationKind::modulator_parameter &&
+              loaded.modulation.routes[1].destination_modulator == 9002 &&
               loaded.modulation.sources[0].tempo_sync &&
               loaded.midi.clock_source == MidiClockSource::external &&
               loaded.midi.forward_external_clock &&
@@ -2693,6 +2845,24 @@ void test_unified_project_persistence() {
               save_metrics.metadata_bytes > 0 &&
               load_metrics.metadata_bytes > 0,
           "unified project round trip");
+
+    auto missing_owner = project;
+    missing_owner.modulation.modulator_count = 3;
+    missing_owner.modulation.modulators[2].id = 9003;
+    missing_owner.modulation.modulators[2].type = ModulatorType::lfo;
+    missing_owner.modulation.modulators[2].owner_kind =
+        ModulatorOwnerKind::track;
+    missing_owner.modulation.modulators[2].owner_id = 999999;
+    bool rejected_missing_owner{};
+    try {
+        save_project(missing_owner, root / "missing-owner");
+    } catch (const std::invalid_argument &error) {
+        rejected_missing_owner =
+            std::string(error.what()).find("missing owner") !=
+            std::string::npos;
+    }
+    check(rejected_missing_owner,
+          "project persistence rejects missing modulation owner");
 
     const auto invalid_target = root / "not-a-directory";
     {

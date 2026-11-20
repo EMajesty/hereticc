@@ -5,6 +5,10 @@ ownership. Discovery metadata stays separate from compact callback state and
 complete configurations are validated before bounded publication. See
 [Dynamic modulator instances](MODULATOR_INSTANCES.md).
 
+Cross-owner and modulator-parameter connections compile control-side into a
+stable-ID topological order. Audio-derived inputs use previous-block mixer
+observations. See [Modulation graph](MODULATION_GRAPH.md).
+
 Native processing uses a bounded effect-rack snapshot within mixer publication.
 Track, aux and master chains own stable instance IDs; preallocated runtime state
 never enters application snapshots. See [FX_CHAINS.md](FX_CHAINS.md).

@@ -248,9 +248,41 @@ MixerConfiguration load_mixer(const std::filesystem::path &path) {
     result.revision = 1;
     return result;
 }
+bool validate_modulation_owners(const ModulationConfiguration &configuration,
+                                const Timeline &timeline,
+                                std::string &error) {
+    const auto owner_exists = [&](ModulatorOwnerKind kind, std::uint64_t id) {
+        if (kind == ModulatorOwnerKind::master)
+            return id == 0;
+        if (kind == ModulatorOwnerKind::auxiliary)
+            return id < mixer_aux_count;
+        if (kind == ModulatorOwnerKind::track ||
+            kind == ModulatorOwnerKind::voice_definition)
+            return std::any_of(timeline.tracks.begin(), timeline.tracks.end(),
+                               [&](const auto &track) { return track.id == id; });
+        return false;
+    };
+    for (std::size_t i = 0; i < configuration.modulator_count; ++i)
+        if (!owner_exists(configuration.modulators[i].owner_kind,
+                          configuration.modulators[i].owner_id)) {
+            error = "modulator " +
+                    std::to_string(configuration.modulators[i].id) +
+                    " has a missing owner";
+            return false;
+        }
+    for (std::size_t i = 0; i < configuration.route_count; ++i)
+        if (configuration.routes[i].destination_owner_explicit &&
+            !owner_exists(configuration.routes[i].destination_owner_kind,
+                          configuration.routes[i].destination_owner_id)) {
+            error = "connection " + std::to_string(configuration.routes[i].id) +
+                    " has a missing destination owner";
+            return false;
+        }
+    return true;
+}
 std::string serialize_modulation(const ModulationConfiguration &configuration) {
     std::ostringstream out;
-    out << "NEUROGENIC_MODULATION 4\n"
+    out << "NEUROGENIC_MODULATION 5\n"
         << std::setprecision(9) << "interval " << configuration.update_interval
         << '\n';
     for (std::size_t i = 0; i < configuration.source_count; ++i) {
@@ -281,7 +313,9 @@ std::string serialize_modulation(const ModulationConfiguration &configuration) {
             << source.release_seconds << ' ' << source.seed << ' '
             << source.follower_attack_seconds << ' '
             << source.follower_release_seconds << ' ' << source.follower_gain
-            << ' ' << source.follower_threshold << '\n';
+            << ' ' << source.follower_threshold << ' ' << instance.shared
+            << ' ' << static_cast<unsigned>(source.follower_tap) << ' '
+            << source.follower_tap_id << '\n';
     }
     out << "routes " << configuration.route_count << '\n';
     for (std::size_t i = 0; i < configuration.route_count; ++i) {
@@ -294,6 +328,12 @@ std::string serialize_modulation(const ModulationConfiguration &configuration) {
             << ' ' << static_cast<unsigned>(route.polarity) << ' '
             << static_cast<unsigned>(route.scope) << ' ' << route.track_id
             << ' ' << route.source_instance << ' ' << route.source_output
+            << ' ' << static_cast<unsigned>(route.destination_kind) << ' '
+            << route.destination_modulator << ' '
+            << static_cast<unsigned>(route.destination_modulator_parameter)
+            << ' ' << route.destination_owner_explicit << ' '
+            << static_cast<unsigned>(route.destination_owner_kind) << ' '
+            << route.destination_owner_id
             << '\n';
     }
     return out.str();
@@ -305,7 +345,7 @@ ModulationConfiguration load_modulation(const std::filesystem::path &path) {
     unsigned version{};
     ModulationConfiguration result;
     if (!(input >> magic >> version) || magic != "NEUROGENIC_MODULATION" ||
-        (version == 0 || version > 4) ||
+        (version == 0 || version > 5) ||
         !(input >> label >> result.update_interval) || label != "interval")
         throw std::runtime_error(
             "unsupported or malformed modulation metadata");
@@ -363,6 +403,13 @@ ModulationConfiguration load_modulation(const std::filesystem::path &path) {
             instance.owner_kind = static_cast<ModulatorOwnerKind>(owner);
             source.waveform = static_cast<LfoWaveform>(waveform);
             std::copy(name.begin(), name.end(), instance.display_name.begin());
+            if (version >= 5) {
+                unsigned tap{};
+                if (!(input >> instance.shared >> tap >> source.follower_tap_id) ||
+                    tap > static_cast<unsigned>(FollowerTapKind::physical_input))
+                    throw std::runtime_error("malformed modulator graph metadata");
+                source.follower_tap = static_cast<FollowerTapKind>(tap);
+            }
         }
     }
     if (!(input >> label >> result.route_count) || label != "routes" ||
@@ -388,6 +435,21 @@ ModulationConfiguration load_modulation(const std::filesystem::path &path) {
         if (version >= 4 &&
             !(input >> route.source_instance >> route.source_output))
             throw std::runtime_error("malformed modulator route source");
+        if (version >= 5) {
+            unsigned kind{}, parameter{}, owner{};
+            if (!(input >> kind >> route.destination_modulator >> parameter >>
+                  route.destination_owner_explicit >> owner >>
+                  route.destination_owner_id) ||
+                kind > static_cast<unsigned>(
+                           ModulationDestinationKind::modulator_parameter) ||
+                owner > static_cast<unsigned>(ModulatorOwnerKind::voice_definition))
+                throw std::runtime_error("malformed modulation graph connection");
+            route.destination_kind =
+                static_cast<ModulationDestinationKind>(kind);
+            route.destination_modulator_parameter =
+                static_cast<ModulatorParameterId>(parameter);
+            route.destination_owner_kind = static_cast<ModulatorOwnerKind>(owner);
+        }
         if (version == 1 &&
             route.destination.target == ParameterTarget::subtractive_synth &&
             route.scope != ModulationScope::global)
@@ -561,8 +623,14 @@ void save_project(const Project &project,
     ModulationEngine modulation_validation;
     if (!modulation_validation.configure(project.modulation))
         throw std::invalid_argument("invalid project modulation configuration");
+    if (!validate_modulation_owners(project.modulation, project.timeline,
+                                    validation_error))
+        throw std::invalid_argument("invalid project modulation owners: " +
+                                    validation_error);
     for (std::size_t i = 0; i < project.modulation.route_count; ++i)
-        if (!valid_legacy_parameter(
+        if (project.modulation.routes[i].destination_kind ==
+                ModulationDestinationKind::parameter &&
+            !valid_legacy_parameter(
                 project.modulation.routes[i].destination.target,
                 project.modulation.routes[i].destination.parameter))
             throw std::invalid_argument("invalid modulation destination");
@@ -689,6 +757,11 @@ Project load_project(const std::filesystem::path &directory,
     }
     if (std::filesystem::exists(files / "modulation.ngm"))
         result.modulation = load_modulation(files / "modulation.ngm");
+    std::string modulation_owner_error;
+    if (!validate_modulation_owners(result.modulation, result.timeline,
+                                    modulation_owner_error))
+        throw std::runtime_error("invalid project modulation owners: " +
+                                 modulation_owner_error);
     if (std::filesystem::exists(files / "midi.ngm"))
         result.midi = load_midi(files / "midi.ngm");
     for (auto &[slot, path] : result.samples.sample_paths) {

@@ -4,6 +4,8 @@ NEUROGENIC uses a bounded collection of stable modulator instances rather than
 a user-visible fixed source bank. The legacy twelve-source bank remains a
 compatibility adapter. New clients discover native types with
 `modulator_type_registry()` and create instances through `modulator.*.v1`.
+Task 040 connects these instances through the validated
+[modulation graph](MODULATION_GRAPH.md).
 
 ## Discovery and types
 

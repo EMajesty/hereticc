@@ -15,21 +15,31 @@ constexpr std::uint32_t owner_bit(ModulatorOwnerKind owner) noexcept {
     return 1U << static_cast<unsigned>(owner);
 }
 constexpr std::array common_parameters{
-    ModulatorParameterDescriptor{"rate", "Rate", "Hz", 0, 100, 1},
+    ModulatorParameterDescriptor{"rate", "Rate", "Hz", 0, 100, 1, false,
+                                 ModulatorParameterId::rate},
     ModulatorParameterDescriptor{"beats", "Beats/cycle", "beats", 0.03125F,
-                                 64, 1},
+                                 64, 1, false, ModulatorParameterId::beats},
     ModulatorParameterDescriptor{"seed", "Seed", "", 1, 4294967295.0F, 1,
-                                 true}};
+                                 true, {}, false}};
 constexpr std::array envelope_parameters{
-    ModulatorParameterDescriptor{"attack", "Attack", "s", 0, 60, 0.01F},
-    ModulatorParameterDescriptor{"decay", "Decay", "s", 0, 60, 0.1F},
-    ModulatorParameterDescriptor{"sustain", "Sustain", "", 0, 1, 1},
-    ModulatorParameterDescriptor{"release", "Release", "s", 0, 60, 0.2F}};
+    ModulatorParameterDescriptor{"attack", "Attack", "s", 0, 60, 0.01F,
+                                 false, ModulatorParameterId::attack},
+    ModulatorParameterDescriptor{"decay", "Decay", "s", 0, 60, 0.1F,
+                                 false, ModulatorParameterId::decay},
+    ModulatorParameterDescriptor{"sustain", "Sustain", "", 0, 1, 1, false,
+                                 ModulatorParameterId::sustain},
+    ModulatorParameterDescriptor{"release", "Release", "s", 0, 60, 0.2F,
+                                 false, ModulatorParameterId::release}};
 constexpr std::array follower_parameters{
-    ModulatorParameterDescriptor{"attack", "Attack", "s", 0, 10, 0.01F},
-    ModulatorParameterDescriptor{"release", "Release", "s", 0, 10, 0.1F},
-    ModulatorParameterDescriptor{"gain", "Sensitivity", "x", 0, 100, 1},
-    ModulatorParameterDescriptor{"threshold", "Threshold", "", 0, 1, 0}};
+    ModulatorParameterDescriptor{"attack", "Attack", "s", 0, 10, 0.01F,
+                                 false, ModulatorParameterId::attack},
+    ModulatorParameterDescriptor{"release", "Release", "s", 0, 10, 0.1F,
+                                 false, ModulatorParameterId::release},
+    ModulatorParameterDescriptor{"gain", "Sensitivity", "x", 0, 100, 1,
+                                 false, ModulatorParameterId::follower_gain},
+    ModulatorParameterDescriptor{"threshold", "Threshold", "", 0, 1, 0,
+                                 false,
+                                 ModulatorParameterId::follower_threshold}};
 constexpr std::array<ModulatorParameterDescriptor, 0> no_parameters{};
 constexpr std::array<ModulatorPortDescriptor, 0> no_inputs{};
 constexpr std::array output_bipolar{
@@ -84,6 +94,157 @@ const ModulatorTypeDescriptor *find_modulator_type(ModulatorType type) noexcept 
     return found == registry.end() ? nullptr : &*found;
 }
 
+bool validate_modulation_graph(const ModulationConfiguration &configuration,
+                               ModulationGraphDiagnostics &diagnostics) {
+    diagnostics = {};
+    if (configuration.modulator_count > configuration.modulators.size() ||
+        configuration.route_count > configuration.routes.size()) {
+        diagnostics.message = "modulation graph exceeds its prepared budget";
+        return false;
+    }
+    const auto find_instance = [&](ModulatorInstanceId id) {
+        return std::find_if(
+            configuration.modulators.begin(),
+            configuration.modulators.begin() + configuration.modulator_count,
+            [&](const auto &instance) { return instance.id == id; });
+    };
+    std::array<std::uint16_t, ModulationConfiguration::maximum_modulators>
+        indegree{};
+    for (std::size_t route_index = 0;
+         route_index < configuration.route_count; ++route_index) {
+        const auto &route = configuration.routes[route_index];
+        diagnostics.connection = route.id;
+        if (!route.source_instance)
+            continue; // Task 028 compatibility source.
+        const auto source = find_instance(route.source_instance);
+        if (source == configuration.modulators.begin() +
+                          configuration.modulator_count) {
+            diagnostics.message = "connection references missing source";
+            return false;
+        }
+        const auto *source_type = find_modulator_type(source->type);
+        if (!source_type ||
+            std::none_of(source_type->outputs.begin(), source_type->outputs.end(),
+                         [&](const auto &output) {
+                             return output.id == route.source_output;
+                         })) {
+            diagnostics.message = "connection references missing output port";
+            return false;
+        }
+        if (route.destination_owner_explicit &&
+            (route.destination_owner_kind != source->owner_kind ||
+             route.destination_owner_id != source->owner_id) &&
+            !source->shared) {
+            diagnostics.message =
+                "cross-owner connection requires an explicitly shared source";
+            return false;
+        }
+        if (route.destination_kind ==
+            ModulationDestinationKind::modulator_parameter) {
+            const auto destination = find_instance(route.destination_modulator);
+            if (destination == configuration.modulators.begin() +
+                                   configuration.modulator_count) {
+                diagnostics.message =
+                    "connection references missing destination modulator";
+                return false;
+            }
+            const auto *destination_type = find_modulator_type(destination->type);
+            const auto parameter =
+                destination_type
+                    ? std::find_if(destination_type->parameters.begin(),
+                                   destination_type->parameters.end(),
+                                   [&](const auto &candidate) {
+                                       return candidate.numeric_id ==
+                                                  route.destination_modulator_parameter &&
+                                              candidate.modulatable &&
+                                              !candidate.discrete;
+                                   })
+                    : std::span<const ModulatorParameterDescriptor>::iterator{};
+            if (!destination_type ||
+                parameter == destination_type->parameters.end()) {
+                diagnostics.message =
+                    "connection targets an unavailable modulator parameter";
+                return false;
+            }
+            const auto cross_owner =
+                source->owner_kind != destination->owner_kind ||
+                source->owner_id != destination->owner_id;
+            if (cross_owner &&
+                (!route.destination_owner_explicit ||
+                 route.destination_owner_kind != destination->owner_kind ||
+                 route.destination_owner_id != destination->owner_id ||
+                 !source->shared)) {
+                diagnostics.message =
+                    "cross-owner modulator connection requires an explicitly "
+                    "shared source and matching destination owner";
+                return false;
+            }
+            if (!cross_owner && route.destination_owner_explicit &&
+                (route.destination_owner_kind != destination->owner_kind ||
+                 route.destination_owner_id != destination->owner_id)) {
+                diagnostics.message =
+                    "connection destination owner does not match modulator";
+                return false;
+            }
+            if (source->id == destination->id) {
+                diagnostics.message = "direct modulation cycle";
+                return false;
+            }
+            const auto slot = static_cast<std::size_t>(
+                destination - configuration.modulators.begin());
+            if (route.enabled)
+                ++indegree[slot];
+        }
+    }
+    std::array<bool, ModulationConfiguration::maximum_modulators> emitted{};
+    for (std::size_t count = 0; count < configuration.modulator_count; ++count) {
+        std::size_t selected = configuration.modulator_count;
+        for (std::size_t candidate = 0;
+             candidate < configuration.modulator_count; ++candidate)
+            if (!emitted[candidate] && indegree[candidate] == 0 &&
+                (selected == configuration.modulator_count ||
+                 configuration.modulators[candidate].id <
+                     configuration.modulators[selected].id))
+                selected = candidate;
+        if (selected == configuration.modulator_count) {
+            diagnostics.message = "indirect modulation cycle";
+            return false;
+        }
+        emitted[selected] = true;
+        diagnostics.evaluation_order[diagnostics.evaluation_count++] =
+            configuration.modulators[selected].id;
+        for (std::size_t route_index = 0;
+             route_index < configuration.route_count; ++route_index) {
+            const auto &route = configuration.routes[route_index];
+            if (!route.enabled ||
+                route.destination_kind !=
+                    ModulationDestinationKind::modulator_parameter ||
+                route.source_instance != configuration.modulators[selected].id)
+                continue;
+            const auto destination = find_instance(route.destination_modulator);
+            if (destination != configuration.modulators.begin() +
+                                   configuration.modulator_count)
+                --indegree[static_cast<std::size_t>(
+                    destination - configuration.modulators.begin())];
+        }
+    }
+    diagnostics.connection = 0;
+    diagnostics.valid = true;
+    return true;
+}
+
+bool prepare_modulation_graph(ModulationConfiguration &configuration,
+                              ModulationGraphDiagnostics &diagnostics) {
+    configuration.graph_prepared = false;
+    configuration.prepared_count = 0;
+    if (!validate_modulation_graph(configuration, diagnostics))
+        return false;
+    configuration.prepared_order = diagnostics.evaluation_order;
+    configuration.prepared_count = diagnostics.evaluation_count;
+    configuration.graph_prepared = true;
+    return true;
+}
+
 ModulationEngine::ModulationEngine(std::uint32_t sample_rate) noexcept
     : sample_rate_(std::max(1U, sample_rate)) {
     track_ids_[0] = 0;
@@ -91,6 +252,15 @@ ModulationEngine::ModulationEngine(std::uint32_t sample_rate) noexcept
 
 bool ModulationEngine::configure(
     const ModulationConfiguration &configuration) noexcept {
+    ModulationGraphDiagnostics graph;
+    if (configuration.graph_prepared) {
+        if (configuration.prepared_count != configuration.modulator_count)
+            return false;
+        graph.valid = true;
+        graph.evaluation_order = configuration.prepared_order;
+        graph.evaluation_count = configuration.prepared_count;
+    } else if (!validate_modulation_graph(configuration, graph))
+        return false;
     if (configuration.modulator_count > configuration.modulators.size() ||
         configuration.route_count > configuration.routes.size() ||
         configuration.update_interval < 1 ||
@@ -180,12 +350,12 @@ bool ModulationEngine::configure(
                     : ModulationScope::global;
             if (route.scope != expected_scope ||
                 (source->owner_kind == ModulatorOwnerKind::track &&
-                 route.track_id != source->owner_id) ||
-                (source->owner_kind == ModulatorOwnerKind::auxiliary &&
-                 (route.destination.target != ParameterTarget::mixer_aux ||
-                  route.destination.instance != source->owner_id + 1)))
+                 route.track_id != source->owner_id))
                 return false;
         }
+        if (route.destination_kind ==
+            ModulationDestinationKind::modulator_parameter)
+            continue;
         const auto target = route.destination.target;
         const auto instance = route.destination.instance;
         const auto parameter = route.destination.parameter;
@@ -239,6 +409,17 @@ bool ModulationEngine::configure(
         }
     }
     configuration_ = configuration;
+    evaluation_count_ = graph.evaluation_count;
+    for (std::size_t order = 0; order < graph.evaluation_count; ++order) {
+        const auto found = std::find_if(
+            configuration_.modulators.begin(),
+            configuration_.modulators.begin() + configuration_.modulator_count,
+            [&](const auto &instance) {
+                return instance.id == graph.evaluation_order[order];
+            });
+        evaluation_order_[order] = static_cast<std::size_t>(
+            found - configuration_.modulators.begin());
+    }
     track_ids_ = tracks;
     track_count_ = count;
     frames_until_update_ = 0;
@@ -264,6 +445,7 @@ bool ModulationEngine::configure(
     for (auto &value : published_route_sources_)
         value.store(0, std::memory_order_relaxed);
     automation_.fill({});
+    modulator_automation_.fill({});
     envelope_gates_.fill(false);
     published_generation_.fetch_add(1, std::memory_order_release);
     return true;
@@ -301,12 +483,31 @@ void ModulationEngine::set_input(ModulationSourceId id, float value) noexcept {
          ++instance)
         if (configuration_.modulators[instance].enabled &&
             configuration_.modulators[instance].type == dynamic_type) {
-            if (dynamic_type == ModulatorType::envelope_follower)
+            if (dynamic_type == ModulatorType::envelope_follower &&
+                configuration_.modulators[instance].settings.follower_tap ==
+                    FollowerTapKind::master &&
+                configuration_.modulators[instance].settings.follower_tap_id ==
+                    0)
                 modulator_states_[instance].target =
                     std::clamp(value, 0.0F, 1.0F);
-            else
+            else if (dynamic_type != ModulatorType::envelope_follower)
                 modulator_states_[instance].value = clamp_source(value);
         }
+}
+void ModulationEngine::set_follower_input(FollowerTapKind tap,
+                                          std::uint64_t tap_id,
+                                          float value) noexcept {
+    if (!std::isfinite(value))
+        return;
+    for (std::size_t instance = 0; instance < configuration_.modulator_count;
+         ++instance) {
+        const auto &definition = configuration_.modulators[instance];
+        if (definition.enabled &&
+            definition.type == ModulatorType::envelope_follower &&
+            definition.settings.follower_tap == tap &&
+            definition.settings.follower_tap_id == tap_id)
+            modulator_states_[instance].target = std::clamp(value, 0.0F, 1.0F);
+    }
 }
 void ModulationEngine::note_on(std::uint64_t track_id,
                                float velocity) noexcept {
@@ -402,6 +603,25 @@ void ModulationEngine::restart() noexcept {
 void ModulationEngine::clear_automation() noexcept {
     for (auto &value : automation_)
         value.active = false;
+    for (auto &value : modulator_automation_)
+        value.active = false;
+}
+void ModulationEngine::set_modulator_automation(
+    ModulatorInstanceId instance, ModulatorParameterId parameter,
+    float value) noexcept {
+    if (!std::isfinite(value))
+        return;
+    for (auto &entry : modulator_automation_)
+        if (entry.active && entry.instance == instance &&
+            entry.parameter == parameter) {
+            entry.value = value;
+            return;
+        }
+    for (auto &entry : modulator_automation_)
+        if (!entry.active) {
+            entry = {instance, parameter, value, true};
+            return;
+        }
 }
 void ModulationEngine::set_automation(ParameterDestination destination,
                                       float value) noexcept {
@@ -574,17 +794,121 @@ void ModulationEngine::update_sources(std::uint32_t elapsed) noexcept {
     }
 }
 
+ModulationSourceSettings
+ModulationEngine::effective_settings(std::size_t index) const noexcept {
+    auto settings = configuration_.modulators[index].settings;
+    const auto destination_id = configuration_.modulators[index].id;
+    const auto *type = find_modulator_type(configuration_.modulators[index].type);
+    if (!type)
+        return settings;
+    for (const auto &descriptor : type->parameters) {
+        if (!descriptor.modulatable || descriptor.discrete)
+            continue;
+        float base{};
+        switch (descriptor.numeric_id) {
+        case ModulatorParameterId::rate: base = settings.rate_hz; break;
+        case ModulatorParameterId::beats: base = settings.beats_per_cycle; break;
+        case ModulatorParameterId::attack:
+            base = configuration_.modulators[index].type ==
+                           ModulatorType::envelope_follower
+                       ? settings.follower_attack_seconds
+                       : settings.attack_seconds;
+            break;
+        case ModulatorParameterId::decay: base = settings.decay_seconds; break;
+        case ModulatorParameterId::sustain: base = settings.sustain; break;
+        case ModulatorParameterId::release:
+            base = configuration_.modulators[index].type ==
+                           ModulatorType::envelope_follower
+                       ? settings.follower_release_seconds
+                       : settings.release_seconds;
+            break;
+        case ModulatorParameterId::follower_gain:
+            base = settings.follower_gain;
+            break;
+        case ModulatorParameterId::follower_threshold:
+            base = settings.follower_threshold;
+            break;
+        default: continue;
+        }
+        for (const auto &automation : modulator_automation_)
+            if (automation.active && automation.instance == destination_id &&
+                automation.parameter == descriptor.numeric_id) {
+                base = automation.value;
+                break;
+            }
+        auto normalized = (base - descriptor.minimum) /
+                          (descriptor.maximum - descriptor.minimum);
+        for (std::size_t route_index = 0;
+             route_index < configuration_.route_count; ++route_index) {
+            const auto &route = configuration_.routes[route_index];
+            if (!route.enabled ||
+                route.destination_kind !=
+                    ModulationDestinationKind::modulator_parameter ||
+                route.destination_modulator != destination_id ||
+                route.destination_modulator_parameter != descriptor.numeric_id)
+                continue;
+            const auto source = std::find_if(
+                configuration_.modulators.begin(),
+                configuration_.modulators.begin() + configuration_.modulator_count,
+                [&](const auto &instance) {
+                    return instance.id == route.source_instance;
+                });
+            if (source == configuration_.modulators.begin() +
+                              configuration_.modulator_count)
+                continue;
+            const auto value = modulator_states_[static_cast<std::size_t>(
+                source - configuration_.modulators.begin())]
+                                   .value;
+            normalized += (route.polarity == ModulationPolarity::bipolar
+                               ? value
+                               : (value + 1.0F) * 0.5F) *
+                          route.depth;
+        }
+        const auto effective = descriptor.minimum +
+                               std::clamp(normalized, 0.0F, 1.0F) *
+                                   (descriptor.maximum - descriptor.minimum);
+        switch (descriptor.numeric_id) {
+        case ModulatorParameterId::rate: settings.rate_hz = effective; break;
+        case ModulatorParameterId::beats: settings.beats_per_cycle = effective; break;
+        case ModulatorParameterId::attack:
+            if (configuration_.modulators[index].type ==
+                ModulatorType::envelope_follower)
+                settings.follower_attack_seconds = effective;
+            else
+                settings.attack_seconds = effective;
+            break;
+        case ModulatorParameterId::decay: settings.decay_seconds = effective; break;
+        case ModulatorParameterId::sustain: settings.sustain = effective; break;
+        case ModulatorParameterId::release:
+            if (configuration_.modulators[index].type ==
+                ModulatorType::envelope_follower)
+                settings.follower_release_seconds = effective;
+            else
+                settings.release_seconds = effective;
+            break;
+        case ModulatorParameterId::follower_gain:
+            settings.follower_gain = effective;
+            break;
+        case ModulatorParameterId::follower_threshold:
+            settings.follower_threshold = effective;
+            break;
+        default: break;
+        }
+    }
+    return settings;
+}
+
 void ModulationEngine::update_modulators(std::uint32_t elapsed) noexcept {
     const auto seconds = static_cast<double>(elapsed) / sample_rate_;
-    for (std::size_t index = 0; index < configuration_.modulator_count;
-         ++index) {
+    for (std::size_t order = 0; order < evaluation_count_; ++order) {
+        const auto index = evaluation_order_[order];
         const auto &instance = configuration_.modulators[index];
         auto &state = modulator_states_[index];
         if (!instance.enabled) {
             state.value = 0;
             continue;
         }
-        const auto &settings = instance.settings;
+        const auto settings = effective_settings(index);
         const auto rate =
             settings.tempo_sync
                 ? tempo_bpm_ /

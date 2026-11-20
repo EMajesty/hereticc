@@ -1,5 +1,10 @@
 # Implementation status
 
+Task 040 adds a stable-ID directed acyclic modulation graph with intentional
+cross-owner sharing, modulator-parameter edges, cycle diagnostics,
+deterministic topological evaluation, previous-block mixer follower taps,
+semantic graph actions and version-5 persistence.
+
 Task 039 adds a discoverable native modulator registry and stable dynamic
 instances owned by tracks, aux buses or master. Instances have independent
 phase/envelope/random state, bounded 64-instance/128-route publication,

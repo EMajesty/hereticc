@@ -192,6 +192,7 @@ struct ApplicationState {
     std::uint64_t active_routing_scene{};
     ModulationConfiguration modulation;
     ModulationSnapshot modulation_runtime;
+    ModulationGraphDiagnostics modulation_graph;
     ModulationRouteId selected_modulation_route{};
     MidiProjectConfiguration midi;
     std::uint64_t midi_dropped{}, midi_sent{};

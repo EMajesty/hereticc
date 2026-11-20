@@ -4,6 +4,9 @@ New configurations use independently creatable stable-ID instances owned by a
 track, aux bus or master. The fixed bank remains a compatibility adapter. See
 [Dynamic modulator instances](MODULATOR_INSTANCES.md).
 
+Cross-owner and modulator-parameter connections form a deterministic DAG; see
+[Modulation graph](MODULATION_GRAPH.md).
+
 Native effects use `fx.INSTANCE.PARAMETER` destinations. Only descriptor-approved
 numeric values are modulatable; topology and resources are rejected. Base values
 remain separate from effective automation/modulation values.

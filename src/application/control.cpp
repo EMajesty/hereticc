@@ -518,7 +518,40 @@ ActionRegistry::ActionRegistry() {
                {{"source_id", ValueType::integer},
                 {"destination", ValueType::text},
                 {"depth", ValueType::real},
-                {"destination_instance", ValueType::integer, false}}));
+                {"destination_instance", ValueType::integer, false},
+                {"destination_owner", ValueType::integer, false},
+                {"destination_owner_id", ValueType::integer, false}}));
+    add(action("modulation.connection-create.v1", "Create graph connection",
+               "Modulation",
+               {{"source_id", ValueType::integer},
+                {"destination_id", ValueType::integer},
+                {"parameter", ValueType::integer},
+                {"depth", ValueType::real}}));
+    add(action("modulation.connection-delete.v1", "Delete graph connection",
+               "Modulation", {{"connection_id", ValueType::integer}}));
+    add(action("modulation.connection-depth.v1", "Set connection depth",
+               "Modulation",
+               {{"connection_id", ValueType::integer},
+                {"depth", ValueType::real}}));
+    add(action("modulation.connection-enable.v1", "Enable connection",
+               "Modulation",
+               {{"connection_id", ValueType::integer},
+                {"enabled", ValueType::boolean}}));
+    add(action("modulation.share.v1", "Share modulator", "Modulation",
+               {{"id", ValueType::integer}, {"shared", ValueType::boolean}}));
+    add(action("modulation.follower-tap.v1", "Select follower tap",
+               "Modulation",
+               {{"id", ValueType::integer},
+                {"tap", ValueType::integer},
+                {"tap_id", ValueType::integer}}));
+    add(action("modulation.graph-query.v1", "Query modulation graph",
+               "Modulation"));
+    add(action("modulation.available-sources.v1", "Query available sources",
+               "Modulation"));
+    add(action("modulation.available-destinations.v1",
+               "Query available destinations", "Modulation"));
+    add(action("modulation.validation-query.v1", "Query graph validation",
+               "Modulation"));
     add(action(
         "parameter.set-normalized.v1", "Set parameter", "Parameters",
         {{"parameter_id", ValueType::text}, {"value", ValueType::real}}));
@@ -2708,6 +2741,16 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                                       : state_.selected_track;
             if ((requested && *requested <= 0) || id == 0)
                 error = "track ID must be positive";
+            else if (std::any_of(
+                         modulation_configuration_.modulators.begin(),
+                         modulation_configuration_.modulators.begin() +
+                             modulation_configuration_.modulator_count,
+                         [&](const auto &instance) {
+                             return instance.owner_kind ==
+                                        ModulatorOwnerKind::track &&
+                                    instance.owner_id == id;
+                         }))
+                error = "track owns modulators; delete or reassign them first";
             else if (!transaction.delete_track(id, error) ||
                      !timeline_.commit(
                          std::move(transaction),
@@ -3839,6 +3882,121 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             if (const auto *latched = argument<bool>(command, "latched"))
                 state_.modifiers.select_latched = *latched;
             changed_locked();
+        } else if (command.action_id == "modulation.graph-query.v1" ||
+                   command.action_id == "modulation.available-sources.v1" ||
+                   command.action_id ==
+                       "modulation.available-destinations.v1" ||
+                   command.action_id == "modulation.validation-query.v1") {
+            changed_locked();
+        } else if (command.action_id.rfind("modulation.connection-", 0) == 0 ||
+                   command.action_id == "modulation.share.v1" ||
+                   command.action_id == "modulation.follower-tap.v1") {
+            auto next = modulation_configuration_;
+            const auto find_instance = [&](ModulatorInstanceId id) {
+                return std::find_if(
+                    next.modulators.begin(),
+                    next.modulators.begin() + next.modulator_count,
+                    [&](const auto &value) { return value.id == id; });
+            };
+            if (command.action_id == "modulation.connection-create.v1") {
+                const auto source_id = static_cast<ModulatorInstanceId>(
+                    *argument<std::int64_t>(command, "source_id"));
+                const auto destination_id = static_cast<ModulatorInstanceId>(
+                    *argument<std::int64_t>(command, "destination_id"));
+                const auto parameter = static_cast<ModulatorParameterId>(
+                    *argument<std::int64_t>(command, "parameter"));
+                const auto depth = *argument<double>(command, "depth");
+                const auto source = find_instance(source_id);
+                const auto destination = find_instance(destination_id);
+                if (source == next.modulators.begin() + next.modulator_count ||
+                    destination == next.modulators.begin() + next.modulator_count)
+                    error = "graph connection references a missing modulator";
+                else if (!std::isfinite(depth) || depth < -1 || depth > 1)
+                    error = "connection depth must be -1..1";
+                else if (next.route_count == next.routes.size())
+                    error = "modulation connection capacity is exhausted";
+                else {
+                    auto &route = next.routes[next.route_count++];
+                    route.id = next_modulation_route_id_++;
+                    route.source_instance = source_id;
+                    route.source_output = 1;
+                    route.destination_kind =
+                        ModulationDestinationKind::modulator_parameter;
+                    route.destination_modulator = destination_id;
+                    route.destination_modulator_parameter = parameter;
+                    route.depth = static_cast<float>(depth);
+                    route.minimum = -1;
+                    route.maximum = 1;
+                    route.scope = source->owner_kind == ModulatorOwnerKind::track
+                                      ? ModulationScope::track
+                                      : ModulationScope::global;
+                    route.track_id = route.scope == ModulationScope::track
+                                         ? source->owner_id
+                                         : 0;
+                    route.destination_owner_explicit = true;
+                    route.destination_owner_kind = destination->owner_kind;
+                    route.destination_owner_id = destination->owner_id;
+                }
+            } else if (command.action_id == "modulation.share.v1" ||
+                       command.action_id == "modulation.follower-tap.v1") {
+                const auto id = static_cast<ModulatorInstanceId>(
+                    *argument<std::int64_t>(command, "id"));
+                const auto instance = find_instance(id);
+                if (instance == next.modulators.begin() + next.modulator_count)
+                    error = "modulator instance does not exist";
+                else if (command.action_id == "modulation.share.v1")
+                    instance->shared = *argument<bool>(command, "shared");
+                else {
+                    const auto tap = *argument<std::int64_t>(command, "tap");
+                    const auto tap_id = *argument<std::int64_t>(command, "tap_id");
+                    if (instance->type != ModulatorType::envelope_follower ||
+                        tap < 0 ||
+                        tap > static_cast<std::int64_t>(
+                                  FollowerTapKind::physical_input) ||
+                        tap_id < 0)
+                        error = "invalid envelope follower tap";
+                    else {
+                        instance->settings.follower_tap =
+                            static_cast<FollowerTapKind>(tap);
+                        instance->settings.follower_tap_id =
+                            static_cast<std::uint64_t>(tap_id);
+                    }
+                }
+            } else {
+                const auto id = static_cast<ModulationRouteId>(
+                    *argument<std::int64_t>(command, "connection_id"));
+                const auto route = std::find_if(
+                    next.routes.begin(), next.routes.begin() + next.route_count,
+                    [&](const auto &value) { return value.id == id; });
+                if (route == next.routes.begin() + next.route_count)
+                    error = "modulation connection does not exist";
+                else if (command.action_id == "modulation.connection-delete.v1") {
+                    std::move(route + 1, next.routes.begin() + next.route_count,
+                              route);
+                    --next.route_count;
+                } else if (command.action_id ==
+                           "modulation.connection-depth.v1") {
+                    const auto depth = *argument<double>(command, "depth");
+                    if (!std::isfinite(depth) || depth < -1 || depth > 1)
+                        error = "connection depth must be -1..1";
+                    else
+                        route->depth = static_cast<float>(depth);
+                } else
+                    route->enabled = *argument<bool>(command, "enabled");
+            }
+            ModulationGraphDiagnostics diagnostics;
+            if (error.empty() &&
+                !validate_modulation_graph(next, diagnostics))
+                error = "connection " + std::to_string(diagnostics.connection) +
+                        ": " + diagnostics.message;
+            if (error.empty() && !engine_.publish_modulation(next))
+                error = "modulation publication queue is full";
+            if (error.empty()) {
+                modulation_configuration_ = next;
+                project_.modulation = next;
+                state_.modulation_graph = std::move(diagnostics);
+                changed_locked();
+            }
         } else if (command.action_id.rfind("modulator.", 0) == 0) {
             if (command.action_id == "modulator.query-types.v1" ||
                 command.action_id == "modulator.query-instances.v1" ||
@@ -3941,6 +4099,26 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                         else
                             route.destination.instance =
                                 static_cast<std::uint32_t>(*instance);
+                    }
+                    const auto owner = argument<std::int64_t>(
+                        command, "destination_owner");
+                    const auto owner_id = argument<std::int64_t>(
+                        command, "destination_owner_id");
+                    if ((owner && !owner_id) || (!owner && owner_id))
+                        error = "destination owner kind and ID are both required";
+                    else if (owner &&
+                             (*owner < static_cast<std::int64_t>(
+                                           ModulatorOwnerKind::track) ||
+                              *owner > static_cast<std::int64_t>(
+                                           ModulatorOwnerKind::group) ||
+                              *owner_id < 0))
+                        error = "invalid destination owner";
+                    else if (owner) {
+                        route.destination_owner_explicit = true;
+                        route.destination_owner_kind =
+                            static_cast<ModulatorOwnerKind>(*owner);
+                        route.destination_owner_id =
+                            static_cast<std::uint64_t>(*owner_id);
                     }
                 }
             } else {
@@ -4691,6 +4869,9 @@ void ApplicationService::synchronize_locked() const {
     state_.parameters = std::move(parameters);
     state_.modulation = modulation_configuration_;
     state_.modulation_runtime = modulation_runtime;
+    ModulationGraphDiagnostics graph;
+    (void)validate_modulation_graph(modulation_configuration_, graph);
+    state_.modulation_graph = std::move(graph);
     state_.performance.generation = system_monitor_.generation();
     state_.performance.monotonic_milliseconds =
         system_monitor_.monotonic_milliseconds();

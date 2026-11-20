@@ -896,6 +896,96 @@ void modulation_case(std::string name, std::size_t route_count,
                    .count() /
                iterations);
 }
+void modulation_graph_case(std::string name, std::size_t instance_count,
+                           std::size_t connection_count, bool deep_chain) {
+    neurogenic::ModulationConfiguration configuration;
+    configuration.update_interval = 32;
+    configuration.modulator_count = std::min(
+        instance_count, neurogenic::ModulationConfiguration::maximum_modulators);
+    for (std::size_t i = 0; i < configuration.modulator_count; ++i) {
+        auto &instance = configuration.modulators[i];
+        instance.id = static_cast<neurogenic::ModulatorInstanceId>(i + 1);
+        instance.type = neurogenic::ModulatorType::lfo;
+        instance.owner_kind = i & 1 ? neurogenic::ModulatorOwnerKind::track
+                                    : neurogenic::ModulatorOwnerKind::master;
+        instance.owner_id = i & 1 ? i % 16 + 1 : 0;
+        instance.shared = true;
+        instance.settings.rate_hz = 0.2F + static_cast<float>(i) * 0.01F;
+    }
+    configuration.route_count = std::min(
+        connection_count, neurogenic::ModulationConfiguration::maximum_routes);
+    for (std::size_t i = 0; i < configuration.route_count; ++i) {
+        auto &route = configuration.routes[i];
+        route.id = static_cast<neurogenic::ModulationRouteId>(i + 1);
+        route.source_instance = static_cast<neurogenic::ModulatorInstanceId>(
+            i % configuration.modulator_count + 1);
+        const auto &source = configuration.modulators[
+            static_cast<std::size_t>(route.source_instance - 1)];
+        route.scope = source.owner_kind == neurogenic::ModulatorOwnerKind::track
+                          ? neurogenic::ModulationScope::track
+                          : neurogenic::ModulationScope::global;
+        route.track_id = route.scope == neurogenic::ModulationScope::track
+                             ? source.owner_id
+                             : 0;
+        route.minimum = -1;
+        route.maximum = 1;
+        route.depth = 0.05F;
+        if (deep_chain && i + 1 < configuration.modulator_count) {
+            route.source_instance =
+                static_cast<neurogenic::ModulatorInstanceId>(i + 1);
+            route.scope = configuration.modulators[i].owner_kind ==
+                                  neurogenic::ModulatorOwnerKind::track
+                              ? neurogenic::ModulationScope::track
+                              : neurogenic::ModulationScope::global;
+            route.track_id = route.scope == neurogenic::ModulationScope::track
+                                 ? configuration.modulators[i].owner_id
+                                 : 0;
+            route.destination_kind =
+                neurogenic::ModulationDestinationKind::modulator_parameter;
+            route.destination_modulator =
+                static_cast<neurogenic::ModulatorInstanceId>(i + 2);
+            route.destination_modulator_parameter =
+                neurogenic::ModulatorParameterId::rate;
+            const auto &destination = configuration.modulators[i + 1];
+            route.destination_owner_explicit = true;
+            route.destination_owner_kind = destination.owner_kind;
+            route.destination_owner_id = destination.owner_id;
+        } else {
+            route.destination = {
+                neurogenic::ParameterTarget::mixer_track,
+                static_cast<std::uint32_t>(
+                    neurogenic::MixerTrackModulationParameter::pan),
+                static_cast<std::uint32_t>(i % 16 + 1)};
+            route.base_value = 0;
+            route.destination_owner_explicit = true;
+            route.destination_owner_kind =
+                neurogenic::ModulatorOwnerKind::track;
+            route.destination_owner_id = i % 16 + 1;
+        }
+    }
+    const auto preparation = Clock::now();
+    neurogenic::ModulationGraphDiagnostics diagnostics;
+    if (!neurogenic::prepare_modulation_graph(configuration, diagnostics))
+        throw std::runtime_error("modulation graph benchmark preparation: " +
+                                 diagnostics.message);
+    neurogenic::ModulationEngine engine;
+    if (!engine.configure(configuration))
+        throw std::runtime_error("modulation graph benchmark configuration");
+    const auto preparation_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
+                                                             preparation)
+            .count();
+    const auto begin = Clock::now();
+    for (std::size_t block = 0; block < iterations; ++block)
+        for (std::size_t frame = 0; frame < 256; ++frame)
+            engine.process_frame([](auto, auto) {});
+    result(std::move(name), 48000, 256,
+           std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
+                                                                begin)
+                   .count() /
+               iterations,
+           preparation_ns);
+}
 void synth_instance_case(std::size_t instance_count, bool voice_modulation) {
     neurogenic::AudioEngine engine(48000, 32);
     neurogenic::Timeline timeline;
@@ -1187,6 +1277,10 @@ int main(int argc, char **argv) {
     modulation_case("modulator_instances_32", 64, false, 32);
     modulation_case("modulator_instances_64_dense_routes_128", 128, false,
                     64);
+    modulation_graph_case("modulation_graph_16_32", 16, 32, false);
+    modulation_graph_case("modulation_graph_32_64", 32, 64, false);
+    modulation_graph_case("modulation_graph_64_128", 64, 128, false);
+    modulation_graph_case("modulation_graph_deep_64", 64, 63, true);
     synth_instance_case(4, false);
     synth_instance_case(8, false);
     synth_instance_case(16, false);

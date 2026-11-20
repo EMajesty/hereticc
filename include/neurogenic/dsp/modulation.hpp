@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <string>
 #include <string_view>
 
 namespace neurogenic {
@@ -38,10 +39,32 @@ enum class ModulatorOwnerKind : std::uint8_t {
     track = 1, auxiliary, master, group, voice_definition
 };
 enum class ModulatorUpdateRate : std::uint8_t { control, per_voice_control };
+enum class ModulationDestinationKind : std::uint8_t {
+    parameter,
+    modulator_parameter
+};
+enum class ModulatorParameterId : std::uint32_t {
+    rate = 1,
+    beats,
+    attack,
+    decay,
+    sustain,
+    release,
+    follower_gain,
+    follower_threshold
+};
+enum class FollowerTapKind : std::uint8_t {
+    master,
+    track,
+    auxiliary,
+    physical_input
+};
 struct ModulatorParameterDescriptor {
     std::string_view id, name, unit;
     float minimum{}, maximum{}, default_value{};
     bool discrete{};
+    ModulatorParameterId numeric_id{};
+    bool modulatable{true};
 };
 struct ModulatorPortDescriptor {
     std::uint32_t id{};
@@ -75,6 +98,8 @@ struct ModulationSourceSettings {
     std::uint32_t seed{1};
     float follower_attack_seconds{0.01F}, follower_release_seconds{0.1F},
         follower_gain{1.0F}, follower_threshold{};
+    FollowerTapKind follower_tap{FollowerTapKind::master};
+    std::uint64_t follower_tap_id{};
 };
 struct ModulationRoute {
     ModulationRouteId id{};
@@ -88,6 +113,13 @@ struct ModulationRoute {
     std::uint64_t track_id{};
     ModulatorInstanceId source_instance{};
     std::uint32_t source_output{1};
+    ModulationDestinationKind destination_kind{
+        ModulationDestinationKind::parameter};
+    ModulatorInstanceId destination_modulator{};
+    ModulatorParameterId destination_modulator_parameter{};
+    bool destination_owner_explicit{};
+    ModulatorOwnerKind destination_owner_kind{ModulatorOwnerKind::master};
+    std::uint64_t destination_owner_id{};
 };
 struct ModulatorInstanceConfiguration {
     ModulatorInstanceId id{};
@@ -97,6 +129,7 @@ struct ModulatorInstanceConfiguration {
     ModulationSourceSettings settings;
     std::array<char, 32> display_name{};
     bool enabled{true};
+    bool shared{};
 };
 struct ModulationConfiguration {
     static constexpr std::size_t maximum_modulators = 64;
@@ -111,7 +144,26 @@ struct ModulationConfiguration {
     std::array<ModulationRoute, maximum_routes> routes{};
     std::size_t route_count{};
     std::uint32_t update_interval{32};
+    // Control-thread compiled graph order. This is runtime publication data,
+    // not persisted project state.
+    std::array<ModulatorInstanceId, maximum_modulators> prepared_order{};
+    std::size_t prepared_count{};
+    bool graph_prepared{};
 };
+struct ModulationGraphDiagnostics {
+    bool valid{};
+    ModulationRouteId connection{};
+    std::string message;
+    std::array<ModulatorInstanceId, ModulationConfiguration::maximum_modulators>
+        evaluation_order{};
+    std::size_t evaluation_count{};
+    std::size_t instance_capacity{ModulationConfiguration::maximum_modulators};
+    std::size_t connection_capacity{ModulationConfiguration::maximum_routes};
+};
+[[nodiscard]] bool validate_modulation_graph(const ModulationConfiguration &,
+                                             ModulationGraphDiagnostics &);
+[[nodiscard]] bool prepare_modulation_graph(ModulationConfiguration &,
+                                            ModulationGraphDiagnostics &);
 struct ModulationSnapshot {
     std::array<float, ModulationConfiguration::source_count> source_values{};
     std::array<float, ModulationConfiguration::maximum_routes>
@@ -131,11 +183,14 @@ class ModulationEngine {
     void set_sample_rate(std::uint32_t) noexcept;
     void set_tempo(float bpm) noexcept;
     void set_input(ModulationSourceId, float) noexcept;
+    void set_follower_input(FollowerTapKind, std::uint64_t, float) noexcept;
     void note_on(std::uint64_t track_id, float velocity) noexcept;
     void note_off(std::uint64_t track_id) noexcept;
     void restart() noexcept;
     void clear_automation() noexcept;
     void set_automation(ParameterDestination, float) noexcept;
+    void set_modulator_automation(ModulatorInstanceId, ModulatorParameterId,
+                                  float) noexcept;
     template <class Apply> void process_frame(Apply &&apply) noexcept {
         if (++frames_until_update_ < configuration_.update_interval)
             return;
@@ -177,8 +232,16 @@ class ModulationEngine {
             SourceState::EnvelopeStage::idle};
         bool gate{};
     };
+    struct ModulatorAutomationValue {
+        ModulatorInstanceId instance{};
+        ModulatorParameterId parameter{};
+        float value{};
+        bool active{};
+    };
     void update_sources(std::uint32_t) noexcept;
     void update_modulators(std::uint32_t) noexcept;
+    [[nodiscard]] ModulationSourceSettings
+    effective_settings(std::size_t) const noexcept;
     float waveform(std::size_t, std::size_t, double, bool) noexcept;
     float random(std::size_t, std::size_t) noexcept;
     float instance_random(std::size_t) noexcept;
@@ -187,7 +250,9 @@ class ModulationEngine {
         for (std::size_t route_index = 0;
              route_index < configuration_.route_count; ++route_index) {
             const auto &route = configuration_.routes[route_index];
-            if (!route.enabled || route.scope == ModulationScope::voice)
+            if (!route.enabled || route.scope == ModulationScope::voice ||
+                route.destination_kind ==
+                    ModulationDestinationKind::modulator_parameter)
                 continue;
             bool already_processed{};
             for (std::size_t previous = 0; previous < route_index; ++previous)
@@ -195,6 +260,8 @@ class ModulationEngine {
                     configuration_.routes[previous].enabled &&
                     configuration_.routes[previous].scope !=
                         ModulationScope::voice &&
+                    configuration_.routes[previous].destination_kind ==
+                        ModulationDestinationKind::parameter &&
                     configuration_.routes[previous].destination.target ==
                         route.destination.target &&
                     configuration_.routes[previous].destination.parameter ==
@@ -221,6 +288,8 @@ class ModulationEngine {
                 const auto &candidate = configuration_.routes[contribution];
                 if (!candidate.enabled ||
                     candidate.scope == ModulationScope::voice ||
+                    candidate.destination_kind !=
+                        ModulationDestinationKind::parameter ||
                     candidate.destination.target != route.destination.target ||
                     candidate.destination.parameter !=
                         route.destination.parameter ||
@@ -294,11 +363,17 @@ class ModulationEngine {
         source_states_{};
     std::array<ModulatorState, ModulationConfiguration::maximum_modulators>
         modulator_states_{};
+    std::array<std::size_t, ModulationConfiguration::maximum_modulators>
+        evaluation_order_{};
+    std::size_t evaluation_count_{};
     std::array<std::uint64_t, ModulationConfiguration::maximum_tracks>
         track_ids_{};
     std::size_t track_count_{1};
     std::array<AutomationValue, ModulationConfiguration::maximum_routes>
         automation_{};
+    std::array<ModulatorAutomationValue,
+               ModulationConfiguration::maximum_routes>
+        modulator_automation_{};
     std::array<float, ModulationConfiguration::maximum_routes> effective_{};
     std::array<std::atomic<float>, ModulationConfiguration::source_count>
         published_sources_{};

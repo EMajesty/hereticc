@@ -338,7 +338,15 @@ bool AudioEngine::set_delay_bypass(bool value) noexcept {
 }
 bool AudioEngine::publish_modulation(
     const ModulationConfiguration &configuration) noexcept {
-    if (!modulation_configurations_.push(configuration)) {
+    auto prepared = configuration;
+    ModulationGraphDiagnostics diagnostics;
+    try {
+        if (!prepare_modulation_graph(prepared, diagnostics))
+            return false;
+    } catch (...) {
+        return false;
+    }
+    if (!modulation_configurations_.push(prepared)) {
         dropped_dsp_commands_.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
@@ -1222,6 +1230,24 @@ void AudioEngine::process(std::span<float> left,
                      std::max(std::fabs(left[frame]), std::fabs(right[frame])));
     modulation_.set_input(ModulationSourceId::envelope_follower,
                           std::min(follower_peak, 1.0F));
+    const auto observe = [&](FollowerTapKind kind, std::uint64_t id,
+                             std::span<const float> first,
+                             std::span<const float> second = {}) {
+        float peak{};
+        for (const auto sample : first)
+            peak = std::max(peak, std::fabs(sample));
+        for (const auto sample : second)
+            peak = std::max(peak, std::fabs(sample));
+        modulation_.set_follower_input(kind, id, std::min(peak, 1.0F));
+    };
+    for (std::size_t track = 0; track < mixer_.active_track_count(); ++track)
+        observe(FollowerTapKind::track, mixer_.active_track_id(track),
+                mixer_.track_left(track), mixer_.track_right(track));
+    for (std::size_t aux = 0; aux < mixer_aux_count; ++aux)
+        observe(FollowerTapKind::auxiliary, aux, mixer_.aux_left(aux),
+                mixer_.aux_right(aux));
+    for (std::size_t input = 0; input < mixer_.active_input_count(); ++input)
+        observe(FollowerTapKind::physical_input, input, mixer_.input(input));
     if (auto *recorder = recording_.load(std::memory_order_acquire)) {
         for (std::size_t i = 0; i < mixer_track_count; ++i)
             recorder->capture_internal(
