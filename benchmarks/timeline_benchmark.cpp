@@ -879,6 +879,134 @@ void synth_instance_case(std::size_t instance_count, bool voice_modulation) {
                    .count() /
                iterations);
 }
+void integrated_workstation_case() {
+    constexpr std::size_t sample_tracks = 8;
+    constexpr std::size_t synth_tracks = 4;
+    neurogenic::AudioEngine engine(48000, 64);
+    for (std::size_t slot = 0; slot < sample_tracks; ++slot)
+        engine.set_sample_slot(neurogenic::SampleSlotId{
+                                   static_cast<std::uint32_t>(slot)},
+                               sample(48000, 32768));
+    neurogenic::Timeline source;
+    for (std::size_t index = 0; index < sample_tracks + synth_tracks; ++index) {
+        neurogenic::Track track;
+        track.id = index + 1;
+        track.pattern.length = neurogenic::ticks_per_quarter * 4;
+        track.instrument_id =
+            index < sample_tracks
+                ? std::string(neurogenic::sample_instrument_id)
+                : std::string(neurogenic::subtractive_instrument_id);
+        if (index >= sample_tracks)
+            track.instrument_instance_id =
+                static_cast<neurogenic::InstrumentInstanceId>(
+                    index - sample_tracks + 1);
+        track.pattern.events.push_back(
+            {index + 1, 0, neurogenic::MusicalEventType::note,
+             static_cast<std::uint8_t>(index < sample_tracks ? 36 + index
+                                                             : 48 + index),
+             0.7F, neurogenic::ticks_per_quarter * 3});
+        source.tracks.push_back(std::move(track));
+    }
+    neurogenic::MixerConfiguration mixer;
+    mixer.revision = 1;
+    mixer.track_count = source.tracks.size();
+    for (std::size_t index = 0; index < mixer.track_count; ++index) {
+        mixer.tracks[index].track = source.tracks[index].id;
+        mixer.tracks[index].aux_send = {0.15F, 0.08F};
+    }
+    mixer.aux[0].effect_enabled = true;
+    mixer.aux[1].effect_enabled = true;
+    std::string error;
+    if (!engine.publish_mixer(mixer, error))
+        throw std::runtime_error(error);
+    neurogenic::ModulationConfiguration modulation;
+    modulation.update_interval = 32;
+    modulation.route_count = 8;
+    for (std::size_t index = 0; index < modulation.route_count; ++index) {
+        auto &route = modulation.routes[index];
+        route.id = index + 1;
+        route.source = static_cast<neurogenic::ModulationSourceId>(index % 4);
+        route.destination = {
+            neurogenic::ParameterTarget::subtractive_synth,
+            static_cast<std::uint32_t>(neurogenic::SynthParameter::cutoff),
+            static_cast<std::uint32_t>(index % synth_tracks + 1)};
+        route.minimum = 20;
+        route.maximum = 20000;
+        route.base_value = 5000;
+        route.depth = 0.1F;
+    }
+    if (!engine.publish_modulation(modulation) ||
+        !engine.queue_timeline(source, error))
+        throw std::runtime_error(error.empty() ? "integrated publication failed"
+                                               : error);
+    neurogenic::TimelineService timeline_service(
+        [&](const auto &value, std::string &publish_error) {
+            return engine.queue_timeline(value, publish_error);
+        },
+        source);
+    neurogenic::SampleManager samples(engine);
+    neurogenic::ApplicationService application(engine, timeline_service,
+                                                samples);
+    neurogenic::GuiModel gui(application);
+    // ApplicationService publishes its initial snapshots during construction;
+    // restore the combined-workload mixer and modulation snapshots afterward.
+    if (!engine.publish_mixer(mixer, error) ||
+        !engine.publish_modulation(modulation))
+        throw std::runtime_error(error.empty() ? "integrated state publication failed"
+                                               : error);
+    neurogenic::RecordingService recorder(48000, iterations * 256 + 256);
+    neurogenic::RecordingConfiguration recording;
+    recording.source = neurogenic::RecordingSource::master_post_effects;
+    recording.destination = neurogenic::SampleSlotId{31};
+    recording.channels = 2;
+    recording.fixed_frames = iterations * 256;
+    if (!recorder.arm(recording, error) || !recorder.start(0, error))
+        throw std::runtime_error(error);
+    engine.set_recording_service(&recorder);
+    neurogenic::MidiOutputScheduler midi;
+    engine.set_midi_output_scheduler(&midi);
+    neurogenic::MidiClockOutputConfiguration clock;
+    clock.enabled = true;
+    clock.port_count = 1;
+    clock.ports[0] = 1;
+    (void)engine.publish_midi_clock_output(clock);
+    engine.play();
+    std::array<float, 256> left{}, right{};
+    engine.process(left, right);
+    std::uint64_t callback_total{};
+    const auto gui_begin = Clock::now();
+    for (std::size_t index = 0; index < iterations; ++index) {
+        const auto callback_begin = Clock::now();
+        engine.process(left, right);
+        callback_total +=
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                Clock::now() - callback_begin)
+                .count();
+        checksum += left[0] != 0;
+        checksum += midi.dispatch([](const auto &) { return true; });
+        checksum += gui.frame(1920 + static_cast<int>(index & 1U), 1200)
+                        .commands.size();
+    }
+    const auto combined_elapsed =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
+                                                             gui_begin)
+            .count() /
+        iterations;
+    result("integrated_8_sample_4_synth_mod_aux_record_midi", 48000, 256,
+           callback_total / iterations);
+    result("integrated_gui_state_sync_1920x1200", 48000, 256,
+           combined_elapsed - callback_total / iterations);
+    const auto callback = engine.callback_statistics();
+    std::cout << "{\"schema\":\"neurogenic.integration.metrics.v1\","
+                 "\"peak_callback_ns\":"
+              << callback.peak_nanoseconds << ",\"deadline_overruns\":"
+              << callback.deadline_overruns << ",\"midi_dropped\":"
+              << midi.dropped() << ",\"recording_overflows\":"
+              << recorder.status().overflow_count << "}\n";
+    engine.set_midi_output_scheduler(nullptr);
+    engine.set_recording_service(nullptr);
+    samples.shutdown();
+}
 } // namespace
 int main(int argc, char **argv) {
     for (int argument = 1; argument < argc; ++argument) {
@@ -976,6 +1104,7 @@ int main(int argc, char **argv) {
     synth_instance_case(16, false);
     synth_instance_case(8, true);
     synth_instance_case(16, true);
+    integrated_workstation_case();
     std::cout << "{\"schema\":\"neurogenic.benchmark.summary.v1\",\"checksum\":"
               << checksum
               << ",\"budget_passed\":" << (budget_failed ? "false" : "true")

@@ -93,6 +93,7 @@ cmake --preset sanitize
 cmake --build --preset sanitize
 ctest --preset sanitize
 ./build/dev/neurogenic_benchmark
+./build/dev/neurogenic_workflows all
 ./build/dev/neurogenic --stats
 ./build/dev/neurogenic --list-devices
 ./build/dev/neurogenic --headless --list-devices
@@ -116,6 +117,9 @@ The compact status line and Performance view consume the shared monitoring
 snapshot. `--stats` emits `neurogenic.performance.v1` JSON and the benchmark
 emits JSON Lines for commit comparisons. See
 [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for metric semantics and limitations.
+The bounded [workflow suite](docs/WORKFLOWS.md) exercises beat, synth,
+resampling, external-routing, MIDI and controller/GUI paths through production
+application services and runs in CTest without hardware.
 
 With direnv installed, run `direnv allow` once; `.envrc` enters the same flake
 shell. Build the installable package with `nix build`, run it with

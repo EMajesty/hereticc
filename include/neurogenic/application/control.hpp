@@ -281,9 +281,13 @@ struct TextEntryState {
 };
 class TextEntryModel {
   public:
+    [[nodiscard]] static constexpr std::string_view characters() noexcept {
+        return " ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.";
+    }
     void begin(std::string initial = {});
     void direct(std::string_view);
     void select_relative(int);
+    void select(char);
     void insert();
     void erase_or_cancel();
     void move_cursor(int);

@@ -1,5 +1,14 @@
 # Implementation status
 
+Task 033 adds a bounded production-path workflow runner covering beat creation,
+sample loading/slicing, synth instances/modulation, mixer/resampling, simulated
+external FX, external MIDI/clock, performance-grid modes, compact GUI text
+entry and project round-trips. The audit fixed missing track create/delete,
+external MIDI destination, project rename and authoritative tempo bindings.
+CTest and sanitizer runs include the runner with a 30-second ceiling. Physical
+audio/MIDI timing, external cabling/levels, 8-inch touch comfort and subjective
+listening remain explicitly hardware-dependent. See `WORKFLOWS.md`.
+
 Task 027 adds two validated external track/aux/master effect loops, mono/stereo
 six-channel mappings, linear wet/dry, return gain/mute, manual bounded latency
 compensation, return/mix recording taps, atomic routing scenes, v2 mixer/scene

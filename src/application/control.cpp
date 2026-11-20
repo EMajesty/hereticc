@@ -119,9 +119,21 @@ ActionRegistry::ActionRegistry() {
     add(action("track.next.v1", "Next track", "Tracks"));
     add(action("track.previous.v1", "Previous track", "Tracks"));
     add(action("track.mute-toggle.v1", "Toggle track mute", "Tracks"));
+    add(action("track.create.v1", "Create track", "Tracks",
+               {{"track_id", ValueType::integer, false},
+                {"name", ValueType::text, false},
+                {"length", ValueType::integer},
+                {"instrument_id", ValueType::text, false},
+                {"instance_id", ValueType::integer, false}}));
+    add(action("track.delete.v1", "Delete track", "Tracks",
+               {{"track_id", ValueType::integer, false}}));
     add(action("track.instrument-set.v1", "Set track instrument", "Tracks",
                {{"instrument_id", ValueType::text},
                 {"instance_id", ValueType::integer, false}}));
+    add(action("track.midi-destination-set.v1",
+               "Set external MIDI destination", "Tracks",
+               {{"port", ValueType::integer},
+                {"channel", ValueType::integer}}));
     add(action("instrument.instance-parameter-set.v1",
                "Set instrument instance parameter", "Instruments",
                {{"instance_id", ValueType::integer},
@@ -262,6 +274,8 @@ ActionRegistry::ActionRegistry() {
     add(action("project.save-as.v1", "Save project as", "Project",
                {{"path", ValueType::text}, {"name", ValueType::text, false}}));
     add(action("project.close.v1", "Close project", "Project"));
+    add(action("project.rename.v1", "Rename project", "Project",
+               {{"name", ValueType::text}}));
     add(action(
         "project.relink-sample.v1", "Relink missing sample", "Project",
         {{"missing", ValueType::text}, {"replacement", ValueType::text}}));
@@ -284,6 +298,8 @@ ActionRegistry::ActionRegistry() {
     add(action("midi.panic.v1", "MIDI panic", "MIDI"));
     add(action("midi.learn.v1", "MIDI learn", "MIDI", {}, false,
                "MIDI learn capture is not implemented"));
+    add(action("transport.tempo-set.v1", "Set tempo", "Transport",
+               {{"bpm", ValueType::real}}));
     add(action("recording.source-select.v1", "Select recording source",
                "Recording",
                {{"source", ValueType::text},
@@ -894,6 +910,19 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
         return {false, sequence, snapshot().revision, std::move(error)};
     const auto before = snapshot();
     const auto publish_parameter = [&](const std::string &id) {
+        if (id == "transport.tempo") {
+            const auto descriptor = parameters_.get(id);
+            if (!descriptor ||
+                !std::holds_alternative<double>(descriptor->current_value))
+                return false;
+            auto transaction = timeline_.edit();
+            std::string tempo_error;
+            return transaction.set_tempo_bpm(
+                       std::get<double>(descriptor->current_value), tempo_error) &&
+                   timeline_.commit(
+                       std::move(transaction),
+                       TimelineCommitPolicy::next_audio_callback, tempo_error);
+        }
         if (id.rfind("mixer.", 0) != 0) {
             if (!publish_dsp_parameter(engine_, parameters_, id))
                 return false;
@@ -1648,6 +1677,18 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
         try {
             if (command.action_id == "project.query.v1")
                 return {true, sequence, before.revision, {}};
+            if (command.action_id == "project.rename.v1") {
+                const auto &name = *argument<std::string>(command, "name");
+                if (name.empty())
+                    return {false, sequence, before.revision,
+                            "project name must not be empty"};
+                std::lock_guard lock(mutex_);
+                project_.name = name;
+                state_.project_name = name;
+                state_.project_dirty = true;
+                changed_locked();
+                return {true, sequence, state_.revision, {}};
+            }
             if (command.action_id == "project.save.v1" ||
                 command.action_id == "project.save-as.v1") {
                 std::filesystem::path path = before.project_path;
@@ -1824,6 +1865,13 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 if (!timeline_.commit(std::move(edit),
                                       TimelineCommitPolicy::next_audio_callback,
                                       error))
+                    throw std::runtime_error(error);
+                parameters_.set(
+                    "transport.tempo",
+                    60'000'000.0 /
+                        loaded.timeline.transport.microseconds_per_quarter,
+                    error);
+                if (!error.empty())
                     throw std::runtime_error(error);
                 if (!slices_.restore_project(loaded.samples, error))
                     throw std::runtime_error(error);
@@ -2004,6 +2052,13 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 if (!timeline_.commit(std::move(edit),
                                       TimelineCommitPolicy::next_audio_callback,
                                       error))
+                    return {false, sequence, before.revision, std::move(error)};
+                parameters_.set(
+                    "transport.tempo",
+                    60'000'000.0 /
+                        replacement.timeline.transport.microseconds_per_quarter,
+                    error);
+                if (!error.empty())
                     return {false, sequence, before.revision, std::move(error)};
                 recording_.cancel();
                 engine_.stop();
@@ -2251,6 +2306,19 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
     } else if (command.action_id == "transport.restart.v1") {
         engine_.restart();
         changed = true;
+    } else if (command.action_id == "transport.tempo-set.v1") {
+        auto transaction = timeline_.edit();
+        if (!transaction.set_tempo_bpm(*argument<double>(command, "bpm"),
+                                       error) ||
+            !timeline_.commit(std::move(transaction),
+                              TimelineCommitPolicy::next_audio_callback,
+                              error)) {
+        } else {
+            std::string ignored;
+            parameters_.set("transport.tempo",
+                            *argument<double>(command, "bpm"), ignored);
+            changed = true;
+        }
     } else if (command.action_id == "sample.load.v1" ||
                command.action_id == "sample.replace.v1") {
         const auto slot = *argument<std::int64_t>(command, "slot_id");
@@ -2285,6 +2353,52 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 error = "track does not exist";
             } else {
                 state_.selected_track = static_cast<TrackId>(id);
+                changed_locked();
+            }
+        } else if (command.action_id == "track.create.v1") {
+            auto transaction = timeline_.edit();
+            const auto requested = argument<std::int64_t>(command, "track_id");
+            const auto id = requested ? static_cast<TrackId>(*requested)
+                                      : transaction.next_track_id();
+            const auto length = *argument<std::int64_t>(command, "length");
+            const auto name = argument<std::string>(command, "name");
+            const auto instrument =
+                argument<std::string>(command, "instrument_id");
+            const auto instance = argument<std::int64_t>(command, "instance_id");
+            if ((requested && *requested <= 0) || length <= 0) {
+                error = "track ID and length must be positive";
+            } else if (!transaction.create_track(
+                           id, name ? *name : "Track " + std::to_string(id),
+                           static_cast<MusicalTick>(length), error)) {
+            } else if (instrument &&
+                       !transaction.set_track_instrument(
+                           id, *instrument, error,
+                           instance ? static_cast<InstrumentInstanceId>(*instance)
+                                    : default_synth_instance_id)) {
+            } else if (!timeline_.commit(
+                           std::move(transaction),
+                           TimelineCommitPolicy::next_audio_callback, error)) {
+            } else {
+                state_.selected_track = id;
+                state_.selected_step = 0;
+                state_.step_page = 0;
+                changed_locked();
+            }
+        } else if (command.action_id == "track.delete.v1") {
+            auto transaction = timeline_.edit();
+            const auto requested = argument<std::int64_t>(command, "track_id");
+            const auto id = requested ? static_cast<TrackId>(*requested)
+                                      : state_.selected_track;
+            if ((requested && *requested <= 0) || id == 0)
+                error = "track ID must be positive";
+            else if (!transaction.delete_track(id, error) ||
+                     !timeline_.commit(
+                         std::move(transaction),
+                         TimelineCommitPolicy::next_audio_callback, error)) {
+            } else {
+                const auto remaining = timeline_.snapshot().timeline.tracks;
+                state_.selected_track = remaining.empty() ? 0 : remaining.front().id;
+                selected_event_id_.reset();
                 changed_locked();
             }
         } else if (command.action_id == "track.next.v1" ||
@@ -2336,6 +2450,24 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 !timeline_.commit(std::move(transaction),
                                   TimelineCommitPolicy::next_audio_callback,
                                   error)) {
+            } else
+                changed_locked();
+        } else if (command.action_id == "track.midi-destination-set.v1") {
+            const auto port = *argument<std::int64_t>(command, "port");
+            const auto channel = *argument<std::int64_t>(command, "channel");
+            auto transaction = timeline_.edit();
+            if (port < 1 ||
+                     port > static_cast<std::int64_t>(maximum_midi_ports) ||
+                     channel < 1 ||
+                     channel > 16)
+                error = "MIDI destination requires port 1..8 and channel 1..16";
+            else if (!transaction.set_track_midi_destination(
+                         state_.selected_track,
+                         static_cast<std::uint32_t>(port),
+                         static_cast<std::uint8_t>(channel - 1), error) ||
+                     !timeline_.commit(
+                         std::move(transaction),
+                         TimelineCommitPolicy::next_audio_callback, error)) {
             } else
                 changed_locked();
         } else if (command.action_id == "pattern.select.v1") {
@@ -3265,8 +3397,17 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     changed_locked();
                 }
             } else if (state_.focused_element == "transport") {
-                if (parameters_.adjust("transport.tempo", delta, error))
-                    changed_locked();
+                const auto previous = parameters_.get("transport.tempo");
+                if (parameters_.adjust("transport.tempo", delta, error)) {
+                    if (!publish_parameter("transport.tempo")) {
+                        std::string ignored;
+                        if (previous)
+                            parameters_.set("transport.tempo",
+                                            previous->current_value, ignored);
+                        error = "tempo publication failed";
+                    } else
+                        changed_locked();
+                }
             }
         } else if (command.action_id == "text.input.v1") {
             state_.focused_element =
@@ -3678,7 +3819,13 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             id.rfind("sample.load", 0) == 0 ||
             id.rfind("sample.replace", 0) == 0 ||
             id.rfind("sample.unload", 0) == 0 ||
-            id.rfind("parameter.", 0) == 0 || id.rfind("track.mute", 0) == 0 ||
+            id.rfind("parameter.", 0) == 0 ||
+            id.rfind("track.create", 0) == 0 ||
+            id.rfind("track.delete", 0) == 0 ||
+            id.rfind("track.mute", 0) == 0 ||
+            id.rfind("track.instrument", 0) == 0 ||
+            id.rfind("track.midi-destination", 0) == 0 ||
+            id.rfind("transport.tempo", 0) == 0 ||
             id.rfind("modulation.route", 0) == 0 ||
             id.rfind("modulation.source", 0) == 0 ||
             id.rfind("instrument.instance-parameter", 0) == 0 ||
@@ -4162,14 +4309,17 @@ void TextEntryModel::direct(std::string_view text) {
 void TextEntryModel::select_relative(int delta) {
     if (!state_.active)
         return;
-    constexpr std::string_view characters =
-        " ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.";
-    auto found = characters.find(state_.selected);
+    const auto available = characters();
+    auto found = available.find(state_.selected);
     auto index = found == std::string_view::npos ? 0 : static_cast<int>(found);
-    index = (index + delta % static_cast<int>(characters.size()) +
-             static_cast<int>(characters.size())) %
-            static_cast<int>(characters.size());
-    state_.selected = characters[static_cast<std::size_t>(index)];
+    index = (index + delta % static_cast<int>(available.size()) +
+             static_cast<int>(available.size())) %
+            static_cast<int>(available.size());
+    state_.selected = available[static_cast<std::size_t>(index)];
+}
+void TextEntryModel::select(char value) {
+    if (state_.active && characters().find(value) != std::string_view::npos)
+        state_.selected = value;
 }
 void TextEntryModel::insert() {
     if (state_.active) {

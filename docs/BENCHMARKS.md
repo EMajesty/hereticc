@@ -197,3 +197,16 @@ On the 2026-11-20 Ryzen 7 7800X3D Debug host, a 100-iteration run measured
 approximately 27 ns per follower update; the combined four-port dense routing
 and internal-clock case measured approximately 1.03 microseconds per 256-frame
 iteration. These short offline averages are not worst-case hardware results.
+
+Task 033 adds `integrated_8_sample_4_synth_mod_aux_record_midi` and
+`integrated_gui_state_sync_1920x1200`. The first times only callback processing
+for eight sample tracks, four synth instances, active modulation, two aux sends,
+internal master recording and MIDI clock; MIDI dispatch and GUI work stay
+outside that timer. The second reports remaining per-iteration GUI/state,
+MIDI-dispatch and harness cost. A 100-iteration Debug run on the 2026-11-20
+Ryzen 7 7800X3D host measured 218.8 microseconds per 256-frame callback
+(24.4x realtime, approximately 4.1% of one callback deadline), a 373.9
+microsecond observed callback peak, zero deadline overruns, MIDI drops and
+recording overflows, about 15.0 microseconds of GUI/state overhead, and about
+40.4 MiB RSS. This is a short offline regression
+run, not N150, Raspberry Pi 5, GPU-presentation or hardware-XRUN evidence.

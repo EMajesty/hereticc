@@ -252,3 +252,11 @@ as unavailable rather than simulated.
 Copied state exposes sync status, BPM, phase error, SPP, port connectivity and
 queue counters without requiring backend access. External forwarding is the
 semantic `midi.clock-forward-set.v1` action.
+
+Track lifecycle and external sequencing use `track.create.v1`,
+`track.delete.v1`, `track.instrument-set.v1` and
+`track.midi-destination-set.v1`. Tempo uses `transport.tempo-set.v1`; changing
+the displayed tempo now changes the authoritative timeline rather than a
+detached UI value. Project naming uses `project.rename.v1` and the reusable text
+entry model. These actions are reachable from minimal data-wheel clients and do
+not depend on Lua or pointer input.

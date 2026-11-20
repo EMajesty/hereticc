@@ -45,7 +45,8 @@ struct GuiLayout {
     bool inspector_visible{};
     UiRect top, nav, content, parameters, page_previous, page_next, resolution,
         target_note, instrument, scale_down, scale_up, scale_reset, fullscreen;
-    std::vector<UiRect> tabs, grid, rows;
+    std::vector<UiRect> tabs, grid, rows, text_keys;
+    UiRect text_commit, text_backspace, text_cancel;
 };
 enum class UiColor : std::uint8_t {
     background,
@@ -95,13 +96,15 @@ struct GuiInput {
         pointer_move,
         touch_down,
         touch_up,
-        touch_move
+        touch_move,
+        text_input
     };
     Type type{};
     GuiKey key{};
     int number{};
     float x{}, y{};
     std::uint64_t timestamp_ms{};
+    std::string text;
 };
 
 class GuiModel {
@@ -112,6 +115,10 @@ class GuiModel {
     [[nodiscard]] GuiLayout layout(int width, int height) const;
     [[nodiscard]] const GuiFrame &frame(int width, int height);
     bool input(const GuiInput &, int width, int height);
+    void begin_project_name_entry();
+    [[nodiscard]] const TextEntryState &text_entry_state() const noexcept {
+        return text_entry_.state();
+    }
     [[nodiscard]] GuiView view() const noexcept { return view_; }
     [[nodiscard]] const std::string &error() const noexcept { return error_; }
     [[nodiscard]] std::vector<std::filesystem::directory_entry>
@@ -152,6 +159,9 @@ class GuiModel {
     SliceDrag slice_drag_{SliceDrag::none};
     float waveform_zoom_{1.0F}, waveform_offset_{};
     std::uint64_t last_xy_ms_{}, ui_revision_{1};
+    TextEntryModel text_entry_;
+    bool editing_project_name_{};
+    std::size_t text_focus_{1};
 };
 
 struct GuiOptions {

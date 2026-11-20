@@ -11,6 +11,7 @@ UiPoint window_to_drawable(const DisplayMetrics &display, float x,
     return {x * display.pixel_ratio_x, y * display.pixel_ratio_y};
 }
 namespace {
+constexpr auto text_characters = TextEntryModel::characters();
 ApplicationCommand
 command(std::string id,
         std::map<std::string, ApplicationValue> arguments = {}) {
@@ -204,7 +205,34 @@ GuiLayout GuiModel::layout(int width, int height) const {
     result.scale_up = r(136, content_y + 90, 100, 48);
     result.scale_reset = r(244, content_y + 90, 136, 48);
     result.fullscreen = r(28, content_y + 150, 208, 48);
+    const float keyboard_x = 28;
+    const float keyboard_y = content_y + 100;
+    const float keyboard_width = logical_width - 56;
+    constexpr int keyboard_columns = 12;
+    const float key_gap = 6;
+    const float key_width =
+        (keyboard_width - key_gap * (keyboard_columns - 1)) / keyboard_columns;
+    const float key_height = 44;
+    for (std::size_t i = 0; i < text_characters.size(); ++i)
+        result.text_keys.push_back(r(
+            keyboard_x + (i % keyboard_columns) * (key_width + key_gap),
+            keyboard_y + (i / keyboard_columns) * (key_height + key_gap),
+            key_width, key_height));
+    const float controls_y = keyboard_y +
+                             ((text_characters.size() + keyboard_columns - 1) /
+                              keyboard_columns) *
+                                 (key_height + key_gap);
+    result.text_backspace = r(keyboard_x, controls_y, 150, 48);
+    result.text_cancel = r(keyboard_x + 160, controls_y, 150, 48);
+    result.text_commit = r(keyboard_x + 320, controls_y, 150, 48);
     return result;
+}
+
+void GuiModel::begin_project_name_entry() {
+    text_entry_.begin(application_.snapshot().project_name);
+    editing_project_name_ = true;
+    text_focus_ = text_characters.find('A');
+    ++ui_revision_;
 }
 
 const GuiFrame &GuiModel::frame(int width, int height) {
@@ -238,6 +266,37 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
         frame_.commands.push_back(
             {DrawCommand::Type::text, r, c, std::move(value)});
     };
+    if (text_entry_.state().active) {
+        rect({0, 0, static_cast<float>(frame_.viewport_width),
+              static_cast<float>(frame_.viewport_height)},
+             UiColor::panel);
+        text({28 * l.scale, 24 * l.scale,
+              frame_.viewport_width - 56 * l.scale, 60 * l.scale},
+             UiColor::accent,
+             "PROJECT NAME: " + text_entry_.state().text + "  [" +
+                 text_entry_.state().selected + "]");
+        for (std::size_t i = 0; i < l.text_keys.size(); ++i) {
+            const auto selected = text_focus_ == i;
+            rect(l.text_keys[i], selected ? UiColor::selected
+                                          : UiColor::background);
+            text(l.text_keys[i], UiColor::text,
+                 text_characters[i] == ' ' ? "SPACE"
+                                           : std::string(1, text_characters[i]));
+        }
+        rect(l.text_backspace,
+             text_focus_ == text_characters.size() ? UiColor::selected
+                                                   : UiColor::background);
+        rect(l.text_cancel,
+             text_focus_ == text_characters.size() + 1 ? UiColor::selected
+                                                       : UiColor::background);
+        rect(l.text_commit,
+             text_focus_ == text_characters.size() + 2 ? UiColor::selected
+                                                       : UiColor::background);
+        text(l.text_backspace, UiColor::text, "BACKSPACE");
+        text(l.text_cancel, UiColor::text, "CANCEL");
+        text(l.text_commit, UiColor::text, "DONE");
+        return;
+    }
     auto line = [&](float x1, float y1, float x2, float y2, UiColor color) {
         frame_.commands.push_back(
             {DrawCommand::Type::line, {x1, y1, x2, y2}, color, {}});
@@ -705,8 +764,8 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
                  (settings_.ui_scale ? std::to_string(*settings_.ui_scale)
                                      : std::string("automatic (current ") +
                                            std::to_string(l.scale) + ")") +
-                 "\nKeyboard: - / + / 0, F11\nEncoder: Up/Down, Enter toggles "
-                 "fullscreen\n\nPROJECT: " +
+                 "\nKeyboard: - / + / 0, F11\nEncoder: Up/Down scale, "
+                 "Enter renames project\n\nPROJECT: " +
                  state.project_name + (state.project_dirty ? " *" : "") + "\n" +
                  (state.project_path.empty() ? "Not saved"
                                              : state.project_path.string()) +
@@ -877,6 +936,72 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
     const auto state = application_.snapshot();
     const auto *track = selected_track(state);
     auto simple = [&](std::string id) { submit(command(std::move(id))); };
+    if (text_entry_.state().active) {
+        const auto finish = [&] {
+            if (editing_project_name_ && text_entry_.state().text.empty()) {
+                error_ = "project name must not be empty";
+                return;
+            }
+            if (editing_project_name_)
+                submit(command("project.rename.v1",
+                               {{"name", text_entry_.state().text}}));
+            if (error_.empty()) {
+                text_entry_.commit();
+                editing_project_name_ = false;
+                ++ui_revision_;
+            }
+        };
+        if (input.type == GuiInput::Type::text_input) {
+            text_entry_.direct(input.text);
+            ++ui_revision_;
+            return true;
+        }
+        if (input.type == GuiInput::Type::key_down) {
+            if (input.key == GuiKey::left || input.key == GuiKey::right) {
+                const auto count = text_characters.size() + 3;
+                text_focus_ = input.key == GuiKey::right
+                                  ? (text_focus_ + 1) % count
+                                  : (text_focus_ + count - 1) % count;
+                if (text_focus_ < text_characters.size())
+                    text_entry_.select(text_characters[text_focus_]);
+            } else if (input.key == GuiKey::up || input.key == GuiKey::down)
+                text_entry_.move_cursor(input.key == GuiKey::down ? 1 : -1);
+            else if (input.key == GuiKey::enter) {
+                if (text_focus_ == text_characters.size())
+                    text_entry_.erase_or_cancel();
+                else if (text_focus_ == text_characters.size() + 1) {
+                    text_entry_.discard();
+                    editing_project_name_ = false;
+                } else if (text_focus_ == text_characters.size() + 2)
+                    finish();
+                else
+                    text_entry_.insert();
+            } else if (input.key == GuiKey::escape)
+                text_entry_.erase_or_cancel();
+            ++ui_revision_;
+            return true;
+        }
+        if (input.type == GuiInput::Type::pointer_down ||
+            input.type == GuiInput::Type::touch_down) {
+            for (std::size_t i = 0; i < l.text_keys.size(); ++i)
+                if (l.text_keys[i].contains(input.x, input.y)) {
+                    text_entry_.direct(
+                        std::string_view(text_characters.data() + i, 1));
+                    ++ui_revision_;
+                    return true;
+                }
+            if (l.text_backspace.contains(input.x, input.y))
+                text_entry_.erase_or_cancel();
+            else if (l.text_cancel.contains(input.x, input.y)) {
+                text_entry_.discard();
+                editing_project_name_ = false;
+            } else if (l.text_commit.contains(input.x, input.y))
+                finish();
+            ++ui_revision_;
+            return true;
+        }
+        return false;
+    }
     if (input.type == GuiInput::Type::key_down) {
         if (input.key == GuiKey::scale_up || input.key == GuiKey::scale_down ||
             input.key == GuiKey::scale_reset) {
@@ -1123,12 +1248,8 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
             else if (view_ == GuiView::settings) {
                 if (shift_)
                     submit(command("project.save.v1"));
-                else {
-                    settings_.fullscreen = !settings_.fullscreen;
-                    fullscreen_toggle_ = true;
-                    ++ui_revision_;
-                    save_settings(error_);
-                }
+                else
+                    begin_project_name_entry();
             } else if (view_ == GuiView::parameters && shift_ &&
                        !state.parameters.empty()) {
                 const auto &parameter =

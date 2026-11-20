@@ -140,6 +140,12 @@ and relink use the same semantic C++ actions; a graphical embedded filesystem
 browser remains a future integration point. No project operation requires
 touch.
 
+Enter in Display settings opens project-name entry. The overlay uses the shared
+text-entry model and renders touch/pointer keys plus Backspace, Cancel and Done.
+A minimal data wheel selects characters or those actions, Enter activates the
+selection, and Up/Down moves the cursor. SDL keyboard text reaches the same
+buffer. This is an initial on-screen keyboard, not a general file browser.
+
 # Recording view
 
 The Record tab shows source, destination, channel mode, state, captured frames,

@@ -274,6 +274,17 @@ engine. Active sample voices hold only scalar pitch/gain/pan overlays. Mixer,
 aux, master and external-loop overlays live in fixed arrays adjacent to the
 compiled mixer configuration. They alter effective DSP values only; stored
 settings, immutable samples and routing ownership are unchanged.
+
+## Integration boundary
+
+`neurogenic_workflows` is a headless client of `ApplicationService`; it does
+not duplicate engine logic. Deterministic fixture creation and simulated device
+buffers live in the runner, while commands, state, audio, MIDI, persistence and
+reclamation use production services. This catches missing semantic bindings
+between otherwise unit-tested modules and provides bounded CI coverage. Track
+creation/deletion, authoritative tempo changes, project rename and external
+MIDI destinations are application actions; adapters no longer need direct
+timeline mutation for those workflows.
 Trigger probability and conditions are immutable compiled-plan metadata.
 Scheduling uses a stateless integer hash rather than a callback RNG, and Fill
 crosses into the audio thread through the bounded transport queue. Ratchets are

@@ -81,6 +81,12 @@ if(NEUROGENIC_BUILD_TESTS)
   target_link_libraries(neurogenic_gui_smoke PRIVATE neurogenic_engine neurogenic_gui)
   add_test(NAME neurogenic_gui_smoke COMMAND neurogenic_gui_smoke)
   set_tests_properties(neurogenic_gui_smoke PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+  add_executable(neurogenic_workflows tests/workflow_scenarios.cpp)
+  target_link_libraries(neurogenic_workflows PRIVATE neurogenic_engine neurogenic_gui)
+  add_test(NAME neurogenic_workflows COMMAND neurogenic_workflows all)
+  set_tests_properties(neurogenic_workflows PROPERTIES
+    PASS_REGULAR_EXPRESSION "neurogenic.workflow.summary.v1 passed=4"
+    TIMEOUT 30)
   add_executable(neurogenic_benchmark benchmarks/timeline_benchmark.cpp)
   target_link_libraries(neurogenic_benchmark PRIVATE neurogenic_engine neurogenic_gui)
   # CTest validates every scenario and runs it under sanitizers, but does not

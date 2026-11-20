@@ -96,6 +96,7 @@ int run_gui(ApplicationService &application, const GuiOptions &options,
     }
     SDL_SetWindowMinimumSize(window, 1024, 600);
     GuiModel model(application, settings, settings_path);
+    SDL_StartTextInput(window);
     bool running = true;
     std::uint32_t frames{};
     while (running) {
@@ -119,6 +120,11 @@ int run_gui(ApplicationService &application, const GuiOptions &options,
                 else
                     model.input(input, display.drawable_width,
                                 display.drawable_height);
+            } else if (event.type == SDL_EVENT_TEXT_INPUT) {
+                input.type = GuiInput::Type::text_input;
+                input.text = event.text.text;
+                model.input(input, display.drawable_width,
+                            display.drawable_height);
             } else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
                        event.type == SDL_EVENT_MOUSE_BUTTON_UP) {
                 input.type = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN

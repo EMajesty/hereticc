@@ -1,4 +1,5 @@
 #include "neurogenic/timeline/edit.hpp"
+#include "neurogenic/midi/routing.hpp"
 #include "neurogenic/timeline/playback.hpp"
 #include <algorithm>
 #include <cmath>
@@ -150,7 +151,8 @@ bool TimelineTransaction::set_track_instrument(TrackId id,
         return false;
     }
     if (instrument != sample_instrument_id &&
-        instrument != subtractive_instrument_id) {
+        instrument != subtractive_instrument_id &&
+        instrument != external_midi_instrument_id) {
         error = "instrument is unavailable";
         return false;
     }
@@ -161,6 +163,25 @@ bool TimelineTransaction::set_track_instrument(TrackId id,
     }
     track->instrument_id = std::move(instrument);
     track->instrument_instance_id = instance;
+    error.clear();
+    return true;
+}
+bool TimelineTransaction::set_track_midi_destination(TrackId id,
+                                                     std::uint32_t port,
+                                                     std::uint8_t channel,
+                                                     std::string &error) {
+    auto *track = find_track(id);
+    if (!track) {
+        error = "track does not exist";
+        return false;
+    }
+    if (port == 0 || port > maximum_midi_ports || channel > 15) {
+        error = "MIDI destination requires port 1..8 and channel 1..16";
+        return false;
+    }
+    track->instrument_id = std::string(external_midi_instrument_id);
+    track->midi_output_port = port;
+    track->midi_channel = channel;
     error.clear();
     return true;
 }

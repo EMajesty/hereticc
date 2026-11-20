@@ -64,6 +64,9 @@ class TimelineTransaction {
     bool set_track_instrument(
         TrackId, std::string, std::string &error,
         InstrumentInstanceId instance = default_synth_instance_id);
+    bool set_track_midi_destination(TrackId, std::uint32_t port,
+                                    std::uint8_t channel,
+                                    std::string &error);
     bool add_note(TrackId, EventId, MusicalTick, std::uint8_t, float,
                   MusicalTick, std::string &error);
     bool modify_note(TrackId, EventId, MusicalTick, std::uint8_t, float,
