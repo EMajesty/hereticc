@@ -19,6 +19,7 @@
 #include "neurogenic/scripting/runtime.hpp"
 #include "neurogenic/sequencer/pattern_adapter.hpp"
 #include "neurogenic/timeline/edit.hpp"
+#include "neurogenic/timeline/arrangement.hpp"
 #include "neurogenic/timeline/io.hpp"
 #include "neurogenic/timeline/playback.hpp"
 #include "neurogenic/ui/gui.hpp"
@@ -47,6 +48,174 @@ void check(bool value, const char *message) {
 void near(float actual, float expected, const char *message) {
     if (std::fabs(actual - expected) > 0.0001F)
         throw std::runtime_error(message);
+}
+
+void test_pattern_clip_arrangement() {
+    using namespace neurogenic;
+    Timeline base;
+    base.generation_seed = 44;
+    base.tracks = {{1, "Drums", false, {ticks_per_quarter * 4, {}},
+                    std::string(sample_instrument_id)},
+                   {2, "MIDI", false, {ticks_per_quarter * 4, {}},
+                    std::string(external_midi_instrument_id),
+                    default_synth_instance_id, 1, 1}};
+    std::vector<Timeline> published;
+    TimelineService service(
+        [&](const Timeline &timeline, std::string &) {
+            published.push_back(timeline);
+            return true;
+        },
+        base);
+    std::string error;
+    auto edit = service.edit();
+    check(edit.create_pattern(10, "Verse", ticks_per_quarter * 4, error),
+          "create arrangement pattern");
+    MusicalPattern drums{ticks_per_quarter * 2,
+                         {{100, 0, MusicalEventType::note, 36, 0.8F,
+                           ticks_per_quarter / 4}}};
+    drums.events[0].trigger_probability = 0.75F;
+    drums.events[0].ratchet_count = 2;
+    check(edit.set_pattern_track(10, 1, drums, error),
+          "set independent pattern track");
+    MusicalPattern midi{ticks_per_quarter * 4,
+                        {{101, ticks_per_quarter, MusicalEventType::note, 60,
+                          0.5F, ticks_per_quarter / 2}}};
+    check(edit.set_pattern_track(10, 2, midi, error), "set MIDI pattern track");
+    check(edit.duplicate_pattern(10, 11, "Chorus", error),
+          "duplicate arrangement pattern");
+    check(edit.rename_pattern(11, "Chorus A", error), "rename pattern");
+    check(edit.set_song_range(0, ticks_per_quarter * 8, error),
+          "set song range");
+    check(edit.create_clip({20, 10, 0, ticks_per_quarter * 4, true, 12, 0.5F,
+                            true},
+                           error),
+          "create transformed clip");
+    check(edit.create_clip({21, 11, ticks_per_quarter * 4,
+                            ticks_per_quarter * 4, false, 0, 1.0F, true},
+                           error),
+          "create second clip");
+    edit.timeline().arrangement.pattern_chain = {10, 11};
+    check(edit.set_playback_mode(TimelinePlaybackMode::song, error),
+          "set song playback mode");
+    check(service.commit(edit, TimelineCommitPolicy::next_audio_callback, error),
+          "commit arrangement transaction");
+
+    PlaybackPlan plan;
+    check(compile_timeline(service.snapshot().timeline, plan, error),
+          "compile song arrangement");
+    check(plan.tracks.size() == 2 && plan.tracks[0].length == ticks_per_quarter * 8,
+          "arrangement compiles into authoritative tracks");
+    check(std::any_of(plan.events.begin(), plan.events.end(), [](const auto &e) {
+              return e.pitch == 48 && std::fabs(e.value - 0.4F) < 0.0001F;
+          }),
+          "clip transpose and velocity transformation");
+    check(std::any_of(plan.tracks.begin(), plan.tracks.end(), [](const auto &t) {
+              return t.instrument == external_midi_instrument_key &&
+                     t.midi_channel == 1;
+          }),
+          "arrangement preserves external MIDI routing");
+
+    TimelineScheduler whole(48'000), partitioned(48'000);
+    auto plan_copy = plan;
+    whole.set_plan(&plan, 0);
+    partitioned.set_plan(&plan_copy, 0);
+    std::array<TimelineScheduledEvent, 128> a{}, b{};
+    const auto whole_count = whole.schedule(0, 48'000, a);
+    const auto first = partitioned.schedule(0, 24'000, b);
+    const auto second = partitioned.schedule(24'000, 24'000,
+                                             std::span(b).subspan(first));
+    check(whole_count == first + second, "arrangement callback partition count");
+
+    auto overlap = service.edit();
+    check(!overlap.create_clip({22, 10, ticks_per_quarter,
+                                ticks_per_quarter * 2, true, 0, 1, true},
+                               error) &&
+              error.find("overlap") != std::string::npos,
+          "ambiguous clip overlap rejected");
+    auto live = service.edit();
+    check(live.launch_pattern(10, false, error), "activate live pattern");
+    check(service.commit(live, TimelineCommitPolicy::next_audio_callback, error),
+          "commit live pattern");
+    check(service.snapshot().timeline.arrangement.playback_mode ==
+              TimelinePlaybackMode::live_pattern,
+          "live mode state");
+    check(service.undo(TimelineCommitPolicy::next_audio_callback, error) &&
+              service.snapshot().timeline.arrangement.playback_mode ==
+                  TimelinePlaybackMode::song &&
+              service.redo(TimelineCommitPolicy::next_audio_callback, error),
+          "arrangement undo and redo");
+    check(launch_boundary(1, LaunchQuantization::bar, ticks_per_quarter * 4,
+                          base.transport) == ticks_per_quarter * 4,
+          "bar launch quantization");
+    AudioEngine seek_engine;
+    seek_engine.stop();
+    check(seek_engine.seek_frame(12'345), "queue arrangement seek");
+    std::array<float, 16> seek_left{}, seek_right{};
+    seek_engine.process(seek_left, seek_right);
+    check(seek_engine.frame_position() == 12'345,
+          "arrangement seek updates authoritative transport");
+
+    const auto path = std::filesystem::temp_directory_path() /
+                      "neurogenic-arrangement-roundtrip.ngt";
+    save_timeline(service.snapshot().timeline, path);
+    const auto restored = load_timeline(path);
+    std::filesystem::remove(path);
+    check(restored.arrangement.patterns.size() == 2 &&
+              restored.arrangement.clips.size() == 2 &&
+              restored.arrangement.pattern_chain ==
+                  std::vector<PatternId>({10, 11}),
+          "arrangement persistence round trip");
+    const auto project_path = std::filesystem::temp_directory_path() /
+                              "neurogenic-arrangement-project";
+    std::filesystem::remove_all(project_path);
+    Project project;
+    project.name = "Arrangement test";
+    project.timeline = restored;
+    save_project(project, project_path);
+    const auto restored_project = load_project(project_path);
+    std::filesystem::remove_all(project_path);
+    check(restored_project.timeline.arrangement.patterns.size() == 2 &&
+              restored_project.timeline.arrangement.clips.size() == 2,
+          "arrangement project round trip");
+    ActionRegistry actions;
+    check(actions.find("pattern.create.v1") &&
+              actions.find("pattern.launch.v1") &&
+              actions.find("arrangement.clip-create.v1") &&
+              actions.find("arrangement.loop-set.v1"),
+          "arrangement semantic action discovery");
+    AudioEngine action_engine;
+    TimelineService action_timeline(
+        [&](const Timeline &timeline, std::string &publish_error) {
+            return action_engine.queue_timeline(timeline, publish_error);
+        });
+    SampleManager action_samples(action_engine);
+    ApplicationService application(action_engine, action_timeline,
+                                   action_samples);
+    check(application.execute(
+              {"pattern.create.v1",
+               {{"id", std::int64_t{77}},
+                {"name", std::string("Action pattern")},
+                {"length", std::int64_t{3840}}}})
+              .accepted,
+          "pattern creation semantic action");
+    check(application.execute(
+              {"pattern.launch.v1",
+               {{"id", std::int64_t{77}}, {"queued", false}}})
+              .accepted,
+          "pattern launch semantic action");
+    const auto application_state = application.snapshot();
+    check(application_state.patterns.size() == 1 &&
+              application_state.active_pattern == 77 &&
+              application_state.playback_mode ==
+                  TimelinePlaybackMode::live_pattern,
+          "arrangement discovery snapshot");
+    check(!application.execute(
+               {"pattern.create.v1",
+                {{"id", std::int64_t{-1}},
+                 {"name", std::string("Bad")},
+                 {"length", std::int64_t{3840}}}})
+               .accepted,
+          "negative stable pattern ID rejection");
 }
 
 void test_hardware_diagnostics() {
@@ -6339,6 +6508,7 @@ int main() {
         test_expressive_sample_playback();
         test_realtime_time_stretch();
         test_timeline_and_tracks();
+        test_pattern_clip_arrangement();
         test_unified_project_persistence();
         test_audio_recording_and_resampling();
         test_mixer_and_routing();

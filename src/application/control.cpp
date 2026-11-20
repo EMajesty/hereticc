@@ -1,6 +1,7 @@
 #include "neurogenic/application/control.hpp"
 #include "neurogenic/dsp/voice_modulation.hpp"
 #include "neurogenic/dsp/parameter_destination.hpp"
+#include "neurogenic/timeline/arrangement.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -115,6 +116,8 @@ ActionRegistry::ActionRegistry() {
     add(action("transport.play.v1", "Play", "Transport"));
     add(action("transport.stop.v1", "Stop", "Transport"));
     add(action("transport.restart.v1", "Restart", "Transport"));
+    add(action("arrangement.seek.v1", "Seek arrangement", "Arrangement",
+               {{"tick", ValueType::integer}}));
     add(action("track.select.v1", "Select track", "Tracks",
                {{"track_id", ValueType::integer}}));
     add(action("track.next.v1", "Next track", "Tracks"));
@@ -142,6 +145,47 @@ ActionRegistry::ActionRegistry() {
                 {"value", ValueType::real}}));
     add(action("pattern.select.v1", "Select pattern", "Sequencer",
                {{"pattern_id", ValueType::integer}}));
+    add(action("pattern.create.v1", "Create pattern", "Arrangement",
+               {{"id", ValueType::integer, false},
+                {"name", ValueType::text},
+                {"length", ValueType::integer}}));
+    add(action("pattern.duplicate.v1", "Duplicate pattern", "Arrangement",
+               {{"source", ValueType::integer},
+                {"id", ValueType::integer, false},
+                {"name", ValueType::text}}));
+    add(action("pattern.rename.v1", "Rename pattern", "Arrangement",
+               {{"id", ValueType::integer}, {"name", ValueType::text}}));
+    add(action("pattern.delete.v1", "Delete pattern", "Arrangement",
+               {{"id", ValueType::integer}}));
+    add(action("pattern.launch.v1", "Launch pattern", "Arrangement",
+               {{"id", ValueType::integer},
+                {"queued", ValueType::boolean, false}}));
+    add(action("arrangement.mode-set.v1", "Set playback mode", "Arrangement",
+               {{"mode", ValueType::text}}));
+    add(action("arrangement.clip-create.v1", "Create clip", "Arrangement",
+               {{"id", ValueType::integer, false},
+                {"pattern", ValueType::integer},
+                {"start", ValueType::integer},
+                {"duration", ValueType::integer},
+                {"loop", ValueType::boolean, false},
+                {"transpose", ValueType::integer, false},
+                {"velocity", ValueType::real, false}}));
+    add(action("arrangement.clip-delete.v1", "Delete clip", "Arrangement",
+               {{"id", ValueType::integer}}));
+    add(action("arrangement.clip-update.v1", "Move or resize clip",
+               "Arrangement",
+               {{"id", ValueType::integer},
+                {"start", ValueType::integer, false},
+                {"duration", ValueType::integer, false},
+                {"transpose", ValueType::integer, false},
+                {"velocity", ValueType::real, false},
+                {"enabled", ValueType::boolean, false}}));
+    add(action("arrangement.range-set.v1", "Set song range", "Arrangement",
+               {{"start", ValueType::integer}, {"end", ValueType::integer}}));
+    add(action("arrangement.loop-set.v1", "Set arrangement loop", "Arrangement",
+               {{"enabled", ValueType::boolean},
+                {"start", ValueType::integer},
+                {"end", ValueType::integer}}));
     add(action("step.select.v1", "Select step", "Sequencer",
                {{"step", ValueType::integer}}));
     add(action("step.toggle.v1", "Toggle step", "Sequencer",
@@ -2960,6 +3004,23 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
     } else if (command.action_id == "transport.restart.v1") {
         engine_.restart();
         changed = true;
+    } else if (command.action_id == "arrangement.seek.v1") {
+        const auto tick = *argument<std::int64_t>(command, "tick");
+        const auto snapshot = timeline_.snapshot();
+        if (tick < 0)
+            error = "arrangement seek tick must be nonnegative";
+        else {
+            const auto frame =
+                (static_cast<long double>(tick) * engine_.sample_rate() *
+                 snapshot.timeline.transport.microseconds_per_quarter) /
+                (static_cast<long double>(ticks_per_quarter) * 1'000'000.0L);
+            if (frame > std::numeric_limits<std::uint64_t>::max())
+                error = "arrangement seek position is too large";
+            else if (!engine_.seek_frame(static_cast<std::uint64_t>(frame)))
+                error = "transport command queue is full";
+            else
+                changed = true;
+        }
     } else if (command.action_id == "transport.tempo-set.v1") {
         auto transaction = timeline_.edit();
         if (!transaction.set_tempo_bpm(*argument<double>(command, "bpm"),
@@ -3142,6 +3203,164 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 error = "pattern ID must be nonnegative";
             else {
                 state_.selected_pattern = static_cast<std::uint64_t>(id);
+                changed_locked();
+            }
+        } else if (command.action_id == "pattern.create.v1" ||
+                   command.action_id == "pattern.duplicate.v1" ||
+                   command.action_id == "pattern.rename.v1" ||
+                   command.action_id == "pattern.delete.v1" ||
+                   command.action_id == "pattern.launch.v1" ||
+                   command.action_id == "arrangement.mode-set.v1" ||
+                   command.action_id == "arrangement.clip-create.v1" ||
+                   command.action_id == "arrangement.clip-update.v1" ||
+                   command.action_id == "arrangement.clip-delete.v1" ||
+                   command.action_id == "arrangement.range-set.v1" ||
+                   command.action_id == "arrangement.loop-set.v1") {
+            auto transaction = timeline_.edit();
+            if (command.action_id == "pattern.create.v1") {
+                const auto requested = argument<std::int64_t>(command, "id");
+                if (requested && *requested <= 0)
+                    error = "pattern ID must be positive";
+                const auto id = requested
+                                    ? static_cast<PatternId>(*requested)
+                                    : transaction.next_pattern_id();
+                if (error.empty())
+                    transaction.create_pattern(
+                    id, *argument<std::string>(command, "name"),
+                    *argument<std::int64_t>(command, "length"), error);
+            } else if (command.action_id == "pattern.duplicate.v1") {
+                const auto requested = argument<std::int64_t>(command, "id");
+                const auto source = *argument<std::int64_t>(command, "source");
+                if (source <= 0 || (requested && *requested <= 0))
+                    error = "pattern IDs must be positive";
+                if (error.empty())
+                    transaction.duplicate_pattern(
+                    static_cast<PatternId>(
+                        source),
+                    requested ? static_cast<PatternId>(*requested)
+                              : transaction.next_pattern_id(),
+                    *argument<std::string>(command, "name"), error);
+            } else if (command.action_id == "pattern.rename.v1") {
+                const auto id = *argument<std::int64_t>(command, "id");
+                if (id <= 0)
+                    error = "pattern ID must be positive";
+                else
+                    transaction.rename_pattern(
+                        static_cast<PatternId>(id),
+                        *argument<std::string>(command, "name"), error);
+            } else if (command.action_id == "pattern.delete.v1") {
+                const auto id = *argument<std::int64_t>(command, "id");
+                if (id <= 0)
+                    error = "pattern ID must be positive";
+                else
+                    transaction.delete_pattern(static_cast<PatternId>(id), error);
+            } else if (command.action_id == "pattern.launch.v1") {
+                const auto raw_id = *argument<std::int64_t>(command, "id");
+                const auto id = static_cast<PatternId>(raw_id);
+                const auto queued = argument<bool>(command, "queued");
+                const bool use_queue = queued ? *queued : true;
+                if (raw_id <= 0)
+                    error = "pattern ID must be positive";
+                else
+                    transaction.launch_pattern(id, use_queue, error);
+                if (error.empty() && use_queue) {
+                    const auto &arrangement = transaction.timeline().arrangement;
+                    const auto found = std::find_if(
+                        arrangement.patterns.begin(), arrangement.patterns.end(),
+                        [=](const auto &p) { return p.id == id; });
+                    queued_launch_tick_ = launch_boundary(
+                        state_.transport_tick, arrangement.launch_quantization,
+                        found->length, transaction.timeline().transport);
+                    if (*queued_launch_tick_ == state_.transport_tick)
+                        transaction.launch_pattern(id, false, error);
+                }
+            } else if (command.action_id == "arrangement.mode-set.v1") {
+                const auto &mode = *argument<std::string>(command, "mode");
+                if (mode == "legacy")
+                    transaction.set_playback_mode(TimelinePlaybackMode::legacy,
+                                                  error);
+                else if (mode == "live")
+                    transaction.set_playback_mode(
+                        TimelinePlaybackMode::live_pattern, error);
+                else if (mode == "song")
+                    transaction.set_playback_mode(TimelinePlaybackMode::song,
+                                                  error);
+                else
+                    error = "unknown arrangement playback mode";
+            } else if (command.action_id == "arrangement.clip-create.v1") {
+                ArrangementClip clip;
+                const auto requested = argument<std::int64_t>(command, "id");
+                const auto pattern = *argument<std::int64_t>(command, "pattern");
+                if ((requested && *requested <= 0) || pattern <= 0)
+                    error = "clip and pattern IDs must be positive";
+                clip.id = requested ? static_cast<ClipId>(*requested)
+                                    : transaction.next_clip_id();
+                clip.pattern = static_cast<PatternId>(pattern);
+                clip.start = *argument<std::int64_t>(command, "start");
+                clip.duration = *argument<std::int64_t>(command, "duration");
+                if (const auto value = argument<bool>(command, "loop"))
+                    clip.loop = *value;
+                if (const auto value = argument<std::int64_t>(command, "transpose")) {
+                    if (*value < -127 || *value > 127)
+                        error = "clip transpose must be -127..127";
+                    else
+                        clip.transpose = static_cast<std::int8_t>(*value);
+                }
+                if (const auto value = argument<double>(command, "velocity"))
+                    clip.velocity_scale = static_cast<float>(*value);
+                if (error.empty())
+                    transaction.create_clip(clip, error);
+            } else if (command.action_id == "arrangement.clip-update.v1") {
+                const auto raw_id = *argument<std::int64_t>(command, "id");
+                const auto id = static_cast<ClipId>(raw_id);
+                const auto found = std::find_if(
+                    transaction.timeline().arrangement.clips.begin(),
+                    transaction.timeline().arrangement.clips.end(),
+                    [=](const auto &clip) { return clip.id == id; });
+                if (raw_id <= 0)
+                    error = "clip ID must be positive";
+                else if (found == transaction.timeline().arrangement.clips.end())
+                    error = "clip does not exist";
+                else {
+                    auto clip = *found;
+                    if (const auto value = argument<std::int64_t>(command, "start"))
+                        clip.start = *value;
+                    if (const auto value = argument<std::int64_t>(command, "duration"))
+                        clip.duration = *value;
+                    if (const auto value = argument<std::int64_t>(command, "transpose")) {
+                        if (*value < -127 || *value > 127)
+                            error = "clip transpose must be -127..127";
+                        else
+                            clip.transpose = static_cast<std::int8_t>(*value);
+                    }
+                    if (const auto value = argument<double>(command, "velocity"))
+                        clip.velocity_scale = static_cast<float>(*value);
+                    if (const auto value = argument<bool>(command, "enabled"))
+                        clip.enabled = *value;
+                    if (error.empty())
+                        transaction.update_clip(clip, error);
+                }
+            } else if (command.action_id == "arrangement.clip-delete.v1") {
+                const auto id = *argument<std::int64_t>(command, "id");
+                if (id <= 0)
+                    error = "clip ID must be positive";
+                else
+                    transaction.delete_clip(static_cast<ClipId>(id), error);
+            } else if (command.action_id == "arrangement.range-set.v1") {
+                transaction.set_song_range(
+                    *argument<std::int64_t>(command, "start"),
+                    *argument<std::int64_t>(command, "end"), error);
+            } else {
+                transaction.set_loop_region(
+                    *argument<bool>(command, "enabled"),
+                    *argument<std::int64_t>(command, "start"),
+                    *argument<std::int64_t>(command, "end"), error);
+            }
+            if (error.empty() &&
+                timeline_.commit(std::move(transaction),
+                                 TimelineCommitPolicy::next_audio_callback,
+                                 error)) {
+                state_.project_dirty = true;
                 changed_locked();
             }
         } else if (command.action_id == "step.select.v1") {
@@ -4913,6 +5132,8 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             id.rfind("track.mute", 0) == 0 ||
             id.rfind("track.instrument", 0) == 0 ||
             id.rfind("track.midi-destination", 0) == 0 ||
+            id.rfind("pattern.", 0) == 0 ||
+            id.rfind("arrangement.", 0) == 0 ||
             id.rfind("transport.tempo", 0) == 0 ||
             id.rfind("modulation.route", 0) == 0 ||
             id.rfind("modulation.source", 0) == 0 ||
@@ -4959,10 +5180,34 @@ void ApplicationService::synchronize_locked() const {
             state_.project_dirty = true;
         recording = recording_.status();
     }
-    const auto timeline = timeline_.snapshot();
-    const auto history = timeline_.history_status();
     const auto playing = engine_.playing();
     const auto frame = engine_.frame_position();
+    auto timeline = timeline_.snapshot();
+    if (queued_launch_tick_) {
+        const auto tick = static_cast<MusicalTick>(
+            (static_cast<long double>(frame) * ticks_per_quarter *
+             1'000'000.0L) /
+            (static_cast<long double>(engine_.sample_rate()) *
+             timeline.timeline.transport.microseconds_per_quarter));
+        if (tick >= *queued_launch_tick_) {
+            auto transaction = timeline_.edit();
+            std::string activation_error;
+            const auto id = transaction.timeline().arrangement.queued_pattern;
+            if (id && transaction.launch_pattern(id, false, activation_error) &&
+                timeline_.commit(
+                    std::move(transaction),
+                    TimelineCommitPolicy::next_audio_callback,
+                    activation_error)) {
+                queued_launch_tick_.reset();
+                timeline = timeline_.snapshot();
+                state_.project_dirty = true;
+            } else if (!activation_error.empty()) {
+                state_.arrangement_error = std::move(activation_error);
+                queued_launch_tick_.reset();
+            }
+        }
+    }
+    const auto history = timeline_.history_status();
     auto slots = samples_.states();
     const auto desired_tracks =
         std::min(timeline.timeline.tracks.size(), maximum_mixer_tracks);
@@ -5205,6 +5450,27 @@ void ApplicationService::synchronize_locked() const {
         timeline.timeline.transport.time_signature_numerator;
     state_.time_signature_denominator =
         timeline.timeline.transport.time_signature_denominator;
+    const auto &arrangement = timeline.timeline.arrangement;
+    state_.playback_mode = arrangement.playback_mode;
+    state_.active_pattern = arrangement.active_pattern;
+    state_.queued_pattern = arrangement.queued_pattern;
+    state_.launch_quantization = arrangement.launch_quantization;
+    state_.song_start = arrangement.song_start;
+    state_.song_end = arrangement.song_end;
+    state_.arrangement_loop_enabled = arrangement.loop_enabled;
+    state_.arrangement_loop_start = arrangement.loop_start;
+    state_.arrangement_loop_end = arrangement.loop_end;
+    state_.patterns.clear();
+    state_.patterns.reserve(arrangement.patterns.size());
+    for (const auto &pattern : arrangement.patterns)
+        state_.patterns.push_back(
+            {pattern.id, pattern.name, pattern.length, pattern.tracks.size()});
+    state_.clips.clear();
+    state_.clips.reserve(arrangement.clips.size());
+    for (const auto &clip : arrangement.clips)
+        state_.clips.push_back({clip.id, clip.pattern, clip.start, clip.duration,
+                                clip.loop, clip.enabled, clip.transpose,
+                                clip.velocity_scale});
     if (state_.selected_track == 0 && !timeline.timeline.tracks.empty())
         state_.selected_track = timeline.timeline.tracks.front().id;
     state_.tracks.clear();

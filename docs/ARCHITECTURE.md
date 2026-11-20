@@ -1,5 +1,11 @@
 # Architecture
 
+Pattern definitions, clip placements, and song ranges are control-side data in
+the revisioned `Timeline`. `materialize_arrangement` validates and expands a
+live pattern or song into a temporary legacy-shaped timeline before
+`compile_timeline` creates the immutable playback plan. The callback receives
+only that prepared plan and retains the deterministic scheduler.
+
 Sample voices contain preallocated `SampleVoiceModulationState`. Persisted
 definitions are immutable shared configuration, while phase, envelopes and
 random state live in the bounded voice pool. Note events allocate and lock

@@ -2,6 +2,10 @@
   <img src="docs/assets/readme/vibeslop.png" alt="Absolute vibeslop" width="512">
 </p>
 
+NEUROGENIC supports reusable multi-track patterns, quantized live launching,
+and linear clip arrangements through one authoritative timeline. See
+[Patterns, clips, and arrangements](docs/ARRANGEMENT.md).
+
 check out
 [neurogenic-control](https://github.com/EMajesty/neurogenic-control)
 [neurogenic-audio](https://github.com/EMajesty/neurogenic-audio)

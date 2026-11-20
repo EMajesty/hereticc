@@ -424,6 +424,13 @@ void AudioEngine::restart() noexcept {
     if (!transport_commands_.push(TransportCommand::restart))
         dropped_transport_commands_.fetch_add(1, std::memory_order_relaxed);
 }
+bool AudioEngine::seek_frame(std::uint64_t frame) noexcept {
+    if (!transport_seeks_.push(frame)) {
+        dropped_transport_commands_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    return true;
+}
 void AudioEngine::midi_panic() noexcept {
     if (!transport_commands_.push(TransportCommand::midi_panic))
         dropped_transport_commands_.fetch_add(1, std::memory_order_relaxed);
@@ -821,6 +828,14 @@ void AudioEngine::process(std::span<float> left,
     external_song_position_.store(external_clock.song_position,
                                   std::memory_order_release);
     TransportCommand command;
+    std::uint64_t seek_frame{};
+    while (transport_seeks_.pop(seek_frame)) {
+        transport_frame_ = seek_frame;
+        stop_voices();
+        modulation_.restart();
+        if (auto *midi = midi_output_.load(std::memory_order_acquire))
+            midi->panic();
+    }
     while (transport_commands_.pop(command)) {
         if (command == TransportCommand::play) {
             if (!transport_playing_ && midi_clock_configuration_.enabled)

@@ -1,5 +1,9 @@
 # Musical timeline
 
+The timeline also owns stable-ID reusable patterns and clip arrangements.
+Legacy `Track::pattern` data remains authoritative in legacy mode, so old files
+and Lua scripts retain their behavior. See [ARRANGEMENT.md](ARRANGEMENT.md).
+
 The editable model in `neurogenic/timeline/model.hpp` is shared musical data,
 not a step-sequencer, tracker, piano-roll, or controller model. Positions and
 durations use signed 64-bit ticks at 960 ticks per quarter note. Pattern length

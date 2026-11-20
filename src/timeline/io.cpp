@@ -14,6 +14,19 @@ Track &find_track(Timeline &timeline, TrackId id) {
             return track;
     throw std::runtime_error("event references unknown track");
 }
+PatternDefinition &find_pattern(Timeline &timeline, PatternId id) {
+    for (auto &pattern : timeline.arrangement.patterns)
+        if (pattern.id == id)
+            return pattern;
+    throw std::runtime_error("record references unknown pattern");
+}
+PatternTrack &find_pattern_track(Timeline &timeline, PatternId pattern,
+                                 TrackId track) {
+    for (auto &value : find_pattern(timeline, pattern).tracks)
+        if (value.track == track)
+            return value;
+    throw std::runtime_error("record references unknown pattern track");
+}
 void require_end(std::istringstream &line) {
     std::string extra;
     if (line >> extra)
@@ -73,6 +86,81 @@ Timeline load_timeline(const std::filesystem::path &path) {
                 }
                 require_end(line);
                 timeline.tracks.push_back(std::move(track));
+            } else if (kind == "arrangement") {
+                unsigned mode{}, quantization{}, loop{};
+                auto &a = timeline.arrangement;
+                if (!(line >> mode >> a.active_pattern >> a.queued_pattern >>
+                      quantization >> a.song_start >> a.song_end >> loop >>
+                      a.loop_start >> a.loop_end) ||
+                    mode > static_cast<unsigned>(TimelinePlaybackMode::song) ||
+                    quantization >
+                        static_cast<unsigned>(LaunchQuantization::pattern_end) ||
+                    loop > 1)
+                    throw std::runtime_error("invalid arrangement");
+                a.playback_mode = static_cast<TimelinePlaybackMode>(mode);
+                a.launch_quantization =
+                    static_cast<LaunchQuantization>(quantization);
+                a.loop_enabled = loop != 0;
+                require_end(line);
+            } else if (kind == "pattern") {
+                PatternDefinition pattern;
+                if (!(line >> pattern.id >> pattern.length >>
+                      pattern.time_signature_numerator >>
+                      pattern.time_signature_denominator >>
+                      std::quoted(pattern.name)))
+                    throw std::runtime_error("invalid pattern");
+                require_end(line);
+                timeline.arrangement.patterns.push_back(std::move(pattern));
+            } else if (kind == "pattern_track") {
+                PatternId pattern{};
+                PatternTrack track;
+                if (!(line >> pattern >> track.track >> track.pattern.length))
+                    throw std::runtime_error("invalid pattern track");
+                require_end(line);
+                find_pattern(timeline, pattern).tracks.push_back(std::move(track));
+            } else if (kind == "pattern_event") {
+                PatternId pattern{};
+                TrackId track{};
+                MusicalEvent event;
+                unsigned type{}, pitch{}, condition{}, ratchets{};
+                if (!(line >> pattern >> track >> event.id >> event.tick >> type >>
+                      pitch >> event.velocity >> event.duration >>
+                      event.parameter_id >> event.value >> event.target_event_id >>
+                      std::quoted(event.parameter_destination) >>
+                      event.trigger_probability >> condition >> event.condition_n >>
+                      event.condition_m >> ratchets) ||
+                    type > static_cast<unsigned>(MusicalEventType::pitch_bend) ||
+                    pitch > 127 ||
+                    condition > static_cast<unsigned>(TriggerCondition::fill_inactive) ||
+                    ratchets > 255)
+                    throw std::runtime_error("invalid pattern event");
+                event.type = static_cast<MusicalEventType>(type);
+                event.pitch = static_cast<std::uint8_t>(pitch);
+                event.trigger_condition = static_cast<TriggerCondition>(condition);
+                event.ratchet_count = static_cast<std::uint8_t>(ratchets);
+                require_end(line);
+                find_pattern_track(timeline, pattern, track)
+                    .pattern.events.push_back(std::move(event));
+            } else if (kind == "clip") {
+                ArrangementClip clip;
+                unsigned loop{}, enabled{};
+                int transpose{};
+                if (!(line >> clip.id >> clip.pattern >> clip.start >>
+                      clip.duration >> loop >> transpose >> clip.velocity_scale >>
+                      enabled) || loop > 1 || enabled > 1 || transpose < -128 ||
+                    transpose > 127)
+                    throw std::runtime_error("invalid clip");
+                clip.loop = loop != 0;
+                clip.transpose = static_cast<std::int8_t>(transpose);
+                clip.enabled = enabled != 0;
+                require_end(line);
+                timeline.arrangement.clips.push_back(clip);
+            } else if (kind == "pattern_chain") {
+                PatternId id{};
+                if (!(line >> timeline.arrangement.pattern_chain_position))
+                    throw std::runtime_error("invalid pattern chain");
+                while (line >> id)
+                    timeline.arrangement.pattern_chain.push_back(id);
             } else if (kind == "note") {
                 TrackId track{};
                 unsigned pitch{};
@@ -192,6 +280,16 @@ void save_timeline(const Timeline &timeline,
            << timeline.transport.time_signature_numerator << ' '
            << timeline.transport.time_signature_denominator << "\nseed "
            << timeline.generation_seed << '\n';
+    const auto &a = timeline.arrangement;
+    output << "arrangement " << static_cast<unsigned>(a.playback_mode) << ' '
+           << a.active_pattern << ' ' << a.queued_pattern << ' '
+           << static_cast<unsigned>(a.launch_quantization) << ' ' << a.song_start
+           << ' ' << a.song_end << ' ' << (a.loop_enabled ? 1 : 0) << ' '
+           << a.loop_start << ' ' << a.loop_end << '\n';
+    output << "pattern_chain " << a.pattern_chain_position;
+    for (const auto id : a.pattern_chain)
+        output << ' ' << id;
+    output << '\n';
     for (const auto &track : timeline.tracks) {
         output << "track " << track.id << ' ' << track.pattern.length << ' '
                << (track.muted ? 1 : 0) << ' ' << std::quoted(track.name) << ' '
@@ -235,5 +333,32 @@ void save_timeline(const Timeline &timeline,
             }
         }
     }
+    for (const auto &pattern : a.patterns) {
+        output << "pattern " << pattern.id << ' ' << pattern.length << ' '
+               << pattern.time_signature_numerator << ' '
+               << pattern.time_signature_denominator << ' '
+               << std::quoted(pattern.name) << '\n';
+        for (const auto &track : pattern.tracks) {
+            output << "pattern_track " << pattern.id << ' ' << track.track << ' '
+                   << track.pattern.length << '\n';
+            for (const auto &event : track.pattern.events)
+                output << "pattern_event " << pattern.id << ' ' << track.track
+                       << ' ' << event.id << ' ' << event.tick << ' '
+                       << static_cast<unsigned>(event.type) << ' '
+                       << unsigned(event.pitch) << ' ' << event.velocity << ' '
+                       << event.duration << ' ' << event.parameter_id << ' '
+                       << event.value << ' ' << event.target_event_id << ' '
+                       << std::quoted(event.parameter_destination) << ' '
+                       << event.trigger_probability << ' '
+                       << static_cast<unsigned>(event.trigger_condition) << ' '
+                       << event.condition_n << ' ' << event.condition_m << ' '
+                       << unsigned(event.ratchet_count) << '\n';
+        }
+    }
+    for (const auto &clip : a.clips)
+        output << "clip " << clip.id << ' ' << clip.pattern << ' ' << clip.start
+               << ' ' << clip.duration << ' ' << (clip.loop ? 1 : 0) << ' '
+               << static_cast<int>(clip.transpose) << ' ' << clip.velocity_scale
+               << ' ' << (clip.enabled ? 1 : 0) << '\n';
 }
 } // namespace neurogenic

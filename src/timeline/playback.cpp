@@ -1,4 +1,5 @@
 #include "neurogenic/timeline/playback.hpp"
+#include "neurogenic/timeline/arrangement.hpp"
 #include "neurogenic/dsp/parameter_destination.hpp"
 #include "neurogenic/midi/routing.hpp"
 #include <algorithm>
@@ -106,6 +107,14 @@ bool condition_fires(TriggerCondition condition, std::uint64_t loop,
 
 bool compile_timeline(const Timeline &timeline, PlaybackPlan &output,
                       std::string &error) {
+    if (!validate_arrangement(timeline, error))
+        return false;
+    if (timeline.arrangement.playback_mode != TimelinePlaybackMode::legacy) {
+        Timeline materialized;
+        if (!materialize_arrangement(timeline, materialized, error))
+            return false;
+        return compile_timeline(materialized, output, error);
+    }
     if (timeline.transport.microseconds_per_quarter == 0 ||
         timeline.transport.time_signature_numerator == 0 ||
         timeline.transport.time_signature_denominator == 0) {

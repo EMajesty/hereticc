@@ -8,6 +8,7 @@
 #include "neurogenic/performance/monitor.hpp"
 #include "neurogenic/project/project.hpp"
 #include "neurogenic/timeline/playback.hpp"
+#include "neurogenic/timeline/arrangement.hpp"
 #include "neurogenic/ui/gui.hpp"
 #include <charconv>
 #include <chrono>
@@ -1319,6 +1320,60 @@ void integrated_workstation_case() {
     samples.shutdown();
 }
 } // namespace
+void arrangement_case(std::size_t pattern_count, std::size_t clip_count) {
+    neurogenic::Timeline source;
+    source.tracks.push_back({1, "Arrangement", false, {3840, {}}});
+    for (std::size_t p = 0; p < pattern_count; ++p) {
+        neurogenic::PatternDefinition pattern;
+        pattern.id = p + 1;
+        pattern.name = "Pattern " + std::to_string(p + 1);
+        pattern.length = 960;
+        neurogenic::PatternTrack track;
+        track.track = 1;
+        track.pattern.length = 960;
+        for (std::size_t event = 0; event < 16; ++event)
+            track.pattern.events.push_back(
+                {event + 1, static_cast<neurogenic::MusicalTick>(event * 60),
+                 neurogenic::MusicalEventType::note, 36, 0.7F, 30});
+        pattern.tracks.push_back(std::move(track));
+        source.arrangement.patterns.push_back(std::move(pattern));
+    }
+    for (std::size_t clip = 0; clip < clip_count; ++clip)
+        source.arrangement.clips.push_back(
+            {clip + 1, clip % pattern_count + 1,
+             static_cast<neurogenic::MusicalTick>(clip * 960), 960, false, 0,
+             1, true});
+    source.arrangement.song_end = static_cast<neurogenic::MusicalTick>(
+        std::max<std::size_t>(1, clip_count) * 960);
+    source.arrangement.playback_mode = neurogenic::TimelinePlaybackMode::song;
+    neurogenic::PlaybackPlan plan;
+    std::string error;
+    const auto prepare = Clock::now();
+    if (!neurogenic::compile_timeline(source, plan, error))
+        throw std::runtime_error(error);
+    const auto preparation =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
+                                                             prepare)
+            .count();
+    neurogenic::TimelineScheduler scheduler(48'000);
+    scheduler.set_plan(&plan, 0);
+    std::array<neurogenic::TimelineScheduledEvent, 256> events{};
+    std::uint64_t frame{};
+    const auto begin = Clock::now();
+    for (std::size_t i = 0; i < iterations; ++i) {
+        checksum += scheduler.schedule(frame, 256, events);
+        frame += 256;
+    }
+    result("arrangement_" + std::to_string(pattern_count) + "_patterns_" +
+               std::to_string(clip_count) + "_clips",
+           48'000, 256,
+           std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
+                                                                begin)
+                   .count() /
+               iterations,
+           preparation);
+}
+
 int main(int argc, char **argv) {
     for (int argument = 1; argument < argc; ++argument) {
         const std::string_view option{argv[argument]};
@@ -1361,6 +1416,8 @@ int main(int argc, char **argv) {
     expressive_case("maximum_ratchets_fill", 8,
                     neurogenic::TriggerCondition::fill_active);
     publication_case();
+    arrangement_case(16, 64);
+    arrangement_case(64, 256);
     automation_case("parameter_locks_sparse", 4);
     automation_case("parameter_locks_dense", 256);
     automation_case("mixed_sample_synth_automation", 64, true);

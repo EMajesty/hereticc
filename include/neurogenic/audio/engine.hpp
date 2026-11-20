@@ -121,6 +121,7 @@ class AudioEngine {
     void play() noexcept;
     void stop() noexcept;
     void restart() noexcept;
+    [[nodiscard]] bool seek_frame(std::uint64_t frame) noexcept;
     void midi_panic() noexcept;
     [[nodiscard]] bool set_fill(bool active) noexcept;
     void process(std::span<float> left, std::span<float> right) noexcept;
@@ -426,6 +427,7 @@ class AudioEngine {
     SpscQueue<std::uint8_t, 4> timelines_;
     std::array<PlanSlot, timeline_plan_slot_count> timeline_plans_{};
     SpscQueue<TransportCommand, 16> transport_commands_;
+    SpscQueue<std::uint64_t, 16> transport_seeks_;
     SpscQueue<MidiClockOutputConfiguration, 5> midi_clock_configurations_;
     SpscQueue<MidiRoutingConfiguration, 5> midi_routing_configurations_;
     SpscQueue<MidiPacket, 257> midi_inputs_;

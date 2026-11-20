@@ -1,5 +1,11 @@
 # Application control and controller API
 
+Pattern and arrangement actions are semantic and layout-independent:
+`pattern.create/duplicate/rename/delete/launch.v1` and
+`arrangement.mode-set/clip-create/clip-delete/loop-set.v1`. Their stable IDs
+and copied application-state collections allow launchers or song navigators
+without assuming a 16-button bank. Task 044 adds no physical mapping.
+
 The dedicated 2×8 controller uses the host protocol in
 [CONTROLLER_PROTOCOL.md](CONTROLLER_PROTOCOL.md). Its MCU reports raw controls;
 the host resolves pages, modes, actions, parameters and RGB feedback. The eight

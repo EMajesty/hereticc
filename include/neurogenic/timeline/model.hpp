@@ -8,6 +8,8 @@ namespace neurogenic {
 using MusicalTick = std::int64_t;
 using EventId = std::uint64_t;
 using TrackId = std::uint64_t;
+using PatternId = std::uint64_t;
+using ClipId = std::uint64_t;
 using InstrumentInstanceId = std::uint32_t;
 inline constexpr InstrumentInstanceId default_synth_instance_id = 1;
 inline constexpr std::size_t maximum_instrument_instances = 16;
@@ -86,9 +88,52 @@ struct TransportMetadata {
     std::uint16_t time_signature_numerator{4};
     std::uint16_t time_signature_denominator{4};
 };
+enum class TimelinePlaybackMode : std::uint8_t { legacy, live_pattern, song };
+enum class LaunchQuantization : std::uint8_t {
+    immediate,
+    quarter,
+    bar,
+    two_bars,
+    pattern_end
+};
+struct PatternTrack {
+    TrackId track{};
+    MusicalPattern pattern;
+};
+struct PatternDefinition {
+    PatternId id{};
+    std::string name;
+    MusicalTick length{ticks_per_quarter * 4};
+    std::uint16_t time_signature_numerator{4};
+    std::uint16_t time_signature_denominator{4};
+    std::vector<PatternTrack> tracks;
+};
+struct ArrangementClip {
+    ClipId id{};
+    PatternId pattern{};
+    MusicalTick start{};
+    MusicalTick duration{ticks_per_quarter * 4};
+    bool loop{true};
+    std::int8_t transpose{};
+    float velocity_scale{1.0F};
+    bool enabled{true};
+};
+struct SongArrangement {
+    TimelinePlaybackMode playback_mode{TimelinePlaybackMode::legacy};
+    std::vector<PatternDefinition> patterns;
+    std::vector<ArrangementClip> clips;
+    PatternId active_pattern{}, queued_pattern{};
+    LaunchQuantization launch_quantization{LaunchQuantization::bar};
+    std::vector<PatternId> pattern_chain;
+    std::size_t pattern_chain_position{};
+    MusicalTick song_start{}, song_end{};
+    bool loop_enabled{};
+    MusicalTick loop_start{}, loop_end{};
+};
 struct Timeline {
     TransportMetadata transport;
     std::vector<Track> tracks;
     std::uint64_t generation_seed{};
+    SongArrangement arrangement;
 };
 } // namespace neurogenic

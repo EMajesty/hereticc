@@ -1,5 +1,15 @@
 # Performance monitoring and benchmarks
 
+Arrangement scenarios compile and schedule 16 patterns/64 clips and 64
+patterns/256 clips. `preparation_ns` contains control-side materialization and
+compilation; buffer processing reports scheduler cost separately.
+
+Debug GCC 15.3 measurements on the development Ryzen 7 7800X3D (48 kHz,
+256-frame buffers, 50 iterations) were 0.466 ms preparation / 19 ns scheduler
+work per sparse buffer for 16/64, and 5.90 ms / 19 ns for 64/256. Resident
+memory observed was 13.4 and 14.3 MB. These are development-host measurements,
+not Raspberry Pi 5 or N150 claims.
+
 Task 042 adds `sample_voice_modulation_8v_4m`, `16v_4m`, `32v_6m` and
 `64v_6m`. They isolate per-voice graph evaluation from PCM/stretch cost.
 Preparation covers graph validation, voice allocation and deterministic reset.

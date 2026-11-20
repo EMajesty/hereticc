@@ -1,5 +1,11 @@
 # Project persistence
 
+Project format 2 uses timeline metadata version 5 to persist pattern
+collections, clips, song and loop
+ranges, pattern chains, and launch preferences in `timeline.ngt`. Older
+versions migrate to arrangement `legacy` mode without changing their events or
+sound. Transient queued-boundary timing is not persisted.
+
 Modulation metadata version 8 adds group owners, group follower taps and stable
 group parameter destinations. Version 7 persists stable instances and owners plus graph
 destination kinds, explicit owner and sharing metadata, and follower tap

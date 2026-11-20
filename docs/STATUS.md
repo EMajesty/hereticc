@@ -1,5 +1,10 @@
 # Implementation status
 
+Task 044 adds stable reusable multi-track patterns, transformed/repeating clips,
+live and song modes, quantized queued launches, loop regions, transactional
+history, discovery state, and timeline-v5 persistence. Same-track overlap,
+automatic chain advancement, and sample-exact boundary plan swaps are deferred.
+
 Task 043 adds eight stable stereo group buses, exclusive track/group routing,
 acyclic group-to-group topology, serial group FX, gain/pan/mute/solo, aux sends,
 meters, group-owned modulation and follower taps, three recording tap points,

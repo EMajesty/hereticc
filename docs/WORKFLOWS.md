@@ -1,5 +1,12 @@
 # End-to-end workflows
 
+## Build a live set or song
+
+Create reusable patterns through arrangement actions, edit their track events
+transactionally, then either launch a pattern in live mode or place clips in
+song mode. Queue live transitions with launch quantization. Saving the project
+restores pattern and clip IDs, loop range, transforms, and launch settings.
+
 The bounded `neurogenic_workflows` executable validates complete application
 service paths without physical devices. It uses the production timeline,
 sample manager, audio callback, mixer, recorder, MIDI scheduler, project I/O,

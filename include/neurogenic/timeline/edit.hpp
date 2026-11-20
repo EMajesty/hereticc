@@ -82,6 +82,25 @@ class TimelineTransaction {
     bool remove_event(TrackId, EventId, std::string &error);
     bool set_tempo_bpm(double, std::string &error);
     bool set_time_signature(std::uint16_t, std::uint16_t, std::string &error);
+    bool create_pattern(PatternId, std::string, MusicalTick,
+                        std::string &error);
+    bool duplicate_pattern(PatternId source, PatternId destination,
+                           std::string name, std::string &error);
+    bool rename_pattern(PatternId, std::string, std::string &error);
+    bool delete_pattern(PatternId, std::string &error);
+    bool set_pattern_track(PatternId, TrackId, MusicalPattern,
+                           std::string &error);
+    bool create_clip(ArrangementClip, std::string &error);
+    bool update_clip(ArrangementClip, std::string &error);
+    bool delete_clip(ClipId, std::string &error);
+    bool set_playback_mode(TimelinePlaybackMode, std::string &error);
+    bool launch_pattern(PatternId, bool queue, std::string &error);
+    bool set_song_range(MusicalTick start, MusicalTick end,
+                        std::string &error);
+    bool set_loop_region(bool enabled, MusicalTick start, MusicalTick end,
+                         std::string &error);
+    [[nodiscard]] PatternId next_pattern_id() const noexcept;
+    [[nodiscard]] ClipId next_clip_id() const noexcept;
     [[nodiscard]] TrackId next_track_id() const noexcept;
     [[nodiscard]] EventId next_event_id() const noexcept;
 

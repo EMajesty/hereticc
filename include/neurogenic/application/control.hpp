@@ -132,6 +132,20 @@ struct SliceState {
     float gain{1.0F};
     std::optional<std::uint8_t> root_note;
 };
+struct PatternState {
+    PatternId id{};
+    std::string name;
+    MusicalTick length{};
+    std::size_t track_count{};
+};
+struct ClipState {
+    ClipId id{};
+    PatternId pattern{};
+    MusicalTick start{}, duration{};
+    bool loop{}, enabled{};
+    int transpose{};
+    float velocity_scale{1.0F};
+};
 struct ApplicationState {
     std::uint64_t revision{};
     bool playing{};
@@ -155,6 +169,15 @@ struct ApplicationState {
     std::array<std::optional<SliceId>, 16> slice_pad_assignments{};
     std::vector<WaveformPeak> waveform_peaks;
     std::uint64_t selected_pattern{};
+    TimelinePlaybackMode playback_mode{TimelinePlaybackMode::legacy};
+    PatternId active_pattern{}, queued_pattern{};
+    LaunchQuantization launch_quantization{LaunchQuantization::bar};
+    MusicalTick song_start{}, song_end{}, arrangement_loop_start{},
+        arrangement_loop_end{};
+    bool arrangement_loop_enabled{};
+    std::vector<PatternState> patterns;
+    std::vector<ClipState> clips;
+    std::string arrangement_error;
     std::int64_t selected_step{};
     std::uint64_t step_page{};
     StepResolution step_resolution{StepResolution::sixteenth};
@@ -272,6 +295,7 @@ class ApplicationService {
     std::uint64_t next_sequence_{1}, rejected_{};
     std::optional<TimelineTransaction> edit_group_;
     mutable std::optional<EventId> selected_event_id_;
+    mutable std::optional<MusicalTick> queued_launch_tick_;
     bool fill_momentary_{};
     Project project_;
     mutable SystemMonitor system_monitor_;
