@@ -55,6 +55,15 @@ misses are not backend XRUN claims. See
 Mixer scenarios cover 4, 8 and 16 channels, both stereo aux buses and simulated
 six-input/six-output routing. These host measurements do not establish physical
 Raspberry Pi 5 or Intel N150 performance.
+`mixer_16_tracks_4_groups_fx_aux` and `mixer_16_tracks_8_groups_fx_aux`
+measure prepared group summing, one native group effect per bus, group aux
+sends, and master return. Preparation and publication are outside the timed
+callback loop; run these scenarios on target hardware before setting budgets.
+On the 2026-11-20 x86-64 Debug host (Ryzen 7 7800X3D, 256 frames, 50
+iterations), four groups averaged 100.2 us/buffer (53.2x real-time; 1.57 us
+preparation) and eight groups averaged 119.3 us/buffer (44.7x; 1.79 us
+preparation). Resident process memory was about 77.4 MB. These are offline host
+regression measurements, not Pi 5 or N150 claims.
 `mixer_two_external_fx_latency` adds eight tracks, two stereo sends/returns,
 simulated six-channel I/O, wet/dry mixing and 128-frame compensation. Routing
 preparation and snapshot publication remain outside the measured callback path.

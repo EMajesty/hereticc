@@ -1,6 +1,7 @@
 # Project persistence
 
-Modulation metadata version 7 persists stable instances and owners plus graph
+Modulation metadata version 8 adds group owners, group follower taps and stable
+group parameter destinations. Version 7 persists stable instances and owners plus graph
 destination kinds, explicit owner and sharing metadata, and follower tap
 identities. It adds native type settings, bounded step values, named source
 output and destination input IDs. Version 7 adds voice definitions, velocity
@@ -12,9 +13,11 @@ than substituted. Transient phase, envelope, voice state and prepared graph
 order are never project data. See
 [modulator instances](MODULATOR_INSTANCES.md).
 
-Mixer metadata version 3 persists native FX instances and serial track, aux and
-master chains. Older versions load empty chains. Unsupported types are reported,
-not substituted.
+Mixer metadata version 4 persists stable group definitions, exclusive track and
+group routing, group mixer values, aux sends, and group FX chains in addition
+to version-3 native track/aux/master chains. Older versions load with no groups
+and retain their direct-to-master sound. Unsupported types are reported, not
+substituted.
 
 `midi.ngm` stores the selected clock source, logical input/output selectors,
 clock output ports, external forwarding preference, route filters/remapping,

@@ -122,6 +122,11 @@ bool validate_effect_rack(const EffectRackConfiguration &rack,
             error = "invalid aux effect chain";
             return false;
         }
+    for (const auto &chain : rack.groups)
+        if (!validate_chain(chain)) {
+            error = "invalid group effect chain";
+            return false;
+        }
     if (!validate_chain(rack.master)) {
         error = "invalid master effect chain";
         return false;

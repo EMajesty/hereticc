@@ -21,11 +21,12 @@ inline constexpr std::size_t maximum_mixer_inputs = 6;
 inline constexpr std::size_t maximum_mixer_outputs = 6;
 inline constexpr std::size_t mixer_aux_count = 2;
 inline constexpr std::size_t mixer_external_fx_count = 2;
+inline constexpr std::size_t maximum_mixer_groups = 8;
 inline constexpr std::size_t maximum_external_fx_latency_frames = 16384;
 inline constexpr std::size_t maximum_mixer_block = 1024;
 using ExternalFxLoopId = std::uint32_t;
 
-enum class ExternalFxSource : std::uint8_t { track, auxiliary, master };
+enum class ExternalFxSource : std::uint8_t { track, auxiliary, master, group };
 
 struct MixerChannelSettings {
     TrackId track{};
@@ -33,6 +34,17 @@ struct MixerChannelSettings {
     std::array<float, mixer_aux_count> aux_send{};
     std::array<bool, mixer_aux_count> aux_pre_fader{};
     std::int8_t output_pair{-1}; // -1 routes to master only.
+    bool mute{}, solo{};
+    MixerBusId destination_group{}; // zero routes to master/physical output.
+};
+struct MixerGroupSettings {
+    MixerBusId id{};
+    std::array<char, 32> name{};
+    float gain{1.0F}, pan{};
+    std::array<float, mixer_aux_count> aux_send{};
+    std::array<bool, mixer_aux_count> aux_pre_fader{};
+    MixerBusId destination_group{}; // zero routes to master.
+    std::int8_t output_pair{-1};
     bool mute{}, solo{};
 };
 struct MixerInputSettings {
@@ -68,6 +80,10 @@ struct MixerConfiguration {
     std::size_t track_count{};
     std::array<MixerInputSettings, maximum_mixer_inputs> inputs{};
     std::size_t input_count{};
+    std::array<MixerGroupSettings, maximum_mixer_groups> groups{};
+    std::size_t group_count{};
+    std::array<std::uint8_t, maximum_mixer_groups> prepared_group_order{};
+    std::size_t prepared_group_count{};
     std::array<MixerAuxSettings, mixer_aux_count> aux{};
     std::array<ExternalFxLoopSettings, mixer_external_fx_count> external_fx{};
     MixerMasterSettings master;
@@ -84,10 +100,12 @@ struct StereoMeter {
 };
 struct MixerState {
     std::uint64_t revision{}, rejected_publications{};
+    std::size_t group_capacity{maximum_mixer_groups};
     MixerConfiguration configuration;
     std::array<StereoMeter, maximum_mixer_tracks> tracks{};
     std::array<StereoMeter, maximum_mixer_inputs> inputs{};
     std::array<StereoMeter, mixer_aux_count> aux{};
+    std::array<StereoMeter, maximum_mixer_groups> groups{};
     std::array<StereoMeter, mixer_external_fx_count> external_returns{};
     std::array<bool, mixer_external_fx_count> external_send_available{},
         external_return_available{};
@@ -149,6 +167,22 @@ class Mixer {
     track_right(std::size_t) const noexcept;
     [[nodiscard]] std::span<const float> aux_left(std::size_t) const noexcept;
     [[nodiscard]] std::span<const float> aux_right(std::size_t) const noexcept;
+    [[nodiscard]] std::span<const float>
+    group_pre_left(std::size_t) const noexcept;
+    [[nodiscard]] std::span<const float>
+    group_pre_right(std::size_t) const noexcept;
+    [[nodiscard]] std::span<const float>
+    group_post_effect_left(std::size_t) const noexcept;
+    [[nodiscard]] std::span<const float>
+    group_post_effect_right(std::size_t) const noexcept;
+    [[nodiscard]] std::span<const float> group_left(std::size_t) const noexcept;
+    [[nodiscard]] std::span<const float> group_right(std::size_t) const noexcept;
+    [[nodiscard]] std::size_t active_group_count() const noexcept {
+        return active_.group_count;
+    }
+    [[nodiscard]] MixerBusId active_group_id(std::size_t index) const noexcept {
+        return index < active_.group_count ? active_.groups[index].id : 0;
+    }
     [[nodiscard]] std::span<const float> input(std::size_t index) const noexcept {
         return index < active_.input_count
                    ? std::span<const float>{physical_input_[index].data(), frames_}
@@ -169,6 +203,7 @@ class Mixer {
         std::atomic<bool> clip{};
     };
     [[nodiscard]] std::size_t find_track(TrackId) const noexcept;
+    [[nodiscard]] std::size_t find_group(MixerBusId) const noexcept;
     void update_meter(AtomicMeter &, float, float) noexcept;
     std::uint32_t sample_rate_{};
     SpscQueue<MixerConfiguration, 5> publications_;
@@ -183,6 +218,12 @@ class Mixer {
         physical_input_{};
     std::array<std::array<float, maximum_mixer_block>, mixer_aux_count>
         aux_left_{}, aux_right_{};
+    struct GroupAudioBuffers {
+        std::array<std::array<float, maximum_mixer_block>, maximum_mixer_groups>
+            pre_left{}, pre_right{}, post_effect_left{}, post_effect_right{},
+            left{}, right{};
+    };
+    std::unique_ptr<GroupAudioBuffers> group_buffers_;
     std::array<std::array<float, maximum_mixer_block>, mixer_external_fx_count>
         external_return_left_{}, external_return_right_{}, external_mix_left_{},
         external_mix_right_{};
@@ -195,6 +236,7 @@ class Mixer {
     std::array<AtomicMeter, maximum_mixer_tracks> track_meters_{};
     std::array<AtomicMeter, maximum_mixer_inputs> input_meters_{};
     std::array<AtomicMeter, mixer_aux_count> aux_meters_{};
+    std::array<AtomicMeter, maximum_mixer_groups> group_meters_{};
     std::array<AtomicMeter, mixer_external_fx_count> external_meters_{};
     std::array<std::atomic<bool>, mixer_external_fx_count>
         external_send_available_{}, external_return_available_{};
@@ -206,6 +248,9 @@ class Mixer {
         std::array<std::array<float, mixer_aux_count>, maximum_mixer_tracks>
             track_send{};
         std::array<float, mixer_aux_count> aux_return{};
+        std::array<float, maximum_mixer_groups> group_gain{}, group_pan{};
+        std::array<std::array<float, mixer_aux_count>, maximum_mixer_groups>
+            group_send{};
         std::array<float, mixer_external_fx_count> fx_wet{}, fx_send{},
             fx_return{};
         float master_gain{};
@@ -214,6 +259,9 @@ class Mixer {
         std::array<std::array<bool, mixer_aux_count>, maximum_mixer_tracks>
             has_track_send{};
         std::array<bool, mixer_aux_count> has_aux_return{};
+        std::array<bool, maximum_mixer_groups> has_group_gain{}, has_group_pan{};
+        std::array<std::array<bool, mixer_aux_count>, maximum_mixer_groups>
+            has_group_send{};
         std::array<bool, mixer_external_fx_count> has_fx_wet{}, has_fx_send{},
             has_fx_return{};
         bool has_master_gain{};
@@ -227,6 +275,12 @@ class Mixer {
             track_send{};
         std::array<std::array<float, maximum_mixer_block>, mixer_aux_count>
             aux_return{};
+        std::array<std::array<float, maximum_mixer_block>, maximum_mixer_groups>
+            group_gain{}, group_pan{};
+        std::array<
+            std::array<std::array<float, maximum_mixer_block>, mixer_aux_count>,
+            maximum_mixer_groups>
+            group_send{};
         std::array<std::array<float, maximum_mixer_block>,
                    mixer_external_fx_count>
             fx_wet{}, fx_send{}, fx_return{};

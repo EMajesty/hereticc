@@ -12,6 +12,10 @@ External processors add `external-fx-return` for an isolated return and
 `source_id`. Existing track, aux, physical-input and master sources are
 unchanged. A loop need not reach the physical master to be recorded.
 
+Group buses add `group-pre`, `group-post-effects`, and `group-post-fader`.
+Their `source_id` is the stable group ID; the taps respectively capture the
+summed group input, chain output, and audible post-gain/pan output.
+
 NEUROGENIC's first recording path uses one reusable `RecordingService`. A
 preallocated stereo-capable buffer is the bounded real-time producer target;
 the audio callback only copies samples and updates lock-free counters. The
@@ -36,6 +40,7 @@ Stable source identifiers currently select:
 - `track` plus stable track ID: post-fader timeline channel;
 - `aux` plus bus index: post-gain aux before return gain;
 - `physical-input` plus channel index: one device input independently.
+- `group-pre`, `group-post-effects`, and `group-post-fader` plus stable group ID.
 
 Pre-effects excludes master gain; post-effects includes it and current master
 processing. Both internal taps include samples, synths, and timeline playback.
@@ -96,7 +101,7 @@ embedded. Missing recordings use normal inspectable/relinkable asset behavior.
 
 ## Current limitations
 
-Only mono/stereo, one recorder, one duplex device, and master pre/post taps are
-implemented. Six-channel routing, track/aux taps, separate-device clock
+Only mono/stereo, one recorder, and one duplex device are implemented.
+Separate-device clock
 correction, streamed waveform display, input pair selection, overdub/looping,
 and physical latency validation remain future work.

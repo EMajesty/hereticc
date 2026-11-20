@@ -187,6 +187,7 @@ struct ApplicationState {
     RecordingStatus recording;
     MixerState mixer;
     std::size_t selected_mixer_channel{};
+    MixerBusId selected_group{};
     std::size_t selected_external_fx_loop{};
     std::vector<RoutingScene> routing_scenes;
     std::uint64_t active_routing_scene{};

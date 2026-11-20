@@ -12,6 +12,7 @@ inline constexpr std::size_t maximum_effect_instances = 32;
 inline constexpr std::size_t maximum_effects_per_chain = 4;
 inline constexpr std::size_t maximum_effect_parameters = 4;
 inline constexpr std::size_t maximum_effect_block = 1024;
+inline constexpr std::size_t maximum_effect_groups = 8;
 
 enum class EffectProcessorType : std::uint8_t {
     gain = 1,
@@ -57,6 +58,7 @@ struct EffectRackConfiguration {
     std::array<EffectChainConfiguration, 32> tracks{};
     std::array<EffectChainConfiguration, 2> aux{};
     EffectChainConfiguration master;
+    std::array<EffectChainConfiguration, maximum_effect_groups> groups{};
 };
 
 [[nodiscard]] bool validate_effect_rack(const EffectRackConfiguration &,

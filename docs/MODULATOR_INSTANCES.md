@@ -49,13 +49,12 @@ algorithm knowledge.
 ## Identity, ownership and routing
 
 Every instance has an independent positive 32-bit ID, type, optional name,
-enabled flag, parameters and owner. Active owners are stable timeline track
-IDs, auxiliary bus 0 or 1, and master (owner ID 0). Group/mixdown ownership is
-reserved and rejected until those buses exist.
+enabled flag, parameters and owner. Active owners are stable timeline track or
+group IDs, auxiliary bus 0 or 1, and master (owner ID 0).
 
 Routes reference `(source instance ID, output ID)` and a stable numeric
-destination. Track and aux sources remain local to their owner; master sources
-use validated global destinations. Cross-track and modulator-to-modulator edges
+destination. Sources remain local unless explicitly shared; validated
+cross-owner and modulator-to-modulator edges
 are deferred to Task 040.
 
 Voice-definition ownership is represented for the existing synth architecture,
@@ -86,6 +85,7 @@ the compatibility path because it is note data. Unsupported or over-capacity
 migration fails rather than dropping a route. Phase, envelope stage, random
 position and active voice state are not persisted.
 
-Current limitations are the absence of cross-track graphs, group buses,
-modulator input routing, dynamic persisted per-voice definitions and audio-rate
-processing. XY currently exposes one scalar output per instance.
+Current limitations are the absence of plugin-owned modulators and audio-rate
+processing. Cross-owner graphs, group owners, typed modulator inputs, and
+persisted sample voice definitions are supported. XY currently exposes one
+scalar output per instance.

@@ -6,13 +6,13 @@ check out
 [neurogenic-control](https://github.com/EMajesty/neurogenic-control)
 [neurogenic-audio](https://github.com/EMajesty/neurogenic-audio)
 
-The mixer supports bounded native track, aux and master effect chains. See
+The mixer supports bounded native track, group, aux and master effect chains. See
 [Native FX chains](docs/FX_CHAINS.md).
 
 # NEUROGENIC
 
 Dynamic modulation sources are discoverable stable instances owned by tracks,
-aux buses or master; see
+groups, aux buses or master; see
 [docs/MODULATOR_INSTANCES.md](docs/MODULATOR_INSTANCES.md) for the API,
 capacity, persistence and migration model.
 Cross-track and modulator-to-modulator routing is documented in
@@ -27,10 +27,13 @@ workstation engine. Its first live vertical slice plays a WAV through miniaudio,
 receives MIDI through libremidi, executes Lua 5.4 through sol2, applies generated
 16-step patterns at bar boundaries, and retains deterministic offline rendering.
 
-The engine now includes a bounded per-track mixer, two stereo aux buses,
+The engine now includes a bounded per-track mixer, eight stable stereo group
+buses, two stereo aux buses,
 master routing, six-channel-capable device adaptation and track/aux/master
-recording taps. See [mixer and routing](docs/MIXER.md).
-Two disabled-by-default external FX loops can route track, aux, or master audio
+recording taps plus group pre/post taps. Group routing, processing and
+recording are described in
+[group buses](docs/GROUP_BUSES.md). See also [mixer and routing](docs/MIXER.md).
+Two disabled-by-default external FX loops can route track, group, aux, or master audio
 through physical mono/stereo sends and returns with wet/dry control, manual
 latency compensation, recording taps and recallable routing scenes. Routing
 uses the same application service and atomic mixer publication; consult the

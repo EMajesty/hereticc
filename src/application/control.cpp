@@ -367,6 +367,32 @@ ActionRegistry::ActionRegistry() {
                 {"effect_enabled", ValueType::boolean},
                 {"mute", ValueType::boolean, false},
                 {"output_pair", ValueType::integer, false}}));
+    add(action("mixer.group-create.v1", "Create group bus", "Mixer",
+               {{"name", ValueType::text}}));
+    add(action("mixer.group-delete.v1", "Delete group bus", "Mixer",
+               {{"id", ValueType::integer}}));
+    add(action("mixer.group-rename.v1", "Rename group bus", "Mixer",
+               {{"id", ValueType::integer}, {"name", ValueType::text}}));
+    add(action("mixer.group-select.v1", "Select group bus", "Mixer",
+               {{"id", ValueType::integer}}));
+    add(action("mixer.track-destination.v1", "Set track destination", "Mixer",
+               {{"track_id", ValueType::integer},
+                {"group_id", ValueType::integer}}));
+    add(action("mixer.group-output.v1", "Set group destination", "Mixer",
+               {{"id", ValueType::integer},
+                {"group_id", ValueType::integer},
+                {"output_pair", ValueType::integer, false}}));
+    add(action("mixer.group-levels.v1", "Set group gain and pan", "Mixer",
+               {{"id", ValueType::integer}, {"gain", ValueType::real},
+                {"pan", ValueType::real}}));
+    add(action("mixer.group-mute-toggle.v1", "Toggle group mute", "Mixer",
+               {{"id", ValueType::integer}}));
+    add(action("mixer.group-solo-toggle.v1", "Toggle group solo", "Mixer",
+               {{"id", ValueType::integer}}));
+    add(action("mixer.group-aux-send.v1", "Set group auxiliary send", "Mixer",
+               {{"id", ValueType::integer}, {"aux", ValueType::integer},
+                {"value", ValueType::real},
+                {"pre_fader", ValueType::boolean, false}}));
     add(action("mixer.fx-loop-select.v1", "Select external FX loop", "Routing",
                {{"index", ValueType::integer}}));
     add(action("mixer.fx-loop-set.v1", "Configure external FX loop", "Routing",
@@ -918,6 +944,10 @@ ApplicationService::ApplicationService(AudioEngine &engine,
     mixer_parameter("mixer.track.aux-1", "Track aux 1", 0, 1, 0);
     mixer_parameter("mixer.track.aux-2", "Track aux 2", 0, 1, 0);
     mixer_parameter("mixer.aux.return", "Aux return", 0, 2, 1);
+    mixer_parameter("mixer.group.gain", "Group gain", 0, 2, 1);
+    mixer_parameter("mixer.group.pan", "Group pan", -1, 1, 0);
+    mixer_parameter("mixer.group.aux-1", "Group aux 1", 0, 1, 0);
+    mixer_parameter("mixer.group.aux-2", "Group aux 2", 0, 1, 0);
     mixer_parameter("external-fx.wet", "External FX wet", 0, 1, 0.5);
     mixer_parameter("external-fx.send-gain", "External FX send", 0, 2, 0.5);
     mixer_parameter("external-fx.return-gain", "External FX return", 0, 2, 1);
@@ -1122,6 +1152,15 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             else if (value == "external-fx-mix")
                 recording_configuration_.source =
                     RecordingSource::external_fx_mix;
+            else if (value == "group-pre")
+                recording_configuration_.source =
+                    RecordingSource::group_pre_effects;
+            else if (value == "group-post-effects")
+                recording_configuration_.source =
+                    RecordingSource::group_post_effects;
+            else if (value == "group-post-fader")
+                recording_configuration_.source =
+                    RecordingSource::group_post_fader;
             else
                 error = "unknown recording source";
             if (const auto *source_id =
@@ -1146,6 +1185,20 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                      RecordingSource::external_fx_mix) &&
                 recording_configuration_.source_id >= mixer_external_fx_count)
                 error = "external FX recording source is unavailable";
+            if ((recording_configuration_.source ==
+                     RecordingSource::group_pre_effects ||
+                 recording_configuration_.source ==
+                     RecordingSource::group_post_effects ||
+                 recording_configuration_.source ==
+                     RecordingSource::group_post_fader) &&
+                std::none_of(
+                    mixer_configuration_.groups.begin(),
+                    mixer_configuration_.groups.begin() +
+                        mixer_configuration_.group_count,
+                    [&](const auto &group) {
+                        return group.id == recording_configuration_.source_id;
+                    }))
+                error = "group recording source is unavailable";
             if (recording_configuration_.source ==
                     RecordingSource::track_channel &&
                 std::none_of(mixer_configuration_.tracks.begin(),
@@ -1461,6 +1514,16 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             if (kind == "aux" && index >= 0 &&
                 static_cast<std::size_t>(index) < rack.aux.size())
                 return &rack.aux[static_cast<std::size_t>(index)];
+            if (kind == "group" && index > 0) {
+                const auto found = std::find_if(
+                    next.groups.begin(), next.groups.begin() + next.group_count,
+                    [&](const auto &group) {
+                        return group.id == static_cast<MixerBusId>(index);
+                    });
+                if (found != next.groups.begin() + next.group_count)
+                    return &rack.groups[static_cast<std::size_t>(
+                        found - next.groups.begin())];
+            }
             if (kind == "master" && index == 0)
                 return &rack.master;
             return nullptr;
@@ -1524,6 +1587,8 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 for (const auto &chain : rack.tracks)
                     referenced |= used(chain);
                 for (const auto &chain : rack.aux)
+                    referenced |= used(chain);
+                for (const auto &chain : rack.groups)
                     referenced |= used(chain);
                 if (referenced)
                     error = "effect instance is still assigned to a chain";
@@ -1707,8 +1772,237 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     std::move(error)};
         }
         const auto previous_configuration = mixer_configuration_;
+        const auto previous_selected_group = state_.selected_group;
         auto changed = false;
-        if (command.action_id == "mixer.fx-loop-select.v1") {
+        const auto find_group = [&](MixerBusId id) {
+            return std::find_if(
+                mixer_configuration_.groups.begin(),
+                mixer_configuration_.groups.begin() +
+                    mixer_configuration_.group_count,
+                [&](const auto &group) { return group.id == id; });
+        };
+        if (command.action_id == "mixer.group-create.v1") {
+            const auto &name = *argument<std::string>(command, "name");
+            if (name.empty() || name.size() >= MixerGroupSettings{}.name.size())
+                error = "group name must contain 1..31 characters";
+            else if (mixer_configuration_.group_count == maximum_mixer_groups)
+                error = "group bus capacity is exhausted (8 groups)";
+            else {
+                std::uint64_t next_id = 1;
+                for (std::size_t i = 0; i < mixer_configuration_.group_count;
+                     ++i)
+                    next_id = std::max(
+                        next_id,
+                        static_cast<std::uint64_t>(
+                            mixer_configuration_.groups[i].id) +
+                            1);
+                if (next_id > std::numeric_limits<MixerBusId>::max())
+                    error = "group bus ID space is exhausted";
+                else {
+                    const auto id = static_cast<MixerBusId>(next_id);
+                    auto &group =
+                        mixer_configuration_
+                            .groups[mixer_configuration_.group_count++];
+                    group.id = id;
+                    std::copy(name.begin(), name.end(), group.name.begin());
+                    state_.selected_group = id;
+                    changed = true;
+                }
+            }
+        } else if (command.action_id == "mixer.group-select.v1") {
+            const auto id = static_cast<MixerBusId>(
+                *argument<std::int64_t>(command, "id"));
+            if (find_group(id) == mixer_configuration_.groups.begin() +
+                                      mixer_configuration_.group_count)
+                error = "group bus does not exist";
+            else
+                state_.selected_group = id;
+        } else if (command.action_id == "mixer.group-delete.v1") {
+            const auto id = static_cast<MixerBusId>(
+                *argument<std::int64_t>(command, "id"));
+            const auto found = find_group(id);
+            if (found == mixer_configuration_.groups.begin() +
+                             mixer_configuration_.group_count)
+                error = "group bus does not exist";
+            else {
+                const auto referenced_track = std::any_of(
+                    mixer_configuration_.tracks.begin(),
+                    mixer_configuration_.tracks.begin() +
+                        mixer_configuration_.track_count,
+                    [&](const auto &track) {
+                        return track.destination_group == id;
+                    });
+                const auto referenced_group = std::any_of(
+                    mixer_configuration_.groups.begin(),
+                    mixer_configuration_.groups.begin() +
+                        mixer_configuration_.group_count,
+                    [&](const auto &group) {
+                        return group.id != id && group.destination_group == id;
+                    });
+                const auto referenced_modulator = std::any_of(
+                    modulation_configuration_.modulators.begin(),
+                    modulation_configuration_.modulators.begin() +
+                        modulation_configuration_.modulator_count,
+                    [&](const auto &modulator) {
+                        return modulator.owner_kind == ModulatorOwnerKind::group &&
+                               modulator.owner_id == id;
+                    });
+                const auto referenced_route = std::any_of(
+                    modulation_configuration_.routes.begin(),
+                    modulation_configuration_.routes.begin() +
+                        modulation_configuration_.route_count,
+                    [&](const auto &route) {
+                        return route.destination_owner_explicit &&
+                               route.destination_owner_kind ==
+                                   ModulatorOwnerKind::group &&
+                               route.destination_owner_id == id;
+                    });
+                const auto referenced_external = std::any_of(
+                    mixer_configuration_.external_fx.begin(),
+                    mixer_configuration_.external_fx.end(),
+                    [&](const auto &loop) {
+                        return loop.enabled &&
+                               loop.source == ExternalFxSource::group &&
+                               loop.source_id == id;
+                    });
+                const auto recording_source_is_group =
+                    recording_configuration_.source ==
+                        RecordingSource::group_pre_effects ||
+                    recording_configuration_.source ==
+                        RecordingSource::group_post_effects ||
+                    recording_configuration_.source ==
+                        RecordingSource::group_post_fader;
+                if (referenced_track || referenced_group ||
+                    referenced_modulator || referenced_route ||
+                    referenced_external ||
+                    (recording_source_is_group &&
+                     recording_configuration_.source_id == id))
+                    error = "group bus is still referenced";
+                else {
+                    const auto slot = static_cast<std::size_t>(
+                        found - mixer_configuration_.groups.begin());
+                    std::move(found + 1,
+                              mixer_configuration_.groups.begin() +
+                                  mixer_configuration_.group_count,
+                              found);
+                    std::move(mixer_configuration_.effects.groups.begin() +
+                                  slot + 1,
+                              mixer_configuration_.effects.groups.begin() +
+                                  mixer_configuration_.group_count,
+                              mixer_configuration_.effects.groups.begin() +
+                                  slot);
+                    --mixer_configuration_.group_count;
+                    mixer_configuration_
+                        .groups[mixer_configuration_.group_count] = {};
+                    mixer_configuration_.effects
+                        .groups[mixer_configuration_.group_count] = {};
+                    if (state_.selected_group == id)
+                        state_.selected_group = 0;
+                    changed = true;
+                }
+            }
+        } else if (command.action_id == "mixer.group-rename.v1") {
+            const auto id = static_cast<MixerBusId>(
+                *argument<std::int64_t>(command, "id"));
+            const auto &name = *argument<std::string>(command, "name");
+            const auto found = find_group(id);
+            if (found == mixer_configuration_.groups.begin() +
+                             mixer_configuration_.group_count)
+                error = "group bus does not exist";
+            else if (name.empty() || name.size() >= found->name.size())
+                error = "group name must contain 1..31 characters";
+            else {
+                found->name.fill(0);
+                std::copy(name.begin(), name.end(), found->name.begin());
+                changed = true;
+            }
+        } else if (command.action_id == "mixer.track-destination.v1") {
+            const auto track_id = static_cast<TrackId>(
+                *argument<std::int64_t>(command, "track_id"));
+            const auto group_id = static_cast<MixerBusId>(
+                *argument<std::int64_t>(command, "group_id"));
+            const auto track = std::find_if(
+                mixer_configuration_.tracks.begin(),
+                mixer_configuration_.tracks.begin() +
+                    mixer_configuration_.track_count,
+                [&](const auto &item) { return item.track == track_id; });
+            if (track == mixer_configuration_.tracks.begin() +
+                             mixer_configuration_.track_count)
+                error = "mixer track does not exist";
+            else if (group_id &&
+                     find_group(group_id) ==
+                         mixer_configuration_.groups.begin() +
+                             mixer_configuration_.group_count)
+                error = "group bus does not exist";
+            else {
+                track->destination_group = group_id;
+                if (group_id)
+                    track->output_pair = -1;
+                changed = true;
+            }
+        } else if (command.action_id == "mixer.group-output.v1" ||
+                   command.action_id == "mixer.group-levels.v1" ||
+                   command.action_id == "mixer.group-mute-toggle.v1" ||
+                   command.action_id == "mixer.group-solo-toggle.v1" ||
+                   command.action_id == "mixer.group-aux-send.v1") {
+            const auto id = static_cast<MixerBusId>(
+                *argument<std::int64_t>(command, "id"));
+            const auto found = find_group(id);
+            if (found == mixer_configuration_.groups.begin() +
+                             mixer_configuration_.group_count)
+                error = "group bus does not exist";
+            else if (command.action_id == "mixer.group-output.v1") {
+                const auto destination = static_cast<MixerBusId>(
+                    *argument<std::int64_t>(command, "group_id"));
+                auto output = std::int64_t{-1};
+                if (const auto *value =
+                        argument<std::int64_t>(command, "output_pair"))
+                    output = *value;
+                if ((destination && find_group(destination) ==
+                                        mixer_configuration_.groups.begin() +
+                                            mixer_configuration_.group_count) ||
+                    (output != -1 && output != 0 && output != 2 &&
+                     output != 4))
+                    error = "invalid group destination";
+                else {
+                    found->destination_group = destination;
+                    found->output_pair = static_cast<std::int8_t>(output);
+                    changed = true;
+                }
+            } else if (command.action_id == "mixer.group-levels.v1") {
+                const auto gain = number(command.arguments.at("gain"));
+                const auto pan = number(command.arguments.at("pan"));
+                if (!std::isfinite(gain) || gain < 0 || gain > 2 ||
+                    !std::isfinite(pan) || pan < -1 || pan > 1)
+                    error = "group gain/pan is out of range";
+                else {
+                    found->gain = static_cast<float>(gain);
+                    found->pan = static_cast<float>(pan);
+                    changed = true;
+                }
+            } else if (command.action_id == "mixer.group-mute-toggle.v1") {
+                found->mute = !found->mute;
+                changed = true;
+            } else if (command.action_id == "mixer.group-solo-toggle.v1") {
+                found->solo = !found->solo;
+                changed = true;
+            } else {
+                const auto aux = *argument<std::int64_t>(command, "aux");
+                const auto value = number(command.arguments.at("value"));
+                if (aux < 0 || aux >= 2 || !std::isfinite(value) || value < 0 ||
+                    value > 1)
+                    error = "group aux send is out of range";
+                else {
+                    found->aux_send[static_cast<std::size_t>(aux)] =
+                        static_cast<float>(value);
+                    if (const auto *pre =
+                            argument<bool>(command, "pre_fader"))
+                        found->aux_pre_fader[static_cast<std::size_t>(aux)] =
+                            *pre;
+                    changed = true;
+                }
+            }
+        } else if (command.action_id == "mixer.fx-loop-select.v1") {
             const auto index = *argument<std::int64_t>(command, "index");
             if (index < 0 ||
                 index >= static_cast<std::int64_t>(mixer_external_fx_count))
@@ -1753,8 +2047,11 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     loop.source = ExternalFxSource::auxiliary;
                 else if (source == "master")
                     loop.source = ExternalFxSource::master;
+                else if (source == "group")
+                    loop.source = ExternalFxSource::group;
                 else
-                    error = "external FX source must be track, aux, or master";
+                    error =
+                        "external FX source must be track, aux, group, or master";
                 loop.source_id = static_cast<std::uint64_t>(source_id);
                 loop.send_left = static_cast<std::uint8_t>(send_left);
                 loop.send_right = static_cast<std::uint8_t>(send_right);
@@ -1973,13 +2270,16 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 }
             }
         }
-        if (!error.empty())
+        if (!error.empty()) {
             mixer_configuration_ = previous_configuration;
+            state_.selected_group = previous_selected_group;
+        }
         if (changed && error.empty()) {
             ++mixer_configuration_.revision;
-            if (!engine_.publish_mixer(mixer_configuration_, error))
+            if (!engine_.publish_mixer(mixer_configuration_, error)) {
                 mixer_configuration_ = previous_configuration;
-            else {
+                state_.selected_group = previous_selected_group;
+            } else {
                 project_.active_routing_scene = 0;
                 state_.active_routing_scene = 0;
                 state_.project_dirty = true;
@@ -3974,9 +4274,20 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     if (instance->type != ModulatorType::envelope_follower ||
                         tap < 0 ||
                         tap > static_cast<std::int64_t>(
-                                  FollowerTapKind::physical_input) ||
+                                  FollowerTapKind::group) ||
                         tap_id < 0)
                         error = "invalid envelope follower tap";
+                    else if (static_cast<FollowerTapKind>(tap) ==
+                                 FollowerTapKind::group &&
+                             std::none_of(
+                                 mixer_configuration_.groups.begin(),
+                                 mixer_configuration_.groups.begin() +
+                                     mixer_configuration_.group_count,
+                                 [&](const auto &group) {
+                                     return group.id ==
+                                            static_cast<MixerBusId>(tap_id);
+                                 }))
+                        error = "envelope follower group tap does not exist";
                     else {
                         instance->settings.follower_tap =
                             static_cast<FollowerTapKind>(tap);
@@ -4062,8 +4373,16 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                         error = "modulator auxiliary owner does not exist";
                     else if (owner == ModulatorOwnerKind::master && owner_id != 0)
                         error = "master owner ID must be zero";
-                    else if (owner == ModulatorOwnerKind::group)
-                        error = "group owners are reserved but not available";
+                    else if (owner == ModulatorOwnerKind::group &&
+                             std::none_of(
+                                 mixer_configuration_.groups.begin(),
+                                 mixer_configuration_.groups.begin() +
+                                     mixer_configuration_.group_count,
+                                 [&](const auto &group) {
+                                     return group.id ==
+                                            static_cast<MixerBusId>(owner_id);
+                                 }))
+                        error = "modulator group owner does not exist";
                     if (error.empty()) {
                         auto &instance = next.modulators[next.modulator_count++];
                         instance.id = next_modulator_instance_id_++;
@@ -4124,6 +4443,13 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     if (source->owner_kind == ModulatorOwnerKind::auxiliary)
                         route.destination.instance =
                             static_cast<std::uint32_t>(source->owner_id + 1);
+                    if (source->owner_kind == ModulatorOwnerKind::group) {
+                        route.destination.instance =
+                            static_cast<std::uint32_t>(source->owner_id);
+                        route.destination_owner_explicit = true;
+                        route.destination_owner_kind = ModulatorOwnerKind::group;
+                        route.destination_owner_id = source->owner_id;
+                    }
                     if (const auto *instance = argument<std::int64_t>(
                             command, "destination_instance")) {
                         if (*instance < 0 ||
@@ -4739,6 +5065,14 @@ void ApplicationService::synchronize_locked() const {
             if (state_.mixer.aux[i].left != mixer.aux[i].left ||
                 state_.mixer.aux[i].right != mixer.aux[i].right ||
                 state_.mixer.aux[i].clip != mixer.aux[i].clip) {
+                external = true;
+                break;
+            }
+    if (!external)
+        for (std::size_t i = 0; i < maximum_mixer_groups; ++i)
+            if (state_.mixer.groups[i].left != mixer.groups[i].left ||
+                state_.mixer.groups[i].right != mixer.groups[i].right ||
+                state_.mixer.groups[i].clip != mixer.groups[i].clip) {
                 external = true;
                 break;
             }

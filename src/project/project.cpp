@@ -46,7 +46,7 @@ std::string generation_name() {
 }
 std::string serialize_mixer(const MixerConfiguration &mixer) {
     std::ostringstream out;
-    out << "NEUROGENIC_MIXER 3\n"
+    out << "NEUROGENIC_MIXER 4\n"
         << std::setprecision(9) << "master " << mixer.master.gain << ' '
         << static_cast<unsigned>(mixer.master.output_left) << ' '
         << static_cast<unsigned>(mixer.master.output_right) << ' '
@@ -55,9 +55,22 @@ std::string serialize_mixer(const MixerConfiguration &mixer) {
     for (std::size_t i = 0; i < mixer.track_count; ++i) {
         const auto &c = mixer.tracks[i];
         out << c.track << ' ' << c.gain << ' ' << c.pan << ' ' << c.mute << ' '
-            << c.solo << ' ' << static_cast<int>(c.output_pair);
+            << c.solo << ' ' << static_cast<int>(c.output_pair) << ' '
+            << c.destination_group;
         for (std::size_t a = 0; a < mixer_aux_count; ++a)
             out << ' ' << c.aux_send[a] << ' ' << c.aux_pre_fader[a];
+        out << '\n';
+    }
+    out << "groups " << mixer.group_count << '\n';
+    for (std::size_t i = 0; i < mixer.group_count; ++i) {
+        const auto &group = mixer.groups[i];
+        out << group.id << ' ' << std::quoted(std::string(group.name.data()))
+            << ' ' << group.gain << ' ' << group.pan << ' ' << group.mute << ' '
+            << group.solo << ' ' << group.destination_group << ' '
+            << static_cast<int>(group.output_pair);
+        for (std::size_t a = 0; a < mixer_aux_count; ++a)
+            out << ' ' << group.aux_send[a] << ' '
+                << group.aux_pre_fader[a];
         out << '\n';
     }
     out << "inputs " << mixer.input_count << '\n';
@@ -116,6 +129,8 @@ std::string serialize_mixer(const MixerConfiguration &mixer) {
     for (std::size_t i = 0; i < mixer.effects.aux.size(); ++i)
         chain("aux", i, mixer.effects.aux[i]);
     chain("master", 0, mixer.effects.master);
+    for (std::size_t i = 0; i < mixer.effects.groups.size(); ++i)
+        chain("group", i, mixer.effects.groups[i]);
     return out.str();
 }
 MixerConfiguration load_mixer(const std::filesystem::path &path) {
@@ -126,7 +141,7 @@ MixerConfiguration load_mixer(const std::filesystem::path &path) {
     MixerConfiguration result;
     int output{};
     if (!(input >> magic >> version) || magic != "NEUROGENIC_MIXER" ||
-        (version < 1 || version > 3) || !(input >> label) ||
+        (version < 1 || version > 4) || !(input >> label) ||
         label != "master" ||
         !(input >> result.master.gain >> left >> right >> result.master.mute) ||
         left >= maximum_mixer_outputs || right >= maximum_mixer_outputs ||
@@ -141,9 +156,31 @@ MixerConfiguration load_mixer(const std::filesystem::path &path) {
               output))
             throw std::runtime_error("malformed mixer track");
         c.output_pair = static_cast<std::int8_t>(output);
+        if (version >= 4 && !(input >> c.destination_group))
+            throw std::runtime_error("malformed mixer track destination");
         for (std::size_t a = 0; a < mixer_aux_count; ++a)
             if (!(input >> c.aux_send[a] >> c.aux_pre_fader[a]))
                 throw std::runtime_error("malformed mixer send");
+    }
+    if (version >= 4) {
+        if (!(input >> label >> result.group_count) || label != "groups" ||
+            result.group_count > maximum_mixer_groups)
+            throw std::runtime_error("malformed mixer group count");
+        for (std::size_t i = 0; i < result.group_count; ++i) {
+            auto &group = result.groups[i];
+            std::string name;
+            if (!(input >> group.id >> std::quoted(name) >> group.gain >>
+                  group.pan >> group.mute >> group.solo >>
+                  group.destination_group >> output) ||
+                name.size() >= group.name.size())
+                throw std::runtime_error("malformed mixer group");
+            std::copy(name.begin(), name.end(), group.name.begin());
+            group.output_pair = static_cast<std::int8_t>(output);
+            for (std::size_t a = 0; a < mixer_aux_count; ++a)
+                if (!(input >> group.aux_send[a] >>
+                      group.aux_pre_fader[a]))
+                    throw std::runtime_error("malformed group send");
+        }
     }
     if (!(input >> label >> result.input_count) || label != "inputs" ||
         result.input_count > maximum_mixer_inputs)
@@ -182,7 +219,8 @@ MixerConfiguration load_mixer(const std::filesystem::path &path) {
                   loop.return_gain >> loop.wet >> loop.latency_frames >>
                   loop.enabled >> loop.bypass >> loop.return_mute >>
                   loop.mono_send >> loop.mono_return) ||
-                label != "external" || index != i || source > 2 ||
+                label != "external" || index != i ||
+                source > (version >= 4 ? 3U : 2U) ||
                 send_left >= maximum_mixer_outputs ||
                 send_right >= maximum_mixer_outputs ||
                 return_left >= maximum_mixer_inputs ||
@@ -240,6 +278,9 @@ MixerConfiguration load_mixer(const std::filesystem::path &path) {
         for (std::size_t i = 0; i < result.effects.aux.size(); ++i)
             read_chain("aux", i, result.effects.aux[i]);
         read_chain("master", 0, result.effects.master);
+        if (version >= 4)
+            for (std::size_t i = 0; i < result.effects.groups.size(); ++i)
+                read_chain("group", i, result.effects.groups[i]);
     }
     std::string error;
     if (!validate_mixer_configuration(result, maximum_mixer_inputs,
@@ -250,26 +291,43 @@ MixerConfiguration load_mixer(const std::filesystem::path &path) {
 }
 bool validate_modulation_owners(const ModulationConfiguration &configuration,
                                 const Timeline &timeline,
+                                const MixerConfiguration &mixer,
                                 std::string &error) {
     const auto owner_exists = [&](ModulatorOwnerKind kind, std::uint64_t id) {
         if (kind == ModulatorOwnerKind::master)
             return id == 0;
         if (kind == ModulatorOwnerKind::auxiliary)
             return id < mixer_aux_count;
+        if (kind == ModulatorOwnerKind::group)
+            return std::any_of(mixer.groups.begin(),
+                               mixer.groups.begin() + mixer.group_count,
+                               [&](const auto &group) { return group.id == id; });
         if (kind == ModulatorOwnerKind::track ||
             kind == ModulatorOwnerKind::voice_definition)
             return std::any_of(timeline.tracks.begin(), timeline.tracks.end(),
                                [&](const auto &track) { return track.id == id; });
         return false;
     };
-    for (std::size_t i = 0; i < configuration.modulator_count; ++i)
-        if (!owner_exists(configuration.modulators[i].owner_kind,
-                          configuration.modulators[i].owner_id)) {
+    for (std::size_t i = 0; i < configuration.modulator_count; ++i) {
+        const auto &modulator = configuration.modulators[i];
+        if (!owner_exists(modulator.owner_kind, modulator.owner_id)) {
             error = "modulator " +
-                    std::to_string(configuration.modulators[i].id) +
-                    " has a missing owner";
+                    std::to_string(modulator.id) + " has a missing owner";
             return false;
         }
+        if (modulator.type == ModulatorType::envelope_follower &&
+            modulator.settings.follower_tap == FollowerTapKind::group &&
+            std::none_of(mixer.groups.begin(),
+                         mixer.groups.begin() + mixer.group_count,
+                         [&](const auto &group) {
+                             return group.id ==
+                                    modulator.settings.follower_tap_id;
+                         })) {
+            error = "modulator " + std::to_string(modulator.id) +
+                    " has a missing group follower tap";
+            return false;
+        }
+    }
     for (std::size_t i = 0; i < configuration.route_count; ++i)
         if (configuration.routes[i].destination_owner_explicit &&
             !owner_exists(configuration.routes[i].destination_owner_kind,
@@ -282,7 +340,7 @@ bool validate_modulation_owners(const ModulationConfiguration &configuration,
 }
 std::string serialize_modulation(const ModulationConfiguration &configuration) {
     std::ostringstream out;
-    out << "NEUROGENIC_MODULATION 7\n"
+    out << "NEUROGENIC_MODULATION 8\n"
         << std::setprecision(9) << "interval " << configuration.update_interval
         << '\n';
     for (std::size_t i = 0; i < configuration.source_count; ++i) {
@@ -360,7 +418,7 @@ ModulationConfiguration load_modulation(const std::filesystem::path &path) {
     unsigned version{};
     ModulationConfiguration result;
     if (!(input >> magic >> version) || magic != "NEUROGENIC_MODULATION" ||
-        (version == 0 || version > 7) ||
+        (version == 0 || version > 8) ||
         !(input >> label >> result.update_interval) || label != "interval")
         throw std::runtime_error(
             "unsupported or malformed modulation metadata");
@@ -424,7 +482,7 @@ ModulationConfiguration load_modulation(const std::filesystem::path &path) {
             if (version >= 5) {
                 unsigned tap{};
                 if (!(input >> instance.shared >> tap >> source.follower_tap_id) ||
-                    tap > static_cast<unsigned>(FollowerTapKind::physical_input))
+                    tap > static_cast<unsigned>(FollowerTapKind::group))
                     throw std::runtime_error("malformed modulator graph metadata");
                 source.follower_tap = static_cast<FollowerTapKind>(tap);
             }
@@ -466,7 +524,7 @@ ModulationConfiguration load_modulation(const std::filesystem::path &path) {
               route.maximum >> route.base_value >> route.depth >>
               route.enabled >> polarity >> scope >> route.track_id) ||
             source >= static_cast<unsigned>(ModulationSourceId::count) ||
-            target > static_cast<unsigned>(ParameterTarget::external_fx) ||
+            target > static_cast<unsigned>(ParameterTarget::mixer_group) ||
             polarity > static_cast<unsigned>(ModulationPolarity::unipolar) ||
             scope > static_cast<unsigned>(ModulationScope::voice))
             throw std::runtime_error("malformed modulation route");
@@ -668,6 +726,7 @@ void save_project(const Project &project,
     if (!modulation_validation.configure(project.modulation))
         throw std::invalid_argument("invalid project modulation configuration");
     if (!validate_modulation_owners(project.modulation, project.timeline,
+                                    project.mixer,
                                     validation_error))
         throw std::invalid_argument("invalid project modulation owners: " +
                                     validation_error);
@@ -803,6 +862,7 @@ Project load_project(const std::filesystem::path &directory,
         result.modulation = load_modulation(files / "modulation.ngm");
     std::string modulation_owner_error;
     if (!validate_modulation_owners(result.modulation, result.timeline,
+                                    result.mixer,
                                     modulation_owner_error))
         throw std::runtime_error("invalid project modulation owners: " +
                                  modulation_owner_error);

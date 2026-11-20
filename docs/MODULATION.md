@@ -97,9 +97,11 @@ Projects write optional version-3 `modulation.ngm`. It preserves source settings
 route IDs, scopes, track IDs, depths, and destinations. Older projects load an
 empty matrix. Forward versions and unsafe destinations are rejected.
 
-Current limitations: no per-voice sample modulation, sample filter, selectable
-follower taps, audio-rate modulation, recursive graphs, modulation curves, or
-per-track MIDI CC/XY lanes. Delay destinations remain block-applied.
+Current limitations: no per-voice sample filter, audio-rate modulation,
+recursive graphs, modulation curves, or per-track MIDI CC/XY lanes. Dynamic
+voice-local sample ADSR/LFO/function/random/step/velocity/gate sources are
+implemented; group follower taps observe post-fader group audio. Delay
+destinations remain block-applied.
 
 ## Scope resolution
 

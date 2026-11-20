@@ -25,7 +25,7 @@ modulatable.
 
 ## Ownership and visibility
 
-Instances retain track, aux or master ownership. Cross-owner access requires a
+Instances retain track, group, aux or master ownership. Cross-owner access requires a
 persisted `shared` flag and an explicit destination owner. Validation rejects
 unshared cross-owner edges. This supports track-to-track, track/bus, bus/track
 and master/track routing without turning a local source into a global source.
@@ -56,7 +56,7 @@ or topology construction.
 
 ## Audio-derived modulation
 
-Followers select stable master, track, aux or physical-input taps. Mixer blocks
+Followers select stable master, track, group, aux or physical-input taps. Mixer blocks
 are observed after mixing and affect the following block. This explicit
 one-block latency breaks audio/control ordering cycles. Stereo taps use peak
 absolute amplitude across both channels; observation uses fixed mixer buffers.
@@ -77,5 +77,5 @@ sharing and taps or query graph discovery data, allowing UI Studio to build a
 patcher without engine-specific hardcoding.
 
 Limitations: no feedback, recursive or audio-rate graph, dynamic per-voice
-nodes, group buses or plugin destinations. Physical-input taps use configured
+nodes or plugin destinations. Physical-input taps use configured
 mixer input indices and require hardware verification.

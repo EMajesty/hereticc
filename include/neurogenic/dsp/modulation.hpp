@@ -77,7 +77,8 @@ enum class FollowerTapKind : std::uint8_t {
     master,
     track,
     auxiliary,
-    physical_input
+    physical_input,
+    group
 };
 struct ModulatorParameterDescriptor {
     std::string_view id, name, unit;

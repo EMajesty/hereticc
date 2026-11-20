@@ -1,7 +1,7 @@
 # Native FX chains
 
-NEUROGENIC has bounded serial native effect chains on mixer tracks, both
-auxiliary buses, and the stereo master. Processor types and processor instances
+NEUROGENIC has bounded serial native effect chains on mixer tracks, group
+buses, both auxiliary buses, and the stereo master. Processor types and processor instances
 are separate: a type describes code and parameters, while each instance has a
 stable numeric ID and independent DSP state.
 
@@ -9,7 +9,8 @@ stable numeric ID and independent DSP state.
 
 ```text
 instrument/sample -> track chain -> pan -> track gain/mute/solo
-                  -> pre/post-fader aux send -> aux chain -> aux gain/return
+                  -> optional group chain -> group gain/pan -> aux sends
+                  -> aux chain -> aux gain/return
                   -> external FX routing -> master gain -> master chain
                   -> legacy master gain-stage and delay -> output
 ```
@@ -22,7 +23,7 @@ processors. Empty chains preserve the pre-chain project signal path.
 ## Model and limits
 
 - A rack contains at most 32 native instances.
-- Every track, aux, or master chain contains at most four instances.
+- Every track, group, aux, or master chain contains at most four instances.
 - Chains are serial and may be bypassed as a unit.
 - An instance may be enabled or bypassed and has a linear 0..1 wet value.
 - Initial types are `native.gain.v1`, `native.stereo-delay.v1`,

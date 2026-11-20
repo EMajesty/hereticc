@@ -97,6 +97,14 @@ resolve_parameter_destination(std::string_view id) noexcept {
         return {{ParameterTarget::mixer_aux, 1}};
     if (id == "mixer.master.gain")
         return {{ParameterTarget::mixer_master, 1}};
+    if (id == "mixer.group.gain")
+        return {{ParameterTarget::mixer_group, 1}};
+    if (id == "mixer.group.pan")
+        return {{ParameterTarget::mixer_group, 2}};
+    if (id == "mixer.group.aux-1")
+        return {{ParameterTarget::mixer_group, 3}};
+    if (id == "mixer.group.aux-2")
+        return {{ParameterTarget::mixer_group, 4}};
     if (id == "external-fx.wet")
         return {
             {ParameterTarget::external_fx,
@@ -138,6 +146,8 @@ bool valid_legacy_parameter(ParameterTarget target,
                                 ExternalFxModulationParameter::return_gain);
     if (target == ParameterTarget::native_effect)
         return parameter >= 1 && parameter <= maximum_effect_parameters;
+    if (target == ParameterTarget::mixer_group)
+        return parameter >= 1 && parameter <= 4;
     return false;
 }
 } // namespace neurogenic

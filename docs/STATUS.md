@@ -1,5 +1,12 @@
 # Implementation status
 
+Task 043 adds eight stable stereo group buses, exclusive track/group routing,
+acyclic group-to-group topology, serial group FX, gain/pan/mute/solo, aux sends,
+meters, group-owned modulation and follower taps, three recording tap points,
+semantic application actions, mixer-metadata-v4/modulation-v8 persistence, deterministic
+tests and bounded benchmarks. Projects without groups retain their previous
+direct-to-master signal path. See `GROUP_BUSES.md`.
+
 Task 042 adds track-owned sample voice definitions with independent envelope,
 LFO, function, step and random state. Velocity and gate/trigger are native
 voice sources; pitch, gain and pan are supported destinations. Metadata is

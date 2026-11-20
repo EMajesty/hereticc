@@ -1262,6 +1262,9 @@ void AudioEngine::process(std::span<float> left,
     for (std::size_t aux = 0; aux < mixer_aux_count; ++aux)
         observe(FollowerTapKind::auxiliary, aux, mixer_.aux_left(aux),
                 mixer_.aux_right(aux));
+    for (std::size_t group = 0; group < mixer_.active_group_count(); ++group)
+        observe(FollowerTapKind::group, mixer_.active_group_id(group),
+                mixer_.group_left(group), mixer_.group_right(group));
     for (std::size_t input = 0; input < mixer_.active_input_count(); ++input)
         observe(FollowerTapKind::physical_input, input, mixer_.input(input));
     if (auto *recorder = recording_.load(std::memory_order_acquire)) {
@@ -1273,6 +1276,19 @@ void AudioEngine::process(std::span<float> left,
             recorder->capture_internal(RecordingSource::auxiliary_bus,
                                        mixer_.aux_left(i), mixer_.aux_right(i),
                                        callback_frame, i);
+        for (std::size_t i = 0; i < mixer_.active_group_count(); ++i) {
+            const auto group_id = mixer_.active_group_id(i);
+            recorder->capture_internal(
+                RecordingSource::group_pre_effects, mixer_.group_pre_left(i),
+                mixer_.group_pre_right(i), callback_frame, group_id);
+            recorder->capture_internal(
+                RecordingSource::group_post_effects,
+                mixer_.group_post_effect_left(i),
+                mixer_.group_post_effect_right(i), callback_frame, group_id);
+            recorder->capture_internal(
+                RecordingSource::group_post_fader, mixer_.group_left(i),
+                mixer_.group_right(i), callback_frame, group_id);
+        }
         for (std::size_t i = 0; i < mixer_external_fx_count; ++i) {
             recorder->capture_internal(RecordingSource::external_fx_return,
                                        mixer_.external_return_left(i),

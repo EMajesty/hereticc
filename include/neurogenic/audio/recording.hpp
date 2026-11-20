@@ -19,7 +19,10 @@ enum class RecordingSource : std::uint8_t {
     auxiliary_bus,
     physical_input,
     external_fx_return,
-    external_fx_mix
+    external_fx_mix,
+    group_pre_effects,
+    group_post_effects,
+    group_post_fader
 };
 enum class RecordingState : std::uint8_t {
     idle,

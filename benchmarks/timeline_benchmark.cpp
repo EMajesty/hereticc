@@ -712,6 +712,64 @@ void mixer_case(std::size_t channels, bool auxiliaries, bool six_io) {
                    .count() /
                iterations);
 }
+void group_mixer_case(std::size_t groups, bool effects) {
+    neurogenic::Mixer mixer;
+    neurogenic::MixerConfiguration configuration;
+    configuration.revision = 1;
+    configuration.track_count = 16;
+    configuration.group_count = groups;
+    for (std::size_t group = 0; group < groups; ++group) {
+        configuration.groups[group].id = 100 + group;
+        configuration.groups[group].aux_send = {0.1F, 0.05F};
+    }
+    for (std::size_t track = 0; track < configuration.track_count; ++track) {
+        configuration.tracks[track].track = track + 1;
+        configuration.tracks[track].destination_group =
+            configuration.groups[track % groups].id;
+    }
+    if (effects)
+        for (std::size_t group = 0; group < groups; ++group) {
+            const auto instance = static_cast<neurogenic::EffectInstanceId>(
+                group + 1);
+            auto &effect = configuration.effects.instances[group];
+            effect.id = instance;
+            effect.type = neurogenic::EffectProcessorType::saturation;
+            effect.parameters[0] = {1, 1.5F};
+            effect.parameter_count = 1;
+            configuration.effects.groups[group] = {{instance}, 1, false};
+        }
+    configuration.effects.instance_count = effects ? groups : 0;
+    std::string error;
+    const auto preparation_begin = Clock::now();
+    if (!mixer.publish(configuration, error))
+        throw std::runtime_error(error);
+    const auto preparation =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
+                                                             preparation_begin)
+            .count();
+    std::array<float, 256> left{}, right{};
+    const auto begin = Clock::now();
+    for (std::size_t iteration = 0; iteration < iterations; ++iteration) {
+        mixer.begin_block(left.size());
+        left.fill(0);
+        right.fill(0);
+        for (std::size_t frame = 0; frame < left.size(); ++frame)
+            for (std::size_t track = 0; track < configuration.track_count;
+                 ++track)
+                (void)mixer.add_track(track + 1, frame, 0.01F, 0.01F);
+        mixer.process(left, right);
+        mixer.apply_master_gain(left, right);
+        checksum += left[0] != 0;
+    }
+    result("mixer_16_tracks_" + std::to_string(groups) + "_groups" +
+               (effects ? "_fx_aux" : ""),
+           48000, 256,
+           std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
+                                                                begin)
+                   .count() /
+               iterations,
+           static_cast<std::uint64_t>(preparation));
+}
 void mixer_publication_case() {
     neurogenic::Mixer mixer;
     neurogenic::MixerConfiguration configuration;
@@ -1349,6 +1407,8 @@ int main(int argc, char **argv) {
     mixer_case(8, true, false);
     mixer_case(16, true, false);
     mixer_case(16, true, true);
+    group_mixer_case(4, true);
+    group_mixer_case(8, true);
     mixer_publication_case();
     external_fx_case();
     modulation_case("modulation_lfos_routes_16", 16);

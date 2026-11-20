@@ -5,7 +5,7 @@ definitions are immutable shared configuration, while phase, envelopes and
 random state live in the bounded voice pool. Note events allocate and lock
 nothing, and publication remains control-side prepared.
 
-Dynamic modulators have stable identities and explicit track, aux or master
+Dynamic modulators have stable identities and explicit track, group, aux or master
 ownership. Discovery metadata stays separate from compact callback state and
 complete configurations are validated before bounded publication. See
 [Dynamic modulator instances](MODULATOR_INSTANCES.md).
@@ -20,7 +20,7 @@ processors and generators therefore share graph ordering, publication and
 ownership rules without callback allocation or dynamic dispatch.
 
 Native processing uses a bounded effect-rack snapshot within mixer publication.
-Track, aux and master chains own stable instance IDs; preallocated runtime state
+Track, group, aux and master chains own stable instance IDs; preallocated runtime state
 never enters application snapshots. See [FX_CHAINS.md](FX_CHAINS.md).
 
 The dedicated physical controller is an `ApplicationService` client.
@@ -35,10 +35,13 @@ pickup compares calibrated raw state against effective values and cannot write
 DSP parameters until acquired.
 
 Timeline-owned sample and synth voices render into fixed per-track buffers.
-The bounded mixer applies channel gain/pan/mute/solo, two aux buses, physical
+The bounded mixer applies channel gain/pan/mute/solo, eight acyclic stereo group
+buses, two aux buses, physical
 inputs, master gain, metering and explicit outputs before the existing master
 effects. Complete validated snapshots cross a bounded SPSC queue; the callback
 never constructs a graph. See [mixer architecture](MIXER.md).
+Group topology is validated and topologically prepared on the control thread;
+callback storage and processing remain fixed. See [group buses](GROUP_BUSES.md).
 External hardware loops are bounded members of the same snapshot, not a
 parallel graph. Delay lines and return taps are fixed storage; routing scenes
 remain control-side data and publish atomically.

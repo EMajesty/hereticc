@@ -541,6 +541,15 @@ void test_modulation_engine() {
     process(1);
     check(engine.snapshot().modulator_values[0] > ignored_tap,
           "envelope follower stable tap selection");
+    tapped.modulators[0].owner_kind = ModulatorOwnerKind::group;
+    tapped.modulators[0].owner_id = 100;
+    tapped.modulators[0].settings.follower_tap = FollowerTapKind::group;
+    tapped.modulators[0].settings.follower_tap_id = 100;
+    check(engine.configure(tapped), "group follower tap configuration");
+    engine.set_follower_input(FollowerTapKind::group, 100, 0.75F);
+    process(1);
+    check(engine.snapshot().modulator_values[0] > 0,
+          "group follower tap observation");
 
     const auto run_frames = [](ModulationEngine &target, std::size_t frames) {
         for (std::size_t frame = 0; frame < frames; ++frame)
@@ -5640,6 +5649,132 @@ void test_mixer_and_routing() {
               saturated.state().rejected_publications == 1,
           "mixer publication overflow is observable");
 
+    MixerConfiguration grouped;
+    grouped.revision = 1;
+    grouped.track_count = 2;
+    grouped.tracks[0].track = 11;
+    grouped.tracks[0].destination_group = 100;
+    grouped.tracks[1].track = 22;
+    grouped.tracks[1].destination_group = 200;
+    grouped.group_count = 2;
+    grouped.groups[0].id = 100;
+    std::copy_n("Drums", 5, grouped.groups[0].name.begin());
+    grouped.groups[0].gain = 0.5F;
+    grouped.groups[0].aux_send[0] = 0.5F;
+    grouped.groups[1].id = 200;
+    std::copy_n("Music", 5, grouped.groups[1].name.begin());
+    grouped.groups[1].destination_group = 100;
+    grouped.effects.instance_count = 1;
+    grouped.effects.instances[0].id = 81;
+    grouped.effects.instances[0].type = EffectProcessorType::gain;
+    grouped.effects.instances[0].parameters[0] = {1, 0.5F};
+    grouped.effects.instances[0].parameter_count = 1;
+    grouped.effects.groups[0] = {{81}, 1, false};
+    auto group_mixer = std::make_unique<Mixer>();
+    check(group_mixer->publish(grouped, error), "publish group routing graph");
+    group_mixer->begin_block(1);
+    check(group_mixer->add_track(11, 0, 1, 1) &&
+              group_mixer->add_track(22, 0, 1, 1),
+          "route tracks into independent groups");
+    std::array<float, 1> group_left{}, group_right{};
+    group_mixer->process(group_left, group_right);
+    near(group_left[0], 0.75F,
+         "nested group serial FX, gain, and aux return order");
+    near(group_right[0], 0.75F, "nested group stereo summing");
+    near(group_mixer->group_pre_left(0)[0], 2.0F,
+         "group pre-effects tap includes child group");
+    near(group_mixer->group_post_effect_left(0)[0], 1.0F,
+         "group post-effects tap");
+    near(group_mixer->group_left(0)[0], 0.5F, "group post-fader tap");
+    check(group_mixer->state().groups[0].left > 0,
+          "group metering is observable");
+    auto solo_group = grouped;
+    solo_group.revision++;
+    solo_group.groups[1].solo = true;
+    check(group_mixer->publish(solo_group, error), "publish group solo");
+    group_mixer->begin_block(1);
+    check(group_mixer->add_track(11, 0, 1, 1) &&
+              group_mixer->add_track(22, 0, 1, 1),
+          "route group solo sources");
+    group_left.fill(0);
+    group_right.fill(0);
+    group_mixer->process(group_left, group_right);
+    near(group_left[0], 0.375F,
+         "group solo keeps source subtree and required ancestor");
+    check(group_mixer->set_modulation(
+              {ParameterTarget::mixer_group,
+               static_cast<std::uint32_t>(MixerGroupModulationParameter::gain),
+               100},
+              0.25F),
+          "group gain modulation destination");
+    auto cyclic = grouped;
+    cyclic.groups[0].destination_group = 200;
+    check(!validate_mixer_configuration(cyclic, 6, 6, error) &&
+              error.find("cyclic") != std::string::npos,
+          "cyclic group routing rejection");
+    auto missing_group = grouped;
+    missing_group.tracks[0].destination_group = 999;
+    check(!validate_mixer_configuration(missing_group, 6, 6, error),
+          "missing group destination rejection");
+    RecordingService group_recorder(48000, 4);
+    RecordingConfiguration group_recording;
+    group_recording.source = RecordingSource::group_post_fader;
+    group_recording.source_id = 100;
+    group_recording.destination = SampleSlotId{19};
+    group_recording.fixed_frames = 1;
+    check(group_recorder.arm(group_recording, error) &&
+              group_recorder.start(0, error),
+          "arm group recording tap");
+    group_recorder.capture_internal(
+        RecordingSource::group_post_fader, group_mixer->group_left(0),
+        group_mixer->group_right(0), 0, 100);
+    check(group_recorder.status().state == RecordingState::completed &&
+              std::fabs(group_recorder.completed_sample().interleaved[0] -
+                        0.25F) < 0.0001F,
+          "group post-fader recording source");
+    auto render_grouped = [&](std::size_t partition) {
+        auto rendered_mixer = std::make_unique<Mixer>();
+        std::string render_error;
+        check(rendered_mixer->publish(grouped, render_error),
+              "partitioned group publish");
+        std::array<float, 8> rendered{};
+        for (std::size_t begin = 0; begin < rendered.size();
+             begin += partition) {
+            const auto count = std::min(partition, rendered.size() - begin);
+            rendered_mixer->begin_block(count);
+            for (std::size_t frame = 0; frame < count; ++frame) {
+                check(rendered_mixer->add_track(11, frame, 1, 1),
+                      "partitioned group track");
+                check(rendered_mixer->add_track(22, frame, 1, 1),
+                      "partitioned child group track");
+            }
+            std::span<float> output{rendered.data() + begin, count};
+            std::array<float, 8> right_output{};
+            rendered_mixer->process(
+                output,
+                {right_output.data() + begin, count});
+        }
+        return rendered;
+    };
+    const auto whole_group = render_grouped(8);
+    const auto split_group = render_grouped(3);
+    for (std::size_t frame = 0; frame < whole_group.size(); ++frame)
+        near(whole_group[frame], split_group[frame],
+             "group callback partition independence");
+    Mixer group_publications;
+    for (std::uint64_t revision = 1; revision <= 4; ++revision) {
+        auto update = grouped;
+        update.revision = revision;
+        update.groups[0].pan = revision % 2 ? -0.25F : 0.25F;
+        check(group_publications.publish(update, error),
+              "rapid group routing publication");
+    }
+    auto rejected_group_update = grouped;
+    rejected_group_update.revision = 5;
+    check(!group_publications.publish(rejected_group_update, error) &&
+              group_publications.state().rejected_publications == 1,
+          "bounded rapid group publication rejection");
+
     MixerConfiguration fx_configuration;
     fx_configuration.revision = 1;
     fx_configuration.track_count = 1;
@@ -5765,7 +5900,27 @@ void test_mixer_and_routing() {
     Project project;
     project.name = "Mixer";
     project.timeline = timeline;
-    project.mixer = engine_mixer;
+    project.mixer = grouped;
+    project.modulation.modulator_count = 1;
+    project.modulation.modulators[0].id = 501;
+    project.modulation.modulators[0].type = ModulatorType::lfo;
+    project.modulation.modulators[0].owner_kind = ModulatorOwnerKind::group;
+    project.modulation.modulators[0].owner_id = 100;
+    project.modulation.route_count = 1;
+    project.modulation.routes[0].id = 502;
+    project.modulation.routes[0].source_instance = 501;
+    project.modulation.routes[0].source_output = 1;
+    project.modulation.routes[0].destination = {
+        ParameterTarget::mixer_group,
+        static_cast<std::uint32_t>(MixerGroupModulationParameter::gain), 100};
+    project.modulation.routes[0].minimum = 0;
+    project.modulation.routes[0].maximum = 2;
+    project.modulation.routes[0].base_value = 0.5F;
+    project.modulation.routes[0].depth = 0.25F;
+    project.modulation.routes[0].destination_owner_explicit = true;
+    project.modulation.routes[0].destination_owner_kind =
+        ModulatorOwnerKind::group;
+    project.modulation.routes[0].destination_owner_id = 100;
     project.routing_scenes.push_back({41, "Performance", fx_configuration});
     project.active_routing_scene = 41;
     const auto path =
@@ -5773,8 +5928,15 @@ void test_mixer_and_routing() {
     std::filesystem::remove_all(path);
     save_project(project, path);
     const auto restored = load_project(path);
-    check(restored.mixer.track_count == 1 &&
-              restored.mixer.tracks[0].track == 77 &&
+    check(restored.mixer.track_count == 2 &&
+              restored.mixer.group_count == 2 &&
+              restored.mixer.groups[0].id == 100 &&
+              restored.mixer.groups[1].destination_group == 100 &&
+              restored.mixer.tracks[0].destination_group == 100 &&
+              restored.mixer.effects.groups[0].instances[0] == 81 &&
+              restored.modulation.modulators[0].owner_kind ==
+                  ModulatorOwnerKind::group &&
+              restored.modulation.routes[0].destination.instance == 100 &&
               restored.routing_scenes.size() == 1 &&
               restored.routing_scenes[0].id == 41 &&
               restored.routing_scenes[0].mixer.external_fx[0].enabled &&
@@ -5828,19 +5990,78 @@ void test_mixer_and_routing() {
                   .accepted,
           "controller-independent mixer actions");
     app_engine.process(rendered_left, rendered_right);
+    auto group_result =
+        application.execute({"mixer.group-create.v1", {{"name", "Drums"}}});
+    check(group_result.accepted, group_result.error.c_str());
+    group_result = application.execute(
+        {"mixer.track-destination.v1",
+         {{"track_id", std::int64_t{77}}, {"group_id", std::int64_t{1}}}});
+    check(group_result.accepted, group_result.error.c_str());
+    group_result = application.execute(
+        {"mixer.group-levels.v1",
+         {{"id", std::int64_t{1}}, {"gain", 0.75}, {"pan", -0.1}}});
+    check(group_result.accepted, group_result.error.c_str());
+    app_engine.process(rendered_left, rendered_right);
+    group_result = application.execute(
+        {"effect.create.v1",
+         {{"id", std::int64_t{902}}, {"type", "gain"}}});
+    check(group_result.accepted, group_result.error.c_str());
+    group_result = application.execute(
+        {"effect.insert.v1",
+         {{"id", std::int64_t{902}},
+          {"chain", "group"},
+          {"index", std::int64_t{1}},
+          {"position", std::int64_t{0}}}});
+    check(group_result.accepted, group_result.error.c_str());
+    check(application
+              .execute({"modulator.create.v1",
+                        {{"type", std::int64_t{1}},
+                         {"owner", static_cast<std::int64_t>(
+                                       ModulatorOwnerKind::group)},
+                         {"owner_id", std::int64_t{1}},
+                         {"name", "Group LFO"}}})
+              .accepted,
+          "create group-owned modulator");
+    const auto group_modulator_id =
+        application.snapshot().modulation.modulators[0].id;
+    check(application
+              .execute({"modulator.route-create.v1",
+                        {{"source_id", static_cast<std::int64_t>(
+                                           group_modulator_id)},
+                         {"destination", "mixer.group.pan"},
+                         {"depth", 0.25}}})
+              .accepted,
+          "group-owned modulation actions");
+    app_engine.process(rendered_left, rendered_right);
     const auto app_state = application.snapshot();
-    check(app_state.mixer.configuration.effects.instance_count == 1 &&
-              app_state.mixer.configuration.effects.instances[0].id == 901 &&
+    check(app_state.mixer.configuration.effects.instance_count == 2,
+          "observable effect instance count");
+    check(app_state.mixer.configuration.effects.instances[0].id == 901 &&
               app_state.mixer.configuration.effects.tracks[0].instances[0] ==
-                  901 &&
-              std::fabs(app_state.mixer.configuration.tracks[0].gain - 0.25F) <
+                  901,
+          "observable track effect state");
+    check(std::fabs(app_state.mixer.configuration.tracks[0].gain - 0.25F) <
                   0.0001F &&
               std::fabs(app_state.mixer.configuration.tracks[0].aux_send[1] -
                         0.4F) < 0.0001F &&
               app_state.mixer.configuration.input_count == 1 &&
               std::fabs(app_state.mixer.configuration.inputs[0].aux_send[0] -
                         0.2F) < 0.0001F,
-          "observable mixer state");
+          "observable mixer channel state");
+    check(app_state.mixer.configuration.group_count == 1 &&
+              app_state.mixer.configuration.groups[0].id == 1 &&
+              app_state.mixer.configuration.tracks[0].destination_group == 1 &&
+              app_state.mixer.configuration.effects.groups[0].instances[0] ==
+                  902,
+          "observable group state");
+    check(app_state.modulation.modulators[0].owner_kind ==
+              ModulatorOwnerKind::group,
+          "observable group modulation state");
+    check(!application
+               .execute({"mixer.group-delete.v1",
+                         {{"id", std::int64_t{1}}}})
+               .accepted,
+          "referenced group deletion rejection");
     check(application
                   .execute({"mixer.fx-loop-set.v1",
                             {{"index", std::int64_t{0}},

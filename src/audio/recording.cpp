@@ -48,6 +48,12 @@ const char *recording_source_name(RecordingSource source) noexcept {
         return "External FX return";
     case RecordingSource::external_fx_mix:
         return "External FX wet/dry mix";
+    case RecordingSource::group_pre_effects:
+        return "Group pre-effects";
+    case RecordingSource::group_post_effects:
+        return "Group post-effects";
+    case RecordingSource::group_post_fader:
+        return "Group post-fader";
     }
     return "Unknown";
 }
@@ -238,6 +244,9 @@ void RecordingService::capture(RecordingSource source,
         configuration_.source != source ||
         ((source == RecordingSource::track_channel ||
           source == RecordingSource::auxiliary_bus ||
+          source == RecordingSource::group_pre_effects ||
+          source == RecordingSource::group_post_effects ||
+          source == RecordingSource::group_post_fader ||
           source == RecordingSource::physical_input ||
           source == RecordingSource::external_fx_return ||
           source == RecordingSource::external_fx_mix) &&
