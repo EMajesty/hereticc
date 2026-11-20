@@ -8,10 +8,6 @@ support repeat chains, deterministic follow actions, exact quantized launches,
 and explicit outgoing-voice policies. See
 [Patterns, clips, and arrangements](docs/ARRANGEMENT.md).
 
-check out
-[neurogenic-control](https://github.com/EMajesty/neurogenic-control)
-[neurogenic-audio](https://github.com/EMajesty/neurogenic-audio)
-
 The mixer supports bounded native track, group, aux and master effect chains. See
 [Native FX chains](docs/FX_CHAINS.md).
 
