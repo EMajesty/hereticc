@@ -154,7 +154,17 @@ void SliceService::synchronize_locked(SampleSlotId id) {
             (void)engine_.clear_note_slice(static_cast<std::uint8_t>(36 + pad));
             pads_[pad].reset();
         }
+    for (std::size_t pad = 0; pad < region_pads_.size(); ++pad)
+        if (region_pads_[pad] &&
+            std::any_of(slot.regions.begin(), slot.regions.end(),
+                        [&](const auto &region) {
+                            return region.id == *region_pads_[pad];
+                        })) {
+            (void)engine_.clear_note_slice(static_cast<std::uint8_t>(36 + pad));
+            region_pads_[pad].reset();
+        }
     slot.slices.clear();
+    slot.regions.clear();
     slot.waveform.clear();
     slot.sample_revision = status.active_revision;
     slot.sample_publication = status.active_publication;
@@ -170,18 +180,21 @@ SliceSnapshot SliceService::snapshot(SampleSlotId id) {
     std::lock_guard lock(mutex_);
     synchronize_locked(id);
     const auto &slot = slots_[id.value];
-    return {slot.revision,
-            id,
-            0,
-            slot.sample_revision,
-            slot.sample_publication,
-            slot.frames,
-            slot.rate,
-            slot.channels,
-            slot.slices,
-            pads_,
-            pad_settings_,
-            slot.waveform};
+    SliceSnapshot result;
+    result.revision = slot.revision;
+    result.selected_slot = id;
+    result.sample_revision = slot.sample_revision;
+    result.sample_publication = slot.sample_publication;
+    result.sample_frames = slot.frames;
+    result.sample_rate = slot.rate;
+    result.channels = slot.channels;
+    result.slices = slot.slices;
+    result.regions = slot.regions;
+    result.pad_assignments = pads_;
+    result.region_pad_assignments = region_pads_;
+    result.pad_settings = pad_settings_;
+    result.waveform = slot.waveform;
+    return result;
 }
 
 SampleSlice *SliceService::find_locked(SliceId id) {
@@ -197,6 +210,19 @@ SampleSlice *SliceService::find_locked(SliceId id) {
 }
 const SampleSlice *SliceService::find_locked(SliceId id) const {
     return const_cast<SliceService *>(this)->find_locked(id);
+}
+SampleRegion *SliceService::find_region_locked(RegionId id) {
+    for (auto &[slot_id, slot] : slots_) {
+        (void)slot_id;
+        const auto found =
+            std::find_if(slot.regions.begin(), slot.regions.end(),
+                         [&](const auto &value) { return value.id == id; });
+        if (found != slot.regions.end()) return &*found;
+    }
+    return nullptr;
+}
+const SampleRegion *SliceService::find_region_locked(RegionId id) const {
+    return const_cast<SliceService *>(this)->find_region_locked(id);
 }
 bool SliceService::valid_revision_locked(SampleSlotId id,
                                          std::uint64_t expected,
@@ -482,6 +508,7 @@ bool SliceService::assign_pad(std::size_t pad, SliceId id,
     if (!publish_pad_locked(pad, slice, error))
         return false;
     pads_[pad] = id;
+    region_pads_[pad].reset();
     ++slots_[slot_id.value].revision;
     error.clear();
     return true;
@@ -489,9 +516,21 @@ bool SliceService::assign_pad(std::size_t pad, SliceId id,
 bool SliceService::clear_pad(std::size_t pad, std::uint64_t expected,
                              std::string &error) {
     std::lock_guard lock(mutex_);
-    if (pad >= pads_.size() || !pads_[pad]) {
+    if (pad >= pads_.size() || (!pads_[pad] && !region_pads_[pad])) {
         error = "pad is not assigned";
         return false;
+    }
+    if (region_pads_[pad]) {
+        auto *region = find_region_locked(*region_pads_[pad]);
+        if (!region) { error = "assigned region does not exist"; return false; }
+        const auto slot_id = region->slot;
+        synchronize_locked(slot_id);
+        if (!valid_revision_locked(slot_id, expected, error) ||
+            !publish_region_pad_locked(pad, nullptr, error)) return false;
+        region_pads_[pad].reset();
+        ++slots_[slot_id.value].revision;
+        error.clear();
+        return true;
     }
     auto *slice = find_locked(*pads_[pad]);
     if (!slice) {
@@ -529,10 +568,14 @@ bool SliceService::set_pad_settings(SampleSlotId context_slot, std::size_t pad,
     const auto previous = pad_settings_[pad];
     pad_settings_[pad] = settings;
     const auto *slice = pads_[pad] ? find_locked(*pads_[pad]) : nullptr;
+    const auto *region = region_pads_[pad]
+                             ? find_region_locked(*region_pads_[pad])
+                             : nullptr;
     const auto published =
-        slice ? publish_pad_locked(pad, slice, error)
-              : engine_.configure_note_playback(
-                    static_cast<std::uint8_t>(36 + pad), settings);
+        region ? publish_region_pad_locked(pad, region, error)
+               : slice ? publish_pad_locked(pad, slice, error)
+                       : engine_.configure_note_playback(
+                             static_cast<std::uint8_t>(36 + pad), settings);
     if (!published) {
         pad_settings_[pad] = previous;
         if (error.empty())
@@ -580,6 +623,309 @@ bool SliceService::preview_full(SampleSlotId id, float velocity,
     error.clear();
     return true;
 }
+namespace {
+bool valid_region(const SampleRegion &region, std::uint64_t frames,
+                  std::string &error) {
+    if (!region.id || region.start_frame >= region.end_frame ||
+        region.end_frame > frames || !std::isfinite(region.gain) ||
+        region.gain < 0) {
+        error = "region boundaries, fades, or gain are invalid";
+        return false;
+    }
+    const auto length = region.end_frame - region.start_frame;
+    if (region.fade_in_frames > length || region.fade_out_frames > length) {
+        error = "region boundaries, fades, or gain are invalid";
+        return false;
+    }
+    if (region.loop_enabled &&
+        (region.loop_start_frame < region.start_frame ||
+         region.loop_start_frame >= region.loop_end_frame ||
+         region.loop_end_frame > region.end_frame ||
+         region.loop_crossfade_frames >
+             region.loop_end_frame - region.loop_start_frame)) {
+        error = "region loop is outside its playback boundaries";
+        return false;
+    }
+    return true;
+}
+SampleRegionPlayback playback_for(const SampleRegion &region) {
+    return {region.fade_in_frames,
+            region.fade_out_frames,
+            region.loop_start_frame,
+            region.loop_end_frame,
+            region.loop_crossfade_frames,
+            region.fade_curve,
+            region.loop_enabled};
+}
+} // namespace
+
+bool SliceService::create_region(SampleSlotId id, std::uint64_t expected,
+                                 std::uint64_t start, std::uint64_t end,
+                                 std::string name, RegionId &created,
+                                 std::string &error) {
+    std::lock_guard lock(mutex_);
+    synchronize_locked(id);
+    auto &slot = slots_[id.value];
+    if (!valid_revision_locked(id, expected, error)) return false;
+    SampleRegion region{next_region_id_, id, slot.sample_revision,
+                        slot.sample_publication, start, end, std::move(name)};
+    if (!valid_region(region, slot.frames, error)) return false;
+    created = next_region_id_++;
+    slot.regions.push_back(std::move(region));
+    ++slot.revision;
+    error.clear();
+    return true;
+}
+bool SliceService::create_region_from_slice(SliceId id, std::uint64_t expected,
+                                            RegionId &created,
+                                            std::string &error) {
+    std::lock_guard lock(mutex_);
+    auto *slice = find_locked(id);
+    if (!slice) { error = "slice does not exist"; return false; }
+    const auto slot_id = slice->slot;
+    synchronize_locked(slot_id);
+    slice = find_locked(id);
+    if (!slice || !valid_revision_locked(slot_id, expected, error)) return false;
+    auto &slot = slots_[slot_id.value];
+    SampleRegion region{next_region_id_, slot_id, slot.sample_revision,
+                        slot.sample_publication, slice->start_frame,
+                        slice->end_frame, slice->name, RegionDirection::forward,
+                        RegionFadeCurve::linear, 0, 0, slice->gain};
+    created = next_region_id_++;
+    slot.regions.push_back(std::move(region));
+    ++slot.revision;
+    error.clear();
+    return true;
+}
+std::size_t SliceService::region_usage(RegionId id) const {
+    std::lock_guard lock(mutex_);
+    return static_cast<std::size_t>(std::count(region_pads_.begin(),
+                                               region_pads_.end(), id));
+}
+bool SliceService::erase_region(RegionId id, std::uint64_t expected,
+                                std::string &error) {
+    std::lock_guard lock(mutex_);
+    auto *region = find_region_locked(id);
+    if (!region) { error = "region does not exist"; return false; }
+    const auto slot_id = region->slot;
+    synchronize_locked(slot_id);
+    region = find_region_locked(id);
+    if (!region || !valid_revision_locked(slot_id, expected, error)) return false;
+    if (std::find(region_pads_.begin(), region_pads_.end(), id) !=
+        region_pads_.end()) {
+        error = "region is assigned to a pad";
+        return false;
+    }
+    auto &regions = slots_[slot_id.value].regions;
+    std::erase_if(regions, [&](const auto &value) { return value.id == id; });
+    ++slots_[slot_id.value].revision;
+    error.clear();
+    return true;
+}
+bool SliceService::duplicate_region(RegionId id, std::uint64_t expected,
+                                    RegionId &created, std::string &error) {
+    std::lock_guard lock(mutex_);
+    auto *region = find_region_locked(id);
+    if (!region) { error = "region does not exist"; return false; }
+    const auto slot_id = region->slot;
+    synchronize_locked(slot_id);
+    region = find_region_locked(id);
+    if (!region || !valid_revision_locked(slot_id, expected, error)) return false;
+    auto copy = *region;
+    copy.id = created = next_region_id_++;
+    copy.name += " copy";
+    slots_[slot_id.value].regions.push_back(std::move(copy));
+    ++slots_[slot_id.value].revision;
+    error.clear();
+    return true;
+}
+bool SliceService::rename_region(RegionId id, std::uint64_t expected,
+                                 std::string name, std::string &error) {
+    std::lock_guard lock(mutex_);
+    auto *region = find_region_locked(id);
+    if (!region) { error = "region does not exist"; return false; }
+    const auto slot_id = region->slot;
+    synchronize_locked(slot_id);
+    region = find_region_locked(id);
+    if (!region || !valid_revision_locked(slot_id, expected, error)) return false;
+    region->name = std::move(name);
+    ++slots_[slot_id.value].revision;
+    error.clear();
+    return true;
+}
+bool SliceService::publish_region_pad_locked(std::size_t pad,
+                                             const SampleRegion *region,
+                                             std::string &error) {
+    if (pad >= region_pads_.size()) { error = "pad index must be 0..15"; return false; }
+    if (!region) return engine_.clear_note_slice(static_cast<std::uint8_t>(36 + pad));
+    auto settings = pad_settings_[pad];
+    settings.reverse = region->direction == RegionDirection::reverse;
+    if (!engine_.map_note_to_region(static_cast<std::uint8_t>(36 + pad),
+                                    region->slot, region->sample_publication,
+                                    region->start_frame, region->end_frame,
+                                    region->gain, settings,
+                                    playback_for(*region))) {
+        error = "region mapping queue is full";
+        return false;
+    }
+    return true;
+}
+bool SliceService::assign_region_pad(std::size_t pad, RegionId id,
+                                     std::uint64_t expected,
+                                     std::string &error) {
+    std::lock_guard lock(mutex_);
+    auto *region = find_region_locked(id);
+    if (!region) { error = "region does not exist"; return false; }
+    const auto slot_id = region->slot;
+    synchronize_locked(slot_id);
+    region = find_region_locked(id);
+    if (!region || !valid_revision_locked(slot_id, expected, error) ||
+        !publish_region_pad_locked(pad, region, error)) return false;
+    region_pads_[pad] = id;
+    pads_[pad].reset();
+    ++slots_[slot_id.value].revision;
+    error.clear();
+    return true;
+}
+bool SliceService::set_region_bounds(RegionId id, std::uint64_t expected,
+                                     std::uint64_t start, std::uint64_t end,
+                                     std::string &error) {
+    std::lock_guard lock(mutex_);
+    auto *region = find_region_locked(id);
+    if (!region) { error = "region does not exist"; return false; }
+    const auto slot_id = region->slot;
+    synchronize_locked(slot_id);
+    region = find_region_locked(id);
+    if (!region || !valid_revision_locked(slot_id, expected, error)) return false;
+    auto candidate = *region;
+    candidate.start_frame = start;
+    candidate.end_frame = end;
+    if (candidate.loop_enabled &&
+        (candidate.loop_start_frame < start || candidate.loop_end_frame > end)) {
+        error = "region boundaries would exclude its loop";
+        return false;
+    }
+    if (!valid_region(candidate, slots_[slot_id.value].frames, error)) return false;
+    for (std::size_t pad = 0; pad < region_pads_.size(); ++pad)
+        if (region_pads_[pad] == id &&
+            !publish_region_pad_locked(pad, &candidate, error)) return false;
+    *region = std::move(candidate);
+    ++slots_[slot_id.value].revision;
+    error.clear();
+    return true;
+}
+bool SliceService::set_region_fades(RegionId id, std::uint64_t expected,
+                                    std::uint64_t fade_in,
+                                    std::uint64_t fade_out,
+                                    RegionFadeCurve curve,
+                                    std::string &error) {
+    std::lock_guard lock(mutex_);
+    auto *region = find_region_locked(id);
+    if (!region) { error = "region does not exist"; return false; }
+    const auto slot_id = region->slot;
+    synchronize_locked(slot_id);
+    region = find_region_locked(id);
+    if (!region || !valid_revision_locked(slot_id, expected, error)) return false;
+    auto candidate = *region;
+    candidate.fade_in_frames = fade_in;
+    candidate.fade_out_frames = fade_out;
+    candidate.fade_curve = curve;
+    if (!valid_region(candidate, slots_[slot_id.value].frames, error)) return false;
+    for (std::size_t pad = 0; pad < region_pads_.size(); ++pad)
+        if (region_pads_[pad] == id &&
+            !publish_region_pad_locked(pad, &candidate, error)) return false;
+    *region = std::move(candidate);
+    ++slots_[slot_id.value].revision;
+    error.clear();
+    return true;
+}
+bool SliceService::set_region_gain(RegionId id, std::uint64_t expected,
+                                   float gain, std::string &error) {
+    std::lock_guard lock(mutex_);
+    auto *region = find_region_locked(id);
+    if (!region) { error = "region does not exist"; return false; }
+    const auto slot_id = region->slot;
+    synchronize_locked(slot_id);
+    region = find_region_locked(id);
+    if (!region || !valid_revision_locked(slot_id, expected, error)) return false;
+    auto candidate = *region;
+    candidate.gain = gain;
+    if (!valid_region(candidate, slots_[slot_id.value].frames, error)) return false;
+    for (std::size_t pad = 0; pad < region_pads_.size(); ++pad)
+        if (region_pads_[pad] == id &&
+            !publish_region_pad_locked(pad, &candidate, error)) return false;
+    *region = std::move(candidate);
+    ++slots_[slot_id.value].revision;
+    error.clear();
+    return true;
+}
+bool SliceService::set_region_direction(RegionId id, std::uint64_t expected,
+                                        RegionDirection direction,
+                                        std::string &error) {
+    std::lock_guard lock(mutex_);
+    auto *region = find_region_locked(id);
+    if (!region) { error = "region does not exist"; return false; }
+    const auto slot_id = region->slot;
+    synchronize_locked(slot_id);
+    region = find_region_locked(id);
+    if (!region || !valid_revision_locked(slot_id, expected, error)) return false;
+    auto candidate = *region;
+    candidate.direction = direction;
+    for (std::size_t pad = 0; pad < region_pads_.size(); ++pad)
+        if (region_pads_[pad] == id &&
+            !publish_region_pad_locked(pad, &candidate, error)) return false;
+    *region = std::move(candidate);
+    ++slots_[slot_id.value].revision;
+    error.clear();
+    return true;
+}
+bool SliceService::set_region_loop(RegionId id, std::uint64_t expected,
+                                   bool enabled, std::uint64_t loop_start,
+                                   std::uint64_t loop_end,
+                                   std::uint32_t crossfade,
+                                   std::string &error) {
+    std::lock_guard lock(mutex_);
+    auto *region = find_region_locked(id);
+    if (!region) { error = "region does not exist"; return false; }
+    const auto slot_id = region->slot;
+    synchronize_locked(slot_id);
+    region = find_region_locked(id);
+    if (!region || !valid_revision_locked(slot_id, expected, error)) return false;
+    auto candidate = *region;
+    candidate.loop_enabled = enabled;
+    candidate.loop_start_frame = loop_start;
+    candidate.loop_end_frame = loop_end;
+    candidate.loop_crossfade_frames = crossfade;
+    if (!valid_region(candidate, slots_[slot_id.value].frames, error)) return false;
+    for (std::size_t pad = 0; pad < region_pads_.size(); ++pad)
+        if (region_pads_[pad] == id &&
+            !publish_region_pad_locked(pad, &candidate, error)) return false;
+    *region = std::move(candidate);
+    ++slots_[slot_id.value].revision;
+    error.clear();
+    return true;
+}
+bool SliceService::preview_region(RegionId id, float velocity,
+                                  std::string &error) {
+    std::lock_guard lock(mutex_);
+    auto *region = find_region_locked(id);
+    if (!region) { error = "region does not exist"; return false; }
+    const auto slot_id = region->slot;
+    synchronize_locked(slot_id);
+    region = find_region_locked(id);
+    if (!region) { error = "region belongs to an inactive sample version"; return false; }
+    SamplePlaybackSettings settings;
+    settings.reverse = region->direction == RegionDirection::reverse;
+    if (!engine_.trigger_region(region->slot, region->sample_publication,
+                                region->start_frame, region->end_frame,
+                                region->gain, settings, playback_for(*region),
+                                velocity)) {
+        error = "region preview queue is full or region is stale";
+        return false;
+    }
+    error.clear();
+    return true;
+}
 void SliceService::stop_preview() noexcept {
     (void)engine_.stop_slice_previews();
 }
@@ -590,10 +936,14 @@ SliceProject SliceService::project_snapshot(
     SliceProject project;
     project.sample_paths = std::move(paths);
     project.pads = pads_;
+    project.region_pads = region_pads_;
     project.pad_settings = pad_settings_;
     for (const auto &[id, slot] : slots_)
         project.slices.insert(project.slices.end(), slot.slices.begin(),
                               slot.slices.end());
+    for (const auto &[id, slot] : slots_)
+        project.regions.insert(project.regions.end(), slot.regions.begin(),
+                               slot.regions.end());
     return project;
 }
 
@@ -623,7 +973,25 @@ bool SliceService::restore_project(const SliceProject &project,
         slot.channels = status.channels;
         slot.slices.push_back(std::move(slice));
     }
+    RegionId next_region = 1;
+    for (auto region : project.regions) {
+        next_region = std::max(next_region, region.id + 1);
+        const auto status = samples_.status(region.slot);
+        if (!status.has_sample || status.active_publication == 0) continue;
+        if (!valid_region(region, status.frames, error)) return false;
+        region.sample_revision = status.active_revision;
+        region.sample_publication = status.active_publication;
+        auto &slot = restored[region.slot.value];
+        slot.revision = 1;
+        slot.sample_revision = status.active_revision;
+        slot.sample_publication = status.active_publication;
+        slot.frames = status.frames;
+        slot.rate = status.engine_sample_rate;
+        slot.channels = status.channels;
+        slot.regions.push_back(std::move(region));
+    }
     std::array<std::optional<SliceId>, 16> pads{};
+    std::array<std::optional<RegionId>, 16> region_pads{};
     for (std::size_t pad = 0; pad < pads.size(); ++pad) {
         const auto wanted = project.pads[pad];
         const SampleSlice *slice{};
@@ -641,7 +1009,27 @@ bool SliceService::restore_project(const SliceProject &project,
             error = "project contains invalid pad playback settings";
             return false;
         }
-        if (!(slice ? engine_.map_note_to_slice(
+        const SampleRegion *region{};
+        if (project.region_pads[pad])
+            for (const auto &[id, slot] : restored) {
+                (void)id;
+                const auto found = std::find_if(
+                    slot.regions.begin(), slot.regions.end(),
+                    [&](const auto &item) {
+                        return item.id == *project.region_pads[pad];
+                    });
+                if (found != slot.regions.end()) { region = &*found; break; }
+            }
+        auto region_settings = settings;
+        if (region)
+            region_settings.reverse =
+                region->direction == RegionDirection::reverse;
+        if (!(region ? engine_.map_note_to_region(
+                           static_cast<std::uint8_t>(36 + pad), region->slot,
+                           region->sample_publication, region->start_frame,
+                           region->end_frame, region->gain, region_settings,
+                           playback_for(*region))
+                     : slice ? engine_.map_note_to_slice(
                           static_cast<std::uint8_t>(36 + pad), slice->slot,
                           slice->sample_publication, slice->start_frame,
                           slice->end_frame, slice->gain, settings)
@@ -654,14 +1042,20 @@ bool SliceService::restore_project(const SliceProject &project,
         }
         if (slice)
             pads[pad] = slice->id;
+        if (region) {
+            region_pads[pad] = region->id;
+            pads[pad].reset();
+        }
     }
     for (auto &[id, slot] : restored)
         if (const auto sample = samples_.active_sample(SampleSlotId{id}))
             slot.waveform = build_waveform_peaks(*sample);
     slots_ = std::move(restored);
     pads_ = pads;
+    region_pads_ = region_pads;
     pad_settings_ = project.pad_settings;
     next_id_ = next;
+    next_region_id_ = next_region;
     error.clear();
     return true;
 }
@@ -691,7 +1085,25 @@ bool SliceService::adopt_activated_project(const SliceProject &project,
         slot.channels = status.channels;
         slot.slices.push_back(std::move(slice));
     }
+    RegionId next_region = 1;
+    for (auto region : project.regions) {
+        next_region = std::max(next_region, region.id + 1);
+        const auto status = samples_.status(region.slot);
+        if (!status.has_sample || !status.active_publication) continue;
+        if (!valid_region(region, status.frames, error)) return false;
+        region.sample_revision = status.active_revision;
+        region.sample_publication = status.active_publication;
+        auto &slot = restored[region.slot.value];
+        slot.revision = 1;
+        slot.sample_revision = status.active_revision;
+        slot.sample_publication = status.active_publication;
+        slot.frames = status.frames;
+        slot.rate = status.engine_sample_rate;
+        slot.channels = status.channels;
+        slot.regions.push_back(std::move(region));
+    }
     std::array<std::optional<SliceId>, 16> pads{};
+    std::array<std::optional<RegionId>, 16> region_pads{};
     for (std::size_t pad = 0; pad < pads.size(); ++pad) {
         if (!valid_playback_settings(project.pad_settings[pad])) {
             error = "preset contains invalid pad playback settings";
@@ -708,14 +1120,29 @@ bool SliceService::adopt_activated_project(const SliceProject &project,
                     break;
                 }
             }
+        if (project.region_pads[pad])
+            for (const auto &[id, slot] : restored) {
+                (void)id;
+                if (std::any_of(slot.regions.begin(), slot.regions.end(),
+                                [&](const auto &region) {
+                                    return region.id ==
+                                           *project.region_pads[pad];
+                                })) {
+                    region_pads[pad] = project.region_pads[pad];
+                    pads[pad].reset();
+                    break;
+                }
+            }
     }
     for (auto &[id, slot] : restored)
         if (const auto sample = samples_.active_sample(SampleSlotId{id}))
             slot.waveform = build_waveform_peaks(*sample);
     slots_ = std::move(restored);
     pads_ = pads;
+    region_pads_ = region_pads;
     pad_settings_ = project.pad_settings;
     next_id_ = next;
+    next_region_id_ = next_region;
     error.clear();
     return true;
 }
@@ -734,9 +1161,22 @@ void save_slice_project(const SliceProject &project,
             << s.sample_revision << ' ' << s.start_frame << ' ' << s.end_frame
             << ' ' << s.gain << ' ' << (s.root_note ? int(*s.root_note) : -1)
             << ' ' << std::quoted(s.name) << '\n';
+    for (const auto &r : project.regions)
+        out << "region " << r.id << ' ' << r.slot.value << ' '
+            << r.sample_revision << ' ' << r.start_frame << ' ' << r.end_frame
+            << ' ' << r.gain << ' ' << static_cast<unsigned>(r.direction)
+            << ' ' << static_cast<unsigned>(r.fade_curve) << ' '
+            << r.fade_in_frames << ' ' << r.fade_out_frames << ' '
+            << (r.loop_enabled ? 1 : 0) << ' ' << r.loop_start_frame << ' '
+            << r.loop_end_frame << ' ' << r.loop_crossfade_frames << ' '
+            << std::quoted(r.name) << '\n';
     for (std::size_t pad = 0; pad < project.pads.size(); ++pad)
         if (project.pads[pad])
             out << "pad " << pad << ' ' << *project.pads[pad] << '\n';
+    for (std::size_t pad = 0; pad < project.region_pads.size(); ++pad)
+        if (project.region_pads[pad])
+            out << "region-pad " << pad << ' ' << *project.region_pads[pad]
+                << '\n';
     for (std::size_t pad = 0; pad < project.pad_settings.size(); ++pad) {
         const auto &s = project.pad_settings[pad];
         if (s == SamplePlaybackSettings{})
@@ -791,6 +1231,31 @@ SliceProject load_slice_project(const std::filesystem::path &path,
             if (!(in >> pad >> id) || pad >= result.pads.size())
                 throw std::runtime_error("invalid pad record");
             result.pads[pad] = id;
+        } else if (kind == "region" && version >= 4) {
+            SampleRegion region;
+            unsigned direction{}, curve{}, loop{};
+            if (!(in >> region.id >> region.slot.value >>
+                  region.sample_revision >> region.start_frame >>
+                  region.end_frame >> region.gain >> direction >> curve >>
+                  region.fade_in_frames >> region.fade_out_frames >> loop >>
+                  region.loop_start_frame >> region.loop_end_frame >>
+                  region.loop_crossfade_frames >> std::quoted(region.name)) ||
+                direction > 1 || curve > 1 || loop > 1)
+                throw std::runtime_error("invalid region record");
+            region.direction = static_cast<RegionDirection>(direction);
+            region.fade_curve = static_cast<RegionFadeCurve>(curve);
+            region.loop_enabled = loop != 0;
+            std::string error;
+            if (!valid_region(region, std::numeric_limits<std::uint64_t>::max(),
+                              error))
+                throw std::runtime_error("invalid region record: " + error);
+            result.regions.push_back(std::move(region));
+        } else if (kind == "region-pad" && version >= 4) {
+            std::size_t pad{};
+            RegionId id{};
+            if (!(in >> pad >> id) || pad >= result.region_pads.size())
+                throw std::runtime_error("invalid region pad record");
+            result.region_pads[pad] = id;
         } else if (kind == "playback" && version >= 2) {
             std::size_t pad{};
             unsigned mode{}, group{}, choke_release{}, reverse{};
@@ -836,6 +1301,21 @@ SliceProject load_slice_project(const std::filesystem::path &path,
     for (const auto pad : result.pads)
         if (pad && std::find(ids.begin(), ids.end(), *pad) == ids.end())
             throw std::runtime_error("pad references an unknown slice");
+    std::vector<RegionId> region_ids;
+    for (const auto &region : result.regions) {
+        if (!region.id || std::find(region_ids.begin(), region_ids.end(),
+                                    region.id) != region_ids.end())
+            throw std::runtime_error("duplicate or zero region identifier");
+        region_ids.push_back(region.id);
+    }
+    for (std::size_t pad = 0; pad < result.region_pads.size(); ++pad) {
+        if (result.region_pads[pad] && result.pads[pad])
+            throw std::runtime_error("pad has both slice and region assignments");
+        if (result.region_pads[pad] &&
+            std::find(region_ids.begin(), region_ids.end(),
+                      *result.region_pads[pad]) == region_ids.end())
+            throw std::runtime_error("pad references an unknown region");
+    }
     return result;
 }
 } // namespace neurogenic

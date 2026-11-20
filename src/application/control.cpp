@@ -367,6 +367,36 @@ ActionRegistry::ActionRegistry() {
     add(action("slice.preview.v1", "Preview slice", "Samples"));
     add(action("sample.preview.v1", "Preview sample", "Samples"));
     add(action("slice.preview-stop.v1", "Stop preview", "Samples"));
+    add(action("region.select.v1", "Select sample region", "Samples",
+               {{"region_id", ValueType::integer}}));
+    add(action("region.create.v1", "Create sample region", "Samples",
+               {{"start_frame", ValueType::integer},
+                {"end_frame", ValueType::integer},
+                {"name", ValueType::text, false}}));
+    add(action("region.from-slice.v1", "Create region from slice", "Samples"));
+    add(action("region.delete.v1", "Delete sample region", "Samples"));
+    add(action("region.duplicate.v1", "Duplicate sample region", "Samples"));
+    add(action("region.rename.v1", "Rename sample region", "Samples",
+               {{"name", ValueType::text}}));
+    add(action("region.bounds-set.v1", "Set region boundaries", "Samples",
+               {{"start_frame", ValueType::integer},
+                {"end_frame", ValueType::integer}}));
+    add(action("region.fades-set.v1", "Set region fades", "Samples",
+               {{"fade_in_frames", ValueType::integer},
+                {"fade_out_frames", ValueType::integer},
+                {"curve", ValueType::text}}));
+    add(action("region.gain-set.v1", "Set region gain", "Samples",
+               {{"gain", ValueType::real}}));
+    add(action("region.direction-set.v1", "Set region direction", "Samples",
+               {{"direction", ValueType::text}}));
+    add(action("region.loop-set.v1", "Set region loop", "Samples",
+               {{"enabled", ValueType::boolean},
+                {"start_frame", ValueType::integer},
+                {"end_frame", ValueType::integer},
+                {"crossfade_frames", ValueType::integer}}));
+    add(action("region.pad-assign.v1", "Assign region to pad", "Samples",
+               {{"pad", ValueType::integer}}));
+    add(action("region.preview.v1", "Preview region", "Samples"));
     add(action("pad.trigger.v1", "Trigger performance pad", "Performance",
                {{"pad", ValueType::integer},
                 {"velocity", ValueType::real, false},
@@ -3003,6 +3033,50 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 for (std::size_t pad = 0; pad < 16; ++pad) {
                     auto &mapping = built.activation.pads[pad];
                     mapping.playback = preset.samples->pad_settings[pad];
+                    if (preset.samples->region_pads[pad]) {
+                        const auto found = std::find_if(
+                            preset.samples->regions.begin(),
+                            preset.samples->regions.end(),
+                            [&](const auto &region) {
+                                return region.id ==
+                                       *preset.samples->region_pads[pad];
+                            });
+                        if (found == preset.samples->regions.end()) {
+                            prepare_error =
+                                "pad references a missing preset region";
+                            return false;
+                        }
+                        const auto sample = std::find_if(
+                            built.activation.samples.begin(),
+                            built.activation.samples.begin() +
+                                built.activation.sample_count,
+                            [&](const auto &candidate) {
+                                return candidate.slot == found->slot;
+                            });
+                        if (sample == built.activation.samples.begin() +
+                                          built.activation.sample_count ||
+                            found->start_frame >= found->end_frame ||
+                            found->end_frame > sample->sample->frames()) {
+                            prepare_error =
+                                "preset region is outside its sample";
+                            return false;
+                        }
+                        mapping.slot = found->slot;
+                        mapping.start_frame = found->start_frame;
+                        mapping.end_frame = found->end_frame;
+                        mapping.gain = found->gain;
+                        mapping.playback.reverse =
+                            found->direction == RegionDirection::reverse;
+                        mapping.region = {found->fade_in_frames,
+                                          found->fade_out_frames,
+                                          found->loop_start_frame,
+                                          found->loop_end_frame,
+                                          found->loop_crossfade_frames,
+                                          found->fade_curve,
+                                          found->loop_enabled};
+                        mapping.assigned = true;
+                        continue;
+                    }
                     if (!preset.samples->pads[pad]) continue;
                     const auto found = std::find_if(
                         preset.samples->slices.begin(),
@@ -5015,6 +5089,7 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 }
             }
         } else if (command.action_id.rfind("slice.", 0) == 0 ||
+                   command.action_id.rfind("region.", 0) == 0 ||
                    command.action_id == "sample.preview.v1" ||
                    (command.action_id.rfind("pad.", 0) == 0 &&
                     command.action_id != "pad.mode-select.v1")) {
@@ -5026,6 +5101,7 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 state_.sample_rate = value.sample_rate;
                 state_.sample_channels = value.channels;
                 state_.slice_pad_assignments = value.pad_assignments;
+                state_.region_pad_assignments = value.region_pad_assignments;
                 state_.pad_settings = value.pad_settings;
                 state_.selected_pad_settings =
                     value.pad_settings[state_.selected_pad];
@@ -5041,12 +5117,35 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     state_.slices.push_back({slice.id, slice.name,
                                              slice.start_frame, slice.end_frame,
                                              slice.gain, slice.root_note});
+                state_.regions.clear();
+                for (const auto &region : value.regions)
+                    state_.regions.push_back(
+                        {region.id,
+                         region.name,
+                         region.start_frame,
+                         region.end_frame,
+                         region.direction,
+                         region.fade_curve,
+                         region.fade_in_frames,
+                         region.fade_out_frames,
+                         region.gain,
+                         region.loop_enabled,
+                         region.loop_start_frame,
+                         region.loop_end_frame,
+                         region.loop_crossfade_frames,
+                         slices_.region_usage(region.id)});
                 if (state_.selected_slice != 0 &&
                     std::none_of(state_.slices.begin(), state_.slices.end(),
                                  [&](const auto &slice) {
                                      return slice.id == state_.selected_slice;
                                  }))
                     state_.selected_slice = 0;
+                if (state_.selected_region != 0 &&
+                    std::none_of(state_.regions.begin(), state_.regions.end(),
+                                 [&](const auto &region) {
+                                     return region.id == state_.selected_region;
+                                 }))
+                    state_.selected_region = 0;
             };
             if (command.action_id == "slice.select.v1") {
                 const auto id = *argument<std::int64_t>(command, "slice_id");
@@ -5165,6 +5264,148 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                                            error);
             } else if (command.action_id == "slice.preview-stop.v1") {
                 slices_.stop_preview();
+            } else if (command.action_id == "region.select.v1") {
+                const auto id = *argument<std::int64_t>(command, "region_id");
+                if (id <= 0 ||
+                    std::none_of(state_.regions.begin(), state_.regions.end(),
+                                 [&](const auto &region) {
+                                     return region.id ==
+                                            static_cast<RegionId>(id);
+                                 }))
+                    error = "region does not exist";
+                else
+                    state_.selected_region = static_cast<RegionId>(id);
+            } else if (command.action_id == "region.create.v1") {
+                const auto start = *argument<std::int64_t>(command, "start_frame");
+                const auto end = *argument<std::int64_t>(command, "end_frame");
+                std::string name = "Region";
+                if (const auto found = command.arguments.find("name");
+                    found != command.arguments.end())
+                    name = std::get<std::string>(found->second);
+                RegionId created{};
+                if (start < 0 || end < 0 ||
+                    !slices_.create_region(
+                        state_.selected_sample_slot, state_.slice_revision,
+                        static_cast<std::uint64_t>(start),
+                        static_cast<std::uint64_t>(end), std::move(name),
+                        created, error)) {
+                    if (error.empty()) error = "region boundaries are invalid";
+                } else
+                    state_.selected_region = created;
+            } else if (command.action_id == "region.from-slice.v1") {
+                RegionId created{};
+                if (!state_.selected_slice)
+                    error = "no slice is selected";
+                else if (slices_.create_region_from_slice(
+                             state_.selected_slice, state_.slice_revision,
+                             created, error))
+                    state_.selected_region = created;
+            } else if (command.action_id == "region.delete.v1") {
+                if (!state_.selected_region)
+                    error = "no region is selected";
+                else if (slices_.erase_region(state_.selected_region,
+                                               state_.slice_revision, error))
+                    state_.selected_region = 0;
+            } else if (command.action_id == "region.duplicate.v1") {
+                RegionId created{};
+                if (!state_.selected_region)
+                    error = "no region is selected";
+                else if (slices_.duplicate_region(
+                             state_.selected_region, state_.slice_revision,
+                             created, error))
+                    state_.selected_region = created;
+            } else if (command.action_id == "region.rename.v1") {
+                if (!state_.selected_region)
+                    error = "no region is selected";
+                else
+                    (void)slices_.rename_region(
+                        state_.selected_region, state_.slice_revision,
+                        *argument<std::string>(command, "name"), error);
+            } else if (command.action_id == "region.bounds-set.v1") {
+                const auto start = *argument<std::int64_t>(command, "start_frame");
+                const auto end = *argument<std::int64_t>(command, "end_frame");
+                if (!state_.selected_region)
+                    error = "no region is selected";
+                else if (start < 0 || end < 0)
+                    error = "region boundaries cannot be negative";
+                else
+                    (void)slices_.set_region_bounds(
+                        state_.selected_region, state_.slice_revision,
+                        static_cast<std::uint64_t>(start),
+                        static_cast<std::uint64_t>(end), error);
+            } else if (command.action_id == "region.fades-set.v1") {
+                const auto fade_in =
+                    *argument<std::int64_t>(command, "fade_in_frames");
+                const auto fade_out =
+                    *argument<std::int64_t>(command, "fade_out_frames");
+                const auto &curve = *argument<std::string>(command, "curve");
+                if (!state_.selected_region)
+                    error = "no region is selected";
+                else if (fade_in < 0 || fade_out < 0 ||
+                         (curve != "linear" && curve != "equal-power"))
+                    error = "invalid region fade";
+                else
+                    (void)slices_.set_region_fades(
+                        state_.selected_region, state_.slice_revision,
+                        static_cast<std::uint64_t>(fade_in),
+                        static_cast<std::uint64_t>(fade_out),
+                        curve == "equal-power"
+                            ? RegionFadeCurve::equal_power
+                            : RegionFadeCurve::linear,
+                        error);
+            } else if (command.action_id == "region.gain-set.v1") {
+                if (!state_.selected_region)
+                    error = "no region is selected";
+                else
+                    (void)slices_.set_region_gain(
+                        state_.selected_region, state_.slice_revision,
+                        static_cast<float>(*argument<double>(command, "gain")),
+                        error);
+            } else if (command.action_id == "region.direction-set.v1") {
+                const auto &direction =
+                    *argument<std::string>(command, "direction");
+                if (!state_.selected_region)
+                    error = "no region is selected";
+                else if (direction != "forward" && direction != "reverse")
+                    error = "region direction must be forward or reverse";
+                else
+                    (void)slices_.set_region_direction(
+                        state_.selected_region, state_.slice_revision,
+                        direction == "reverse" ? RegionDirection::reverse
+                                               : RegionDirection::forward,
+                        error);
+            } else if (command.action_id == "region.loop-set.v1") {
+                const auto start = *argument<std::int64_t>(command, "start_frame");
+                const auto end = *argument<std::int64_t>(command, "end_frame");
+                const auto crossfade =
+                    *argument<std::int64_t>(command, "crossfade_frames");
+                if (!state_.selected_region || start < 0 || end < 0 ||
+                    crossfade < 0)
+                    error = "invalid region loop";
+                else
+                    (void)slices_.set_region_loop(
+                        state_.selected_region, state_.slice_revision,
+                        *argument<bool>(command, "enabled"),
+                        static_cast<std::uint64_t>(start),
+                        static_cast<std::uint64_t>(end),
+                        static_cast<std::uint32_t>(crossfade), error);
+            } else if (command.action_id == "region.pad-assign.v1") {
+                const auto pad = *argument<std::int64_t>(command, "pad");
+                if (!state_.selected_region)
+                    error = "no region is selected";
+                else if (pad < 0 ||
+                         !slices_.assign_region_pad(
+                             static_cast<std::size_t>(pad),
+                             state_.selected_region, state_.slice_revision,
+                             error)) {
+                    if (error.empty()) error = "pad index is invalid";
+                }
+            } else if (command.action_id == "region.preview.v1") {
+                if (!state_.selected_region)
+                    error = "no region is selected";
+                else
+                    (void)slices_.preview_region(state_.selected_region, 1.0F,
+                                                 error);
             } else if (command.action_id == "pad.select.v1") {
                 const auto pad = *argument<std::int64_t>(command, "pad");
                 if (pad < 0 || pad >= 16)
@@ -5287,6 +5528,10 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                         state_.slice_revision, settings, error);
             }
             if (error.empty()) {
+                if (command.action_id.rfind("region.", 0) == 0 &&
+                    command.action_id != "region.select.v1" &&
+                    command.action_id != "region.preview.v1")
+                    state_.project_dirty = true;
                 refresh_slices();
                 changed_locked();
             }
@@ -6765,6 +7010,7 @@ void ApplicationService::synchronize_locked() const {
     state_.sample_rate = slice_state.sample_rate;
     state_.sample_channels = slice_state.channels;
     state_.slice_pad_assignments = slice_state.pad_assignments;
+    state_.region_pad_assignments = slice_state.region_pad_assignments;
     state_.pad_settings = slice_state.pad_settings;
     state_.selected_pad_settings =
         slice_state.pad_settings[state_.selected_pad];
@@ -6777,6 +7023,13 @@ void ApplicationService::synchronize_locked() const {
                 slice_state.slices.begin(), slice_state.slices.end(),
                 [&](const auto &slice) { return slice.id == *assigned; });
             found != slice_state.slices.end())
+            stretch_source_frames = found->end_frame - found->start_frame;
+    if (const auto assigned =
+            slice_state.region_pad_assignments[state_.selected_pad])
+        if (const auto found = std::find_if(
+                slice_state.regions.begin(), slice_state.regions.end(),
+                [&](const auto &region) { return region.id == *assigned; });
+            found != slice_state.regions.end())
             stretch_source_frames = found->end_frame - found->start_frame;
     const auto source_seconds =
         slice_state.sample_rate > 0
@@ -6802,12 +7055,36 @@ void ApplicationService::synchronize_locked() const {
     for (const auto &slice : slice_state.slices)
         state_.slices.push_back({slice.id, slice.name, slice.start_frame,
                                  slice.end_frame, slice.gain, slice.root_note});
+    state_.regions.clear();
+    state_.regions.reserve(slice_state.regions.size());
+    for (const auto &region : slice_state.regions)
+        state_.regions.push_back(
+            {region.id,
+             region.name,
+             region.start_frame,
+             region.end_frame,
+             region.direction,
+             region.fade_curve,
+             region.fade_in_frames,
+             region.fade_out_frames,
+             region.gain,
+             region.loop_enabled,
+             region.loop_start_frame,
+             region.loop_end_frame,
+             region.loop_crossfade_frames,
+             slices_.region_usage(region.id)});
     if (state_.selected_slice != 0 &&
         std::none_of(state_.slices.begin(), state_.slices.end(),
                      [&](const auto &slice) {
                          return slice.id == state_.selected_slice;
                      }))
         state_.selected_slice = 0;
+    if (state_.selected_region != 0 &&
+        std::none_of(state_.regions.begin(), state_.regions.end(),
+                     [&](const auto &region) {
+                         return region.id == state_.selected_region;
+                     }))
+        state_.selected_region = 0;
     state_.tempo_bpm =
         60'000'000.0 / timeline.timeline.transport.microseconds_per_quarter;
     state_.time_signature_numerator =

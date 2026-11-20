@@ -34,8 +34,9 @@ beyond the filesystem's guarantees.
 
 - Synth patches contain base synth/voice parameters and compatible local
   modulation definitions. Active voices and oscillator phases are excluded.
-- Sample instruments contain sample references, slices, pad assignments,
-  playback/stretch/envelope settings, and compatible local modulation.
+- Sample instruments contain sample references, slices, nondestructive regions,
+  pad assignments, playback/stretch/envelope settings, and compatible local
+  modulation.
 - FX-chain presets contain ordered processors, parameters, wet/dry, bypass and
   local modulation.
 - Track sounds combine those compatible parts with track gain/pan. Project

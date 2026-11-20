@@ -501,6 +501,47 @@ void slice_playback_case(std::string name, std::size_t voices,
                    .count() /
                iterations);
 }
+void region_playback_case(std::string name, std::size_t voices, bool loop,
+                          bool stretch) {
+    neurogenic::AudioEngine engine(48000, 64);
+    std::uint64_t publication{};
+    auto source =
+        std::make_shared<const neurogenic::Sample>(sample(48000, 16384));
+    if (!engine.publish_sample_slot(neurogenic::SampleSlotId{0}, source,
+                                    &publication))
+        throw std::runtime_error("region benchmark publication failed");
+    std::vector<float> left(256), right(256);
+    engine.process({left.data(), 0}, {right.data(), 0});
+    neurogenic::SamplePlaybackSettings settings;
+    if (stretch) {
+        settings.stretch_mode = neurogenic::StretchMode::realtime;
+        settings.stretch_ratio = 1.5F;
+    }
+    neurogenic::SampleRegionPlayback region;
+    region.fade_in_frames = 64;
+    region.fade_out_frames = 64;
+    region.fade_curve = neurogenic::RegionFadeCurve::equal_power;
+    region.loop_enabled = loop;
+    region.loop_start_frame = 512;
+    region.loop_end_frame = 2048;
+    region.loop_crossfade_frames = 32;
+    const auto begin = Clock::now();
+    for (std::size_t i = 0; i < iterations; ++i) {
+        if (i % 32 == 0)
+            for (std::size_t voice = 0; voice < voices; ++voice)
+                if (!engine.trigger_region(
+                        neurogenic::SampleSlotId{0}, publication, 0, 4096,
+                        1.0F, settings, region, 0.5F))
+                    break;
+        engine.process(left, right);
+        checksum += left[0] != 0;
+    }
+    result(std::move(name), 48000, 256,
+           std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
+                                                                begin)
+                   .count() /
+               iterations);
+}
 void expressive_sample_case(std::string name, std::size_t voices,
                             neurogenic::SamplePlaybackSettings settings,
                             bool release_each_buffer = false,
@@ -1634,6 +1675,9 @@ int main(int argc, char **argv) {
     slice_playback_case("slice_triggers_16", 16, false);
     slice_playback_case("slice_voices_32_overlapping", 32, false);
     slice_playback_case("slice_rapid_retrigger", 16, true);
+    region_playback_case("region_fades_16_voices", 16, false, false);
+    region_playback_case("region_loops_32_voices", 32, true, false);
+    region_playback_case("region_stretch_16_voices", 16, false, true);
     neurogenic::SamplePlaybackSettings expressive;
     expressive.semitones = 3;
     expressive.fine_cents = 17;

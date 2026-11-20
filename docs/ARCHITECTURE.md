@@ -1,5 +1,9 @@
 # Architecture
 
+Sample regions are control-side metadata compiled into bounded targets. A voice
+copies boundaries, fade/loop settings and an immutable sample-version reference
+at trigger time, so edits affect new triggers without mutating active voices.
+
 Reusable sound configuration is stored outside projects by the versioned
 `PresetLibrary`. It composes the authoritative slice, native-FX and modulation
 serializers, validates and remaps template IDs on the control thread, then

@@ -1,5 +1,9 @@
 # Project persistence
 
+Sample metadata version 4 persists stable regions, fades, loop boundaries and
+region pad assignments. Older sidecars migrate with an empty region set and
+unchanged playback. Grouped region Undo/Redo is not yet implemented.
+
 Projects restore complete sessions; presets are smaller reusable sound
 configurations. Applying a preset does not implicitly change project routing,
 group or master ownership. See [PRESETS.md](PRESETS.md).

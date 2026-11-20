@@ -24,6 +24,14 @@
 namespace neurogenic {
 class RecordingService;
 enum class SamplePlaybackMode : std::uint8_t { one_shot, gate, toggle };
+enum class RegionFadeCurve : std::uint8_t { linear, equal_power };
+struct SampleRegionPlayback {
+    std::uint64_t fade_in_frames{}, fade_out_frames{};
+    std::uint64_t loop_start_frame{}, loop_end_frame{};
+    std::uint32_t loop_crossfade_frames{};
+    RegionFadeCurve fade_curve{RegionFadeCurve::linear};
+    bool loop_enabled{};
+};
 struct SamplePlaybackSettings {
     SamplePlaybackMode mode{SamplePlaybackMode::one_shot};
     std::uint8_t choke_group{};
@@ -56,6 +64,7 @@ struct PresetPadActivation {
     std::uint64_t start_frame{}, end_frame{};
     float gain{1.0F};
     SamplePlaybackSettings playback;
+    SampleRegionPlayback region;
     bool assigned{};
 };
 struct PresetActivationRequest {
@@ -120,6 +129,11 @@ class AudioEngine {
                                      std::uint64_t end_frame, float slice_gain,
                                      float velocity,
                                      std::uint32_t frame_offset = 0) noexcept;
+    [[nodiscard]] bool trigger_region(
+        SampleSlotId, std::uint64_t publication, std::uint64_t start_frame,
+        std::uint64_t end_frame, float gain, SamplePlaybackSettings,
+        SampleRegionPlayback, float velocity,
+        std::uint32_t frame_offset = 0) noexcept;
     [[nodiscard]] bool stop_slice_previews() noexcept;
     [[nodiscard]] bool map_note_to_slice(std::uint8_t note, SampleSlotId,
                                          std::uint64_t publication,
@@ -127,6 +141,10 @@ class AudioEngine {
                                          std::uint64_t end_frame,
                                          float gain = 1.0F,
                                          SamplePlaybackSettings = {}) noexcept;
+    [[nodiscard]] bool map_note_to_region(
+        std::uint8_t note, SampleSlotId, std::uint64_t publication,
+        std::uint64_t start_frame, std::uint64_t end_frame, float gain,
+        SamplePlaybackSettings, SampleRegionPlayback) noexcept;
     [[nodiscard]] bool clear_note_slice(std::uint8_t note) noexcept;
     [[nodiscard]] bool configure_note_playback(std::uint8_t note,
                                                SamplePlaybackSettings) noexcept;
@@ -360,8 +378,11 @@ class AudioEngine {
         SampleSlotId slot{invalid_sample_slot};
         std::uint64_t publication{}, start_frame{}, end_frame{};
         float slice_gain{1.0F};
+        SamplePlaybackSettings playback;
+        SampleRegionPlayback region;
         float pitch_offset{};
-        bool sliced{}, stop_previews{}, note_on{true}, pad_event{};
+        bool sliced{}, region_trigger{}, stop_previews{}, note_on{true},
+            pad_event{};
     };
     struct SynthTrigger {
         std::uint8_t note{};
@@ -392,6 +413,7 @@ class AudioEngine {
         TimeStretchState stretch_state;
         double stretch_duration{};
         std::uint64_t start_frame{}, end_frame{};
+        SampleRegionPlayback region;
         float gain{}, base_gain{}, modulation_gain{1.0F}, modulation_pan{},
             modulation_pitch{}, envelope_level{1.0F};
         SampleVoiceModulationState voice_modulation;
@@ -431,6 +453,7 @@ class AudioEngine {
         std::uint64_t publication{}, start_frame{}, end_frame{};
         float gain{1.0F};
         SamplePlaybackSettings playback;
+        SampleRegionPlayback region;
         bool enabled{};
     };
     struct SliceMapCommand {

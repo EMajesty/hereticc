@@ -271,6 +271,42 @@ bool AudioEngine::trigger_slice(SampleSlotId slot, std::uint64_t publication,
     }
     return true;
 }
+bool AudioEngine::trigger_region(
+    SampleSlotId slot, std::uint64_t publication, std::uint64_t start_frame,
+    std::uint64_t end_frame, float gain, SamplePlaybackSettings playback,
+    SampleRegionPlayback region, float velocity,
+    std::uint32_t frame_offset) noexcept {
+    if (slot == invalid_sample_slot || publication == 0 ||
+        start_frame >= end_frame || !std::isfinite(gain) || gain < 0 ||
+        !std::isfinite(velocity) || velocity < 0 ||
+        region.fade_in_frames > end_frame - start_frame ||
+        region.fade_out_frames > end_frame - start_frame ||
+        (region.loop_enabled &&
+         (region.loop_start_frame < start_frame ||
+          region.loop_start_frame >= region.loop_end_frame ||
+          region.loop_end_frame > end_frame ||
+          region.loop_crossfade_frames >
+              region.loop_end_frame - region.loop_start_frame)))
+        return false;
+    Trigger event{};
+    event.velocity = velocity;
+    event.frame_offset = frame_offset;
+    event.order = next_order_.fetch_add(1, std::memory_order_relaxed);
+    event.slot = slot;
+    event.publication = publication;
+    event.start_frame = start_frame;
+    event.end_frame = end_frame;
+    event.slice_gain = gain;
+    event.playback = playback;
+    event.region = region;
+    event.sliced = true;
+    event.region_trigger = true;
+    if (!triggers_.push(event)) {
+        dropped_triggers_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    return true;
+}
 bool AudioEngine::stop_slice_previews() noexcept {
     Trigger event{};
     event.order = next_order_.fetch_add(1, std::memory_order_relaxed);
@@ -290,10 +326,40 @@ bool AudioEngine::map_note_to_slice(std::uint8_t note, SampleSlotId slot,
         start_frame >= end_frame || !std::isfinite(gain) || gain < 0)
         return false;
     playback.gain *= gain;
-    return slice_map_commands_.push(
-        {SliceMapCommand::Type::map,
-         note,
-         {slot, publication, start_frame, end_frame, 1.0F, playback, true}});
+    SliceTarget target{};
+    target.slot = slot;
+    target.publication = publication;
+    target.start_frame = start_frame;
+    target.end_frame = end_frame;
+    target.playback = playback;
+    target.enabled = true;
+    return slice_map_commands_.push({SliceMapCommand::Type::map, note, target});
+}
+bool AudioEngine::map_note_to_region(
+    std::uint8_t note, SampleSlotId slot, std::uint64_t publication,
+    std::uint64_t start_frame, std::uint64_t end_frame, float gain,
+    SamplePlaybackSettings playback, SampleRegionPlayback region) noexcept {
+    if (slot == invalid_sample_slot || publication == 0 ||
+        start_frame >= end_frame || !std::isfinite(gain) || gain < 0 ||
+        region.fade_in_frames > end_frame - start_frame ||
+        region.fade_out_frames > end_frame - start_frame ||
+        (region.loop_enabled &&
+         (region.loop_start_frame < start_frame ||
+          region.loop_start_frame >= region.loop_end_frame ||
+          region.loop_end_frame > end_frame ||
+          region.loop_crossfade_frames >
+              region.loop_end_frame - region.loop_start_frame)))
+        return false;
+    playback.gain *= gain;
+    SliceTarget target{};
+    target.slot = slot;
+    target.publication = publication;
+    target.start_frame = start_frame;
+    target.end_frame = end_frame;
+    target.playback = playback;
+    target.region = region;
+    target.enabled = true;
+    return slice_map_commands_.push({SliceMapCommand::Type::map, note, target});
 }
 bool AudioEngine::clear_note_slice(std::uint8_t note) noexcept {
     return slice_map_commands_.push({SliceMapCommand::Type::clear, note, {}});
@@ -407,6 +473,26 @@ bool AudioEngine::publish_preset_activation(
             sample.sample->interleaved.empty() ||
             sample.sample->interleaved.size() % sample.sample->channels != 0) {
             error = "invalid prepared preset sample";
+            return false;
+        }
+    }
+    for (const auto &pad : request.pads) {
+        if (!pad.assigned) continue;
+        const auto length = pad.end_frame > pad.start_frame
+                                ? pad.end_frame - pad.start_frame
+                                : 0;
+        if (pad.slot == invalid_sample_slot || length == 0 ||
+            !std::isfinite(pad.gain) || pad.gain < 0 ||
+            pad.region.fade_in_frames > length ||
+            pad.region.fade_out_frames > length ||
+            (pad.region.loop_enabled &&
+             (pad.region.loop_start_frame < pad.start_frame ||
+              pad.region.loop_start_frame >= pad.region.loop_end_frame ||
+              pad.region.loop_end_frame > pad.end_frame ||
+              pad.region.loop_crossfade_frames >
+                  pad.region.loop_end_frame -
+                      pad.region.loop_start_frame))) {
+            error = "invalid prepared preset region";
             return false;
         }
     }
@@ -571,6 +657,7 @@ void AudioEngine::activate_preset(std::size_t index) noexcept {
             target.end_frame = source.end_frame;
             target.gain = source.gain;
             target.playback = source.playback;
+            target.region = source.region;
             target.enabled = true;
             const auto active = find_active_sample(source.slot);
             if (active < sample_version_capacity_)
@@ -878,6 +965,7 @@ void AudioEngine::start_voice(std::uint8_t note, float velocity, TrackId track,
     voice.sample_version = sample_index;
     voice.start_frame = start;
     voice.end_frame = end;
+    voice.region = slice ? slice->region : SampleRegionPlayback{};
     voice.reverse = settings.reverse;
     voice.position = settings.reverse ? static_cast<double>(end - 1)
                                       : static_cast<double>(start);
@@ -1452,6 +1540,10 @@ void AudioEngine::process(std::span<float> left,
                 target.start_frame = event.start_frame;
                 target.end_frame = event.end_frame;
                 target.gain = event.slice_gain;
+                if (event.region_trigger) {
+                    target.playback = event.playback;
+                    target.region = event.region;
+                }
                 target.enabled = true;
                 start_voice(event.note, event.velocity, 0, 0, 0, false, &target,
                             true);
@@ -1627,9 +1719,92 @@ void AudioEngine::process(std::span<float> left,
                 };
                 sample_left = interpolate(0);
                 sample_right = interpolate(1);
+                if (voice.region.loop_enabled &&
+                    voice.region.loop_crossfade_frames > 0) {
+                    const auto loop_start = voice.region.loop_start_frame;
+                    const auto loop_end = voice.region.loop_end_frame;
+                    const auto crossfade = static_cast<double>(
+                        voice.region.loop_crossfade_frames);
+                    const auto in_crossfade =
+                        voice.reverse
+                            ? voice.position <
+                                  static_cast<double>(loop_start) + crossfade
+                            : voice.position >=
+                                  static_cast<double>(loop_end) - crossfade;
+                    if (in_crossfade) {
+                        const auto amount = std::clamp(
+                            voice.reverse
+                                ? (static_cast<double>(loop_start) + crossfade -
+                                   voice.position) /
+                                      crossfade
+                                : (voice.position -
+                                   (static_cast<double>(loop_end) - crossfade)) /
+                                      crossfade,
+                            0.0, 1.0);
+                        const auto alternate_position =
+                            voice.reverse
+                                ? static_cast<double>(loop_end) - crossfade +
+                                      (voice.position - loop_start)
+                                : static_cast<double>(loop_start) +
+                                      (voice.position -
+                                       (static_cast<double>(loop_end) -
+                                        crossfade));
+                        const auto alternate_base = static_cast<std::uint64_t>(
+                            std::clamp(alternate_position,
+                                       static_cast<double>(loop_start),
+                                       static_cast<double>(loop_end - 1)));
+                        const auto sample_at = [&](std::uint16_t channel) {
+                            const auto actual = sample.channels > 1 ? channel : 0;
+                            return sample.interleaved[alternate_base *
+                                                          sample.channels +
+                                                      actual];
+                        };
+                        sample_left = static_cast<float>(
+                            sample_left * (1.0 - amount) + sample_at(0) * amount);
+                        sample_right = static_cast<float>(sample_right *
+                                                              (1.0 - amount) +
+                                                          sample_at(1) * amount);
+                    }
+                }
             }
+            const auto source_progress =
+                voice.stretched
+                    ? voice.stretch_state.output_frame /
+                          std::max(0.25F,
+                                   voice.stretch_configuration.time_ratio)
+                    : (voice.reverse
+                           ? static_cast<double>(voice.end_frame - 1) -
+                                 voice.position
+                           : voice.position -
+                                 static_cast<double>(voice.start_frame));
+            const auto source_remaining =
+                static_cast<double>(voice.end_frame - voice.start_frame) -
+                source_progress;
+            auto region_level = 1.0F;
+            const auto curve = [&](double normalized) {
+                const auto value = static_cast<float>(
+                    std::clamp(normalized, 0.0, 1.0));
+                return voice.region.fade_curve == RegionFadeCurve::equal_power
+                           ? std::sin(value * 1.5707963267948966F)
+                           : value;
+            };
+            if (voice.region.fade_in_frames)
+                region_level = std::min(
+                    region_level,
+                    voice.region.fade_in_frames == 1
+                        ? (source_progress <= 0 ? 0.0F : 1.0F)
+                        : curve(source_progress /
+                                (voice.region.fade_in_frames - 1)));
+            if (voice.region.fade_out_frames)
+                region_level = std::min(
+                    region_level,
+                    voice.region.fade_out_frames == 1
+                        ? (source_remaining <= 1 ? 0.0F : 1.0F)
+                        : curve((source_remaining - 1) /
+                                (voice.region.fade_out_frames - 1)));
             const auto level = voice.base_gain * voice.modulation_gain *
-                               voice_modulation.gain * voice.envelope_level;
+                               voice_modulation.gain * voice.envelope_level *
+                               region_level;
             const auto pan = std::clamp(
                 voice.modulation_pan + voice_modulation.pan, -1.0F, 1.0F);
             sample_left *= pan > 0 ? 1.0F - pan : 1.0F;
@@ -1667,6 +1842,23 @@ void AudioEngine::process(std::span<float> left,
             else
                 voice.position +=
                     voice.reverse ? -voice.increment : voice.increment;
+            if (!voice.stretched && voice.region.loop_enabled &&
+                voice.envelope_stage != Voice::EnvelopeStage::release) {
+                const auto loop_start =
+                    static_cast<double>(voice.region.loop_start_frame);
+                const auto loop_end =
+                    static_cast<double>(voice.region.loop_end_frame);
+                if (!voice.reverse && voice.position >= loop_end)
+                    voice.position = loop_start +
+                                     std::fmod(voice.position - loop_start,
+                                               loop_end - loop_start);
+                else if (voice.reverse && voice.position < loop_start) {
+                    const auto distance = loop_start - voice.position;
+                    voice.position = loop_end -
+                                     std::fmod(distance, loop_end - loop_start);
+                    if (voice.position >= loop_end) voice.position = loop_end - 1;
+                }
+            }
         }
         for (std::size_t synth_index = 0; synth_index < synths_.size();
              ++synth_index) {

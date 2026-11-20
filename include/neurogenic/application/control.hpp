@@ -135,6 +135,19 @@ struct SliceState {
     float gain{1.0F};
     std::optional<std::uint8_t> root_note;
 };
+struct RegionState {
+    RegionId id{};
+    std::string name;
+    std::uint64_t start_frame{}, end_frame{};
+    RegionDirection direction{RegionDirection::forward};
+    RegionFadeCurve fade_curve{RegionFadeCurve::linear};
+    std::uint64_t fade_in_frames{}, fade_out_frames{};
+    float gain{1.0F};
+    bool loop_enabled{};
+    std::uint64_t loop_start_frame{}, loop_end_frame{};
+    std::uint32_t loop_crossfade_frames{};
+    std::size_t usage{};
+};
 struct PatternState {
     PatternId id{};
     std::string name;
@@ -172,6 +185,7 @@ struct ApplicationState {
     TrackId selected_track{};
     SampleSlotId selected_sample_slot{};
     SliceId selected_slice{};
+    RegionId selected_region{};
     std::size_t selected_pad{};
     SamplePlaybackSettings selected_pad_settings;
     float effective_stretch_ratio{1.0F};
@@ -182,7 +196,9 @@ struct ApplicationState {
     std::uint32_t sample_rate{};
     std::uint16_t sample_channels{};
     std::vector<SliceState> slices;
+    std::vector<RegionState> regions;
     std::array<std::optional<SliceId>, 16> slice_pad_assignments{};
+    std::array<std::optional<RegionId>, 16> region_pad_assignments{};
     std::vector<WaveformPeak> waveform_peaks;
     std::uint64_t selected_pattern{};
     TimelinePlaybackMode playback_mode{TimelinePlaybackMode::legacy};

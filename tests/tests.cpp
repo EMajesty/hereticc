@@ -3146,6 +3146,76 @@ void test_sample_slicing() {
                           [](float value) { return value == 0; }),
           "slice playback boundaries");
     state = slices.snapshot(SampleSlotId{0});
+    RegionId region{}, one_frame{};
+    check(slices.create_region_from_slice(first, state.revision, region, error),
+          "slice-to-region conversion");
+    state = slices.snapshot(SampleSlotId{0});
+    check(slices.set_region_direction(region, state.revision,
+                                      RegionDirection::reverse, error),
+          "reverse region editing");
+    state = slices.snapshot(SampleSlotId{0});
+    check(slices.preview_region(region, 1.0F, error),
+          "reverse region preview");
+    engine.process({left.data(), 1}, {right.data(), 1});
+    if (!(left[0] > 0.35F))
+        throw std::runtime_error(
+            "reverse region did not start at its end boundary: " +
+            std::to_string(left[0]));
+    slices.stop_preview();
+    engine.process({left.data(), 1}, {right.data(), 1});
+    state = slices.snapshot(SampleSlotId{0});
+    check(slices.set_region_direction(region, state.revision,
+                                      RegionDirection::forward, error),
+          "forward region editing");
+    state = slices.snapshot(SampleSlotId{0});
+    check(slices.set_region_fades(region, state.revision, 2, 2,
+                                  RegionFadeCurve::linear, error),
+          "region fade editing");
+    state = slices.snapshot(SampleSlotId{0});
+    check(slices.set_region_loop(region, state.revision, true, 120, 140, 4,
+                                 error),
+          "region loop editing");
+    state = slices.snapshot(SampleSlotId{0});
+    auto region_pad_settings = SamplePlaybackSettings{};
+    region_pad_settings.mode = SamplePlaybackMode::toggle;
+    check(slices.set_pad_settings(SampleSlotId{0}, 1, state.revision,
+                                  region_pad_settings, error),
+          "region toggle settings");
+    state = slices.snapshot(SampleSlotId{0});
+    check(slices.assign_region_pad(1, region, state.revision, error),
+          "region pad assignment");
+    engine.process({left.data(), 0}, {right.data(), 0});
+    left.fill(0);
+    right.fill(0);
+    engine.trigger(37, 1.0F);
+    engine.process({left.data(), 64}, {right.data(), 64});
+    check(left[0] == 0 && left[1] > 0 && left[63] != 0,
+          "region fades and bounded looping");
+    check(engine.trigger_pad(37, 1.0F), "region toggle stop trigger");
+    engine.process({left.data(), 256}, {right.data(), 256});
+    state = slices.snapshot(SampleSlotId{0});
+    check(slices.preview_region(region, 1.0F, error),
+          "region preview before edit");
+    engine.process({left.data(), 1}, {right.data(), 1});
+    state = slices.snapshot(SampleSlotId{0});
+    check(slices.clear_pad(1, state.revision, error),
+          "region pad clear");
+    state = slices.snapshot(SampleSlotId{0});
+    check(slices.erase_region(region, state.revision, error),
+          "region deletion after unassignment");
+    engine.process({left.data(), 8}, {right.data(), 8});
+    check(std::any_of(left.begin(), left.begin() + 8,
+                      [](float value) { return value != 0; }),
+          "active region voice did not retain its copied configuration");
+    state = slices.snapshot(SampleSlotId{0});
+    check(slices.create_region(SampleSlotId{0}, state.revision, 7, 8,
+                               "One frame", one_frame, error),
+          "one-frame region creation");
+    state = slices.snapshot(SampleSlotId{0});
+    check(!slices.set_region_fades(one_frame, state.revision, 2, 0,
+                                   RegionFadeCurve::equal_power, error),
+          "oversized region fade accepted");
+    state = slices.snapshot(SampleSlotId{0});
     check(slices.equal_divisions(SampleSlotId{0}, state.revision, 16, error),
           "equal slice generation");
     state = slices.snapshot(SampleSlotId{0});
@@ -3167,7 +3237,8 @@ void test_sample_slicing() {
     engine.process({left.data(), 1}, {right.data(), 1});
     check(left[0] != 0, "old slice voice did not survive replacement");
     state = slices.snapshot(SampleSlotId{0});
-    check(state.revision > before_replace_revision && state.slices.empty(),
+    check(state.revision > before_replace_revision && state.slices.empty() &&
+              state.regions.empty(),
           "sample replacement invalidated stale slices");
     TimelineService timeline(
         [&](const Timeline &value, std::string &timeline_error) {
@@ -3183,6 +3254,28 @@ void test_sample_slicing() {
          {{"slice_id",
            static_cast<std::int64_t>(application.snapshot().slices[0].id)}}});
     check(result.accepted, "slice application selection");
+    result = application.execute(
+        {"region.from-slice.v1", {}});
+    check(result.accepted && application.snapshot().regions.size() == 1 &&
+              application.snapshot().selected_region != 0 &&
+              application.snapshot().project_dirty,
+          "region application action/state");
+    check(application
+                  .execute({"region.fades-set.v1",
+                            {{"fade_in_frames", std::int64_t{2}},
+                             {"fade_out_frames", std::int64_t{3}},
+                             {"curve", std::string{"equal-power"}}}})
+                  .accepted &&
+              application
+                  .execute({"region.direction-set.v1",
+                            {{"direction", std::string{"reverse"}}}})
+                  .accepted &&
+              application
+                  .execute({"region.pad-assign.v1",
+                            {{"pad", std::int64_t{2}}}})
+                  .accepted &&
+              application.snapshot().region_pad_assignments[2].has_value(),
+          "region edit and assignment actions");
     check(application.execute({"pad.select.v1", {{"pad", std::int64_t{3}}}})
               .accepted,
           "pad selection action");
@@ -3267,6 +3360,23 @@ void test_sample_slicing() {
     project.slices.push_back(
         {42, SampleSlotId{0}, 1, 1, 0, 100, "Persisted", 60, 0.8F});
     project.pads[3] = 42;
+    project.regions.push_back({77,
+                               SampleSlotId{0},
+                               1,
+                               1,
+                               10,
+                               90,
+                               "Loop",
+                               RegionDirection::reverse,
+                               RegionFadeCurve::equal_power,
+                               4,
+                               5,
+                               0.7F,
+                               true,
+                               20,
+                               80,
+                               3});
+    project.region_pads[4] = 77;
     project.pad_settings[3].mode = SamplePlaybackMode::toggle;
     project.pad_settings[3].choke_group = 4;
     project.pad_settings[3].semitones = -5;
@@ -3289,6 +3399,13 @@ void test_sample_slicing() {
               restored.pad_settings[3].stretch_ratio == 1.5F &&
               restored.pad_settings[3].source_beats == 4,
           "slice persistence round trip");
+    check(restored.regions.size() == 1 && restored.regions[0].id == 77 &&
+              restored.regions[0].direction == RegionDirection::reverse &&
+              restored.regions[0].fade_curve ==
+                  RegionFadeCurve::equal_power &&
+              restored.regions[0].loop_enabled &&
+              restored.region_pads[4] == 77,
+          "region persistence round trip");
     check(application.slices().restore_project(restored, error),
           "slice project activation");
     const auto activated = application.slices().snapshot(SampleSlotId{0});
@@ -3296,6 +3413,9 @@ void test_sample_slicing() {
               activated.pad_assignments[3] == 42 &&
               activated.pad_settings[3].stretch_mode == StretchMode::realtime,
           "slice and pad settings restoration");
+    check(activated.regions.size() == 1 &&
+              activated.region_pad_assignments[4] == 77,
+          "region restoration");
     const auto legacy_path = base / "neurogenic-slices-v1.project";
     {
         std::ofstream legacy(legacy_path);
@@ -3319,6 +3439,38 @@ void test_sample_slicing() {
     check(version_two.pad_settings[0].mode == SamplePlaybackMode::gate &&
               version_two.pad_settings[0].stretch_mode == StretchMode::off,
           "version-two slice sidecar compatibility");
+    auto partition_engine = [](std::size_t block) {
+        AudioEngine engine(48000, 4);
+        Sample source;
+        source.sample_rate = 48000;
+        source.channels = 1;
+        source.interleaved.resize(128);
+        for (std::size_t i = 0; i < source.interleaved.size(); ++i)
+            source.interleaved[i] = static_cast<float>(i) / 128.0F;
+        std::uint64_t publication{};
+        check(engine.publish_sample_slot(
+                  SampleSlotId{0},
+                  std::make_shared<const Sample>(std::move(source)),
+                  &publication),
+              "partition region publication");
+        std::array<float, 64> empty_left{}, empty_right{};
+        engine.process({empty_left.data(), 0}, {empty_right.data(), 0});
+        SampleRegionPlayback region{4, 4, 16, 32, 4,
+                                    RegionFadeCurve::equal_power, true};
+        check(engine.trigger_region(SampleSlotId{0}, publication, 8, 48, 1,
+                                    {}, region, 1),
+              "partition region trigger");
+        std::array<float, 64> output{}, right{};
+        for (std::size_t offset = 0; offset < output.size(); offset += block)
+            engine.process({output.data() + offset, block},
+                           {right.data() + offset, block});
+        return output;
+    };
+    const auto whole = partition_engine(64);
+    const auto partitioned = partition_engine(16);
+    for (std::size_t i = 0; i < whole.size(); ++i)
+        check(std::abs(whole[i] - partitioned[i]) < 1e-6F,
+              "region callback partition dependence");
     std::filesystem::remove(wav);
     bool missing = false;
     try {

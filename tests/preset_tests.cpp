@@ -71,6 +71,23 @@ SoundPreset fixture(const std::filesystem::path &asset) {
     samples.sample_paths.emplace(1, asset);
     samples.slices.push_back({7, 1, 2, 3, 10, 400, "break", 60, 0.8F});
     samples.pads[0] = 7;
+    samples.regions.push_back({9,
+                               SampleSlotId{1},
+                               2,
+                               3,
+                               20,
+                               300,
+                               "loop",
+                               RegionDirection::forward,
+                               RegionFadeCurve::equal_power,
+                               8,
+                               12,
+                               0.9F,
+                               true,
+                               40,
+                               200,
+                               6});
+    samples.region_pads[1] = 9;
     samples.pad_settings[0].gain = 0.7F;
     value.samples = samples;
 
@@ -113,7 +130,9 @@ int main() {
                   loaded.synth_parameters == source.synth_parameters,
               "metadata or synth round-trip");
         check(loaded.samples && loaded.samples->slices.size() == 1 &&
-                  loaded.samples->pads[0] == 7,
+                  loaded.samples->pads[0] == 7 &&
+                  loaded.samples->regions.size() == 1 &&
+                  loaded.samples->region_pads[1] == 9,
               "sample instrument round-trip");
         check(loaded.effects && loaded.effects->instances.size() == 1 &&
                   loaded.effects->chain.instances[0] == 11,

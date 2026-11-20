@@ -1,5 +1,11 @@
 # Implementation status
 
+- Task 054: stable nondestructive sample regions, source-frame fades, bounded
+  forward/reverse loops and crossfades, slice conversion, pad playback,
+  version-4 persistence/presets, actions and discovery are implemented.
+  Stretch looping, destructive rendering, GUI editing and grouped region
+  Undo/Redo remain deferred.
+
 - Task 052 adds versioned synth, sample-instrument, native FX-chain and track
   sound presets with generation-based saves, asset diagnostics, fresh runtime
   ID remapping and deterministic rollback tests. A preset-browser GUI remains

@@ -1,5 +1,9 @@
 # Live sample management
 
+Nondestructive playback regions, fades, looping, slice conversion and stable
+pad assignments are documented in [SAMPLE_REGIONS.md](SAMPLE_REGIONS.md).
+Regions use source-frame coordinates and never alter immutable PCM.
+
 Sample-instrument presets reuse slice sidecars and immutable sample references.
 They store paths and playback metadata, never PCM; missing assets stay
 inspectable for relinking. See [PRESETS.md](PRESETS.md).

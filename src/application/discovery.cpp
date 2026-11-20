@@ -105,6 +105,7 @@ std::string action_target(std::string_view id) {
     if (id.rfind("mixer.aux", 0) == 0) return "aux-bus";
     if (id.rfind("mixer.", 0) == 0) return "master";
     if (id.rfind("sample.", 0) == 0 || id.rfind("slice.", 0) == 0 ||
+        id.rfind("region.", 0) == 0 ||
         id.rfind("pad.", 0) == 0)
         return "sample-slot";
     return {};
@@ -119,7 +120,7 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
         {"timeline-arrangement", 2, true, {}}, {"native-fx-chains", 1, true, {}},
         {"modulation-graph", 6, true, {}}, {"performance-macros", 2, true, {}},
         {"midi-routing", 2, true, {}}, {"audio-recording", 1, true, {}},
-        {"sound-presets", 2, true, {}},
+        {"sound-presets", 2, true, {}}, {"sample-regions", 1, true, {}},
         {"high-frequency-telemetry", 1, true, {}},
         {"typed-parameter-bindings", 1, true, {}}};
     result.object_types = {
@@ -128,6 +129,7 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
         {"track", "Track", true, true, true},
         {"instrument", "Instrument", true, true, true},
         {"sample-slot", "Sample slot", false, false, true},
+        {"sample-region", "Sample region", true, true, true},
         {"pattern", "Pattern", true, true, true},
         {"clip", "Clip", true, true, true},
         {"arrangement", "Arrangement", false, false, true},
@@ -219,6 +221,11 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
         result.objects.push_back({"sample-slot", object_id("sample-slot", i),
                                   "project:current", "Sample " + std::to_string(i + 1),
                                   true, i == state.selected_sample_slot.value, {}});
+    for (const auto &region : state.regions)
+        result.objects.push_back(
+            {"sample-region", object_id("sample-region", region.id),
+             object_id("sample-slot", state.selected_sample_slot.value),
+             region.name, true, region.id == state.selected_region, {}});
     for (const auto &pattern : state.patterns)
         result.objects.push_back({"pattern", object_id("pattern", pattern.id),
                                   "arrangement:main", pattern.name, true,
@@ -326,6 +333,8 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
         {"tracks", "project:current", "Track collection", DiscoveryValueKind::collection, DiscoveryUpdateRate::state},
         {"patterns", "arrangement:main", "Pattern collection", DiscoveryValueKind::collection, DiscoveryUpdateRate::state},
         {"clips", "arrangement:main", "Clip collection", DiscoveryValueKind::collection, DiscoveryUpdateRate::state},
+        {"sample.regions", "project:current", "Sample region collection", DiscoveryValueKind::collection, DiscoveryUpdateRate::state},
+        {"sample.region-assignments", "project:current", "Region pad assignments", DiscoveryValueKind::collection, DiscoveryUpdateRate::state},
         {"mixer.meters", "master:main", "Mixer peak meters", DiscoveryValueKind::collection, DiscoveryUpdateRate::telemetry},
         {"modulation.outputs", "project:current", "Current modulator outputs", DiscoveryValueKind::collection, DiscoveryUpdateRate::telemetry},
         {"macros.effective-values", "project:current", "Effective macro values", DiscoveryValueKind::collection, DiscoveryUpdateRate::telemetry},

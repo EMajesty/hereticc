@@ -1,5 +1,12 @@
 # Performance monitoring and benchmarks
 
+Task 054 adds `region_fades_16_voices`, `region_loops_32_voices`, and
+`region_stretch_16_voices`. They measure callback playback separately from
+control-side editing and are host regressions, not Pi 5 or N150 claims.
+On the 2026-11-21 x86-64 Debug host (Ryzen 7 7800X3D, GCC 15.3, 48 kHz,
+256 frames, 20 iterations) they averaged 79.6, 190.8 and 218.2 microseconds
+per buffer respectively, with approximately 54.0 MB resident memory.
+
 The preset regression reports `application_prepare_us`,
 `activation_callback_us`, `package_export_us`, and `package_bytes` separately.
 Preparation covers parsing, WAV preparation, validation, and ID remapping;

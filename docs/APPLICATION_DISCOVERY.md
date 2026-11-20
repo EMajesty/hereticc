@@ -1,5 +1,9 @@
 # Application discovery contract
 
+Capability `sample-regions` version 1 exposes region objects and semantic edit
+actions. `sample.regions` and `sample.region-assignments` provide revisioned
+metadata without placing waveform PCM in ordinary snapshots.
+
 Preset clients consume presentation-neutral metadata, dependency lists,
 validation diagnostics and typed `PresetLibrary` operations for synth, sample,
 FX-chain and track-sound entries. See [PRESETS.md](PRESETS.md).
