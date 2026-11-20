@@ -793,7 +793,7 @@ void external_fx_case() {
                iterations);
 }
 void modulation_case(std::string name, std::size_t route_count,
-                     bool tempo_sync = false) {
+                     bool tempo_sync = false, std::size_t instance_count = 0) {
     neurogenic::AudioEngine engine(48000, 32);
     neurogenic::MixerConfiguration mixer;
     mixer.revision = 1;
@@ -806,6 +806,18 @@ void modulation_case(std::string name, std::size_t route_count,
     configuration.route_count =
         std::min(route_count, configuration.routes.size());
     configuration.update_interval = 32;
+    configuration.modulator_count =
+        std::min(instance_count, configuration.modulators.size());
+    for (std::size_t index = 0; index < configuration.modulator_count; ++index) {
+        auto &instance = configuration.modulators[index];
+        instance.id = static_cast<neurogenic::ModulatorInstanceId>(index + 1);
+        instance.type = index % 4 == 0 ? neurogenic::ModulatorType::sample_hold
+                                      : neurogenic::ModulatorType::lfo;
+        instance.owner_kind = neurogenic::ModulatorOwnerKind::master;
+        instance.settings.rate_hz = 0.25F + static_cast<float>(index % 13) * 0.1F;
+        instance.settings.tempo_sync = tempo_sync;
+        instance.settings.seed = static_cast<std::uint32_t>(1000 + index);
+    }
     for (std::size_t source = 0; source < 4; ++source) {
         configuration.sources[source].waveform =
             static_cast<neurogenic::LfoWaveform>(source);
@@ -817,6 +829,9 @@ void modulation_case(std::string name, std::size_t route_count,
         auto &value = configuration.routes[route];
         value.id = static_cast<neurogenic::ModulationRouteId>(route + 1);
         value.source = static_cast<neurogenic::ModulationSourceId>(route % 4);
+        if (configuration.modulator_count)
+            value.source_instance = static_cast<neurogenic::ModulatorInstanceId>(
+                route % configuration.modulator_count + 1);
         value.depth = (route & 1U) ? -0.1F : 0.1F;
         if (route % 6 == 0) {
             value.destination = {
@@ -1168,6 +1183,10 @@ int main(int argc, char **argv) {
     modulation_case("modulation_lfos_routes_16", 16);
     modulation_case("modulation_routes_32", 32);
     modulation_case("modulation_tempo_sync", 16, true);
+    modulation_case("modulator_instances_8", 16, false, 8);
+    modulation_case("modulator_instances_32", 64, false, 32);
+    modulation_case("modulator_instances_64_dense_routes_128", 128, false,
+                    64);
     synth_instance_case(4, false);
     synth_instance_case(8, false);
     synth_instance_case(16, false);

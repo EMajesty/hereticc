@@ -11,6 +11,11 @@ The mixer supports bounded native track, aux and master effect chains. See
 
 # NEUROGENIC
 
+Dynamic modulation sources are discoverable stable instances owned by tracks,
+aux buses or master; see
+[docs/MODULATOR_INSTANCES.md](docs/MODULATOR_INSTANCES.md) for the API,
+capacity, persistence and migration model.
+
 The dedicated controller host interface uses a versioned USB CDC binary
 protocol; see [controller protocol](docs/CONTROLLER_PROTOCOL.md). Launch it with
 `--controller /dev/serial/by-id/...`. Controller hardware remains optional.

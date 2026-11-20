@@ -250,7 +250,7 @@ MixerConfiguration load_mixer(const std::filesystem::path &path) {
 }
 std::string serialize_modulation(const ModulationConfiguration &configuration) {
     std::ostringstream out;
-    out << "NEUROGENIC_MODULATION 3\n"
+    out << "NEUROGENIC_MODULATION 4\n"
         << std::setprecision(9) << "interval " << configuration.update_interval
         << '\n';
     for (std::size_t i = 0; i < configuration.source_count; ++i) {
@@ -265,6 +265,24 @@ std::string serialize_modulation(const ModulationConfiguration &configuration) {
             << source.follower_release_seconds << ' ' << source.follower_gain
             << ' ' << source.follower_threshold << '\n';
     }
+    out << "modulators " << configuration.modulator_count << '\n';
+    for (std::size_t i = 0; i < configuration.modulator_count; ++i) {
+        const auto &instance = configuration.modulators[i];
+        const auto &source = instance.settings;
+        out << "modulator " << instance.id << ' '
+            << static_cast<unsigned>(instance.type) << ' '
+            << static_cast<unsigned>(instance.owner_kind) << ' '
+            << instance.owner_id << ' ' << instance.enabled << ' '
+            << std::quoted(std::string(instance.display_name.data())) << ' '
+            << static_cast<unsigned>(source.waveform) << ' ' << source.rate_hz
+            << ' ' << source.tempo_sync << ' ' << source.beats_per_cycle << ' '
+            << source.retrigger << ' ' << source.attack_seconds << ' '
+            << source.decay_seconds << ' ' << source.sustain << ' '
+            << source.release_seconds << ' ' << source.seed << ' '
+            << source.follower_attack_seconds << ' '
+            << source.follower_release_seconds << ' ' << source.follower_gain
+            << ' ' << source.follower_threshold << '\n';
+    }
     out << "routes " << configuration.route_count << '\n';
     for (std::size_t i = 0; i < configuration.route_count; ++i) {
         const auto &route = configuration.routes[i];
@@ -275,6 +293,7 @@ std::string serialize_modulation(const ModulationConfiguration &configuration) {
             << route.base_value << ' ' << route.depth << ' ' << route.enabled
             << ' ' << static_cast<unsigned>(route.polarity) << ' '
             << static_cast<unsigned>(route.scope) << ' ' << route.track_id
+            << ' ' << route.source_instance << ' ' << route.source_output
             << '\n';
     }
     return out.str();
@@ -286,7 +305,7 @@ ModulationConfiguration load_modulation(const std::filesystem::path &path) {
     unsigned version{};
     ModulationConfiguration result;
     if (!(input >> magic >> version) || magic != "NEUROGENIC_MODULATION" ||
-        (version == 0 || version > 3) ||
+        (version == 0 || version > 4) ||
         !(input >> label >> result.update_interval) || label != "interval")
         throw std::runtime_error(
             "unsupported or malformed modulation metadata");
@@ -312,6 +331,40 @@ ModulationConfiguration load_modulation(const std::filesystem::path &path) {
               source.follower_threshold))
             throw std::runtime_error("malformed modulation follower source");
     }
+    if (version >= 4) {
+        if (!(input >> label >> result.modulator_count) ||
+            label != "modulators" ||
+            result.modulator_count > result.modulators.size())
+            throw std::runtime_error("malformed modulator instance count");
+        for (std::size_t i = 0; i < result.modulator_count; ++i) {
+            auto &instance = result.modulators[i];
+            auto &source = instance.settings;
+            unsigned type{}, owner{}, waveform{};
+            std::string name;
+            if (!(input >> label >> instance.id >> type >> owner >>
+                  instance.owner_id >> instance.enabled >> std::quoted(name) >>
+                  waveform >> source.rate_hz >> source.tempo_sync >>
+                  source.beats_per_cycle >> source.retrigger >>
+                  source.attack_seconds >> source.decay_seconds >>
+                  source.sustain >> source.release_seconds >> source.seed >>
+                  source.follower_attack_seconds >>
+                  source.follower_release_seconds >> source.follower_gain >>
+                  source.follower_threshold) ||
+                label != "modulator" ||
+                type < static_cast<unsigned>(ModulatorType::lfo) ||
+                type > static_cast<unsigned>(ModulatorType::midi_cc) ||
+                owner < static_cast<unsigned>(ModulatorOwnerKind::track) ||
+                owner >
+                    static_cast<unsigned>(ModulatorOwnerKind::voice_definition) ||
+                waveform > static_cast<unsigned>(LfoWaveform::random) ||
+                name.size() >= instance.display_name.size())
+                throw std::runtime_error("malformed modulator instance");
+            instance.type = static_cast<ModulatorType>(type);
+            instance.owner_kind = static_cast<ModulatorOwnerKind>(owner);
+            source.waveform = static_cast<LfoWaveform>(waveform);
+            std::copy(name.begin(), name.end(), instance.display_name.begin());
+        }
+    }
     if (!(input >> label >> result.route_count) || label != "routes" ||
         result.route_count > result.routes.size())
         throw std::runtime_error("malformed modulation route count");
@@ -332,10 +385,62 @@ ModulationConfiguration load_modulation(const std::filesystem::path &path) {
         route.destination.target = static_cast<ParameterTarget>(target);
         route.polarity = static_cast<ModulationPolarity>(polarity);
         route.scope = static_cast<ModulationScope>(scope);
+        if (version >= 4 &&
+            !(input >> route.source_instance >> route.source_output))
+            throw std::runtime_error("malformed modulator route source");
         if (version == 1 &&
             route.destination.target == ParameterTarget::subtractive_synth &&
             route.scope != ModulationScope::global)
             route.destination.instance = default_synth_instance_id;
+    }
+    if (version < 4) {
+        for (std::size_t i = 0; i < result.route_count; ++i) {
+            auto &route = result.routes[i];
+            if (route.source == ModulationSourceId::velocity)
+                continue; // voice velocity remains on the compatibility path.
+            if (result.modulator_count == result.modulators.size())
+                throw std::runtime_error(
+                    "legacy modulation exceeds instance capacity");
+            auto &instance = result.modulators[result.modulator_count++];
+            instance.id = static_cast<ModulatorInstanceId>(i + 1);
+            instance.settings =
+                result.sources[static_cast<std::size_t>(route.source)];
+            instance.owner_kind = route.scope == ModulationScope::track
+                                      ? ModulatorOwnerKind::track
+                                  : route.scope == ModulationScope::voice
+                                      ? ModulatorOwnerKind::voice_definition
+                                      : ModulatorOwnerKind::master;
+            instance.owner_id = route.scope == ModulationScope::global
+                                    ? 0
+                                    : route.track_id;
+            switch (route.source) {
+            case ModulationSourceId::lfo_1:
+            case ModulationSourceId::lfo_2:
+            case ModulationSourceId::lfo_3:
+            case ModulationSourceId::lfo_4:
+                instance.type = ModulatorType::lfo;
+                break;
+            case ModulationSourceId::envelope:
+                instance.type = ModulatorType::adsr;
+                break;
+            case ModulationSourceId::sample_hold:
+                instance.type = ModulatorType::sample_hold;
+                break;
+            case ModulationSourceId::smooth_random:
+                instance.type = ModulatorType::smooth_random;
+                break;
+            case ModulationSourceId::envelope_follower:
+                instance.type = ModulatorType::envelope_follower;
+                break;
+            case ModulationSourceId::midi_cc:
+                instance.type = ModulatorType::midi_cc;
+                break;
+            default:
+                instance.type = ModulatorType::xy_manual;
+                break;
+            }
+            route.source_instance = instance.id;
+        }
     }
     ModulationEngine validation;
     if (!validation.configure(result))

@@ -1,5 +1,10 @@
 # Implementation status
 
+Task 039 adds a discoverable native modulator registry and stable dynamic
+instances owned by tracks, aux buses or master. Instances have independent
+phase/envelope/random state, bounded 64-instance/128-route publication,
+semantic management actions, version-4 persistence and legacy migration.
+
 Task 038 adds bounded serial native FX chains for tracks, two aux buses and
 master. Gain, stereo delay, low-pass filter and saturation instances have stable
 IDs, typed descriptors, semantic actions, modulation/automation destinations and

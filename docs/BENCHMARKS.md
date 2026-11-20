@@ -1,5 +1,15 @@
 # Performance monitoring and benchmarks
 
+Task 039 adds bounded 8-, 32- and 64-instance scenarios; the last uses 128
+dense routes. They measure callback work after control-side preparation and do
+not constitute Raspberry Pi 5 measurements.
+
+On the 2026-11-20 x86-64 Debug host (Ryzen 7 7800X3D, GCC 15.3, 48 kHz,
+256 frames, 200 iterations), 8/16, 32/64 and 64/128 instance/route cases
+averaged 19.1, 35.4 and 68.7 microseconds per buffer respectively. Resident
+process memory was 76.4 MB. These short offline regression measurements are not
+physical Raspberry Pi 5 or Intel N150 results.
+
 Native-chain scenarios cover four tracks with two processors each, and sixteen
 tracks with one processor each plus both aux chains and master. Results remain
 offline measurements rather than Raspberry Pi 5 hardware claims.

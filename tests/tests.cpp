@@ -364,6 +364,62 @@ void test_modulation_engine() {
     check(follower_attack > follower_release && follower_release > -1.0F,
           "envelope follower attack and release smoothing");
 
+    check(modulator_type_registry().size() == 7 &&
+              find_modulator_type(ModulatorType::lfo)->parameters.size() >= 2,
+          "modulator type discovery metadata");
+    ModulationConfiguration dynamic;
+    dynamic.update_interval = 1;
+    dynamic.modulator_count = 3;
+    dynamic.modulators[0].id = 41;
+    dynamic.modulators[0].type = ModulatorType::lfo;
+    dynamic.modulators[0].owner_kind = ModulatorOwnerKind::track;
+    dynamic.modulators[0].owner_id = 10;
+    dynamic.modulators[0].settings.rate_hz = 3;
+    dynamic.modulators[1] = dynamic.modulators[0];
+    dynamic.modulators[1].id = 99;
+    dynamic.modulators[1].settings.rate_hz = 7;
+    dynamic.modulators[2].id = 7;
+    dynamic.modulators[2].type = ModulatorType::lfo;
+    dynamic.modulators[2].owner_kind = ModulatorOwnerKind::master;
+    dynamic.modulators[2].settings.rate_hz = 2;
+    dynamic.route_count = 3;
+    for (std::size_t i = 0; i < dynamic.route_count; ++i) {
+        dynamic.routes[i] = {
+            static_cast<ModulationRouteId>(i + 1), ModulationSourceId::lfo_1,
+            {ParameterTarget::mixer_track,
+             static_cast<std::uint32_t>(MixerTrackModulationParameter::pan),
+             static_cast<std::uint32_t>(i + 1)},
+            -1, 1, 0, 0.5F, true, ModulationPolarity::bipolar,
+            i < 2 ? ModulationScope::track : ModulationScope::global,
+            i < 2 ? 10U : 0U};
+        dynamic.routes[i].source_instance =
+            dynamic.modulators[i].id;
+    }
+    check(engine.configure(dynamic), "dynamic modulator instance configuration");
+    process(17);
+    const auto dynamic_snapshot = engine.snapshot();
+    check(dynamic_snapshot.modulator_count == 3 &&
+              dynamic_snapshot.modulator_values[0] !=
+                  dynamic_snapshot.modulator_values[1],
+          "independent same-track LFO phase");
+    auto invalid_owner = dynamic;
+    invalid_owner.modulators[0].owner_id = 0;
+    check(!engine.configure(invalid_owner), "invalid modulator owner rejected");
+    auto duplicate_id = dynamic;
+    duplicate_id.modulators[1].id = duplicate_id.modulators[0].id;
+    check(!engine.configure(duplicate_id), "duplicate stable instance ID rejected");
+    ModulationEngine partition_a(1000), partition_b(1000);
+    check(partition_a.configure(dynamic) && partition_b.configure(dynamic),
+          "partition test configuration");
+    for (int frame = 0; frame < 100; ++frame)
+        partition_a.process_frame([](auto, auto) {});
+    for (int block : {13, 21, 7, 59})
+        for (int frame = 0; frame < block; ++frame)
+            partition_b.process_frame([](auto, auto) {});
+    near(partition_a.snapshot().modulator_values[0],
+         partition_b.snapshot().modulator_values[0],
+         "dynamic modulator callback partition independence");
+
     Mixer numeric_mixer(1000);
     MixerConfiguration numeric_config;
     numeric_config.revision = 1;
@@ -562,6 +618,32 @@ void test_modulation_engine() {
     });
     SampleManager samples(audio);
     ApplicationService application(audio, timeline, samples);
+    check(application
+                  .execute({"modulator.create.v1",
+                            {{"type", std::int64_t{static_cast<std::int64_t>(
+                                          ModulatorType::lfo)}},
+                             {"owner", std::int64_t{static_cast<std::int64_t>(
+                                           ModulatorOwnerKind::master)}},
+                             {"owner_id", std::int64_t{0}},
+                             {"name", std::string("Motion")}}})
+                  .accepted &&
+              application.snapshot().modulation.modulator_count == 1,
+          "semantic modulator creation");
+    check(application
+              .execute({"modulator.route-create.v1",
+                        {{"source_id", std::int64_t{1}},
+                         {"destination", std::string("effect.delay.mix")},
+                         {"depth", 0.2}}})
+              .accepted &&
+              application.snapshot().modulation.routes[0].source_instance == 1,
+          "semantic instance route creation");
+    check(application
+              .execute({"modulator.duplicate.v1", {{"id", std::int64_t{1}}}})
+              .accepted &&
+              application.snapshot().modulation.modulator_count == 2,
+          "semantic modulator duplication with stable identity");
+    std::array<float, 64> left{}, right{};
+    audio.process(left, right); // acknowledge bounded configuration publications
     auto created = application.execute(
         {"modulation.route-create.v1",
          {{"source",
@@ -571,7 +653,7 @@ void test_modulation_engine() {
           {"scope",
            std::int64_t{static_cast<std::int64_t>(ModulationScope::global)}}}});
     check(created.accepted &&
-              application.snapshot().modulation.route_count == 1 &&
+              application.snapshot().modulation.route_count == 2 &&
               application.snapshot().project_dirty,
           "semantic modulation route creation");
     check(application
@@ -586,9 +668,8 @@ void test_modulation_engine() {
                   {"modulation.xy.v1", {{"position", NormalizedXY{1.0, 0.5}}}})
               .accepted,
           "XY modulation action");
-    std::array<float, 64> left{}, right{};
     audio.process(left, right);
-    check(audio.modulation_snapshot().effective_values[0] > 8000,
+    check(audio.modulation_snapshot().effective_values[1] > 8000,
           "application modulation reached audio engine");
     check(application
               .execute({"modulation.route-create.v1",
@@ -2548,6 +2629,14 @@ void test_unified_project_persistence() {
         20000,
         4321,
         -0.25F};
+    project.modulation.modulator_count = 1;
+    project.modulation.modulators[0].id = 9001;
+    project.modulation.modulators[0].type = ModulatorType::lfo;
+    project.modulation.modulators[0].owner_kind = ModulatorOwnerKind::master;
+    project.modulation.modulators[0].settings = project.modulation.sources[0];
+    std::copy_n("Project LFO", 11,
+                project.modulation.modulators[0].display_name.begin());
+    project.modulation.routes[0].source_instance = 9001;
     project.midi.clock_source = MidiClockSource::external;
     project.midi.forward_external_clock = true;
     project.midi.route_count = 1;
@@ -2584,6 +2673,11 @@ void test_unified_project_persistence() {
               loaded.modulation.route_count == 1 &&
               loaded.modulation.routes[0].id == 81 &&
               loaded.modulation.routes[0].destination.instance == 2 &&
+              loaded.modulation.routes[0].source_instance == 9001 &&
+              loaded.modulation.modulator_count == 1 &&
+              loaded.modulation.modulators[0].id == 9001 &&
+              std::string(loaded.modulation.modulators[0].display_name.data()) ==
+                  "Project LFO" &&
               loaded.modulation.sources[0].tempo_sync &&
               loaded.midi.clock_source == MidiClockSource::external &&
               loaded.midi.forward_external_clock &&

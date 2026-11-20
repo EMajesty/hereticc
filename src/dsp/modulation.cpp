@@ -11,7 +11,78 @@ constexpr auto envelope_source =
 constexpr float clamp_source(float value) noexcept {
     return std::clamp(value, -1.0F, 1.0F);
 }
+constexpr std::uint32_t owner_bit(ModulatorOwnerKind owner) noexcept {
+    return 1U << static_cast<unsigned>(owner);
+}
+constexpr std::array common_parameters{
+    ModulatorParameterDescriptor{"rate", "Rate", "Hz", 0, 100, 1},
+    ModulatorParameterDescriptor{"beats", "Beats/cycle", "beats", 0.03125F,
+                                 64, 1},
+    ModulatorParameterDescriptor{"seed", "Seed", "", 1, 4294967295.0F, 1,
+                                 true}};
+constexpr std::array envelope_parameters{
+    ModulatorParameterDescriptor{"attack", "Attack", "s", 0, 60, 0.01F},
+    ModulatorParameterDescriptor{"decay", "Decay", "s", 0, 60, 0.1F},
+    ModulatorParameterDescriptor{"sustain", "Sustain", "", 0, 1, 1},
+    ModulatorParameterDescriptor{"release", "Release", "s", 0, 60, 0.2F}};
+constexpr std::array follower_parameters{
+    ModulatorParameterDescriptor{"attack", "Attack", "s", 0, 10, 0.01F},
+    ModulatorParameterDescriptor{"release", "Release", "s", 0, 10, 0.1F},
+    ModulatorParameterDescriptor{"gain", "Sensitivity", "x", 0, 100, 1},
+    ModulatorParameterDescriptor{"threshold", "Threshold", "", 0, 1, 0}};
+constexpr std::array<ModulatorParameterDescriptor, 0> no_parameters{};
+constexpr std::array<ModulatorPortDescriptor, 0> no_inputs{};
+constexpr std::array output_bipolar{
+    ModulatorPortDescriptor{1, "value", "Value", ModulationPolarity::bipolar}};
+constexpr std::array output_unipolar{
+    ModulatorPortDescriptor{1, "value", "Value", ModulationPolarity::unipolar}};
+constexpr auto all_owners = owner_bit(ModulatorOwnerKind::track) |
+                            owner_bit(ModulatorOwnerKind::auxiliary) |
+                            owner_bit(ModulatorOwnerKind::master) |
+                            owner_bit(ModulatorOwnerKind::group);
+const std::array registry{
+    ModulatorTypeDescriptor{"native.lfo.v1", "LFO", "Oscillators",
+                            ModulatorType::lfo, common_parameters, no_inputs,
+                            output_bipolar, all_owners, true, true,
+                            ModulatorUpdateRate::control, 32},
+    ModulatorTypeDescriptor{"native.adsr.v1", "ADSR", "Envelopes",
+                            ModulatorType::adsr, envelope_parameters, no_inputs,
+                            output_bipolar,
+                            all_owners | owner_bit(ModulatorOwnerKind::voice_definition),
+                            true, true, ModulatorUpdateRate::control, 32},
+    ModulatorTypeDescriptor{"native.sample-hold.v1", "Sample and hold", "Random",
+                            ModulatorType::sample_hold, common_parameters,
+                            no_inputs, output_bipolar, all_owners, false, false,
+                            ModulatorUpdateRate::control, 32},
+    ModulatorTypeDescriptor{"native.smooth-random.v1", "Smooth random", "Random",
+                            ModulatorType::smooth_random, common_parameters,
+                            no_inputs, output_bipolar, all_owners, false, false,
+                            ModulatorUpdateRate::control, 32},
+    ModulatorTypeDescriptor{"native.envelope-follower.v1", "Envelope follower",
+                            "Audio", ModulatorType::envelope_follower,
+                            follower_parameters, no_inputs, output_unipolar,
+                            all_owners, false, false, ModulatorUpdateRate::control,
+                            32},
+    ModulatorTypeDescriptor{"native.xy-manual.v1", "XY/manual", "Control",
+                            ModulatorType::xy_manual, no_parameters, no_inputs,
+                            output_bipolar, all_owners, false, false,
+                            ModulatorUpdateRate::control, 16},
+    ModulatorTypeDescriptor{"native.midi-cc.v1", "MIDI CC", "Control",
+                            ModulatorType::midi_cc, no_parameters, no_inputs,
+                            output_bipolar, all_owners, false, false,
+                            ModulatorUpdateRate::control, 16}};
 } // namespace
+
+std::span<const ModulatorTypeDescriptor> modulator_type_registry() noexcept {
+    return registry;
+}
+const ModulatorTypeDescriptor *find_modulator_type(ModulatorType type) noexcept {
+    const auto found = std::find_if(registry.begin(), registry.end(),
+                                    [&](const auto &entry) {
+                                        return entry.type == type;
+                                    });
+    return found == registry.end() ? nullptr : &*found;
+}
 
 ModulationEngine::ModulationEngine(std::uint32_t sample_rate) noexcept
     : sample_rate_(std::max(1U, sample_rate)) {
@@ -20,31 +91,56 @@ ModulationEngine::ModulationEngine(std::uint32_t sample_rate) noexcept
 
 bool ModulationEngine::configure(
     const ModulationConfiguration &configuration) noexcept {
-    if (configuration.route_count > configuration.routes.size() ||
+    if (configuration.modulator_count > configuration.modulators.size() ||
+        configuration.route_count > configuration.routes.size() ||
         configuration.update_interval < 1 ||
         configuration.update_interval > 1024)
         return false;
+    const auto valid_settings = [](const ModulationSourceSettings &source) {
+        return std::isfinite(source.rate_hz) && source.rate_hz >= 0 &&
+               source.rate_hz <= 100 &&
+               std::isfinite(source.beats_per_cycle) &&
+               source.beats_per_cycle > 0 && source.beats_per_cycle <= 64 &&
+               std::isfinite(source.attack_seconds) &&
+               source.attack_seconds >= 0 && source.attack_seconds <= 60 &&
+               std::isfinite(source.decay_seconds) &&
+               source.decay_seconds >= 0 && source.decay_seconds <= 60 &&
+               std::isfinite(source.sustain) && source.sustain >= 0 &&
+               source.sustain <= 1 && std::isfinite(source.release_seconds) &&
+               source.release_seconds >= 0 && source.release_seconds <= 60 &&
+               std::isfinite(source.follower_attack_seconds) &&
+               source.follower_attack_seconds >= 0 &&
+               source.follower_attack_seconds <= 10 &&
+               std::isfinite(source.follower_release_seconds) &&
+               source.follower_release_seconds >= 0 &&
+               source.follower_release_seconds <= 10 &&
+               std::isfinite(source.follower_gain) &&
+               source.follower_gain >= 0 && source.follower_gain <= 100 &&
+               std::isfinite(source.follower_threshold) &&
+               source.follower_threshold >= 0 &&
+               source.follower_threshold <= 1;
+    };
+    for (std::size_t i = 0; i < configuration.modulator_count; ++i) {
+        const auto &instance = configuration.modulators[i];
+        const auto *type = find_modulator_type(instance.type);
+        if (!instance.id || !type ||
+            !(type->owner_mask & owner_bit(instance.owner_kind)) ||
+            ((instance.owner_kind == ModulatorOwnerKind::track ||
+              instance.owner_kind == ModulatorOwnerKind::group ||
+              instance.owner_kind == ModulatorOwnerKind::voice_definition) &&
+             instance.owner_id == 0) ||
+            (instance.owner_kind == ModulatorOwnerKind::auxiliary &&
+             instance.owner_id >= 2) ||
+            (instance.owner_kind == ModulatorOwnerKind::master &&
+             instance.owner_id != 0) ||
+            !valid_settings(instance.settings))
+            return false;
+        for (std::size_t other = 0; other < i; ++other)
+            if (configuration.modulators[other].id == instance.id)
+                return false;
+    }
     for (const auto &source : configuration.sources)
-        if (!std::isfinite(source.rate_hz) || source.rate_hz < 0 ||
-            source.rate_hz > 100 || !std::isfinite(source.beats_per_cycle) ||
-            source.beats_per_cycle <= 0 || source.beats_per_cycle > 64 ||
-            !std::isfinite(source.attack_seconds) ||
-            source.attack_seconds < 0 || source.attack_seconds > 60 ||
-            !std::isfinite(source.decay_seconds) || source.decay_seconds < 0 ||
-            source.decay_seconds > 60 || !std::isfinite(source.sustain) ||
-            source.sustain < 0 || source.sustain > 1 ||
-            !std::isfinite(source.release_seconds) ||
-            source.release_seconds < 0 || source.release_seconds > 60 ||
-            !std::isfinite(source.follower_attack_seconds) ||
-            source.follower_attack_seconds < 0 ||
-            source.follower_attack_seconds > 10 ||
-            !std::isfinite(source.follower_release_seconds) ||
-            source.follower_release_seconds < 0 ||
-            source.follower_release_seconds > 10 ||
-            !std::isfinite(source.follower_gain) || source.follower_gain < 0 ||
-            source.follower_gain > 100 ||
-            !std::isfinite(source.follower_threshold) ||
-            source.follower_threshold < 0 || source.follower_threshold > 1)
+        if (!valid_settings(source))
             return false;
     for (std::size_t source = 0; source < configuration.sources.size();
          ++source)
@@ -61,9 +157,35 @@ bool ModulationEngine::configure(
             !std::isfinite(route.depth) || route.depth < -1.0F ||
             route.depth > 1.0F || !std::isfinite(route.minimum) ||
             !std::isfinite(route.maximum) || route.minimum >= route.maximum ||
-            configuration.sources[static_cast<std::size_t>(route.source)]
-                    .scope != route.scope)
+            (!route.source_instance &&
+             configuration.sources[static_cast<std::size_t>(route.source)]
+                     .scope != route.scope))
             return false;
+        if (route.source_instance) {
+            const auto source = std::find_if(
+                configuration.modulators.begin(),
+                configuration.modulators.begin() + configuration.modulator_count,
+                [&](const auto &instance) {
+                    return instance.id == route.source_instance;
+                });
+            if (source == configuration.modulators.begin() +
+                              configuration.modulator_count ||
+                route.source_output != 1)
+                return false;
+            const auto expected_scope =
+                source->owner_kind == ModulatorOwnerKind::track
+                    ? ModulationScope::track
+                : source->owner_kind == ModulatorOwnerKind::voice_definition
+                    ? ModulationScope::voice
+                    : ModulationScope::global;
+            if (route.scope != expected_scope ||
+                (source->owner_kind == ModulatorOwnerKind::track &&
+                 route.track_id != source->owner_id) ||
+                (source->owner_kind == ModulatorOwnerKind::auxiliary &&
+                 (route.destination.target != ParameterTarget::mixer_aux ||
+                  route.destination.instance != source->owner_id + 1)))
+                return false;
+        }
         const auto target = route.destination.target;
         const auto instance = route.destination.instance;
         const auto parameter = route.destination.parameter;
@@ -100,8 +222,10 @@ bool ModulationEngine::configure(
         for (std::size_t other = 0; other < i; ++other)
             if (configuration.routes[other].id == route.id)
                 return false;
-        if (configuration.sources[static_cast<std::size_t>(route.source)]
-                .scope == ModulationScope::track) {
+        if ((!route.source_instance &&
+             configuration.sources[static_cast<std::size_t>(route.source)]
+                     .scope == ModulationScope::track) ||
+            (route.source_instance && route.scope == ModulationScope::track)) {
             if (route.track_id == 0)
                 return false;
             bool found{};
@@ -127,6 +251,13 @@ bool ModulationEngine::configure(
             seed ^= static_cast<std::uint32_t>(track_ids_[track] >> 32U);
             source_states_[track][source].random = seed ? seed : 1;
         }
+    for (std::size_t instance = 0; instance < configuration_.modulator_count;
+         ++instance) {
+        modulator_states_[instance] = {};
+        auto seed = configuration_.modulators[instance].settings.seed ^
+                    configuration_.modulators[instance].id;
+        modulator_states_[instance].random = seed ? seed : 1;
+    }
     effective_.fill(0);
     for (auto &value : published_effective_)
         value.store(0, std::memory_order_relaxed);
@@ -159,6 +290,23 @@ void ModulationEngine::set_input(ModulationSourceId id, float value) noexcept {
         source_states_[0][source].target = std::clamp(value, 0.0F, 1.0F);
     else
         source_states_[0][source].value = clamp_source(value);
+    const auto dynamic_type =
+        id == ModulationSourceId::envelope_follower
+            ? ModulatorType::envelope_follower
+        : id == ModulationSourceId::midi_cc ? ModulatorType::midi_cc
+        : (id == ModulationSourceId::xy_x || id == ModulationSourceId::xy_y)
+            ? ModulatorType::xy_manual
+            : ModulatorType::lfo;
+    for (std::size_t instance = 0; instance < configuration_.modulator_count;
+         ++instance)
+        if (configuration_.modulators[instance].enabled &&
+            configuration_.modulators[instance].type == dynamic_type) {
+            if (dynamic_type == ModulatorType::envelope_follower)
+                modulator_states_[instance].target =
+                    std::clamp(value, 0.0F, 1.0F);
+            else
+                modulator_states_[instance].value = clamp_source(value);
+        }
 }
 void ModulationEngine::note_on(std::uint64_t track_id,
                                float velocity) noexcept {
@@ -189,6 +337,26 @@ void ModulationEngine::note_on(std::uint64_t track_id,
         if (slot < track_count_ && configuration_.sources[source].retrigger)
             source_states_[slot][source].phase = 0;
     }
+    for (std::size_t instance = 0; instance < configuration_.modulator_count;
+         ++instance) {
+        const auto &definition = configuration_.modulators[instance];
+        const auto owned = definition.owner_kind == ModulatorOwnerKind::master ||
+                           (definition.owner_kind == ModulatorOwnerKind::track &&
+                            definition.owner_id == track_id) ||
+                           (definition.owner_kind ==
+                                ModulatorOwnerKind::voice_definition &&
+                            definition.owner_id == track_id);
+        if (!definition.enabled || !owned)
+            continue;
+        if (definition.type == ModulatorType::adsr) {
+            modulator_states_[instance].gate = true;
+            modulator_states_[instance].envelope_stage =
+                SourceState::EnvelopeStage::attack;
+        }
+        if (definition.type == ModulatorType::lfo &&
+            definition.settings.retrigger)
+            modulator_states_[instance].phase = 0;
+    }
 }
 void ModulationEngine::note_off(std::uint64_t track_id) noexcept {
     const auto slot =
@@ -200,6 +368,19 @@ void ModulationEngine::note_off(std::uint64_t track_id) noexcept {
     envelope_gates_[slot] = false;
     source_states_[slot][envelope_source].envelope_stage =
         SourceState::EnvelopeStage::release;
+    for (std::size_t instance = 0; instance < configuration_.modulator_count;
+         ++instance) {
+        const auto &definition = configuration_.modulators[instance];
+        if (definition.type == ModulatorType::adsr &&
+            (definition.owner_kind == ModulatorOwnerKind::master ||
+             ((definition.owner_kind == ModulatorOwnerKind::track ||
+               definition.owner_kind == ModulatorOwnerKind::voice_definition) &&
+              definition.owner_id == track_id))) {
+            modulator_states_[instance].gate = false;
+            modulator_states_[instance].envelope_stage =
+                SourceState::EnvelopeStage::release;
+        }
+    }
 }
 void ModulationEngine::restart() noexcept {
     for (std::size_t track = 0; track < track_count_; ++track)
@@ -210,6 +391,13 @@ void ModulationEngine::restart() noexcept {
                 source_states_[track][source].value = 0;
         }
     clear_automation();
+    for (std::size_t instance = 0; instance < configuration_.modulator_count;
+         ++instance) {
+        modulator_states_[instance].phase = 0;
+        modulator_states_[instance].gate = false;
+        if (configuration_.modulators[instance].settings.retrigger)
+            modulator_states_[instance].value = 0;
+    }
 }
 void ModulationEngine::clear_automation() noexcept {
     for (auto &value : automation_)
@@ -233,6 +421,16 @@ void ModulationEngine::set_automation(ParameterDestination destination,
 
 float ModulationEngine::random(std::size_t track, std::size_t source) noexcept {
     auto &state = source_states_[track][source].random;
+    state ^= state << 13U;
+    state ^= state >> 17U;
+    state ^= state << 5U;
+    return static_cast<float>(state) /
+               static_cast<float>(std::numeric_limits<std::uint32_t>::max()) *
+               2.0F -
+           1.0F;
+}
+float ModulationEngine::instance_random(std::size_t instance) noexcept {
+    auto &state = modulator_states_[instance].random;
     state ^= state << 13U;
     state ^= state >> 17U;
     state ^= state << 5U;
@@ -376,6 +574,121 @@ void ModulationEngine::update_sources(std::uint32_t elapsed) noexcept {
     }
 }
 
+void ModulationEngine::update_modulators(std::uint32_t elapsed) noexcept {
+    const auto seconds = static_cast<double>(elapsed) / sample_rate_;
+    for (std::size_t index = 0; index < configuration_.modulator_count;
+         ++index) {
+        const auto &instance = configuration_.modulators[index];
+        auto &state = modulator_states_[index];
+        if (!instance.enabled) {
+            state.value = 0;
+            continue;
+        }
+        const auto &settings = instance.settings;
+        const auto rate =
+            settings.tempo_sync
+                ? tempo_bpm_ /
+                      (60.0F * std::max(0.03125F, settings.beats_per_cycle))
+                : std::max(0.0F, settings.rate_hz);
+        if (instance.type == ModulatorType::lfo) {
+            const auto previous = state.phase;
+            state.phase = std::fmod(state.phase + seconds * rate, 1.0);
+            const auto wrapped = state.phase < previous;
+            switch (settings.waveform) {
+            case LfoWaveform::sine:
+                state.value = static_cast<float>(std::sin(
+                    state.phase * 2.0 * std::numbers::pi_v<double>));
+                break;
+            case LfoWaveform::triangle:
+                state.value = static_cast<float>(
+                    1.0 - 4.0 * std::abs(state.phase - 0.5));
+                break;
+            case LfoWaveform::saw:
+                state.value = static_cast<float>(state.phase * 2.0 - 1.0);
+                break;
+            case LfoWaveform::square:
+                state.value = state.phase < 0.5 ? 1.0F : -1.0F;
+                break;
+            case LfoWaveform::random:
+                if (wrapped)
+                    state.held = instance_random(index);
+                state.value = state.held;
+                break;
+            }
+        } else if (instance.type == ModulatorType::sample_hold ||
+                   instance.type == ModulatorType::smooth_random) {
+            const auto previous = state.phase;
+            state.phase = std::fmod(state.phase + seconds *
+                                                      std::max(0.01F, rate),
+                                    1.0);
+            if (state.phase < previous) {
+                state.held = state.target;
+                state.target = instance_random(index);
+            }
+            state.value = instance.type == ModulatorType::sample_hold
+                              ? state.target
+                              : state.held + (state.target - state.held) *
+                                                 static_cast<float>(state.phase);
+        } else if (instance.type == ModulatorType::envelope_follower) {
+            const auto target = std::clamp(
+                (state.target - settings.follower_threshold) *
+                    settings.follower_gain,
+                0.0F, 1.0F);
+            const auto current = (state.value + 1.0F) * 0.5F;
+            const auto duration = target > current
+                                      ? settings.follower_attack_seconds
+                                      : settings.follower_release_seconds;
+            const auto coefficient =
+                duration <= 0
+                    ? 1.0F
+                    : 1.0F - std::exp(-static_cast<float>(seconds) / duration);
+            state.value =
+                (current + (target - current) * coefficient) * 2.0F - 1.0F;
+        } else if (instance.type == ModulatorType::adsr) {
+            const auto frames = static_cast<float>(elapsed);
+            switch (state.envelope_stage) {
+            case SourceState::EnvelopeStage::idle:
+                state.value = -1.0F;
+                break;
+            case SourceState::EnvelopeStage::attack:
+                state.value += 2.0F * frames /
+                               std::max(1.0F, settings.attack_seconds *
+                                                   sample_rate_);
+                if (state.value >= 1.0F) {
+                    state.value = 1.0F;
+                    state.envelope_stage = SourceState::EnvelopeStage::decay;
+                }
+                break;
+            case SourceState::EnvelopeStage::decay: {
+                const auto sustain = settings.sustain * 2.0F - 1.0F;
+                state.value -= 2.0F * frames /
+                               std::max(1.0F, settings.decay_seconds *
+                                                   sample_rate_);
+                if (state.value <= sustain) {
+                    state.value = sustain;
+                    state.envelope_stage = SourceState::EnvelopeStage::sustain;
+                }
+                break;
+            }
+            case SourceState::EnvelopeStage::sustain:
+                state.value = settings.sustain * 2.0F - 1.0F;
+                if (!state.gate)
+                    state.envelope_stage = SourceState::EnvelopeStage::release;
+                break;
+            case SourceState::EnvelopeStage::release:
+                state.value -= 2.0F * frames /
+                               std::max(1.0F, settings.release_seconds *
+                                                   sample_rate_);
+                if (state.value <= -1.0F) {
+                    state.value = -1.0F;
+                    state.envelope_stage = SourceState::EnvelopeStage::idle;
+                }
+                break;
+            }
+        }
+    }
+}
+
 ModulationSnapshot ModulationEngine::snapshot() const noexcept {
     ModulationSnapshot result;
     for (std::size_t source = 0; source < configuration_.source_count; ++source)
@@ -387,6 +700,10 @@ ModulationSnapshot ModulationEngine::snapshot() const noexcept {
     for (std::size_t route = 0; route < configuration_.maximum_routes; ++route)
         result.route_source_values[route] =
             published_route_sources_[route].load(std::memory_order_relaxed);
+    result.modulator_count = configuration_.modulator_count;
+    for (std::size_t instance = 0; instance < result.modulator_count; ++instance)
+        result.modulator_values[instance] =
+            published_modulators_[instance].load(std::memory_order_relaxed);
     result.generation = published_generation_.load(std::memory_order_acquire);
     return result;
 }

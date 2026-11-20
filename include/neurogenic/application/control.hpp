@@ -257,6 +257,7 @@ class ApplicationService {
     MidiOutputScheduler midi_output_;
     MidiRouter midi_router_;
     ModulationRouteId next_modulation_route_id_{1};
+    ModulatorInstanceId next_modulator_instance_id_{1};
     std::map<InstrumentInstanceId, std::map<std::string, double>>
         synth_instance_parameters_;
     ActionRegistry actions_;

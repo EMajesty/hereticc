@@ -489,6 +489,36 @@ ActionRegistry::ActionRegistry() {
                 {"seed", ValueType::integer, false}}));
     add(action("modulation.source-reset.v1", "Reset modulation source",
                "Modulation", {{"source", ValueType::integer}}));
+    add(action("modulator.create.v1", "Create modulator", "Modulation",
+               {{"type", ValueType::integer},
+                {"owner", ValueType::integer},
+                {"owner_id", ValueType::integer},
+                {"name", ValueType::text, false}}));
+    add(action("modulator.delete.v1", "Delete modulator", "Modulation",
+               {{"id", ValueType::integer}}));
+    add(action("modulator.duplicate.v1", "Duplicate modulator", "Modulation",
+               {{"id", ValueType::integer}}));
+    add(action("modulator.enable.v1", "Enable modulator", "Modulation",
+               {{"id", ValueType::integer}, {"enabled", ValueType::boolean}}));
+    add(action("modulator.rename.v1", "Rename modulator", "Modulation",
+               {{"id", ValueType::integer}, {"name", ValueType::text}}));
+    add(action("modulator.parameter-set.v1", "Set modulator parameter",
+               "Modulation",
+               {{"id", ValueType::integer},
+                {"parameter", ValueType::text},
+                {"value", ValueType::real}}));
+    add(action("modulator.query-types.v1", "Query modulator types",
+               "Modulation"));
+    add(action("modulator.query-instances.v1", "Query modulators",
+               "Modulation"));
+    add(action("modulator.query-capacity.v1", "Query modulation capacity",
+               "Modulation"));
+    add(action("modulator.route-create.v1", "Create instance route",
+               "Modulation",
+               {{"source_id", ValueType::integer},
+                {"destination", ValueType::text},
+                {"depth", ValueType::real},
+                {"destination_instance", ValueType::integer, false}}));
     add(action(
         "parameter.set-normalized.v1", "Set parameter", "Parameters",
         {{"parameter_id", ValueType::text}, {"value", ValueType::real}}));
@@ -2184,11 +2214,18 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 modulation_configuration_ = loaded.modulation;
                 synth_instance_parameters_.clear();
                 next_modulation_route_id_ = 1;
+                next_modulator_instance_id_ = 1;
                 for (std::size_t route = 0;
                      route < modulation_configuration_.route_count; ++route)
                     next_modulation_route_id_ = std::max(
                         next_modulation_route_id_,
                         modulation_configuration_.routes[route].id + 1);
+                for (std::size_t instance = 0;
+                     instance < modulation_configuration_.modulator_count;
+                     ++instance)
+                    next_modulator_instance_id_ = std::max(
+                        next_modulator_instance_id_,
+                        modulation_configuration_.modulators[instance].id + 1);
                 for (const auto &[id, value] : loaded.parameters) {
                     if (id.rfind("instance.", 0) == 0) {
                         const auto separator = id.find('.', 9);
@@ -2363,6 +2400,7 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 modulation_configuration_ = replacement.modulation;
                 synth_instance_parameters_.clear();
                 next_modulation_route_id_ = 1;
+                next_modulator_instance_id_ = 1;
                 for (const auto &slot : samples_.states())
                     if ((slot.has_sample ||
                          slot.state != SampleSlotLoadState::empty) &&
@@ -3801,6 +3839,177 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             if (const auto *latched = argument<bool>(command, "latched"))
                 state_.modifiers.select_latched = *latched;
             changed_locked();
+        } else if (command.action_id.rfind("modulator.", 0) == 0) {
+            if (command.action_id == "modulator.query-types.v1" ||
+                command.action_id == "modulator.query-instances.v1" ||
+                command.action_id == "modulator.query-capacity.v1")
+                return {true, sequence, snapshot().revision, {}};
+            auto next = modulation_configuration_;
+            const auto find_instance = [&](ModulatorInstanceId id) {
+                return std::find_if(
+                    next.modulators.begin(),
+                    next.modulators.begin() + next.modulator_count,
+                    [&](const auto &value) { return value.id == id; });
+            };
+            if (command.action_id == "modulator.create.v1") {
+                const auto type_value = *argument<std::int64_t>(command, "type");
+                const auto owner_value = *argument<std::int64_t>(command, "owner");
+                const auto owner_id = *argument<std::int64_t>(command, "owner_id");
+                if (type_value < static_cast<std::int64_t>(ModulatorType::lfo) ||
+                    type_value > static_cast<std::int64_t>(ModulatorType::midi_cc) ||
+                    owner_value < static_cast<std::int64_t>(ModulatorOwnerKind::track) ||
+                    owner_value > static_cast<std::int64_t>(ModulatorOwnerKind::group) ||
+                    owner_id < 0)
+                    error = "invalid modulator type or owner";
+                else if (next.modulator_count == next.modulators.size())
+                    error = "modulator capacity is exhausted (64 instances)";
+                else {
+                    const auto owner = static_cast<ModulatorOwnerKind>(owner_value);
+                    if (owner == ModulatorOwnerKind::track) {
+                        const auto timeline = timeline_.snapshot().timeline;
+                        if (std::none_of(timeline.tracks.begin(), timeline.tracks.end(),
+                                         [&](const auto &track) {
+                                             return track.id == static_cast<TrackId>(owner_id);
+                                         }))
+                            error = "modulator owner track does not exist";
+                    } else if (owner == ModulatorOwnerKind::auxiliary && owner_id >= 2)
+                        error = "modulator auxiliary owner does not exist";
+                    else if (owner == ModulatorOwnerKind::master && owner_id != 0)
+                        error = "master owner ID must be zero";
+                    else if (owner == ModulatorOwnerKind::group)
+                        error = "group owners are reserved but not available";
+                    if (error.empty()) {
+                        auto &instance = next.modulators[next.modulator_count++];
+                        instance.id = next_modulator_instance_id_++;
+                        instance.type = static_cast<ModulatorType>(type_value);
+                        instance.owner_kind = owner;
+                        instance.owner_id = static_cast<std::uint64_t>(owner_id);
+                        if (const auto *name = argument<std::string>(command, "name")) {
+                            if (name->size() >= instance.display_name.size())
+                                error = "modulator name is too long";
+                            else
+                                std::copy(name->begin(), name->end(),
+                                          instance.display_name.begin());
+                        }
+                    }
+                }
+            } else if (command.action_id == "modulator.route-create.v1") {
+                const auto source_id = static_cast<ModulatorInstanceId>(
+                    *argument<std::int64_t>(command, "source_id"));
+                const auto source = find_instance(source_id);
+                const auto destination_id =
+                    *argument<std::string>(command, "destination");
+                const auto destination = resolve_parameter_destination(destination_id);
+                const auto descriptor = parameters_.get(destination_id);
+                const auto depth = *argument<double>(command, "depth");
+                if (source == next.modulators.begin() + next.modulator_count)
+                    error = "modulator source instance does not exist";
+                else if (!destination || !descriptor || !descriptor->modulatable ||
+                         descriptor->type != ParameterType::real)
+                    error = "parameter is not a modulation destination";
+                else if (!std::isfinite(depth) || depth < -1 || depth > 1)
+                    error = "modulation depth must be -1..1";
+                else if (next.route_count == next.routes.size())
+                    error = "modulation route capacity is exhausted";
+                else {
+                    auto &route = next.routes[next.route_count++];
+                    route.id = next_modulation_route_id_++;
+                    route.source_instance = source_id;
+                    route.destination = *destination;
+                    route.minimum = static_cast<float>(number(descriptor->minimum));
+                    route.maximum = static_cast<float>(number(descriptor->maximum));
+                    route.base_value =
+                        static_cast<float>(number(descriptor->current_value));
+                    route.depth = static_cast<float>(depth);
+                    route.scope = source->owner_kind == ModulatorOwnerKind::track
+                                      ? ModulationScope::track
+                                      : ModulationScope::global;
+                    route.track_id = route.scope == ModulationScope::track
+                                         ? source->owner_id
+                                         : 0;
+                    if (route.scope == ModulationScope::track)
+                        route.destination.instance =
+                            static_cast<std::uint32_t>(source->owner_id);
+                    if (source->owner_kind == ModulatorOwnerKind::auxiliary)
+                        route.destination.instance =
+                            static_cast<std::uint32_t>(source->owner_id + 1);
+                    if (const auto *instance = argument<std::int64_t>(
+                            command, "destination_instance")) {
+                        if (*instance < 0 ||
+                            *instance > std::numeric_limits<std::uint32_t>::max())
+                            error = "destination instance is out of range";
+                        else
+                            route.destination.instance =
+                                static_cast<std::uint32_t>(*instance);
+                    }
+                }
+            } else {
+                const auto raw = *argument<std::int64_t>(command, "id");
+                const auto found = find_instance(static_cast<ModulatorInstanceId>(raw));
+                if (raw <= 0 || found == next.modulators.begin() + next.modulator_count)
+                    error = "modulator instance does not exist";
+                else if (command.action_id == "modulator.delete.v1") {
+                    const auto referenced = std::any_of(
+                        next.routes.begin(), next.routes.begin() + next.route_count,
+                        [&](const auto &route) { return route.source_instance == found->id; });
+                    if (referenced)
+                        error = "modulator is still referenced by a route";
+                    else {
+                        std::move(found + 1, next.modulators.begin() + next.modulator_count,
+                                  found);
+                        --next.modulator_count;
+                    }
+                } else if (command.action_id == "modulator.duplicate.v1") {
+                    if (next.modulator_count == next.modulators.size())
+                        error = "modulator capacity is exhausted (64 instances)";
+                    else {
+                        auto copy = *found;
+                        copy.id = next_modulator_instance_id_++;
+                        next.modulators[next.modulator_count++] = copy;
+                    }
+                } else if (command.action_id == "modulator.enable.v1")
+                    found->enabled = *argument<bool>(command, "enabled");
+                else if (command.action_id == "modulator.rename.v1") {
+                    const auto &name = *argument<std::string>(command, "name");
+                    if (name.size() >= found->display_name.size())
+                        error = "modulator name is too long";
+                    else {
+                        found->display_name.fill(0);
+                        std::copy(name.begin(), name.end(), found->display_name.begin());
+                    }
+                } else if (command.action_id == "modulator.parameter-set.v1") {
+                    const auto &name = *argument<std::string>(command, "parameter");
+                    const auto value = *argument<double>(command, "value");
+                    if (!std::isfinite(value))
+                        error = "modulator parameter must be finite";
+                    else if (name == "rate" && value >= 0 && value <= 100)
+                        found->settings.rate_hz = static_cast<float>(value);
+                    else if (name == "beats" && value >= 0.03125 && value <= 64)
+                        found->settings.beats_per_cycle = static_cast<float>(value);
+                    else if (name == "attack" && value >= 0 && value <= 60)
+                        found->settings.attack_seconds = static_cast<float>(value);
+                    else if (name == "decay" && value >= 0 && value <= 60)
+                        found->settings.decay_seconds = static_cast<float>(value);
+                    else if (name == "sustain" && value >= 0 && value <= 1)
+                        found->settings.sustain = static_cast<float>(value);
+                    else if (name == "release" && value >= 0 && value <= 60)
+                        found->settings.release_seconds = static_cast<float>(value);
+                    else
+                        error = "unknown modulator parameter or value out of range";
+                }
+            }
+            if (error.empty()) {
+                ModulationEngine validation;
+                if (!validation.configure(next))
+                    error = "invalid modulator ownership or route";
+            }
+            if (error.empty() && !engine_.publish_modulation(next))
+                error = "modulation publication queue is full";
+            if (error.empty()) {
+                modulation_configuration_ = next;
+                project_.modulation = next;
+                changed_locked();
+            }
         } else if (command.action_id == "modulation.route-create.v1") {
             const auto source_value =
                 *argument<std::int64_t>(command, "source");
@@ -4121,6 +4330,7 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             id.rfind("transport.tempo", 0) == 0 ||
             id.rfind("modulation.route", 0) == 0 ||
             id.rfind("modulation.source", 0) == 0 ||
+            id.rfind("modulator.", 0) == 0 ||
             id.rfind("instrument.instance-parameter", 0) == 0 ||
             id.rfind("timeline.", 0) == 0 || id.rfind("edit.undo", 0) == 0 ||
             id.rfind("edit.redo", 0) == 0 ||

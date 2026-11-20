@@ -1,5 +1,9 @@
 # Project persistence
 
+Modulation metadata version 4 persists stable instances and owners. Older
+fixed-bank files migrate during load; transient phase, envelope and voice state
+are never project data. See [modulator instances](MODULATOR_INSTANCES.md).
+
 Mixer metadata version 3 persists native FX instances and serial track, aux and
 master chains. Older versions load empty chains. Unsupported types are reported,
 not substituted.
