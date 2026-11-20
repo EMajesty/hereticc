@@ -62,6 +62,9 @@ Timeline load_timeline(const std::filesystem::path &path) {
                 if (line >> std::quoted(track.instrument_id)) {
                 } else
                     line.clear();
+                if (version >= 3 &&
+                    !(line >> track.instrument_instance_id))
+                    throw std::runtime_error("invalid instrument instance");
                 require_end(line);
                 timeline.tracks.push_back(std::move(track));
             } else if (kind == "note") {
@@ -174,7 +177,8 @@ void save_timeline(const Timeline &timeline,
     for (const auto &track : timeline.tracks) {
         output << "track " << track.id << ' ' << track.pattern.length << ' '
                << (track.muted ? 1 : 0) << ' ' << std::quoted(track.name) << ' '
-               << std::quoted(track.instrument_id) << '\n';
+               << std::quoted(track.instrument_id) << ' '
+               << track.instrument_instance_id << '\n';
         for (const auto &event : track.pattern.events) {
             if (event.type == MusicalEventType::note)
                 output << "note " << track.id << ' ' << event.id << ' '

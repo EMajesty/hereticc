@@ -244,10 +244,16 @@ bool compile_timeline(const Timeline &timeline, PlaybackPlan &output,
             error = "unavailable instrument target: " + track.instrument_id;
             return false;
         }
+        if (track.instrument_id == subtractive_instrument_id &&
+            (track.instrument_instance_id == 0 ||
+             track.instrument_instance_id > maximum_instrument_instances)) {
+            error = "synth instrument instance is out of range";
+            return false;
+        }
         plan.tracks.push_back({track.id, track.pattern.length, begin,
                                plan.events.size() - begin, 0, 0, track.muted,
-                               stable_id(track.instrument_id), false, 0, 0,
-                               false});
+                               stable_id(track.instrument_id),
+                               track.instrument_instance_id, false, 0, 0, false});
     }
     output = std::move(plan);
     error.clear();
@@ -427,7 +433,8 @@ TimelineScheduler::schedule(std::uint64_t start, std::uint32_t frames,
                                    event.parameter_id,
                                    event.parameter_target,
                                    event.value,
-                                   track.instrument};
+                                   track.instrument,
+                                   track.instrument_instance};
         }
         std::pop_heap(plan_->scheduler_heap.begin(),
                       plan_->scheduler_heap.end(), after);

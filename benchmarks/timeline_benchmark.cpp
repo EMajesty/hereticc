@@ -735,6 +735,69 @@ void modulation_case(std::string name, std::size_t route_count,
                    .count() /
                iterations);
 }
+void synth_instance_case(std::size_t instance_count, bool voice_modulation) {
+    neurogenic::AudioEngine engine(48000, 32);
+    neurogenic::Timeline timeline;
+    for (std::size_t i = 0; i < instance_count; ++i) {
+        neurogenic::Track track;
+        track.id = i + 1;
+        track.instrument_id = std::string(neurogenic::subtractive_instrument_id);
+        track.instrument_instance_id =
+            static_cast<neurogenic::InstrumentInstanceId>(i + 1);
+        track.pattern.length = neurogenic::ticks_per_quarter * 4;
+        track.pattern.events.push_back(
+            {i + 1, 0, neurogenic::MusicalEventType::note,
+             static_cast<std::uint8_t>(48 + i), 0.8F,
+             neurogenic::ticks_per_quarter * 4});
+        timeline.tracks.push_back(std::move(track));
+    }
+    if (voice_modulation) {
+        neurogenic::ModulationConfiguration configuration;
+        configuration.update_interval = 32;
+        configuration.sources[static_cast<std::size_t>(
+            neurogenic::ModulationSourceId::envelope)].scope =
+            neurogenic::ModulationScope::voice;
+        configuration.sources[0].scope = neurogenic::ModulationScope::voice;
+        configuration.route_count = std::min<std::size_t>(
+            instance_count * 2, configuration.routes.size());
+        for (std::size_t i = 0; i < configuration.route_count; ++i) {
+            auto &route = configuration.routes[i];
+            route.id = static_cast<std::uint32_t>(i + 1);
+            route.source = (i & 1U) ? neurogenic::ModulationSourceId::envelope
+                                    : neurogenic::ModulationSourceId::lfo_1;
+            route.destination = {
+                neurogenic::ParameterTarget::subtractive_synth,
+                static_cast<std::uint32_t>(
+                    (i & 1U) ? neurogenic::SynthParameter::gain
+                             : neurogenic::SynthParameter::cutoff),
+                static_cast<std::uint32_t>(i / 2 + 1)};
+            route.minimum = (i & 1U) ? 0.0F : 20.0F;
+            route.maximum = (i & 1U) ? 1.0F : 20000.0F;
+            route.base_value = (i & 1U) ? 0.25F : 8000.0F;
+            route.depth = 0.2F;
+            route.scope = neurogenic::ModulationScope::voice;
+        }
+        (void)engine.publish_modulation(configuration);
+    }
+    std::string error;
+    if (!engine.queue_timeline(timeline, error))
+        throw std::runtime_error(error);
+    engine.play();
+    std::array<float, 256> left{}, right{};
+    engine.process(left, right);
+    const auto begin = Clock::now();
+    for (std::size_t i = 0; i < iterations; ++i) {
+        engine.process(left, right);
+        checksum += left[0] != 0;
+    }
+    result("synth_instances_" + std::to_string(instance_count) +
+               (voice_modulation ? "_voice_mod" : ""),
+           48000, 256,
+           std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
+                                                                begin)
+                   .count() /
+               iterations);
+}
 } // namespace
 int main(int argc, char **argv) {
     for (int argument = 1; argument < argc; ++argument) {
@@ -825,6 +888,11 @@ int main(int argc, char **argv) {
     modulation_case("modulation_lfos_routes_16", 16);
     modulation_case("modulation_routes_32", 32);
     modulation_case("modulation_tempo_sync", 16, true);
+    synth_instance_case(4, false);
+    synth_instance_case(8, false);
+    synth_instance_case(16, false);
+    synth_instance_case(8, true);
+    synth_instance_case(16, true);
     std::cout << "{\"schema\":\"neurogenic.benchmark.summary.v1\",\"checksum\":"
               << checksum
               << ",\"budget_passed\":" << (budget_failed ? "false" : "true")

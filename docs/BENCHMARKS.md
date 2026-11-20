@@ -165,3 +165,9 @@ region. These are offline regression measurements, not Pi 5/N150 or XRUN data.
 On the 2026-11-20 Ryzen 7 7800X3D Debug host, the 16-route, 32-route, and
 tempo-sync scenarios averaged approximately 13.5, 15.9, and 13.9 µs per
 256-frame buffer. They are averages, not worst-case or hardware claims.
+
+Task 029 adds 4/8/16-instance synth workloads and 8/16-instance per-voice
+LFO/envelope workloads. On the 2026-11-20 Ryzen 7 7800X3D Debug host, plain
+instances averaged about 50.3/104.8/201.7 µs and the 8/16-instance voice
+modulation cases averaged 105.1/206.1 µs per 256-frame buffer. Idle instances
+are skipped. These are offline averages, not Pi 5/N150 or hardware guarantees.

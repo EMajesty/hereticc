@@ -1,6 +1,7 @@
 #include "neurogenic/instrument/subtractive_synth.hpp"
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numbers>
 namespace neurogenic {
 namespace {
@@ -47,6 +48,37 @@ void SubtractiveSynth::note_on(std::uint8_t note, float velocity,
                          owner,
                          note,
                          EnvelopeStage::attack};
+    auto &voice = voices_[selected];
+    for (std::size_t source = 0; source < 4; ++source)
+        if (voice_modulation_.sources[source].retrigger)
+            voice.modulation_phase[source] = 0;
+        else {
+            const auto &settings = voice_modulation_.sources[source];
+            const auto frequency = settings.tempo_sync
+                                       ? tempo_bpm_ /
+                                             (60.0F * std::max(
+                                                           0.03125F,
+                                                           settings.beats_per_cycle))
+                                       : settings.rate_hz;
+            voice.modulation_phase[source] = std::fmod(
+                static_cast<double>(modulation_frame_) *
+                    std::max(0.0F, frequency) / rate_,
+                1.0);
+        }
+    voice.modulation_envelope = -1.0F;
+    voice.modulation_stage = EnvelopeStage::attack;
+    const auto identity = owner.event != 0
+                              ? owner.track ^ owner.event ^ owner.occurrence
+                              : age_;
+    for (std::size_t source = 0; source < 4; ++source) {
+        voice.modulation_random[source] =
+            voice_modulation_.sources[source].seed ^
+            static_cast<std::uint32_t>(identity) ^
+            static_cast<std::uint32_t>(identity >> 32U) ^
+            (static_cast<std::uint32_t>(note) << 16U);
+        if (voice.modulation_random[source] == 0)
+            voice.modulation_random[source] = 1;
+    }
 }
 void SubtractiveSynth::note_off(std::uint8_t note,
                                 NoteIdentity owner) noexcept {
@@ -54,6 +86,7 @@ void SubtractiveSynth::note_off(std::uint8_t note,
         if (voice.stage != EnvelopeStage::idle && voice.note == note &&
             (owner.event == 0 || voice.owner == owner)) {
             voice.stage = EnvelopeStage::release;
+            voice.modulation_stage = EnvelopeStage::release;
             if (owner.event != 0)
                 return;
         }
@@ -109,7 +142,8 @@ float SubtractiveSynth::smooth(std::atomic<float> &target,
     return current;
 }
 float SubtractiveSynth::oscillator(Voice &voice) noexcept {
-    const auto pitch = smooth(pitch_, pitch_current_);
+    const auto pitch = voice_parameter(voice, SynthParameter::pitch,
+                                       smooth(pitch_, pitch_current_), -24, 24);
     const float frequency = midi_frequency(voice.note) * std::exp2(pitch / 12.0F),
                 increment = std::min(0.49F, frequency / rate_);
     float phase = static_cast<float>(voice.phase), out{};
@@ -131,6 +165,144 @@ float SubtractiveSynth::oscillator(Voice &voice) noexcept {
     if (voice.phase >= 1)
         voice.phase -= 1;
     return out;
+}
+bool SubtractiveSynth::configure_voice_modulation(
+    const ModulationConfiguration &configuration,
+    std::uint32_t instance) noexcept {
+    voice_modulation_ = {};
+    voice_modulation_.update_interval = configuration.update_interval;
+    voice_modulation_.sources = configuration.sources;
+    instance_id_ = instance;
+    for (std::size_t i = 0; i < configuration.route_count; ++i) {
+        const auto &route = configuration.routes[i];
+        if (route.scope != ModulationScope::voice)
+            continue;
+        if (route.destination.target != ParameterTarget::subtractive_synth ||
+            route.destination.instance != instance ||
+            (route.destination.parameter !=
+                 static_cast<std::uint32_t>(SynthParameter::pitch) &&
+             route.destination.parameter !=
+                 static_cast<std::uint32_t>(SynthParameter::cutoff) &&
+             route.destination.parameter !=
+                 static_cast<std::uint32_t>(SynthParameter::gain)))
+            return false;
+        if (voice_modulation_.route_count ==
+            voice_modulation_.routes.size())
+            return false;
+        voice_modulation_.routes[voice_modulation_.route_count++] = route;
+    }
+    return true;
+}
+float SubtractiveSynth::voice_source(Voice &voice,
+                                     ModulationSourceId source) noexcept {
+    if (source == ModulationSourceId::velocity)
+        return voice.velocity * 2.0F - 1.0F;
+    if (source == ModulationSourceId::envelope)
+        return voice.modulation_envelope;
+    const auto index = static_cast<std::size_t>(source);
+    if (index < 4) {
+        const auto phase = voice.modulation_phase[index];
+        switch (voice_modulation_.sources[index].waveform) {
+        case LfoWaveform::sine:
+            return std::sin(static_cast<float>(phase) * 2.0F *
+                            std::numbers::pi_v<float>);
+        case LfoWaveform::triangle:
+            return static_cast<float>(1.0 - 4.0 * std::abs(phase - 0.5));
+        case LfoWaveform::saw:
+            return static_cast<float>(phase * 2.0 - 1.0);
+        case LfoWaveform::square:
+            return phase < 0.5 ? 1.0F : -1.0F;
+        case LfoWaveform::random:
+            return static_cast<float>(voice.modulation_random[index]) /
+                       static_cast<float>(
+                           std::numeric_limits<std::uint32_t>::max()) *
+                       2.0F -
+                   1.0F;
+        }
+    }
+    return 0;
+}
+void SubtractiveSynth::update_voice_modulation(Voice &voice) noexcept {
+    if (voice.modulation_countdown != 0) {
+        --voice.modulation_countdown;
+        return;
+    }
+    const auto elapsed = std::max(1U, voice_modulation_.update_interval);
+    voice.modulation_countdown = elapsed - 1;
+    for (std::size_t source = 0; source < 4; ++source) {
+        const auto &settings = voice_modulation_.sources[source];
+        if (settings.scope != ModulationScope::voice)
+            continue;
+        const auto rate = settings.tempo_sync
+                              ? tempo_bpm_ /
+                                    (60.0F * std::max(0.03125F,
+                                                      settings.beats_per_cycle))
+                              : settings.rate_hz;
+        const auto previous = voice.modulation_phase[source];
+        voice.modulation_phase[source] = std::fmod(
+            voice.modulation_phase[source] +
+                static_cast<double>(elapsed) * std::max(0.0F, rate) / rate_,
+            1.0);
+        if (voice_modulation_.sources[source].waveform ==
+                LfoWaveform::random &&
+            voice.modulation_phase[source] < previous) {
+            auto &random = voice.modulation_random[source];
+            random ^= random << 13U;
+            random ^= random >> 17U;
+            random ^= random << 5U;
+        }
+    }
+    const auto &settings = voice_modulation_.sources[
+        static_cast<std::size_t>(ModulationSourceId::envelope)];
+    if (settings.scope != ModulationScope::voice)
+        return;
+    const auto samples = static_cast<float>(elapsed);
+    if (voice.modulation_stage == EnvelopeStage::attack) {
+        voice.modulation_envelope +=
+            2.0F * samples /
+            std::max(1.0F, settings.attack_seconds * rate_);
+        if (voice.modulation_envelope >= 1) {
+            voice.modulation_envelope = 1;
+            voice.modulation_stage = EnvelopeStage::decay;
+        }
+    } else if (voice.modulation_stage == EnvelopeStage::decay) {
+        const auto sustain = settings.sustain * 2.0F - 1.0F;
+        voice.modulation_envelope -=
+            2.0F * samples /
+            std::max(1.0F, settings.decay_seconds * rate_);
+        if (voice.modulation_envelope <= sustain) {
+            voice.modulation_envelope = sustain;
+            voice.modulation_stage = EnvelopeStage::sustain;
+        }
+    } else if (voice.modulation_stage == EnvelopeStage::sustain)
+        voice.modulation_envelope = settings.sustain * 2.0F - 1.0F;
+    else if (voice.modulation_stage == EnvelopeStage::release) {
+        voice.modulation_envelope -=
+            2.0F * samples /
+            std::max(1.0F, settings.release_seconds * rate_);
+        if (voice.modulation_envelope <= -1) {
+            voice.modulation_envelope = -1;
+            voice.modulation_stage = EnvelopeStage::idle;
+        }
+    }
+}
+float SubtractiveSynth::voice_parameter(Voice &voice, SynthParameter parameter,
+                                        float base, float minimum,
+                                        float maximum) noexcept {
+    auto normalized = (base - minimum) / (maximum - minimum);
+    for (std::size_t i = 0; i < voice_modulation_.route_count; ++i) {
+        const auto &route = voice_modulation_.routes[i];
+        if (route.enabled && route.destination.parameter ==
+                                 static_cast<std::uint32_t>(parameter)) {
+            const auto source = voice_source(voice, route.source);
+            const auto shaped = route.polarity == ModulationPolarity::bipolar
+                                    ? source
+                                    : (source + 1.0F) * 0.5F;
+            normalized += shaped * route.depth;
+        }
+    }
+    return minimum + std::clamp(normalized, 0.0F, 1.0F) *
+                         (maximum - minimum);
 }
 float SubtractiveSynth::envelope(Voice &voice) noexcept {
     const auto attack = std::max(0.001F, smooth(attack_, attack_current_)),
@@ -170,16 +342,22 @@ void SubtractiveSynth::render_sample_tracks(std::span<const std::uint64_t> track
                                             float &unrouted) noexcept {
     std::fill(outputs.begin(), outputs.end(), 0.0F);
     unrouted = 0;
-    const auto cutoff = std::clamp(smooth(cutoff_, cutoff_current_), 20.0F,
-                                   rate_ * 0.45F),
+    const auto cutoff_base = std::clamp(smooth(cutoff_, cutoff_current_), 20.0F,
+                                        rate_ * 0.45F),
                resonance = smooth(resonance_, resonance_current_),
                velocity = smooth(velocity_, velocity_current_),
-               gain = smooth(gain_, gain_current_);
-    const auto coefficient =
-        2 * std::sin(std::numbers::pi_v<float> * cutoff / rate_);
+               gain_base = smooth(gain_, gain_current_);
     for (auto &voice : voices_) {
         if (voice.stage == EnvelopeStage::idle)
             continue;
+        update_voice_modulation(voice);
+        const auto cutoff = voice_parameter(
+            voice, SynthParameter::cutoff, cutoff_base, 20.0F,
+            std::min(20000.0F, rate_ * 0.45F));
+        const auto gain = voice_parameter(voice, SynthParameter::gain,
+                                          gain_base, 0.0F, 1.0F);
+        const auto coefficient =
+            2 * std::sin(std::numbers::pi_v<float> * cutoff / rate_);
         float value = oscillator(voice) * envelope(voice) *
                       (1 - velocity + velocity * voice.velocity);
         if (filter_enabled_.load(std::memory_order_relaxed) >= 0.5F) {
@@ -195,16 +373,16 @@ void SubtractiveSynth::render_sample_tracks(std::span<const std::uint64_t> track
         auto routed = false;
         for (std::size_t i = 0; i < std::min(tracks.size(), outputs.size()); ++i)
             if (voice.owner.track != 0 && voice.owner.track == tracks[i]) {
-                outputs[i] += value;
+                outputs[i] += value * gain;
                 routed = true;
                 break;
             }
         if (!routed)
-            unrouted += value;
+            unrouted += value * gain;
     }
     for (auto &value : outputs)
-        value = std::clamp(value * gain, -2.0F, 2.0F);
-    unrouted = std::clamp(unrouted * gain, -2.0F, 2.0F);
+        value = std::clamp(value, -2.0F, 2.0F);
+    unrouted = std::clamp(unrouted, -2.0F, 2.0F);
 }
 void SubtractiveSynth::process(std::span<float> left,
                                std::span<float> right) noexcept {
@@ -218,6 +396,8 @@ void SubtractiveSynth::process(std::span<float> left,
 void SubtractiveSynth::reset() noexcept {
     for (auto &voice : voices_)
         voice = Voice{};
+    age_ = 0;
+    modulation_frame_ = 0;
 }
 void SubtractiveSynth::set_sample_rate(std::uint32_t rate) noexcept {
     rate_ = std::max(1U, rate);
@@ -228,5 +408,11 @@ InstrumentState SubtractiveSynth::state() const noexcept {
     for (const auto &voice : voices_)
         active += voice.stage != EnvelopeStage::idle;
     return {active, voices_.size(), stolen_, 0};
+}
+bool SubtractiveSynth::active() const noexcept {
+    for (const auto &voice : voices_)
+        if (voice.stage != EnvelopeStage::idle)
+            return true;
+    return false;
 }
 } // namespace neurogenic

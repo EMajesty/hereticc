@@ -8,6 +8,9 @@ namespace neurogenic {
 using MusicalTick = std::int64_t;
 using EventId = std::uint64_t;
 using TrackId = std::uint64_t;
+using InstrumentInstanceId = std::uint32_t;
+inline constexpr InstrumentInstanceId default_synth_instance_id = 1;
+inline constexpr std::size_t maximum_instrument_instances = 16;
 inline constexpr std::uint32_t ticks_per_quarter = 960;
 constexpr std::uint32_t stable_id(std::string_view value) noexcept {
     std::uint32_t hash = 2166136261U;
@@ -67,6 +70,7 @@ struct Track {
     bool muted{};
     MusicalPattern pattern;
     std::string instrument_id{sample_instrument_id};
+    InstrumentInstanceId instrument_instance_id{default_synth_instance_id};
 };
 struct TransportMetadata {
     std::uint32_t microseconds_per_quarter{500000};

@@ -25,8 +25,8 @@ Parameters are clamped, finite-checked and smoothed at control rate. Extreme
 resonance is bounded for numerical stability.
 
 The modulation matrix targets pitch, oscillator/filter/envelope controls, and
-gain through numeric destinations. Per-track sources are independent. Routable
-per-voice modulation remains a future extension rather than a global singleton.
+gain through numeric destinations. Per-track sources are independent; voice
+ADSR, velocity, and LFO sources target per-voice pitch, cutoff, and gain.
 
 ```sh
 ./build/dev/neurogenic --synth
@@ -58,8 +58,17 @@ the application parameter value is rolled back so visible state cannot claim a
 change the engine did not accept. Instrument routing changes use the existing
 immutable timeline-plan publication and retirement mechanism.
 
-Stop, restart and timeline replacement currently reset synth voices. A future
-instrument registry will permit multiple instances and control-side lifetime
-publication; the current vertical slice has one sample instrument, one synth
-instance and one master delay. There are no per-track effect chains, presets,
-audio-rate modulation, plugin ABI or oversampling.
+Stop, restart, timeline replacement, and instrument reassignment reset affected
+timeline playback through the immutable-plan activation path. The engine owns
+16 preallocated subtractive-synth instances. Tracks default to legacy shared
+instance 1 but may select independent instances; multiple tracks may still
+share an instance deliberately. Each instance has its own parameters, smoothing
+state, voice pool, and voice-stealing counter. There are no per-track effect
+chains, presets, audio-rate modulation, plugin ABI, or oversampling.
+
+Per-voice modulation state is embedded in every synth voice. Note-on initializes
+its modulation envelope, velocity value, deterministic random seed, and LFO
+phase; retriggered LFOs start at zero while free-running LFOs inherit the
+instance phase. Exact note ownership drives release, and stealing replaces only
+the selected oldest voice. Voice contributions currently target pitch, cutoff,
+and gain after instance/global parameter composition.

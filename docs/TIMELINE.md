@@ -238,3 +238,9 @@ Discrete automation and step locks remain authoritative timeline events. Their
 latest value becomes the matrix's automation/base layer; enabled routes are
 then summed and clamped without modifying or disabling the lock.
 Tempo-synchronized sources follow the same authoritative transport tempo.
+
+Tracks now persist `instrument_instance_id`. Synth tracks may share an instance
+explicitly or select independent instances; compiled note and parameter events
+carry that numeric identity sample-accurately. Version-1/2 timelines migrate to
+shared synth instance 1. Changing a track's instrument/instance publishes a
+complete plan and existing timeline voices are cleaned up at activation.

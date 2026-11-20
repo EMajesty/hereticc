@@ -54,8 +54,8 @@ interface and preallocated stereo delay. Timeline and MIDI notes share
 scheduling with sample playback; synth/effect controls use the application
 parameter registry and bounded callback queue. GUI selection, parameters,
 voice/steal statistics and deterministic DSP benchmarks are host-tested. There
-is currently one synth instance and one master delay; dynamic instances,
-per-track chains, presets and plugins remain future work. Physical audio/MIDI
+now has bounded track-local instances and one master delay; per-track chains,
+presets and plugins remain future work. Physical audio/MIDI
 playability and subjective sound quality are not hardware-tested.
 
 Task 017 adds optional bounded callback timing/load statistics, active-voice
@@ -252,7 +252,13 @@ physical multichannel hardware remains unverified.
 Task 028 adds a fixed-capacity modulation matrix with four LFOs, ADSR,
 deterministic random, X/Y, velocity, and MIDI CC. Sources have explicit
 global/track/voice scope; global and per-track instances are implemented with
-independent phase, gate, retrigger, and seeded random state. Voice routes are
-rejected pending a polyphonic destination path. Synth/delay destinations,
+independent phase, gate, retrigger, and seeded random state. Synth/delay destinations,
 projects, semantic actions/state, GUI inspection, tests, and benchmarks are
 implemented; audio-rate and prepared sample/mixer modulation remain future.
+
+Task 029 replaces the implicit synth singleton with 16 bounded, preallocated
+instances. Tracks persist an instance ID, legacy data migrates to shared
+instance 1, and numeric callback routing isolates local parameters/modulation
+while permitting explicit sharing. Per-voice ADSR, velocity,
+retrigger/free-running LFO, pitch, cutoff, and gain modulation are embedded in
+synth voices. Sample-voice modulation remains future work.

@@ -51,6 +51,7 @@ struct ModulationRoute {
 struct ModulationConfiguration {
     static constexpr std::size_t maximum_routes = 32;
     static constexpr std::size_t maximum_tracks = 32;
+    static constexpr std::size_t maximum_instances = 16;
     static constexpr std::size_t source_count =
         static_cast<std::size_t>(ModulationSourceId::count);
     std::array<ModulationSourceSettings, source_count> sources{};
@@ -119,16 +120,20 @@ class ModulationEngine {
         for (std::size_t route_index = 0;
              route_index < configuration_.route_count; ++route_index) {
             const auto &route = configuration_.routes[route_index];
-            if (!route.enabled)
+            if (!route.enabled || route.scope == ModulationScope::voice)
                 continue;
             bool already_processed{};
             for (std::size_t previous = 0; previous < route_index; ++previous)
                 already_processed |=
                     configuration_.routes[previous].enabled &&
+                    configuration_.routes[previous].scope !=
+                        ModulationScope::voice &&
                     configuration_.routes[previous].destination.target ==
                         route.destination.target &&
                     configuration_.routes[previous].destination.parameter ==
-                        route.destination.parameter;
+                        route.destination.parameter &&
+                    configuration_.routes[previous].destination.instance ==
+                        route.destination.instance;
             if (already_processed)
                 continue;
             float base = route.base_value;
@@ -136,7 +141,9 @@ class ModulationEngine {
                 if (automation.active &&
                     automation.destination.target == route.destination.target &&
                     automation.destination.parameter ==
-                        route.destination.parameter) {
+                        route.destination.parameter &&
+                    automation.destination.instance ==
+                        route.destination.instance) {
                     base = automation.value;
                     break;
                 }
@@ -146,9 +153,11 @@ class ModulationEngine {
                  contribution < configuration_.route_count; ++contribution) {
                 const auto &candidate = configuration_.routes[contribution];
                 if (!candidate.enabled ||
+                    candidate.scope == ModulationScope::voice ||
                     candidate.destination.target != route.destination.target ||
                     candidate.destination.parameter !=
-                        route.destination.parameter)
+                        route.destination.parameter ||
+                    candidate.destination.instance != route.destination.instance)
                     continue;
                 const auto source_index =
                     static_cast<std::size_t>(candidate.source);
@@ -176,7 +185,9 @@ class ModulationEngine {
                 if (configuration_.routes[matching].destination.target ==
                         route.destination.target &&
                     configuration_.routes[matching].destination.parameter ==
-                        route.destination.parameter) {
+                        route.destination.parameter &&
+                    configuration_.routes[matching].destination.instance ==
+                        route.destination.instance) {
                     effective_[matching] = effective;
                     published_effective_[matching].store(
                         effective, std::memory_order_relaxed);

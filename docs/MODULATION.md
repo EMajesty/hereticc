@@ -20,10 +20,10 @@ sources have one state. Track sources create fixed-capacity independent state
 for every routed track, including phase, envelope gate/stage, retrigger state,
 and a random stream derived deterministically from `(seed, track ID)`.
 
-Voice scope is represented in the public model and persistence format, but is
-rejected during validation in this release. The synth's existing velocity
-response remains per voice; fully routable polyphonic envelopes and velocity
-modulation require a future voice-destination path.
+Voice scope is implemented for the subtractive synth. Each preallocated voice
+owns independent ADSR, velocity, note-triggered LFO phase, and deterministic
+random state. Voice routes currently accept pitch, filter cutoff, and gain.
+Other voice destinations are rejected rather than promoted to global scope.
 
 The engine updates at a bounded interval (32 samples by default). Phase advances
 from elapsed frames, so callback partitioning does not alter frequency. Free
@@ -66,6 +66,21 @@ Projects write optional `modulation.ngm`. It preserves source settings, seeds,
 route IDs, scopes, track IDs, depths, and destinations. Older projects load an
 empty matrix. Forward versions and unsafe destinations are rejected.
 
-Current limitations: no per-voice route execution, audio-rate modulation,
+Current limitations: no per-voice sample modulation, audio-rate modulation,
 recursive graphs, modulation curves, per-track MIDI CC/XY lanes, or modulation
-of prepared sample/mixer/routing state. Delay destinations remain block-applied.
+of prepared mixer/routing state. Delay destinations remain block-applied.
+
+## Scope resolution
+
+Destinations carry a stable numeric instrument instance. Instance `0` means all
+synth instances only for a global route. A global route may instead name one
+instance. Track routes require track and instance IDs, so their independent
+source state can affect only the routed instrument. Voice routes require a
+concrete synth instance and execute inside its active voices. Ambiguous local
+routes, voice routes to shared delay state, and out-of-range instances fail
+control-side validation.
+
+For a voice destination, the instance-level effective parameter is the base.
+The voice's normalized contributions are then summed once and clamped. This
+avoids double-applying global or track modulation and never changes stored
+instance parameters.

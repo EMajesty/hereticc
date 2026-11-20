@@ -243,6 +243,24 @@ Modulation is a numeric layer after stored base and timeline automation.
 Global and per-track source banks are distinct; track banks own independent
 phase, envelope, retrigger, and seeded random state. See
 [MODULATION.md](MODULATION.md).
+
+## Track-local instrument ownership
+
+Timeline tracks own stable routing references, not DSP objects. A compiled
+track carries its track ID, instrument type key, and bounded numeric instrument
+instance ID. `AudioEngine` owns a preallocated rack of 16 subtractive-synth
+instances; each instance owns its parameters and bounded voice pool. Notes carry
+the compiled instance ID into the callback, while the mixer still keys audio by
+track ID. Several tracks may explicitly share one instance, or use different
+instances for isolated parameters and modulation. Sample voices remain in the
+existing shared bounded sample pool and retain track ownership for mixing.
+
+The ownership chain is therefore: timeline track -> numeric instrument instance
+-> preallocated voice -> track mixer channel. Global modulation may address all
+instances or one instance; track routes require both track and instance IDs;
+voice routes are installed into the selected synth instance and evaluated in
+each active voice. No callback lookup uses strings and no instance or voice is
+created or destroyed on the audio thread.
 Trigger probability and conditions are immutable compiled-plan metadata.
 Scheduling uses a stateless integer hash rather than a callback RNG, and Fill
 crosses into the audio thread through the bounded transport queue. Ratchets are

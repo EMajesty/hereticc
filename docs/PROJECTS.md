@@ -88,8 +88,14 @@ browser is still deferred.
 Version-1 projects may include `modulation.ngm`. This optional versioned file
 stores source definitions, deterministic seeds, explicit scopes, and stable
 routes. Absence means an empty matrix for backward compatibility. Unsafe or
-unavailable destinations and unsupported voice routes are rejected before
+unavailable destinations and unsupported voice destinations are rejected before
 publication.
+
+Timeline version 3 stores track-to-instance assignments and modulation metadata
+version 2 stores destination instance IDs. Older projects and timelines migrate
+their former singleton synth routing to shared instance 1. Instance parameter
+overrides use stable `instance.N.synth.*` entries in parameter metadata. Active
+voices, phases, envelopes, and random runtime state are never persisted.
 
 Legacy `.ngt` timelines and version 1-3 slice sidecars remain accepted by their
 existing loaders. They can be assembled into a project through the shared C++

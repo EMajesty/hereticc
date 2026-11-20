@@ -104,6 +104,7 @@ struct TrackSummary {
     std::uint8_t target_note{36};
     std::string instrument_id{sample_instrument_id};
     std::vector<MusicalEvent> events;
+    InstrumentInstanceId instrument_instance_id{default_synth_instance_id};
 };
 struct SelectedEventState {
     TrackId track_id{};
@@ -238,6 +239,8 @@ class ApplicationService {
     mutable MixerConfiguration mixer_configuration_;
     ModulationConfiguration modulation_configuration_;
     ModulationRouteId next_modulation_route_id_{1};
+    std::map<InstrumentInstanceId, std::map<std::string, double>>
+        synth_instance_parameters_;
     ActionRegistry actions_;
     ParameterRegistry parameters_;
     const std::size_t capacity_;

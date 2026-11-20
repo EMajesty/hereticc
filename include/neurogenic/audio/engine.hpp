@@ -94,8 +94,12 @@ class AudioEngine {
     [[nodiscard]] bool configure_note_playback(std::uint8_t note,
                                                SamplePlaybackSettings) noexcept;
     void trigger_synth(std::uint8_t note, float velocity,
-                       bool note_on = true) noexcept;
-    [[nodiscard]] bool set_synth_parameter(SynthParameter, float) noexcept;
+                       bool note_on = true,
+                       InstrumentInstanceId instance =
+                           default_synth_instance_id) noexcept;
+    [[nodiscard]] bool set_synth_parameter(
+        SynthParameter, float,
+        InstrumentInstanceId instance = default_synth_instance_id) noexcept;
     [[nodiscard]] bool set_delay_parameter(DelayParameter, float) noexcept;
     [[nodiscard]] bool set_delay_bypass(bool) noexcept;
     [[nodiscard]] bool
@@ -196,7 +200,20 @@ class AudioEngine {
         return buffer_frames_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] InstrumentState synth_state() const noexcept {
-        return synth_.state();
+        InstrumentState total{};
+        for (const auto &synth : synths_) {
+            const auto state = synth->state();
+            total.active_voices += state.active_voices;
+            total.maximum_voices += state.maximum_voices;
+            total.stolen_voices += state.stolen_voices;
+        }
+        return total;
+    }
+    [[nodiscard]] InstrumentState
+    synth_instance_state(InstrumentInstanceId instance) const noexcept {
+        return instance > 0 && instance <= synths_.size()
+                   ? synths_[instance - 1]->state()
+                   : InstrumentState{};
     }
     [[nodiscard]] std::uint64_t dropped_dsp_commands() const noexcept {
         return dropped_dsp_commands_.load();
@@ -224,6 +241,7 @@ class AudioEngine {
         std::uint8_t note{};
         float velocity{};
         bool note_on{};
+        InstrumentInstanceId instance{default_synth_instance_id};
     };
     struct DspCommand {
         enum class Target : std::uint8_t {
@@ -235,6 +253,7 @@ class AudioEngine {
         Target target{};
         std::uint32_t parameter{};
         float value{};
+        InstrumentInstanceId instance{};
     };
     struct Voice {
         const Sample *sample{};
@@ -399,7 +418,9 @@ class AudioEngine {
     std::atomic<std::uint64_t> instrument_nanoseconds_{}, effect_nanoseconds_{};
     std::atomic<RecordingService *> recording_{};
     std::atomic<std::uint64_t> callback_frame_{};
-    SubtractiveSynth synth_;
+    std::array<std::unique_ptr<SubtractiveSynth>, maximum_instrument_instances>
+        synths_{};
+    std::array<bool, maximum_instrument_instances> synth_active_{};
     StereoDelay delay_;
     ModulationEngine modulation_;
     Mixer mixer_;

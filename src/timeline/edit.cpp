@@ -142,7 +142,8 @@ bool TimelineTransaction::set_track_muted(TrackId id, bool muted,
 }
 bool TimelineTransaction::set_track_instrument(TrackId id,
                                                std::string instrument,
-                                               std::string &error) {
+                                               std::string &error,
+                                               InstrumentInstanceId instance) {
     auto *track = find_track(id);
     if (!track) {
         error = "track does not exist";
@@ -153,7 +154,13 @@ bool TimelineTransaction::set_track_instrument(TrackId id,
         error = "instrument is unavailable";
         return false;
     }
+    if (instrument == subtractive_instrument_id &&
+        (instance == 0 || instance > maximum_instrument_instances)) {
+        error = "instrument instance is out of range";
+        return false;
+    }
     track->instrument_id = std::move(instrument);
+    track->instrument_instance_id = instance;
     error.clear();
     return true;
 }

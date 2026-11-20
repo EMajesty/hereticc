@@ -301,7 +301,9 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
         text(l.target_note, UiColor::text,
              "NOTE " + std::to_string(track ? track->target_note : 0));
         text(l.instrument, UiColor::text,
-             track ? track->instrument_id : "NO INSTRUMENT");
+             track ? track->instrument_id + " #" +
+                         std::to_string(track->instrument_instance_id)
+                   : "NO INSTRUMENT");
         for (std::size_t i = 0;
              i < std::min<std::size_t>(3, state.tracks.size()); ++i) {
             const auto &item = state.tracks[i];
@@ -311,6 +313,7 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
             text(l.rows[i], item.muted ? UiColor::muted : UiColor::text,
                  std::to_string(item.id) + "  " + item.name + "  " +
                      item.instrument_id + "  " +
+                     "#" + std::to_string(item.instrument_instance_id) + "  " +
                      std::to_string(item.pattern_length) + " ticks" +
                      (item.muted ? "  MUTED" : ""));
         }
@@ -742,7 +745,13 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
                      std::to_string(route.depth) +
                      (route.scope == ModulationScope::track
                           ? "  TRACK " + std::to_string(route.track_id)
-                          : "  GLOBAL") +
+                          : (route.scope == ModulationScope::voice
+                                 ? "  VOICE"
+                                 : "  GLOBAL")) +
+                     (route.destination.instance == 0
+                          ? " / ALL"
+                          : " / INST " +
+                                std::to_string(route.destination.instance)) +
                      "  EFF " + std::to_string(
                          state.modulation_runtime.effective_values[i]));
         }

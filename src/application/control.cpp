@@ -120,7 +120,13 @@ ActionRegistry::ActionRegistry() {
     add(action("track.previous.v1", "Previous track", "Tracks"));
     add(action("track.mute-toggle.v1", "Toggle track mute", "Tracks"));
     add(action("track.instrument-set.v1", "Set track instrument", "Tracks",
-               {{"instrument_id", ValueType::text}}));
+               {{"instrument_id", ValueType::text},
+                {"instance_id", ValueType::integer, false}}));
+    add(action("instrument.instance-parameter-set.v1",
+               "Set instrument instance parameter", "Instruments",
+               {{"instance_id", ValueType::integer},
+                {"parameter_id", ValueType::text},
+                {"value", ValueType::real}}));
     add(action("pattern.select.v1", "Select pattern", "Sequencer",
                {{"pattern_id", ValueType::integer}}));
     add(action("step.select.v1", "Select step", "Sequencer",
@@ -383,7 +389,8 @@ ActionRegistry::ActionRegistry() {
                 {"destination", ValueType::text},
                 {"depth", ValueType::real},
                 {"scope", ValueType::integer},
-                {"track_id", ValueType::integer, false}}));
+                {"track_id", ValueType::integer, false},
+                {"instance_id", ValueType::integer, false}}));
     add(action("modulation.route-delete.v1", "Delete modulation route",
                "Modulation", {{"route_id", ValueType::integer}}));
     add(action("modulation.route-select.v1", "Select modulation route",
@@ -1577,6 +1584,11 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                          parameter.id.rfind("effect.", 0) == 0))
                         saving.parameters[parameter.id] =
                             number(parameter.current_value);
+                for (const auto &[instance, values] : synth_instance_parameters_)
+                    for (const auto &[id, value] : values)
+                        saving.parameters["instance." +
+                                          std::to_string(instance) + "." + id] =
+                            value;
                 {
                     std::lock_guard lock(mutex_);
                     state_.project_saving = true;
@@ -1624,6 +1636,8 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                             "project contains an unavailable modulation destination");
                 }
                 for (const auto &[id, value] : loaded.parameters) {
+                    if (id.rfind("instance.", 0) == 0)
+                        continue;
                     const auto descriptor = parameters_.get(id);
                     if (!descriptor || value < number(descriptor->minimum) ||
                         value > number(descriptor->maximum))
@@ -1703,6 +1717,7 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     throw std::runtime_error(
                         "modulation publication queue is full");
                 modulation_configuration_ = loaded.modulation;
+                synth_instance_parameters_.clear();
                 next_modulation_route_id_ = 1;
                 for (std::size_t route = 0;
                      route < modulation_configuration_.route_count; ++route)
@@ -1710,6 +1725,33 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                         std::max(next_modulation_route_id_,
                                  modulation_configuration_.routes[route].id + 1);
                 for (const auto &[id, value] : loaded.parameters) {
+                    if (id.rfind("instance.", 0) == 0) {
+                        const auto separator = id.find('.', 9);
+                        if (separator == std::string::npos)
+                            throw std::runtime_error(
+                                "invalid instance parameter key: " + id);
+                        const auto instance = static_cast<InstrumentInstanceId>(
+                            std::stoul(id.substr(9, separator - 9)));
+                        const auto parameter_id = id.substr(separator + 1);
+                        const auto descriptor = parameters_.get(parameter_id);
+                        const auto destination =
+                            resolve_parameter_destination(parameter_id);
+                        if (!descriptor || !destination ||
+                            destination->target !=
+                                ParameterTarget::subtractive_synth ||
+                            instance == 0 ||
+                            instance > maximum_instrument_instances ||
+                            value < number(descriptor->minimum) ||
+                            value > number(descriptor->maximum) ||
+                            !engine_.set_synth_parameter(
+                                static_cast<SynthParameter>(
+                                    destination->parameter),
+                                static_cast<float>(value), instance))
+                            throw std::runtime_error(
+                                "cannot restore instance parameter: " + id);
+                        synth_instance_parameters_[instance][parameter_id] = value;
+                        continue;
+                    }
                     const auto previous = parameters_.get(id);
                     if (!parameters_.set(id, value, error) ||
                         !publish_dsp_parameter(engine_, parameters_, id)) {
@@ -1813,6 +1855,7 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     return {false, sequence, before.revision,
                             "modulation publication queue is full"};
                 modulation_configuration_ = replacement.modulation;
+                synth_instance_parameters_.clear();
                 next_modulation_route_id_ = 1;
                 for (const auto &slot : samples_.states())
                     if ((slot.has_sample ||
@@ -2109,9 +2152,12 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             }
         } else if (command.action_id == "track.instrument-set.v1") {
             auto transaction = timeline_.edit();
+            const auto instance = argument<std::int64_t>(command, "instance_id");
             if (!transaction.set_track_instrument(
                     state_.selected_track,
-                    *argument<std::string>(command, "instrument_id"), error) ||
+                    *argument<std::string>(command, "instrument_id"), error,
+                    instance ? static_cast<InstrumentInstanceId>(*instance)
+                             : default_synth_instance_id) ||
                 !timeline_.commit(std::move(transaction),
                                   TimelineCommitPolicy::next_audio_callback,
                                   error)) {
@@ -3051,6 +3097,51 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             state_.focused_element =
                 "text:" + *argument<std::string>(command, "text");
             changed_locked();
+        } else if (command.action_id ==
+                   "instrument.instance-parameter-set.v1") {
+            const auto instance =
+                *argument<std::int64_t>(command, "instance_id");
+            const auto &id = *argument<std::string>(command, "parameter_id");
+            const auto value = *argument<double>(command, "value");
+            const auto descriptor = parameters_.get(id);
+            const auto destination = resolve_parameter_destination(id);
+            if (instance <= 0 ||
+                instance > static_cast<std::int64_t>(
+                               maximum_instrument_instances) ||
+                !descriptor || !destination ||
+                destination->target != ParameterTarget::subtractive_synth ||
+                !std::isfinite(value) || value < number(descriptor->minimum) ||
+                value > number(descriptor->maximum))
+                error = "invalid instrument instance parameter";
+            else if (!engine_.set_synth_parameter(
+                         static_cast<SynthParameter>(destination->parameter),
+                         static_cast<float>(value),
+                         static_cast<InstrumentInstanceId>(instance)))
+                error = "DSP parameter queue is full";
+            else {
+                auto next = modulation_configuration_;
+                bool modulation_changed{};
+                for (std::size_t route = 0; route < next.route_count; ++route)
+                    if (next.routes[route].destination.target ==
+                            ParameterTarget::subtractive_synth &&
+                        next.routes[route].destination.parameter ==
+                            destination->parameter &&
+                        next.routes[route].destination.instance == instance) {
+                        next.routes[route].base_value =
+                            static_cast<float>(value);
+                        modulation_changed = true;
+                    }
+                if (modulation_changed && !engine_.publish_modulation(next))
+                    error = "modulation publication queue is full";
+                if (!error.empty())
+                    return {false, sequence, before.revision,
+                            std::move(error)};
+                modulation_configuration_ = next;
+                project_.modulation = next;
+                synth_instance_parameters_[static_cast<InstrumentInstanceId>(
+                    instance)][id] = value;
+                changed_locked();
+            }
         } else if (command.action_id == "parameter.set-normalized.v1") {
             const auto id = *argument<std::string>(command, "parameter_id");
             const auto previous = parameters_.get(id);
@@ -3118,9 +3209,6 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 error = "invalid modulation scope";
             else if (!std::isfinite(depth) || depth < -1 || depth > 1)
                 error = "modulation depth must be -1..1";
-            else if (scope_value ==
-                     static_cast<std::int64_t>(ModulationScope::voice))
-                error = "per-voice modulation routes are not implemented";
             else if (modulation_configuration_.route_count ==
                      modulation_configuration_.routes.size())
                 error = "modulation route capacity is exhausted";
@@ -3140,17 +3228,86 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                                                       source)]
                                                   .scope;
                     const auto track = argument<std::int64_t>(command, "track_id");
+                    const auto instance =
+                        argument<std::int64_t>(command, "instance_id");
                     if (scope != source_scope)
                         error = "route scope must match the source scope";
+                    else if (instance &&
+                             (*instance < 0 ||
+                              *instance > static_cast<std::int64_t>(
+                                              maximum_instrument_instances)))
+                        error = "instrument instance is out of range";
                     else if (scope == ModulationScope::track &&
                              (!track || *track <= 0))
                         error = "track modulation requires a positive track ID";
+                    else if ((scope == ModulationScope::track ||
+                              scope == ModulationScope::voice) &&
+                             (!instance || *instance <= 0 ||
+                              *instance > static_cast<std::int64_t>(
+                                              maximum_instrument_instances)))
+                        error = "local modulation requires a valid instrument instance";
+                    else if (scope == ModulationScope::track &&
+                             destination->target !=
+                                 ParameterTarget::subtractive_synth)
+                        error = "track modulation requires a synth instance destination";
+                    else if (scope == ModulationScope::global && instance &&
+                             *instance != 0 && destination->target !=
+                                                   ParameterTarget::subtractive_synth)
+                        error = "shared destinations do not accept an instrument instance";
+                    else if (scope == ModulationScope::track) {
+                        const auto timeline = timeline_.snapshot().timeline;
+                        const auto routed = std::find_if(
+                            timeline.tracks.begin(), timeline.tracks.end(),
+                            [&](const Track &candidate) {
+                                return candidate.id ==
+                                           static_cast<TrackId>(*track) &&
+                                       candidate.instrument_id ==
+                                           subtractive_instrument_id &&
+                                       candidate.instrument_instance_id ==
+                                           static_cast<InstrumentInstanceId>(
+                                               *instance);
+                            });
+                        if (routed == timeline.tracks.end())
+                            error = "track is not routed to the requested synth instance";
+                        else {
+                            auto next = modulation_configuration_;
+                            auto &route = next.routes[next.route_count++];
+                            route.id = next_modulation_route_id_++;
+                            route.source = source;
+                            route.destination = *destination;
+                            route.destination.instance =
+                                static_cast<std::uint32_t>(*instance);
+                            route.minimum = static_cast<float>(
+                                number(descriptor->minimum));
+                            route.maximum = static_cast<float>(
+                                number(descriptor->maximum));
+                            route.base_value = static_cast<float>(
+                                number(descriptor->current_value));
+                            route.depth = static_cast<float>(depth);
+                            route.scope = scope;
+                            route.track_id = static_cast<std::uint64_t>(*track);
+                            if (!engine_.publish_modulation(next))
+                                error = "modulation publication queue is full";
+                            else {
+                                modulation_configuration_ = next;
+                                project_.modulation = next;
+                                state_.selected_modulation_route = route.id;
+                                changed_locked();
+                            }
+                        }
+                    }
+                    else if (scope == ModulationScope::voice &&
+                             destination->target !=
+                                 ParameterTarget::subtractive_synth)
+                        error = "voice modulation requires a synth destination";
                     else {
                         auto next = modulation_configuration_;
                         auto &route = next.routes[next.route_count++];
                         route.id = next_modulation_route_id_++;
                         route.source = source;
                         route.destination = *destination;
+                        route.destination.instance =
+                            instance ? static_cast<std::uint32_t>(*instance) : 0;
                         route.minimum = static_cast<float>(
                             number(descriptor->minimum));
                         route.maximum = static_cast<float>(
@@ -3232,9 +3389,6 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 !std::isfinite(rate) || rate < 0 || rate > 100 ||
                 !std::isfinite(beats) || beats <= 0 || beats > 64)
                 error = "invalid modulation source settings";
-            else if (scope ==
-                     static_cast<std::int64_t>(ModulationScope::voice))
-                error = "per-voice modulation sources are not implemented";
             else {
                 auto next = modulation_configuration_;
                 auto &settings = next.sources[static_cast<std::size_t>(source)];
@@ -3244,6 +3398,12 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     *argument<bool>(command, "tempo_sync");
                 settings.beats_per_cycle = static_cast<float>(beats);
                 settings.scope = static_cast<ModulationScope>(scope);
+                if (settings.scope == ModulationScope::voice && source >= 4 &&
+                    source != static_cast<std::int64_t>(
+                                  ModulationSourceId::envelope) &&
+                    source != static_cast<std::int64_t>(
+                                  ModulationSourceId::velocity))
+                    error = "source does not support per-voice scope";
                 if (const auto *retrigger =
                         argument<bool>(command, "retrigger"))
                     settings.retrigger = *retrigger;
@@ -3345,6 +3505,7 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             id.rfind("parameter.", 0) == 0 || id.rfind("track.mute", 0) == 0 ||
             id.rfind("modulation.route", 0) == 0 ||
             id.rfind("modulation.source", 0) == 0 ||
+            id.rfind("instrument.instance-parameter", 0) == 0 ||
             id.rfind("timeline.", 0) == 0 || id.rfind("edit.undo", 0) == 0 ||
             id.rfind("edit.redo", 0) == 0 ||
             (id.rfind("pad.", 0) == 0 && id != "pad.trigger.v1" &&
@@ -3419,7 +3580,16 @@ void ApplicationService::synchronize_locked() const {
     auto slice_state = slices_.snapshot(state_.selected_sample_slot);
     auto parameters = parameters_.parameters();
     const auto modulation_runtime = engine_.modulation_snapshot();
+    InstrumentInstanceId selected_instance = default_synth_instance_id;
+    for (const auto &track : timeline.timeline.tracks)
+        if (track.id == state_.selected_track)
+            selected_instance = track.instrument_instance_id;
     for (auto &parameter : parameters) {
+        if (const auto instance = synth_instance_parameters_.find(selected_instance);
+            instance != synth_instance_parameters_.end())
+            if (const auto value = instance->second.find(parameter.id);
+                value != instance->second.end())
+                parameter.current_value = value->second;
         parameter.effective_value = parameter.current_value;
         const auto destination = resolve_parameter_destination(parameter.id);
         if (!destination)
@@ -3429,7 +3599,11 @@ void ApplicationService::synchronize_locked() const {
             if (modulation_configuration_.routes[route].destination.target ==
                     destination->target &&
                 modulation_configuration_.routes[route]
-                        .destination.parameter == destination->parameter)
+                        .destination.parameter == destination->parameter &&
+                (modulation_configuration_.routes[route]
+                         .destination.instance == 0 ||
+                 modulation_configuration_.routes[route]
+                         .destination.instance == selected_instance))
                 parameter.effective_value = static_cast<double>(
                     modulation_runtime.effective_values[route]);
     }
@@ -3607,9 +3781,10 @@ void ApplicationService::synchronize_locked() const {
         const auto target = track_targets_.contains(track.id)
                                 ? track_targets_.at(track.id)
                                 : fallback;
-        state_.tracks.push_back({track.id, track.name, track.muted,
-                                 track.pattern.length, target,
-                                 track.instrument_id, track.pattern.events});
+            state_.tracks.push_back({track.id, track.name, track.muted,
+                                     track.pattern.length, target,
+                                     track.instrument_id, track.pattern.events,
+                                     track.instrument_instance_id});
     }
     state_.selected_event.reset();
     state_.selected_step_locks.clear();

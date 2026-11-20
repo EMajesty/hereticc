@@ -28,6 +28,7 @@ struct PlaybackTrack {
     std::uint64_t cursor_cycle{};
     bool muted{};
     std::uint32_t instrument{};
+    InstrumentInstanceId instrument_instance{};
     bool previous_trigger_fired{};
     EventId decision_event{};
     std::uint64_t decision_occurrence{};
@@ -54,6 +55,7 @@ struct TimelineScheduledEvent {
     std::uint32_t parameter_target{};
     float value{};
     std::uint32_t instrument{};
+    InstrumentInstanceId instrument_instance{};
 };
 class TimelineScheduler {
   public:

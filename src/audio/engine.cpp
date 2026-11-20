@@ -19,12 +19,14 @@ AudioEngine::AudioEngine(std::uint32_t rate, std::size_t voice_capacity,
           std::make_unique<SampleVersion[]>(sample_version_capacity)),
       sample_version_capacity_(sample_version_capacity),
       voices_(voice_capacity), legacy_events_(event_staging_capacity),
-      timeline_events_(event_staging_capacity), synth_(rate, voice_capacity),
-      delay_(rate), modulation_(rate), mixer_(rate) {
+      timeline_events_(event_staging_capacity), delay_(rate), modulation_(rate),
+      mixer_(rate) {
     if (rate == 0 || voice_capacity == 0 || event_staging_capacity == 0 ||
         sample_version_capacity == 0)
         throw std::invalid_argument(
             "sample rate and all bounded capacities must be positive");
+    for (auto &synth : synths_)
+        synth = std::make_unique<SubtractiveSynth>(rate, voice_capacity);
     note_slots_.fill(invalid_sample_slot);
     for (auto &target : note_slices_) {
         target.playback.mode = SamplePlaybackMode::gate;
@@ -299,14 +301,20 @@ bool AudioEngine::configure_note_playback(
         {SliceMapCommand::Type::settings, note, target});
 }
 void AudioEngine::trigger_synth(std::uint8_t note, float velocity,
-                                bool note_on) noexcept {
-    if (!synth_triggers_.push({note, velocity, note_on}))
+                                bool note_on,
+                                InstrumentInstanceId instance) noexcept {
+    if (instance == 0 || instance > synths_.size() ||
+        !synth_triggers_.push({note, velocity, note_on, instance}))
         dropped_triggers_.fetch_add(1, std::memory_order_relaxed);
 }
 bool AudioEngine::set_synth_parameter(SynthParameter parameter,
-                                      float value) noexcept {
+                                      float value,
+                                      InstrumentInstanceId instance) noexcept {
+    if (instance == 0 || instance > synths_.size())
+        return false;
     if (!dsp_commands_.push({DspCommand::Target::synth,
-                             static_cast<std::uint32_t>(parameter), value})) {
+                             static_cast<std::uint32_t>(parameter), value,
+                             instance})) {
         dropped_dsp_commands_.fetch_add(1);
         return false;
     }
@@ -568,7 +576,9 @@ void AudioEngine::stop_voices(bool timeline_only) noexcept {
     for (auto &voice : voices_)
         if (!timeline_only || voice.timeline_owned)
             voice.active = false;
-    synth_.reset();
+    for (auto &synth : synths_)
+        synth->reset();
+    synth_active_.fill(false);
 }
 
 void AudioEngine::process(std::span<float> left,
@@ -622,12 +632,17 @@ void AudioEngine::process(std::span<float> left,
 
     Pattern pattern;
     ModulationConfiguration modulation_configuration;
-    while (modulation_configurations_.pop(modulation_configuration))
-        (void)modulation_.configure(modulation_configuration);
+    while (modulation_configurations_.pop(modulation_configuration)) {
+        if (modulation_.configure(modulation_configuration))
+            for (std::size_t instance = 0; instance < synths_.size(); ++instance)
+                (void)synths_[instance]->configure_voice_modulation(
+                    modulation_configuration,
+                    static_cast<std::uint32_t>(instance + 1));
+    }
     DspCommand dsp;
     while (dsp_commands_.pop(dsp)) {
         if (dsp.target == DspCommand::Target::synth)
-            synth_.set_parameter(dsp.parameter, dsp.value);
+            synths_[dsp.instance - 1]->set_parameter(dsp.parameter, dsp.value);
         else if (dsp.target == DspCommand::Target::delay)
             delay_.set_parameter(dsp.parameter, dsp.value);
         else if (dsp.target == DspCommand::Target::delay_bypass)
@@ -639,9 +654,15 @@ void AudioEngine::process(std::span<float> left,
     SynthTrigger synth_trigger;
     while (synth_triggers_.pop(synth_trigger)) {
         if (synth_trigger.note_on)
-            synth_.note_on(synth_trigger.note, synth_trigger.velocity);
+            synths_[synth_trigger.instance - 1]->set_modulation_frame(
+                callback_frame);
+        if (synth_trigger.note_on)
+            synths_[synth_trigger.instance - 1]->note_on(
+                synth_trigger.note, synth_trigger.velocity);
         else
-            synth_.note_off(synth_trigger.note);
+            synths_[synth_trigger.instance - 1]->note_off(synth_trigger.note);
+        if (synth_trigger.note_on)
+            synth_active_[synth_trigger.instance - 1] = true;
         if (synth_trigger.note_on)
             modulation_.note_on(0, synth_trigger.velocity);
         else
@@ -659,6 +680,8 @@ void AudioEngine::process(std::span<float> left,
         project_tempo_bpm_ = static_cast<float>(
             60000000.0 / timeline->transport.microseconds_per_quarter);
         modulation_.set_tempo(project_tempo_bpm_);
+        for (auto &synth : synths_)
+            synth->set_tempo(project_tempo_bpm_);
         modulation_.clear_automation();
         next.state.store(PlanState::active, std::memory_order_release);
         if (active_timeline_slot_ >= 0)
@@ -733,9 +756,14 @@ void AudioEngine::process(std::span<float> left,
     for (std::size_t frame = 0; frame < frames; ++frame) {
         modulation_.process_frame([&](ParameterDestination destination,
                                       float value) noexcept {
-            if (destination.target == ParameterTarget::subtractive_synth)
-                (void)synth_.set_parameter(destination.parameter, value);
-            else if (destination.target == ParameterTarget::stereo_delay)
+            if (destination.target == ParameterTarget::subtractive_synth) {
+                for (std::size_t instance = 0; instance < synths_.size();
+                     ++instance)
+                    if (destination.instance == 0 ||
+                        destination.instance == instance + 1)
+                        (void)synths_[instance]->set_parameter(
+                            destination.parameter, value);
+            } else if (destination.target == ParameterTarget::stereo_delay)
                 (void)delay_.set_parameter(destination.parameter, value);
         });
         while (external_index < pending_trigger_count_ &&
@@ -778,19 +806,31 @@ void AudioEngine::process(std::span<float> left,
             if (event.type == MusicalEventType::parameter) {
                 modulation_.set_automation(
                     {static_cast<ParameterTarget>(event.parameter_target),
-                     event.parameter_id},
+                     event.parameter_id,
+                     event.parameter_target == static_cast<std::uint32_t>(
+                                                   ParameterTarget::subtractive_synth)
+                         ? event.instrument_instance
+                         : 0},
                     event.value);
                 if (event.parameter_target ==
                     static_cast<std::uint32_t>(
                         ParameterTarget::subtractive_synth))
-                    synth_.set_parameter(event.parameter_id, event.value);
+                    synths_[event.instrument_instance - 1]->set_parameter(
+                        event.parameter_id, event.value);
             } else if (event.instrument == subtractive_instrument_key) {
                 const NoteIdentity owner{event.track, event.target_event_id,
                                          event.occurrence};
                 if (event.type == MusicalEventType::note_on)
-                    synth_.note_on(event.pitch, event.value, owner);
+                    synths_[event.instrument_instance - 1]
+                        ->set_modulation_frame(transport_frame_ + frame);
+                if (event.type == MusicalEventType::note_on)
+                    synths_[event.instrument_instance - 1]->note_on(
+                        event.pitch, event.value, owner);
                 else if (event.type == MusicalEventType::note_off)
-                    synth_.note_off(event.pitch, owner);
+                    synths_[event.instrument_instance - 1]->note_off(
+                        event.pitch, owner);
+                if (event.type == MusicalEventType::note_on)
+                    synth_active_[event.instrument_instance - 1] = true;
                 if (event.type == MusicalEventType::note_on)
                     modulation_.note_on(event.track, event.value);
                 else if (event.type == MusicalEventType::note_off)
@@ -879,15 +919,22 @@ void AudioEngine::process(std::span<float> left,
                 voice.position +=
                     voice.reverse ? -voice.increment : voice.increment;
         }
-        float synth_unrouted{};
-        synth_.render_sample_tracks({mixer_tracks.data(), mixer_track_count},
-                                    {synth_tracks.data(), mixer_track_count},
-                                    synth_unrouted);
-        left[frame] += synth_unrouted;
-        right[frame] += synth_unrouted;
-        for (std::size_t i = 0; i < mixer_track_count; ++i)
-            (void)mixer_.add_track(mixer_tracks[i], frame, synth_tracks[i],
-                                   synth_tracks[i]);
+        for (std::size_t synth_index = 0; synth_index < synths_.size();
+             ++synth_index) {
+            if (!synth_active_[synth_index])
+                continue;
+            auto &synth = synths_[synth_index];
+            float synth_unrouted{};
+            synth->render_sample_tracks({mixer_tracks.data(), mixer_track_count},
+                                        {synth_tracks.data(), mixer_track_count},
+                                        synth_unrouted);
+            left[frame] += synth_unrouted;
+            right[frame] += synth_unrouted;
+            for (std::size_t i = 0; i < mixer_track_count; ++i)
+                (void)mixer_.add_track(mixer_tracks[i], frame, synth_tracks[i],
+                                       synth_tracks[i]);
+            synth_active_[synth_index] = synth->active();
+        }
     }
 
     const auto remaining = pending_trigger_count_ - external_index;

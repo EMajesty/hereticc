@@ -11,6 +11,7 @@ enum class ParameterTarget : std::uint32_t {
 struct ParameterDestination {
     ParameterTarget target{};
     std::uint32_t parameter{};
+    std::uint32_t instance{};
 };
 [[nodiscard]] std::optional<ParameterDestination>
     resolve_parameter_destination(std::string_view) noexcept;

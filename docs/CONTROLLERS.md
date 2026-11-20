@@ -235,3 +235,6 @@ Adapters use `modulation.route-create/delete/select/depth/enable.v1`,
 `modulation.midi-cc.v1`. Scope and track ID are semantic route data, not a
 physical layout. Eight encoders may address settings directly; a minimal wheel
 navigates the MOD route list and reads copied source/effective feedback.
+`track.instrument-set.v1` accepts an optional stable `instance_id`, and
+`instrument.instance-parameter-set.v1` edits one instance. Route creation also
+carries `instance_id`; adapters never infer global scope for a local target.

@@ -49,8 +49,10 @@ delay. See the [instrument and DSP architecture](docs/INSTRUMENTS.md).
 
 A bounded [modulation matrix](docs/MODULATION.md) combines stored base values,
 timeline automation and bipolar modulation without overwriting edits. Sources
-have explicit global or independent per-track scope; voice scope is reserved
-and rejected until its polyphonic destination path is complete.
+have explicit global or independent per-track scope. Voice scope supports synth
+pitch, cutoff, and gain through independent per-voice ADSR, velocity, and
+note-triggered LFO state. Tracks may use independent bounded synth instances or
+deliberately share one.
 
 The Samples view provides the first complete chopping workflow: immutable
 loaded samples are displayed through cached waveform peaks, slices use prepared

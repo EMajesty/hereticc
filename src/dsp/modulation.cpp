@@ -1,4 +1,5 @@
 #include "neurogenic/dsp/modulation.hpp"
+#include "neurogenic/instrument/subtractive_synth.hpp"
 #include <cmath>
 #include <limits>
 #include <numbers>
@@ -24,8 +25,7 @@ bool ModulationEngine::configure(
         configuration.update_interval > 1024)
         return false;
     for (const auto &source : configuration.sources)
-        if (source.scope == ModulationScope::voice ||
-            !std::isfinite(source.rate_hz) || source.rate_hz < 0 ||
+        if (!std::isfinite(source.rate_hz) || source.rate_hz < 0 ||
             source.rate_hz > 100 || !std::isfinite(source.beats_per_cycle) ||
             source.beats_per_cycle <= 0 || source.beats_per_cycle > 64 ||
             !std::isfinite(source.attack_seconds) ||
@@ -36,6 +36,13 @@ bool ModulationEngine::configure(
             !std::isfinite(source.release_seconds) ||
             source.release_seconds < 0 || source.release_seconds > 60)
             return false;
+    for (std::size_t source = 0; source < configuration.sources.size(); ++source)
+        if (configuration.sources[source].scope == ModulationScope::voice &&
+            source >= 4 && source != static_cast<std::size_t>(
+                                         ModulationSourceId::envelope) &&
+            source != static_cast<std::size_t>(
+                                         ModulationSourceId::velocity))
+            return false;
     std::array<std::uint64_t, ModulationConfiguration::maximum_tracks> tracks{};
     std::size_t count = 1;
     for (std::size_t i = 0; i < configuration.route_count; ++i) {
@@ -45,11 +52,25 @@ bool ModulationEngine::configure(
             route.depth > 1.0F || !std::isfinite(route.minimum) ||
             !std::isfinite(route.maximum) ||
             route.minimum >= route.maximum ||
-            route.scope == ModulationScope::voice ||
-            configuration.sources[static_cast<std::size_t>(route.source)]
-                    .scope == ModulationScope::voice ||
             configuration.sources[static_cast<std::size_t>(route.source)]
                     .scope != route.scope)
+            return false;
+        if ((route.destination.target == ParameterTarget::subtractive_synth &&
+             route.destination.instance > configuration.maximum_instances) ||
+            (route.destination.target != ParameterTarget::subtractive_synth &&
+             route.destination.instance != 0) ||
+            (route.scope == ModulationScope::track &&
+             route.destination.instance == 0))
+            return false;
+        if (route.scope == ModulationScope::voice &&
+            (route.destination.target != ParameterTarget::subtractive_synth ||
+             route.destination.instance == 0 ||
+             (route.destination.parameter !=
+                  static_cast<std::uint32_t>(SynthParameter::pitch) &&
+              route.destination.parameter !=
+                  static_cast<std::uint32_t>(SynthParameter::cutoff) &&
+              route.destination.parameter !=
+                  static_cast<std::uint32_t>(SynthParameter::gain))))
             return false;
         for (std::size_t other = 0; other < i; ++other)
             if (configuration.routes[other].id == route.id)
@@ -169,7 +190,8 @@ void ModulationEngine::set_automation(ParameterDestination destination,
                                       float value) noexcept {
     for (auto &entry : automation_)
         if (entry.active && entry.destination.target == destination.target &&
-            entry.destination.parameter == destination.parameter) {
+            entry.destination.parameter == destination.parameter &&
+            entry.destination.instance == destination.instance) {
             entry.value = value;
             return;
         }
@@ -215,6 +237,8 @@ void ModulationEngine::update_sources(std::uint32_t elapsed) noexcept {
     for (std::size_t track = 0; track < track_count_; ++track) {
         for (std::size_t source = 0; source < 4; ++source) {
             const auto &settings = configuration_.sources[source];
+            if (settings.scope == ModulationScope::voice)
+                continue;
             if ((settings.scope == ModulationScope::global && track != 0) ||
                 (settings.scope == ModulationScope::track && track == 0))
                 continue;
@@ -233,6 +257,8 @@ void ModulationEngine::update_sources(std::uint32_t elapsed) noexcept {
                                      ModulationSourceId::smooth_random}) {
             const auto source = static_cast<std::size_t>(source_id);
             const auto &settings = configuration_.sources[source];
+            if (settings.scope == ModulationScope::voice)
+                continue;
             if ((settings.scope == ModulationScope::global && track != 0) ||
                 (settings.scope == ModulationScope::track && track == 0))
                 continue;
@@ -252,6 +278,8 @@ void ModulationEngine::update_sources(std::uint32_t elapsed) noexcept {
         }
         auto &envelope = source_states_[track][envelope_source];
         const auto &settings = configuration_.sources[envelope_source];
+        if (settings.scope == ModulationScope::voice)
+            continue;
         if ((settings.scope == ModulationScope::global && track != 0) ||
             (settings.scope == ModulationScope::track && track == 0))
             continue;

@@ -55,7 +55,7 @@ void test_modulation_engine() {
     configuration.routes[0] = {
         1, ModulationSourceId::lfo_1,
         {ParameterTarget::subtractive_synth,
-         static_cast<std::uint32_t>(SynthParameter::cutoff)},
+         static_cast<std::uint32_t>(SynthParameter::cutoff), 1},
         20, 20000, 10000, 0.5F, true, ModulationPolarity::bipolar,
         ModulationScope::track, 10};
     configuration.routes[1] = configuration.routes[0];
@@ -156,6 +156,117 @@ void test_modulation_engine() {
     }
     near(a, b, "sample-and-hold seed reproducibility");
 
+    ModulationConfiguration voice_velocity;
+    voice_velocity.update_interval = 1;
+    voice_velocity.sources[static_cast<std::size_t>(
+        ModulationSourceId::velocity)].scope = ModulationScope::voice;
+    voice_velocity.route_count = 1;
+    voice_velocity.routes[0] = {
+        1,
+        ModulationSourceId::velocity,
+        {ParameterTarget::subtractive_synth,
+         static_cast<std::uint32_t>(SynthParameter::gain), 1},
+        0,
+        1,
+        0.5F,
+        0.5F,
+        true,
+        ModulationPolarity::bipolar,
+        ModulationScope::voice};
+    check(first.configure(voice_velocity),
+          "per-voice modulation configuration validation");
+    SubtractiveSynth high_only(1000, 4), high_and_zero(1000, 4);
+    check(high_only.configure_voice_modulation(voice_velocity, 1) &&
+              high_and_zero.configure_voice_modulation(voice_velocity, 1),
+          "per-voice velocity modulation publication");
+    high_only.note_on(60, 1.0F, {1, 1, 0});
+    high_and_zero.note_on(60, 1.0F, {1, 1, 0});
+    high_and_zero.note_on(60, 0.0F, {1, 2, 0});
+    for (int i = 0; i < 32; ++i)
+        near(high_and_zero.render_sample(), high_only.render_sample(),
+             "velocity modulation is independent per voice");
+
+    ModulationConfiguration voice_lfo = voice_velocity;
+    voice_lfo.sources[0].scope = ModulationScope::voice;
+    voice_lfo.sources[0].waveform = LfoWaveform::sine;
+    voice_lfo.sources[0].rate_hz = 3.0F;
+    voice_lfo.sources[0].retrigger = true;
+    voice_lfo.routes[0].source = ModulationSourceId::lfo_1;
+    voice_lfo.routes[0].destination.parameter =
+        static_cast<std::uint32_t>(SynthParameter::pitch);
+    voice_lfo.routes[0].minimum = -24;
+    voice_lfo.routes[0].maximum = 24;
+    voice_lfo.routes[0].base_value = 0;
+    voice_lfo.routes[0].depth = 0.25F;
+    SubtractiveSynth whole(48000, 4), partitioned(48000, 4);
+    check(whole.configure_voice_modulation(voice_lfo, 1) &&
+              partitioned.configure_voice_modulation(voice_lfo, 1),
+          "per-voice LFO configuration");
+    whole.note_on(64, 0.8F, {1, 1, 0});
+    partitioned.note_on(64, 0.8F, {1, 1, 0});
+    std::array<float, 256> whole_left{}, whole_right{}, split_left{},
+        split_right{};
+    whole.process(whole_left, whole_right);
+    for (std::size_t offset = 0; offset < split_left.size(); offset += 64)
+        partitioned.process(
+            std::span<float>(split_left).subspan(offset, 64),
+            std::span<float>(split_right).subspan(offset, 64));
+    for (std::size_t i = 0; i < whole_left.size(); ++i)
+        near(split_left[i], whole_left[i],
+             "per-voice modulation callback partition independence");
+
+    ModulationConfiguration voice_envelope = voice_velocity;
+    auto &envelope_settings = voice_envelope.sources[static_cast<std::size_t>(
+        ModulationSourceId::envelope)];
+    envelope_settings.scope = ModulationScope::voice;
+    envelope_settings.attack_seconds = 1.0F;
+    voice_envelope.routes[0].source = ModulationSourceId::envelope;
+    voice_envelope.routes[0].base_value = 0.0F;
+    voice_envelope.routes[0].depth = 1.0F;
+    SubtractiveSynth envelope_single(1000, 4), envelope_overlap(1000, 4);
+    check(envelope_single.configure_voice_modulation(voice_envelope, 1) &&
+              envelope_overlap.configure_voice_modulation(voice_envelope, 1),
+          "per-voice envelope configuration");
+    envelope_single.note_on(60, 1.0F, {1, 1, 0});
+    envelope_overlap.note_on(60, 1.0F, {1, 1, 0});
+    for (int i = 0; i < 600; ++i) {
+        (void)envelope_single.render_sample();
+        (void)envelope_overlap.render_sample();
+    }
+    envelope_overlap.note_on(67, 1.0F, {1, 2, 0});
+    near(envelope_overlap.render_sample(), envelope_single.render_sample(),
+         "new overlapping voice did not start its own envelope");
+    bool overlap_became_audible{};
+    for (int i = 0; i < 600; ++i)
+        overlap_became_audible |=
+            std::abs(envelope_overlap.render_sample() -
+                     envelope_single.render_sample()) > 0.001F;
+    check(overlap_became_audible,
+          "overlapping per-voice envelope never advanced independently");
+
+    Timeline instances;
+    for (std::uint64_t id = 1; id <= 2; ++id) {
+        Track track;
+        track.id = id;
+        track.instrument_id = std::string(subtractive_instrument_id);
+        track.instrument_instance_id = static_cast<InstrumentInstanceId>(id);
+        track.pattern.length = ticks_per_quarter;
+        track.pattern.events.push_back(
+            {id, 0, MusicalEventType::note, static_cast<std::uint8_t>(59 + id),
+             1.0F, ticks_per_quarter});
+        instances.tracks.push_back(std::move(track));
+    }
+    AudioEngine instance_audio(1000, 4);
+    std::string instance_error;
+    check(instance_audio.queue_timeline(instances, instance_error),
+          "independent synth instance timeline publication");
+    instance_audio.play();
+    std::array<float, 32> instance_left{}, instance_right{};
+    instance_audio.process(instance_left, instance_right);
+    check(instance_audio.synth_instance_state(1).active_voices == 1 &&
+              instance_audio.synth_instance_state(2).active_voices == 1,
+          "timeline tracks reached independent synth instances");
+
     AudioEngine audio(1000);
     TimelineService timeline([&](const Timeline &value, std::string &error) {
         return audio.queue_timeline(value, error);
@@ -175,6 +286,13 @@ void test_modulation_engine() {
               application.snapshot().project_dirty,
           "semantic modulation route creation");
     check(application
+              .execute({"instrument.instance-parameter-set.v1",
+                        {{"instance_id", std::int64_t{2}},
+                         {"parameter_id", std::string("synth.cutoff")},
+                         {"value", 2500.0}}})
+              .accepted,
+          "instrument instance parameter action");
+    check(application
                   .execute({"modulation.xy.v1",
                             {{"position", NormalizedXY{1.0, 0.5}}}})
                   .accepted,
@@ -191,6 +309,28 @@ void test_modulation_engine() {
                               {"scope", std::int64_t{0}}}})
                    .accepted,
           "unsafe modulation destination rejection");
+    check(application
+              .execute({"modulation.source-configure.v1",
+                        {{"source", std::int64_t{static_cast<std::int64_t>(
+                                        ModulationSourceId::velocity)}},
+                         {"waveform", std::int64_t{0}},
+                         {"rate", 0.0},
+                         {"tempo_sync", false},
+                         {"beats", 1.0},
+                         {"scope", std::int64_t{static_cast<std::int64_t>(
+                                       ModulationScope::voice)}}}})
+              .accepted &&
+              application
+                  .execute({"modulation.route-create.v1",
+                            {{"source", std::int64_t{static_cast<std::int64_t>(
+                                            ModulationSourceId::velocity)}},
+                             {"destination", std::string("synth.gain")},
+                             {"depth", 0.5},
+                             {"scope", std::int64_t{static_cast<std::int64_t>(
+                                            ModulationScope::voice)}},
+                             {"instance_id", std::int64_t{1}}}})
+                  .accepted,
+          "semantic per-voice modulation route creation");
 }
 
 void test_performance_monitoring() {
@@ -1604,6 +1744,7 @@ void test_unified_project_persistence() {
     track.id = 77;
     track.name = "Synth lead";
     track.instrument_id = std::string(subtractive_instrument_id);
+    track.instrument_instance_id = 2;
     track.pattern.length = 2880;
     MusicalEvent note{91, 120, MusicalEventType::note, 64, 0.7F, 360};
     note.trigger_probability = 0.625F;
@@ -1633,6 +1774,7 @@ void test_unified_project_persistence() {
     settings.source_beats = 7;
     project.parameters["synth.cutoff"] = 4321.0;
     project.parameters["effect.delay.mix"] = 0.25;
+    project.parameters["instance.2.synth.cutoff"] = 2500.0;
     project.modulation.sources[0].waveform = LfoWaveform::triangle;
     project.modulation.sources[0].tempo_sync = true;
     project.modulation.sources[0].beats_per_cycle = 2;
@@ -1640,7 +1782,7 @@ void test_unified_project_persistence() {
     project.modulation.routes[0] = {
         81, ModulationSourceId::lfo_1,
         {ParameterTarget::subtractive_synth,
-         static_cast<std::uint32_t>(SynthParameter::cutoff)},
+         static_cast<std::uint32_t>(SynthParameter::cutoff), 2},
         20, 20000, 4321, -0.25F};
 
     ProjectIoMetrics save_metrics, load_metrics;
@@ -1663,9 +1805,12 @@ void test_unified_project_persistence() {
               loaded.samples.pad_settings[5].stretch_mode ==
                   StretchMode::realtime &&
               loaded.parameters.at("synth.cutoff") == 4321.0 &&
+              loaded.parameters.at("instance.2.synth.cutoff") == 2500.0 &&
               loaded.modulation.route_count == 1 &&
               loaded.modulation.routes[0].id == 81 &&
+              loaded.modulation.routes[0].destination.instance == 2 &&
               loaded.modulation.sources[0].tempo_sync &&
+              loaded.timeline.tracks[0].instrument_instance_id == 2 &&
               loaded.missing_assets.empty() &&
               save_metrics.metadata_bytes > 0 &&
               load_metrics.metadata_bytes > 0,
@@ -2288,6 +2433,19 @@ void test_transport_integration_and_timeline_io() {
     std::filesystem::remove(legacy_path);
     check(legacy_loaded.tracks[0].pattern.events[1].target_event_id == 10,
           "legacy note-off target resolution");
+    const auto singleton_path = std::filesystem::temp_directory_path() /
+                                "neurogenic-v2-synth-instance.ngt";
+    {
+        std::ofstream legacy(singleton_path);
+        legacy << "NEUROGENIC_TIMELINE 2\ntransport 500000 4 4\nseed 0\n"
+                  "track 9 960 0 \"legacy synth\" \"synth.subtractive.v1\"\n"
+                  "note 9 1 0 60 1 240 1 0 1 1 1\n";
+    }
+    const auto singleton = load_timeline(singleton_path);
+    std::filesystem::remove(singleton_path);
+    check(singleton.tracks[0].instrument_instance_id ==
+              default_synth_instance_id,
+          "legacy synth did not migrate to shared instance 1");
 }
 
 void test_midi_control_dispatch() {

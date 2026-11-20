@@ -179,7 +179,7 @@ MixerConfiguration load_mixer(const std::filesystem::path &path) {
 }
 std::string serialize_modulation(const ModulationConfiguration &configuration) {
     std::ostringstream out;
-    out << "NEUROGENIC_MODULATION 1\n" << std::setprecision(9)
+    out << "NEUROGENIC_MODULATION 2\n" << std::setprecision(9)
         << "interval " << configuration.update_interval << '\n';
     for (std::size_t i = 0; i < configuration.source_count; ++i) {
         const auto &source = configuration.sources[i];
@@ -196,6 +196,7 @@ std::string serialize_modulation(const ModulationConfiguration &configuration) {
         const auto &route = configuration.routes[i];
         out << route.id << ' ' << static_cast<unsigned>(route.source) << ' '
             << static_cast<unsigned>(route.destination.target) << ' '
+            << route.destination.instance << ' '
             << route.destination.parameter << ' ' << route.minimum << ' '
             << route.maximum << ' ' << route.base_value << ' ' << route.depth
             << ' ' << route.enabled << ' '
@@ -212,7 +213,8 @@ ModulationConfiguration load_modulation(const std::filesystem::path &path) {
     unsigned version{};
     ModulationConfiguration result;
     if (!(input >> magic >> version) || magic != "NEUROGENIC_MODULATION" ||
-        version != 1 || !(input >> label >> result.update_interval) ||
+        (version == 0 || version > 2) ||
+        !(input >> label >> result.update_interval) ||
         label != "interval")
         throw std::runtime_error("unsupported or malformed modulation metadata");
     for (std::size_t i = 0; i < result.source_count; ++i) {
@@ -236,8 +238,9 @@ ModulationConfiguration load_modulation(const std::filesystem::path &path) {
     for (std::size_t i = 0; i < result.route_count; ++i) {
         unsigned source{}, target{}, polarity{}, scope{};
         auto &route = result.routes[i];
-        if (!(input >> route.id >> source >> target >>
-              route.destination.parameter >> route.minimum >> route.maximum >>
+        if (!(input >> route.id >> source >> target) ||
+            (version >= 2 && !(input >> route.destination.instance)) ||
+            !(input >> route.destination.parameter >> route.minimum >> route.maximum >>
               route.base_value >> route.depth >> route.enabled >> polarity >>
               scope >> route.track_id) ||
             source >= static_cast<unsigned>(ModulationSourceId::count) ||
@@ -249,6 +252,10 @@ ModulationConfiguration load_modulation(const std::filesystem::path &path) {
         route.destination.target = static_cast<ParameterTarget>(target);
         route.polarity = static_cast<ModulationPolarity>(polarity);
         route.scope = static_cast<ModulationScope>(scope);
+        if (version == 1 &&
+            route.destination.target == ParameterTarget::subtractive_synth &&
+            route.scope != ModulationScope::global)
+            route.destination.instance = default_synth_instance_id;
     }
     ModulationEngine validation;
     if (!validation.configure(result))
