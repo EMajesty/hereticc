@@ -104,6 +104,13 @@ resumes, and restart cleans voices and returns to zero. Timeline replacement
 preserves position and cleans timeline-owned voices. Plan destruction and final
 reclamation happen only after the audio device has stopped.
 
+With external MIDI sync selected, a bounded Q32 phase/frequency follower owns
+the rate of that same transport frame; it does not create another transport.
+The timeline scheduler accepts a prepared-frame range plus the physical buffer
+length and scales event offsets into that callback. Clock loss freezes the
+authoritative frame after bounded holdover and cleans voices. All follower
+state is preallocated and callback-owned.
+
 `SampleManager` owns a bounded asynchronous command queue and one preparation
 worker. WAV I/O, decoding, resampling, allocation, status locking, and errors
 remain on that worker/control side. It publishes immutable samples through a

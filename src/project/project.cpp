@@ -273,9 +273,10 @@ ModulationConfiguration load_modulation(const std::filesystem::path &path) {
 }
 std::string serialize_midi(const MidiProjectConfiguration &configuration) {
     std::ostringstream out;
-    out << "NEUROGENIC_MIDI 1\nclock "
+    out << "NEUROGENIC_MIDI 2\nclock "
         << static_cast<unsigned>(configuration.clock_source) << ' '
-        << configuration.clock_output_count;
+        << configuration.clock_output_count << ' '
+        << configuration.forward_external_clock;
     for (std::size_t i = 0; i < configuration.clock_output_count; ++i)
         out << ' ' << configuration.clock_outputs[i];
     out << "\nroutes " << configuration.route_count << '\n';
@@ -302,14 +303,17 @@ MidiProjectConfiguration load_midi(const std::filesystem::path &path) {
     unsigned version{}, source{};
     MidiProjectConfiguration result;
     if (!(input >> magic >> version) || magic != "NEUROGENIC_MIDI" ||
-        version != 1 ||
+        (version != 1 && version != 2) ||
         !(input >> label >> source >> result.clock_output_count) ||
         label != "clock" || source > 1 ||
         result.clock_output_count > maximum_midi_ports)
         throw std::runtime_error("unsupported or malformed MIDI metadata");
     result.clock_source = static_cast<MidiClockSource>(source);
+    if (version >= 2 && !(input >> result.forward_external_clock))
+        throw std::runtime_error("malformed MIDI forwarding preference");
     for (std::size_t i = 0; i < result.clock_output_count; ++i)
-        if (!(input >> result.clock_outputs[i]) || !result.clock_outputs[i])
+        if (!(input >> result.clock_outputs[i]) || !result.clock_outputs[i] ||
+            result.clock_outputs[i] > maximum_midi_ports)
             throw std::runtime_error("malformed MIDI clock output");
     if (!(input >> label >> result.route_count) || label != "routes" ||
         result.route_count > maximum_midi_routes)

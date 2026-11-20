@@ -19,8 +19,8 @@ AudioEngine::AudioEngine(std::uint32_t rate, std::size_t voice_capacity,
           std::make_unique<SampleVersion[]>(sample_version_capacity)),
       sample_version_capacity_(sample_version_capacity),
       voices_(voice_capacity), legacy_events_(event_staging_capacity),
-      timeline_events_(event_staging_capacity), midi_clock_(rate), delay_(rate),
-      modulation_(rate), mixer_(rate) {
+      timeline_events_(event_staging_capacity), midi_clock_(rate),
+      midi_clock_follower_(rate), delay_(rate), modulation_(rate), mixer_(rate) {
     if (rate == 0 || voice_capacity == 0 || event_staging_capacity == 0 ||
         sample_version_capacity == 0)
         throw std::invalid_argument(
@@ -691,6 +691,8 @@ void AudioEngine::process(std::span<float> left,
         project_tempo_bpm_ = static_cast<float>(
             60000000.0 / timeline->transport.microseconds_per_quarter);
         midi_clock_.set_tempo(timeline->transport.microseconds_per_quarter);
+        active_timeline_tempo_us_ =
+            timeline->transport.microseconds_per_quarter;
         modulation_.set_tempo(project_tempo_bpm_);
         for (auto &synth : synths_)
             synth->set_tempo(project_tempo_bpm_);
@@ -709,15 +711,32 @@ void AudioEngine::process(std::span<float> left,
     }
     MidiPacket midi_input;
     while (midi_inputs_.pop(midi_input)) {
-        midi_clock_receiver_.receive(midi_input);
+        midi_clock_follower_.receive(midi_input);
         if (auto *output = midi_output_.load(std::memory_order_acquire))
             (void)midi_router_.route(midi_input, *output);
+        const auto realtime = midi_input.size ? midi_input.bytes[0] : 0;
+        const auto forward_clock = realtime == 0xF2 || realtime == 0xF8 ||
+                                   realtime == 0xFA || realtime == 0xFB ||
+                                   realtime == 0xFC;
+        if (accept_external_clock_ &&
+            midi_clock_configuration_.forward_external && forward_clock) {
+            if (auto *output = midi_output_.load(std::memory_order_acquire))
+                for (std::size_t i = 0;
+                     i < midi_clock_configuration_.port_count; ++i)
+                    if (midi_clock_configuration_.ports[i] != midi_input.port) {
+                        auto forwarded = midi_input;
+                        forwarded.port = midi_clock_configuration_.ports[i];
+                        (void)output->enqueue(forwarded);
+                    }
+        }
         if (accept_external_clock_ && midi_input.size &&
             midi_input.bytes[0] == 0xFA) {
             transport_frame_ = 0;
             transport_playing_ = true;
             stop_voices();
             modulation_.restart();
+            if (auto *output = midi_output_.load(std::memory_order_acquire))
+                output->panic();
         } else if (accept_external_clock_ && midi_input.size &&
                    midi_input.bytes[0] == 0xFB) {
             transport_playing_ = true;
@@ -726,9 +745,49 @@ void AudioEngine::process(std::span<float> left,
             transport_playing_ = false;
             stop_voices();
             modulation_.clear_automation();
+            if (auto *output = midi_output_.load(std::memory_order_acquire))
+                output->panic();
+        } else if (accept_external_clock_ && midi_input.size >= 3 &&
+                   midi_input.bytes[0] == 0xF2) {
+            stop_voices();
+            modulation_.clear_automation();
+            if (auto *output = midi_output_.load(std::memory_order_acquire))
+                output->panic();
         }
     }
-    const auto external_clock = midi_clock_receiver_.state();
+    const auto phase_to_frame = [&](std::uint64_t phase) noexcept {
+        const auto numerator = static_cast<__uint128_t>(phase) * rate_ *
+                               active_timeline_tempo_us_;
+        constexpr auto denominator =
+            static_cast<__uint128_t>(24) * 1'000'000 *
+            (std::uint64_t{1} << 32);
+        const auto frame = numerator / denominator;
+        return frame > std::numeric_limits<std::uint64_t>::max()
+                   ? std::numeric_limits<std::uint64_t>::max()
+                   : static_cast<std::uint64_t>(frame);
+    };
+    auto external_start_frame = transport_frame_;
+    auto external_end_frame = transport_frame_;
+    if (accept_external_clock_) {
+        external_start_frame = phase_to_frame(midi_clock_follower_.phase_q32());
+        midi_clock_follower_.advance(static_cast<std::uint32_t>(frames));
+        external_end_frame = phase_to_frame(midi_clock_follower_.phase_q32());
+    }
+    const auto external_clock = midi_clock_follower_.state();
+    if (accept_external_clock_ &&
+        external_clock.sync_status == MidiSyncStatus::lost &&
+        !external_clock_lost_) {
+        external_clock_lost_ = true;
+        transport_playing_ = false;
+        stop_voices();
+        modulation_.clear_automation();
+    } else if (accept_external_clock_ && external_clock_lost_ &&
+               external_clock.running &&
+               external_clock.sync_status != MidiSyncStatus::lost) {
+        external_clock_lost_ = false;
+        transport_playing_ = true;
+        stop_voices();
+    }
     external_clock_running_.store(external_clock.running,
                                   std::memory_order_release);
     external_clock_available_.store(external_clock.available,
@@ -741,6 +800,13 @@ void AudioEngine::process(std::span<float> left,
                                  std::memory_order_release);
     external_clock_last_timestamp_.store(external_clock.last_timestamp_ns,
                                          std::memory_order_release);
+    external_clock_status_.store(
+        static_cast<std::uint8_t>(external_clock.sync_status),
+        std::memory_order_release);
+    external_clock_phase_error_.store(external_clock.phase_error_pulses,
+                                      std::memory_order_release);
+    external_song_position_.store(external_clock.song_position,
+                                  std::memory_order_release);
     TransportCommand command;
     while (transport_commands_.pop(command)) {
         if (command == TransportCommand::play) {
@@ -814,9 +880,13 @@ void AudioEngine::process(std::span<float> left,
             : 0;
     const auto timeline_count =
         transport_playing_
-            ? timeline_scheduler_.schedule(transport_frame_,
-                                           static_cast<std::uint32_t>(frames),
-                                           timeline_events_)
+            ? accept_external_clock_
+                  ? timeline_scheduler_.schedule_range(
+                        external_start_frame, external_end_frame,
+                        static_cast<std::uint32_t>(frames), timeline_events_)
+                  : timeline_scheduler_.schedule(
+                        transport_frame_, static_cast<std::uint32_t>(frames),
+                        timeline_events_)
             : 0;
     dropped_timeline_events_.store(timeline_scheduler_.dropped_events(),
                                    std::memory_order_release);
@@ -1115,7 +1185,9 @@ void AudioEngine::process(std::span<float> left,
                 sample_versions_[version].state.store(
                     SampleVersionState::retired, std::memory_order_release);
         }
-    if (transport_playing_) {
+    if (transport_playing_ && accept_external_clock_) {
+        transport_frame_ = external_end_frame;
+    } else if (transport_playing_) {
         if (frames >
             std::numeric_limits<std::uint64_t>::max() - transport_frame_) {
             transport_frame_ = std::numeric_limits<std::uint64_t>::max();

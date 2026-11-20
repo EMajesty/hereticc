@@ -195,6 +195,8 @@ struct ApplicationState {
     MidiProjectConfiguration midi;
     std::uint64_t midi_dropped{}, midi_sent{};
     ExternalClockState external_midi_clock;
+    std::array<bool, maximum_midi_ports> midi_output_connected{};
+    std::array<bool, maximum_midi_ports> midi_input_connected{};
 };
 struct ApplicationCommand {
     std::string action_id;
@@ -233,6 +235,10 @@ class ApplicationService {
     [[nodiscard]] bool receive_midi(const MidiPacket &packet) noexcept {
         return engine_.receive_midi(packet);
     }
+    void set_midi_output_connections(
+        const std::array<bool, maximum_midi_ports> &connections);
+    void set_midi_input_connections(
+        const std::array<bool, maximum_midi_ports> &connections);
 
   private:
     CommandResult execute_locked(const ApplicationCommand &, std::uint64_t);

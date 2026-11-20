@@ -20,6 +20,9 @@ class MidiOutput {
     bool connect(MidiPortId, const std::string &selector, std::string &error);
     void disconnect(MidiPortId) noexcept;
     bool send(const MidiPacket &, std::string &error) noexcept;
+    std::size_t reconnect_missing(std::string &error) noexcept;
+    [[nodiscard]] std::array<bool, maximum_midi_ports>
+    connection_state() const noexcept;
 
   private:
     struct Impl;

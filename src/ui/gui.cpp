@@ -763,17 +763,37 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
               l.content.w - 24 * l.scale, 28 * l.scale},
              UiColor::accent, "MIDI ROUTING / CLOCK");
         const auto &clock = state.external_midi_clock;
-        const std::array<std::string, 5> rows{
+        const auto status_name = [](MidiSyncStatus status) {
+            switch (status) {
+            case MidiSyncStatus::stopped: return "STOPPED";
+            case MidiSyncStatus::acquiring: return "ACQUIRING";
+            case MidiSyncStatus::locked: return "LOCKED";
+            case MidiSyncStatus::holdover: return "HOLDOVER";
+            case MidiSyncStatus::lost: return "LOST";
+            }
+            return "UNKNOWN";
+        };
+        const auto connected_inputs = static_cast<std::size_t>(std::count(
+            state.midi_input_connected.begin(),
+            state.midi_input_connected.end(), true));
+        const auto connected_outputs = static_cast<std::size_t>(std::count(
+            state.midi_output_connected.begin(),
+            state.midi_output_connected.end(), true));
+        const std::array<std::string, 7> rows{
             "CLOCK SOURCE  " +
                 std::string(state.midi.clock_source == MidiClockSource::internal
                                 ? "INTERNAL"
                                 : "EXTERNAL"),
-            "EXTERNAL  " + std::string(clock.running ? "RUNNING" : "STOPPED") +
+            "SYNC  " + std::string(status_name(clock.sync_status)) + "  " +
                 "  " + (clock.available ? std::to_string(clock.tempo_bpm)
                                              : std::string("NO CLOCK")) +
                 (clock.dropout ? "  DROPOUT" : ""),
+            "PHASE ERROR  " + std::to_string(clock.phase_error_pulses) +
+                " PULSES  SPP " + std::to_string(clock.song_position),
             "CLOCK OUTPUTS  " + std::to_string(state.midi.clock_output_count),
             "ROUTES  " + std::to_string(state.midi.route_count),
+            "PORTS  IN " + std::to_string(connected_inputs) + "  OUT " +
+                std::to_string(connected_outputs),
             "SENT " + std::to_string(state.midi_sent) + "  DROPPED " +
                 std::to_string(state.midi_dropped)};
         for (std::size_t i = 0; i < rows.size(); ++i) {
@@ -782,7 +802,7 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
                                                     : UiColor::text,
                  rows[i]);
         }
-        text(l.rows[6], UiColor::muted,
+        text(l.rows[7], UiColor::muted,
              "Enter: toggle clock source   Shift+Enter: MIDI panic");
     }
     if (view_ == GuiView::mixer || view_ == GuiView::routing ||

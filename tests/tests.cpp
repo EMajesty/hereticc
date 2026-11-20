@@ -564,6 +564,64 @@ void test_midi_routing_and_clock() {
     receiver.receive({1, {0xFC, 0, 0}, 1, timestamp + 630'000'000ULL});
     check(!receiver.state().running, "external MIDI Stop");
 
+    MidiClockFollower follower(48000);
+    follower.receive({1, {0xFA, 0, 0}, 1, 1});
+    timestamp = 1;
+    for (int pulse = 0; pulse < 96; ++pulse) {
+        timestamp += 20'833'333ULL + (pulse % 2 ? 80'000 : -80'000);
+        follower.receive({1, {0xF8, 0, 0}, 1, timestamp});
+        follower.advance(1000);
+    }
+    check(follower.state().sync_status == MidiSyncStatus::locked &&
+              std::fabs(follower.state().tempo_bpm - 120.0) < 0.5 &&
+              std::fabs(follower.state().phase_error_pulses) < 0.2,
+          "external follower locks through bounded jitter");
+    const auto locked_phase = follower.phase_q32();
+    follower.advance(7000);
+    check(follower.state().sync_status == MidiSyncStatus::holdover &&
+              follower.phase_q32() > locked_phase,
+          "external follower bounded holdover");
+    follower.advance(24001);
+    check(follower.state().sync_status == MidiSyncStatus::lost &&
+              follower.state().dropout,
+          "external follower freezes after dropout");
+    const auto lost_phase = follower.phase_q32();
+    follower.advance(4096);
+    check(follower.phase_q32() == lost_phase,
+          "lost external clock does not free-run indefinitely");
+    timestamp += 700'000'000ULL;
+    follower.receive({1, {0xF8, 0, 0}, 1, timestamp});
+    check(follower.state().sync_status != MidiSyncStatus::lost &&
+              follower.consume_discontinuity(),
+          "external clock recovery reacquires with discontinuity");
+    follower.receive({1, {0xFC, 0, 0}, 1, timestamp + 1});
+    const auto stopped_phase = follower.phase_q32();
+    follower.advance(4096);
+    check(follower.phase_q32() == stopped_phase,
+          "MIDI Stop freezes follower position");
+    follower.receive({1, {0xF2, 8, 0}, 3, timestamp + 2});
+    follower.receive({1, {0xFB, 0, 0}, 1, timestamp + 3});
+    check(follower.state().song_position == 8 &&
+              (follower.phase_q32() >> 32) == 48,
+          "Song Position Pointer and Continue preserve requested position");
+    follower.receive({1, {0xFA, 0, 0}, 1, timestamp + 4});
+    check(follower.phase_q32() == 0 && follower.state().song_position == 0,
+          "MIDI Start resets position unlike Continue");
+
+    MidiClockFollower fractional_follower(48000);
+    fractional_follower.receive({1, {0xFA, 0, 0}, 1, 1});
+    timestamp = 1;
+    for (int pulse = 0; pulse < 96; ++pulse) {
+        const auto interval = static_cast<std::uint64_t>(
+            21'500'000 - std::min(pulse, 80) * 12'000);
+        timestamp += interval;
+        fractional_follower.receive({1, {0xF8, 0, 0}, 1, timestamp});
+        fractional_follower.advance(900);
+    }
+    check(fractional_follower.state().tempo_bpm > 120.0 &&
+              fractional_follower.state().tempo_bpm < 125.0,
+          "external follower tracks gradual acceleration");
+
     MidiRouter router;
     std::string error;
     const std::array<MidiRoute, 2> routes{
@@ -595,6 +653,22 @@ void test_midi_routing_and_clock() {
         (void)bounded.enqueue({1, {0x90, 60, 100}, 3});
     check(bounded.dropped() > 0 && bounded.queued() == 1024,
           "MIDI output overflow is bounded and observable");
+    check(bounded.enqueue({1, {0xF8, 0, 0}, 1}),
+          "clock has reserved priority capacity under congestion");
+    MidiPacket first_congested;
+    bounded.dispatch([&](const MidiPacket &packet) {
+        if (!first_congested.size)
+            first_congested = packet;
+        return true;
+    });
+    check(first_congested.bytes[0] == 0xF8,
+          "clock dispatch is prioritized over dense note traffic");
+    AudioEngine congested_input;
+    for (int i = 0; i < 300; ++i)
+        (void)congested_input.receive_midi({1, {0xF8, 0, 0}, 1,
+                                            static_cast<std::uint64_t>(i + 1)});
+    check(congested_input.dropped_midi_inputs() > 0,
+          "MIDI input congestion is bounded and observable");
     MidiOutputScheduler panic;
     panic.panic(1);
     check(panic.queued() == 32,
@@ -677,6 +751,107 @@ void test_midi_routing_and_clock() {
           }) &&
               !midi_audio.playing(),
           "audio-owned MIDI thru and external Stop");
+
+    auto externally_clocked_note_frame = [&](std::uint32_t partition) {
+        AudioEngine synced(48000);
+        MidiOutputScheduler synced_output;
+        synced.set_midi_output_scheduler(&synced_output);
+        Timeline synced_timeline;
+        synced_timeline.transport.microseconds_per_quarter = 500000;
+        Track synced_track;
+        synced_track.id = 71;
+        synced_track.instrument_id = std::string(external_midi_instrument_id);
+        synced_track.midi_output_port = 2;
+        synced_track.midi_channel = 1;
+        synced_track.pattern.length = ticks_per_quarter * 4;
+        synced_track.pattern.events.push_back(
+            {1, ticks_per_quarter, MusicalEventType::note, 64, 1.0F, 120});
+        synced_timeline.tracks.push_back(std::move(synced_track));
+        std::string sync_error;
+        check(synced.queue_timeline(synced_timeline, sync_error),
+              "queue externally clocked timeline");
+        MidiRoutingConfiguration sync_configuration;
+        sync_configuration.accept_external_clock = true;
+        check(synced.publish_midi_routing(sync_configuration),
+              "select external timeline clock");
+        check(synced.receive_midi({1, {0xFA, 0, 0}, 1, 1}),
+              "enqueue external Start");
+        std::vector<float> l(partition), r(partition);
+        std::uint64_t pulse_timestamp{1};
+        std::uint64_t note_frame = std::numeric_limits<std::uint64_t>::max();
+        for (int pulse = 0; pulse < 32; ++pulse) {
+            pulse_timestamp += 20'833'333ULL;
+            check(synced.receive_midi(
+                      {1, {0xF8, 0, 0}, 1, pulse_timestamp}),
+                  "enqueue external clock pulse");
+            for (std::uint32_t advanced = 0; advanced < 1000;
+                 advanced += partition) {
+                synced.process(l, r);
+                synced_output.dispatch([&](const MidiPacket &packet) {
+                    if ((packet.bytes[0] & 0xF0U) == 0x90 &&
+                        packet.bytes[1] == 64)
+                        note_frame = std::min(note_frame, packet.frame);
+                    return true;
+                });
+            }
+        }
+        return note_frame;
+    };
+    const auto clocked_1000 = externally_clocked_note_frame(1000);
+    const auto clocked_250 = externally_clocked_note_frame(250);
+    check(clocked_1000 != std::numeric_limits<std::uint64_t>::max() &&
+              clocked_250 != std::numeric_limits<std::uint64_t>::max() &&
+              std::llabs(static_cast<long long>(clocked_1000) -
+                         static_cast<long long>(clocked_250)) <= 1000 &&
+              clocked_1000 >= 22'000 && clocked_1000 <= 26'000,
+          "timeline phase follows external clock across callback partitions");
+
+    AudioEngine positioned(48000);
+    MidiOutputScheduler positioned_output;
+    positioned.set_midi_output_scheduler(&positioned_output);
+    check(positioned.queue_timeline(external, error),
+          "queue SPP timeline fixture");
+    MidiRoutingConfiguration positioned_configuration;
+    positioned_configuration.accept_external_clock = true;
+    check(positioned.publish_midi_routing(positioned_configuration),
+          "select external clock for SPP");
+    check(positioned.receive_midi({1, {0xF2, 4, 0}, 3, 1}) &&
+              positioned.receive_midi({1, {0xFB, 0, 0}, 1, 2}),
+          "enqueue SPP and Continue");
+    std::array<float, 64> positioned_left{}, positioned_right{};
+    positioned.process(positioned_left, positioned_right);
+    check(positioned.frame_position() >= 24000,
+          "SPP seeks authoritative transport before Continue");
+
+    AudioEngine forwarding(48000);
+    MidiOutputScheduler forwarding_output;
+    forwarding.set_midi_output_scheduler(&forwarding_output);
+    MidiRoutingConfiguration forwarding_routing;
+    forwarding_routing.accept_external_clock = true;
+    check(forwarding.publish_midi_routing(forwarding_routing),
+          "publish external forwarding mode");
+    MidiClockOutputConfiguration forwarding_clock;
+    forwarding_clock.forward_external = true;
+    forwarding_clock.port_count = 2;
+    forwarding_clock.ports[0] = 1;
+    forwarding_clock.ports[1] = 2;
+    check(forwarding.publish_midi_clock_output(forwarding_clock) &&
+              forwarding.receive_midi(
+                  {1, {0xF8, 0, 0}, 1, 20'833'333ULL}),
+          "enqueue forwarded external clock");
+    forwarding.process(positioned_left, positioned_right);
+    sent.clear();
+    forwarding_output.dispatch([&](const MidiPacket &packet) {
+        sent.push_back(packet);
+        return true;
+    });
+    check(std::count_if(sent.begin(), sent.end(), [](const auto &packet) {
+              return packet.port == 2 && packet.bytes[0] == 0xF8;
+          }) == 1 &&
+              std::none_of(sent.begin(), sent.end(), [](const auto &packet) {
+                  return packet.port == 1 && packet.bytes[0] == 0xF8;
+              }),
+          "external clock forwards explicitly without source-port feedback");
 
     const auto midi_path =
         std::filesystem::temp_directory_path() / "neurogenic-midi-timeline.ngt";
@@ -2152,6 +2327,7 @@ void test_unified_project_persistence() {
         4321,
         -0.25F};
     project.midi.clock_source = MidiClockSource::external;
+    project.midi.forward_external_clock = true;
     project.midi.route_count = 1;
     project.midi.routes[0] =
         {51, 1, 2, 0, 4, true, true, false, false, false, false, true};
@@ -2183,6 +2359,7 @@ void test_unified_project_persistence() {
               loaded.modulation.routes[0].destination.instance == 2 &&
               loaded.modulation.sources[0].tempo_sync &&
               loaded.midi.clock_source == MidiClockSource::external &&
+              loaded.midi.forward_external_clock &&
               loaded.midi.route_count == 1 &&
               loaded.midi.routes[0].output_channel == 4 &&
               std::fabs(loaded.modulation
@@ -4539,6 +4716,11 @@ void test_mixer_and_routing() {
               gui.input({GuiInput::Type::key_down, GuiKey::enter}, 1024, 600) &&
               application.snapshot().midi.clock_source ==
                   MidiClockSource::external &&
+              application
+                  .execute({"midi.clock-forward-set.v1",
+                            {{"enabled", true}}})
+                  .accepted &&
+              application.snapshot().midi.forward_external_clock &&
               !gui.frame(1024, 600).commands.empty(),
           "responsive modulation GUI navigation");
 }

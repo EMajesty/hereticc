@@ -10,7 +10,8 @@ The input callback copies messages into the bounded controller queue. The
 control dispatcher preserves controller mappings and passes raw messages into a
 second bounded queue owned by `AudioEngine`. At the next audio block the engine
 evaluates validated thru routes, received transport, and clock state. Outbound
-messages enter a 1024-message SPSC queue. A non-real-time dispatch thread alone
+messages enter bounded normal and priority SPSC queues. Clock, transport,
+note-off, and panic cleanup use reserved priority capacity. A non-real-time dispatch thread alone
 calls libremidi. Queue exhaustion drops the newest message and increments the
 observable counter; Stop and Panic enqueue CC 123 (All Notes Off) and CC 120
 (All Sound Off) for every channel.
@@ -24,13 +25,26 @@ rescale the fractional phase rather than restarting it. Physical transmission
 occurs after the audio callback, so frame timestamps express intended engine
 time, not a claim of sample-accurate cable timing.
 
-External reception recognizes Clock, Start, Continue, and Stop. A bounded
-five-pulse interval filter estimates tempo, rejects isolated implausible
-intervals, and reports dropout after 500 ms. Selecting external clock makes its
-transport messages authoritative and disables generated clock. Current external
-sync is transport-message synchronization plus tempo measurement: continuous
-phase/tempo slaving, Song Position Pointer seeking, and backend timestamp
-latency compensation remain future work.
+External reception recognizes Clock, Start, Continue, Stop, and 14-bit Song
+Position Pointer (SPP, in MIDI sixteenth notes). A bounded seven-pulse median
+filter estimates pulse frequency; a 1/8 low-pass update follows gradual drift.
+Each pulse applies at most one eighth-pulse phase correction unless acquiring,
+recovering, or more than two pulses out of phase. The resulting Q32 pulse phase
+drives the authoritative timeline range, and event offsets are proportionally
+mapped into each audio callback. This preserves musical position across
+callback partitions without blocking for a pulse.
+
+The sync states are `acquiring`, `locked`, `holdover`, `lost`, and `stopped`.
+After approximately 125 ms without a pulse the follower enters holdover and
+continues at its filtered rate. At 500 ms it enters lost, freezes position,
+cleans active notes, and stops playback. The next valid pulse snaps to its
+deterministic clock position and resumes if external transport is running.
+Start cleans notes and resets to zero; Continue retains the current or
+SPP-selected position; Stop freezes and cleans notes.
+
+External clock/transport forwarding is explicit. The originating logical port
+is skipped to prevent immediate feedback; validated routes also reject direct
+same-port clock loops. Backend timestamp latency compensation remains future.
 
 ## Tracks and routes
 
@@ -51,12 +65,15 @@ Native launch examples:
 
 Multiple `--midi` and `--midi-out` options bind logical ports in command-line
 order. Projects persist logical selectors, routes, track assignments, clock
-source/output settings, and latency-offset metadata. Automatic reconnect and
-hotplug recovery are not implemented yet.
+source/output/forwarding settings, and latency-offset metadata. A non-real-time
+monitor checks once per second. A disconnected port reconnects only when the
+exact configured display name reappears; it never selects a different device.
+Output reconnect requests panic cleanup.
 
 ## Hardware limits
 
 Automated tests use simulated packets and deterministic timestamps. They verify
-scheduling, routing, clock drift, jitter filtering, overflow, panic, and
-persistence, but do not measure physical DIN/USB MIDI jitter, backend latency,
-hotplug behavior, or device interoperability.
+scheduling, routing, phase following, SPP, jitter, holdover/loss/recovery,
+priority overflow, panic, exact-name reconnect policy, and persistence. They do
+not measure physical DIN/USB MIDI jitter, backend latency, OS hotplug timing, or
+device interoperability.

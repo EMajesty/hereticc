@@ -395,13 +395,21 @@ void TimelineScheduler::set_plan(PlaybackPlan *plan,
 std::size_t
 TimelineScheduler::schedule(std::uint64_t start, std::uint32_t frames,
                             std::span<TimelineScheduledEvent> output) noexcept {
+    const auto end = frames > std::numeric_limits<std::uint64_t>::max() - start
+                         ? std::numeric_limits<std::uint64_t>::max()
+                         : start + frames;
+    return schedule_range(start, end, frames, output);
+}
+
+std::size_t TimelineScheduler::schedule_range(
+    std::uint64_t start, std::uint64_t end, std::uint32_t output_frames,
+    std::span<TimelineScheduledEvent> output) noexcept {
     if (plan_ == nullptr)
         return 0;
     if (start != expected_frame_)
         seek(start);
-    const auto end = frames > std::numeric_limits<std::uint64_t>::max() - start
-                         ? std::numeric_limits<std::uint64_t>::max()
-                         : start + frames;
+    if (end < start)
+        end = start;
     std::size_t count{};
     auto after = [this](std::size_t a, std::size_t b) {
         return track_after(a, b);
@@ -441,10 +449,13 @@ TimelineScheduler::schedule(std::uint64_t start, std::uint32_t frames,
                     track.previous_trigger_fired = emit;
                 }
             }
-            const auto offset =
-                absolute_frame <= start
-                    ? 0
-                    : static_cast<std::uint32_t>(absolute_frame - start);
+            const auto offset = absolute_frame <= start || end == start
+                                    ? 0
+                                    : static_cast<std::uint32_t>(
+                                          (static_cast<WideInteger>(
+                                               absolute_frame - start) *
+                                           output_frames) /
+                                          (end - start));
             if (emit)
                 output[count++] = {offset,
                                    track.id,

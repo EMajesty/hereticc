@@ -274,6 +274,13 @@ nonblocking output dispatch, validated channel-filter/remap thru routes,
 24-PPQN rational clock generation, filtered external clock/transport reception,
 panic/stop cleanup, and external MIDI timeline tracks for notes, CC, program
 and pitch bend. Timeline/project formats persist routing and logical device
-selectors. Host tests use simulated ports; physical jitter, hotplug/reconnect,
-continuous external phase slaving, Song Position Pointer seeking, MIDI learn,
-and the full GUI routing editor remain unverified or deferred.
+selectors. Host tests use simulated ports; physical jitter and the full GUI
+routing editor remained deferred at that milestone.
+
+Task 032 replaces tempo-only reception with a bounded external-clock follower.
+The authoritative timeline now follows filtered 24-PPQN phase, supports SPP,
+distinguishes Start/Continue, holds over for 125 ms, freezes and cleans notes at
+500 ms loss, and deterministically reacquires. Clock/transport forwarding has
+reserved queue capacity. Exact-name input/output reconnect and port-state GUI
+feedback are implemented; physical jitter, reconnect timing and interoperability
+remain hardware-dependent and unverified.

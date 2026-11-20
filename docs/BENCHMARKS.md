@@ -188,3 +188,12 @@ physical jitter are excluded.
 On the 2026-11-20 Ryzen 7 7800X3D Debug host, a 100-iteration run averaged
 approximately 0.95 microseconds per 256-frame iteration (about 0.05% of one
 5.33 ms buffer deadline). This is an offline average, not a wire-latency claim.
+
+Task 032 adds `midi_external_clock_tracking`, which feeds deterministic jittered
+pulses through the median/frequency/phase follower and advances one 1000-frame
+interval per iteration. It measures only bounded tracking arithmetic, not
+libremidi or physical transmission.
+On the 2026-11-20 Ryzen 7 7800X3D Debug host, a 100-iteration run measured
+approximately 27 ns per follower update; the combined four-port dense routing
+and internal-clock case measured approximately 1.03 microseconds per 256-frame
+iteration. These short offline averages are not worst-case hardware results.

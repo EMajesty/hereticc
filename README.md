@@ -165,6 +165,8 @@ ports follow command-line order. External MIDI timeline tracks support notes,
 CC, program change and pitch bend; internal 24-PPQN clock, received transport,
 explicit thru routes, panic and project persistence use bounded queues. See
 [MIDI routing and clock](docs/MIDI.md) for exact timing and hardware limits.
+External sync continuously drives timeline phase, supports SPP and bounded
+holdover/recovery, and exposes lock quality in the MIDI view.
 
 The positional WAV form remains a compatibility mode: it installs slot 0 and
 maps every note to it. Multi-sample mode uses repeatable `--slot ID=FILE`

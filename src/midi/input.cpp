@@ -33,6 +33,7 @@ struct MidiInput::Impl {
     libremidi::observer observer;
 #endif
     std::array<std::unique_ptr<libremidi::midi_in>, maximum_midi_ports> inputs;
+    std::array<std::string, maximum_midi_ports> configured_names;
 #endif
     explicit Impl(MidiMapper &value) : mapper(value) {}
 };
@@ -134,6 +135,9 @@ bool MidiInput::connect(std::uint32_t logical, const std::string &selector,
         if (status != stdx::error{})
             status.throw_exception();
         impl_->inputs[logical - 1] = std::move(input);
+        impl_->configured_names[logical - 1] =
+            selected->display_name.empty() ? selected->port_name
+                                           : selected->display_name;
         error.clear();
         return true;
     } catch (const std::exception &exception) {
@@ -151,11 +155,76 @@ bool MidiInput::connect(std::uint32_t logical, const std::string &selector,
 }
 void MidiInput::disconnect(std::uint32_t logical) noexcept {
 #ifdef NEUROGENIC_HAS_LIBREMIDI
-    if (logical && logical <= maximum_midi_ports)
+    if (logical && logical <= maximum_midi_ports) {
         impl_->inputs[logical - 1].reset();
+        impl_->configured_names[logical - 1].clear();
+    }
 #else
     (void)logical;
 #endif
+}
+std::size_t MidiInput::reconnect_missing(std::string &error) noexcept {
+#ifdef NEUROGENIC_HAS_LIBREMIDI
+    std::size_t connected{};
+    const auto available = impl_->observer.get_input_ports();
+    for (std::size_t i = 0; i < impl_->inputs.size(); ++i) {
+        if (impl_->inputs[i] && !impl_->inputs[i]->is_port_connected())
+            impl_->inputs[i].reset();
+        if (impl_->inputs[i] || impl_->configured_names[i].empty())
+            continue;
+        const auto found = std::find_if(available.begin(), available.end(),
+                                        [&](const auto &port) {
+            const auto name = port.display_name.empty() ? port.port_name
+                                                        : port.display_name;
+            return name == impl_->configured_names[i];
+        });
+        if (found == available.end())
+            continue;
+        try {
+            libremidi::input_configuration configuration;
+            configuration.on_message = [this, logical = i + 1](
+                                           const libremidi::message &message) {
+                if (message.empty())
+                    return;
+                const auto size = static_cast<std::uint8_t>(
+                    std::min<std::size_t>(message.size(), 3));
+                impl_->mapper.receive(
+                    {message[0], size > 1 ? message[1] : std::uint8_t{},
+                     size > 2 ? message[2] : std::uint8_t{},
+                     static_cast<std::uint64_t>(
+                         std::chrono::duration_cast<std::chrono::nanoseconds>(
+                             std::chrono::steady_clock::now().time_since_epoch())
+                             .count()),
+                     static_cast<std::uint32_t>(logical), size});
+            };
+            auto input = std::make_unique<libremidi::midi_in>(
+                configuration,
+                libremidi::midi_in_configuration_for(impl_->observer));
+            auto status = input->open_port(*found);
+            if (status != stdx::error{})
+                status.throw_exception();
+            impl_->inputs[i] = std::move(input);
+            ++connected;
+        } catch (const std::exception &exception) {
+            error = "MIDI input reconnect failed: " +
+                    std::string(exception.what());
+        }
+    }
+    if (connected)
+        error.clear();
+    return connected;
+#else
+    error = "libremidi support was not built";
+    return 0;
+#endif
+}
+std::array<bool, 8> MidiInput::connection_state() const noexcept {
+    std::array<bool, 8> result{};
+#ifdef NEUROGENIC_HAS_LIBREMIDI
+    for (std::size_t i = 0; i < result.size(); ++i)
+        result[i] = impl_->inputs[i] && impl_->inputs[i]->is_port_connected();
+#endif
+    return result;
 }
 void MidiInput::close() noexcept {
 #ifdef NEUROGENIC_HAS_LIBREMIDI

@@ -1,7 +1,8 @@
 # Graphical interface
 
-The MIDI view reports clock ownership, measured external tempo/dropout,
-configured outputs/routes and queue counters. Enter toggles internal/external
+The MIDI view reports clock ownership, lock/acquiring/holdover/lost state,
+measured tempo, phase error, SPP, connected logical ports, configured
+outputs/routes and queue counters. Enter toggles internal/external
 clock ownership and Shift+Enter invokes panic. Detailed port and routing-rule
 editing currently uses semantic actions, project data, and native CLI port
 selection.

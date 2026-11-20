@@ -20,6 +20,13 @@ struct MidiPacket {
     std::uint64_t timestamp_ns{}, frame{};
 };
 enum class MidiClockSource : std::uint8_t { internal, external };
+enum class MidiSyncStatus : std::uint8_t {
+    stopped,
+    acquiring,
+    locked,
+    holdover,
+    lost
+};
 
 struct MidiRoute {
     std::uint32_t id{};
@@ -46,6 +53,7 @@ class MidiOutputScheduler {
     [[nodiscard]] std::size_t queued() const noexcept { return queued_.load(); }
 
   private:
+    SpscQueue<MidiPacket, 1025> priority_queue_;
     SpscQueue<MidiPacket, 1025> queue_;
     std::atomic<std::uint64_t> dropped_{}, sent_{};
     std::atomic<std::size_t> queued_{};
@@ -92,6 +100,9 @@ struct ExternalClockState {
     bool running{}, available{}, dropout{};
     double tempo_bpm{};
     std::uint64_t pulses{}, last_timestamp_ns{};
+    MidiSyncStatus sync_status{MidiSyncStatus::stopped};
+    double phase_error_pulses{};
+    std::uint16_t song_position{};
 };
 class MidiClockReceiver {
   public:
@@ -104,18 +115,40 @@ class MidiClockReceiver {
     std::array<std::uint64_t, 5> intervals_{};
     std::size_t interval_count_{}, interval_cursor_{};
 };
+class MidiClockFollower {
+  public:
+    explicit MidiClockFollower(std::uint32_t sample_rate = 48000) noexcept;
+    void receive(const MidiPacket &) noexcept;
+    void advance(std::uint32_t frames) noexcept;
+    void reset() noexcept;
+    [[nodiscard]] ExternalClockState state() const noexcept;
+    [[nodiscard]] std::uint64_t phase_q32() const noexcept { return phase_q32_; }
+    [[nodiscard]] bool consume_discontinuity() noexcept;
+
+  private:
+    void clock(std::uint64_t timestamp_ns) noexcept;
+    std::uint32_t sample_rate_{};
+    std::uint64_t phase_q32_{}, increment_q32_{}, next_pulse_{},
+        frames_since_pulse_{};
+    std::array<std::uint64_t, 7> intervals_{};
+    std::size_t interval_count_{}, interval_cursor_{};
+    ExternalClockState state_{};
+    bool discontinuity_{};
+};
 struct MidiProjectConfiguration {
     MidiClockSource clock_source{MidiClockSource::internal};
     std::array<MidiRoute, maximum_midi_routes> routes{};
     std::size_t route_count{};
     std::array<MidiPortId, maximum_midi_ports> clock_outputs{};
     std::size_t clock_output_count{};
+    bool forward_external_clock{};
     std::array<std::int32_t, maximum_midi_ports> output_latency_frames{};
     std::array<std::array<char, 64>, maximum_midi_ports> input_selectors{},
         output_selectors{};
 };
 struct MidiClockOutputConfiguration {
     bool enabled{};
+    bool forward_external{};
     std::array<MidiPortId, maximum_midi_ports> ports{};
     std::size_t port_count{};
 };

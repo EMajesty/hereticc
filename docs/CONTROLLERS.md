@@ -249,3 +249,6 @@ channel-filter/remap routes, and invoke panic through stable `midi.*.v1`
 actions. Controller mappings and musical routing remain separate, so using a
 keyboard for both roles does not imply MIDI thru. MIDI learn remains registered
 as unavailable rather than simulated.
+Copied state exposes sync status, BPM, phase error, SPP, port connectivity and
+queue counters without requiring backend access. External forwarding is the
+semantic `midi.clock-forward-set.v1` action.

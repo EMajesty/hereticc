@@ -173,6 +173,23 @@ void midi_case() {
                    .count() /
                iterations);
 }
+void external_clock_case() {
+    neurogenic::MidiClockFollower follower(48000);
+    follower.receive({1, {0xFA, 0, 0}, 1, 1});
+    std::uint64_t timestamp{1};
+    const auto begin = Clock::now();
+    for (std::size_t i = 0; i < iterations; ++i) {
+        timestamp += 20'833'333ULL + (i % 3 == 0 ? 50'000 : 0);
+        follower.receive({1, {0xF8, 0, 0}, 1, timestamp});
+        follower.advance(1000);
+        checksum += follower.phase_q32() & 0xFF;
+    }
+    result("midi_external_clock_tracking", 48000, 1000,
+           std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
+                                                                begin)
+                   .count() /
+               iterations);
+}
 void mixed_case() {
     neurogenic::AudioEngine engine(48000, 32);
     engine.set_sample(sample(48000));
@@ -895,6 +912,7 @@ int main(int argc, char **argv) {
     effect_case(false);
     effect_case(true);
     midi_case();
+    external_clock_case();
     mixed_case();
     dense_case();
     expressive_case("probability_conditions", 1,

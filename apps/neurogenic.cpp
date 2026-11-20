@@ -398,6 +398,7 @@ int main(int argc, char **argv) {
                 std::cout << "MIDI output " << i + 1 << " active\n";
         }
         std::jthread midi_output_dispatcher([&](std::stop_token stop_token) {
+            auto next_refresh = std::chrono::steady_clock::now();
             while (!stop_token.stop_requested()) {
                 const auto sent = application.midi_output().dispatch(
                     [&](const neurogenic::MidiPacket &packet) {
@@ -406,6 +407,18 @@ int main(int argc, char **argv) {
                     });
                 if (sent == 0)
                     std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                const auto now = std::chrono::steady_clock::now();
+                if (now >= next_refresh) {
+                    std::string reconnect_error;
+                    if (midi_output.reconnect_missing(reconnect_error))
+                        engine.midi_panic();
+                    (void)midi.reconnect_missing(reconnect_error);
+                    application.set_midi_output_connections(
+                        midi_output.connection_state());
+                    application.set_midi_input_connections(
+                        midi.connection_state());
+                    next_refresh = now + std::chrono::seconds(1);
+                }
             }
         });
         std::signal(SIGINT, stop);

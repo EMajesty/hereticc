@@ -145,7 +145,13 @@ class AudioEngine {
         return midi_routing_configurations_.push(configuration);
     }
     [[nodiscard]] bool receive_midi(const MidiPacket &packet) noexcept {
-        return midi_inputs_.push(packet);
+        if (midi_inputs_.push(packet))
+            return true;
+        dropped_midi_inputs_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    [[nodiscard]] std::uint64_t dropped_midi_inputs() const noexcept {
+        return dropped_midi_inputs_.load(std::memory_order_acquire);
     }
     [[nodiscard]] ExternalClockState external_clock_state() const noexcept {
         ExternalClockState state;
@@ -156,6 +162,12 @@ class AudioEngine {
         state.pulses = external_clock_pulses_.load(std::memory_order_acquire);
         state.last_timestamp_ns =
             external_clock_last_timestamp_.load(std::memory_order_acquire);
+        state.sync_status = static_cast<MidiSyncStatus>(
+            external_clock_status_.load(std::memory_order_acquire));
+        state.phase_error_pulses =
+            external_clock_phase_error_.load(std::memory_order_acquire);
+        state.song_position =
+            external_song_position_.load(std::memory_order_acquire);
         return state;
     }
     void capture_external_input(std::span<const float> interleaved,
@@ -450,15 +462,21 @@ class AudioEngine {
     std::atomic<RecordingService *> recording_{};
     std::atomic<MidiOutputScheduler *> midi_output_{};
     MidiClockGenerator midi_clock_;
-    MidiClockReceiver midi_clock_receiver_;
+    MidiClockFollower midi_clock_follower_;
     MidiRouter midi_router_;
     MidiClockOutputConfiguration midi_clock_configuration_{};
     bool accept_external_clock_{};
+    bool external_clock_lost_{};
+    std::uint32_t active_timeline_tempo_us_{500000};
     std::atomic<bool> external_clock_running_{}, external_clock_available_{},
         external_clock_dropout_{};
     std::atomic<double> external_clock_tempo_{};
     std::atomic<std::uint64_t> external_clock_pulses_{};
     std::atomic<std::uint64_t> external_clock_last_timestamp_{};
+    std::atomic<std::uint64_t> dropped_midi_inputs_{};
+    std::atomic<std::uint8_t> external_clock_status_{};
+    std::atomic<double> external_clock_phase_error_{};
+    std::atomic<std::uint16_t> external_song_position_{};
     std::atomic<std::uint64_t> callback_frame_{};
     std::array<std::unique_ptr<SubtractiveSynth>, maximum_instrument_instances>
         synths_{};

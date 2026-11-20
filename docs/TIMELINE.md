@@ -76,13 +76,16 @@ rejected, and saved files always include the explicit target.
 ## Transport behavior
 
 The audio engine owns one frame position and play state. Timeline and legacy
-Lua patterns receive the same frame range and tempo. Stop freezes position and
+Lua patterns share that authority. Internal mode advances by audio frames;
+external MIDI mode maps filtered 24-PPQN Q32 phase into the prepared timeline
+frame domain and scales event offsets into the physical callback. Stop freezes position and
 cleans active voices. Play continues from that position. Restart cleans voices
 and starts at tick/frame zero. Each track loops independently. Replacing a
 timeline keeps the current position, adopts new tempo metadata at the callback
 boundary, and cleans old timeline voices. This deterministic segment-boundary
-policy leaves room for a tempo-map transport and MIDI-clock position/tempo
-commands without moving clock ownership into either scheduler.
+policy leaves room for a tempo map without moving clock ownership into either
+scheduler. SPP seeks in sixteenth-note units; Start resets to zero while
+Continue preserves the current or SPP-selected position.
 
 The existing Lua `neurogenic.v1` API remains a 16-step compatibility surface.
 Its next-bar replacement scheduler is retained, and `adapt_step_pattern`

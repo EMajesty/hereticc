@@ -16,6 +16,7 @@ struct MidiOutput::Impl {
     libremidi::observer observer;
 #endif
     std::array<std::unique_ptr<libremidi::midi_out>, maximum_midi_ports> ports;
+    std::array<std::string, maximum_midi_ports> configured_names;
 #endif
 };
 MidiOutput::MidiOutput() : impl_(std::make_unique<Impl>()) {}
@@ -80,6 +81,9 @@ bool MidiOutput::connect(MidiPortId logical, const std::string &selector,
         if (status != stdx::error{})
             status.throw_exception();
         impl_->ports[logical - 1] = std::move(output);
+        impl_->configured_names[logical - 1] =
+            selected->display_name.empty() ? selected->port_name
+                                           : selected->display_name;
         error.clear();
         return true;
     } catch (const std::exception &exception) {
@@ -96,8 +100,10 @@ bool MidiOutput::connect(MidiPortId logical, const std::string &selector,
 }
 void MidiOutput::disconnect(MidiPortId logical) noexcept {
 #ifdef NEUROGENIC_HAS_LIBREMIDI
-    if (logical && logical <= maximum_midi_ports)
+    if (logical && logical <= maximum_midi_ports) {
         impl_->ports[logical - 1].reset();
+        impl_->configured_names[logical - 1].clear();
+    }
 #else
     (void)logical;
 #endif
@@ -113,6 +119,7 @@ bool MidiOutput::send(const MidiPacket &packet, std::string &error) noexcept {
         packet.bytes.data(), packet.size);
     if (status != stdx::error{}) {
         error = "MIDI output transmission failed";
+        impl_->ports[packet.port - 1].reset();
         return false;
     }
     error.clear();
@@ -122,5 +129,54 @@ bool MidiOutput::send(const MidiPacket &packet, std::string &error) noexcept {
     error = "libremidi support was not built";
     return false;
 #endif
+}
+std::size_t MidiOutput::reconnect_missing(std::string &error) noexcept {
+#ifdef NEUROGENIC_HAS_LIBREMIDI
+    std::size_t connected{};
+    const auto available = impl_->observer.get_output_ports();
+    for (std::size_t i = 0; i < impl_->ports.size(); ++i) {
+        if (impl_->ports[i] && !impl_->ports[i]->is_port_connected())
+            impl_->ports[i].reset();
+        if (impl_->ports[i] || impl_->configured_names[i].empty())
+            continue;
+        const auto found = std::find_if(available.begin(), available.end(),
+                                        [&](const auto &port) {
+            const auto name = port.display_name.empty() ? port.port_name
+                                                        : port.display_name;
+            return name == impl_->configured_names[i];
+        });
+        if (found == available.end())
+            continue;
+        try {
+            libremidi::output_configuration configuration;
+            auto output = std::make_unique<libremidi::midi_out>(
+                configuration,
+                libremidi::midi_out_configuration_for(impl_->observer));
+            auto status = output->open_port(*found);
+            if (status != stdx::error{})
+                status.throw_exception();
+            impl_->ports[i] = std::move(output);
+            ++connected;
+        } catch (const std::exception &exception) {
+            error = "MIDI output reconnect failed: " +
+                    std::string(exception.what());
+        }
+    }
+    if (connected)
+        error.clear();
+    return connected;
+#else
+    error = "libremidi support was not built";
+    return 0;
+#endif
+}
+std::array<bool, maximum_midi_ports>
+MidiOutput::connection_state() const noexcept {
+    std::array<bool, maximum_midi_ports> result{};
+#ifdef NEUROGENIC_HAS_LIBREMIDI
+    for (std::size_t i = 0; i < result.size(); ++i)
+        result[i] = impl_->ports[i] && impl_->ports[i]->is_port_connected();
+#endif
+    return result;
 }
 } // namespace neurogenic

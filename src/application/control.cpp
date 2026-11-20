@@ -270,6 +270,8 @@ ActionRegistry::ActionRegistry() {
                {{"source", ValueType::text}}));
     add(action("midi.clock-output-set.v1", "Set MIDI clock output", "MIDI",
                {{"port", ValueType::integer}, {"enabled", ValueType::boolean}}));
+    add(action("midi.clock-forward-set.v1", "Forward external MIDI clock",
+               "MIDI", {{"enabled", ValueType::boolean}}));
     add(action("midi.route-set.v1", "Create or update MIDI route", "MIDI",
                {{"id", ValueType::integer}, {"input_port", ValueType::integer},
                 {"output_port", ValueType::integer},
@@ -832,6 +834,22 @@ ApplicationService::~ApplicationService() {
     engine_.set_midi_output_scheduler(nullptr);
     engine_.set_recording_service(nullptr);
 }
+void ApplicationService::set_midi_output_connections(
+    const std::array<bool, maximum_midi_ports> &connections) {
+    std::lock_guard lock(mutex_);
+    if (state_.midi_output_connected != connections) {
+        state_.midi_output_connected = connections;
+        changed_locked();
+    }
+}
+void ApplicationService::set_midi_input_connections(
+    const std::array<bool, maximum_midi_ports> &connections) {
+    std::lock_guard lock(mutex_);
+    if (state_.midi_input_connected != connections) {
+        state_.midi_input_connected = connections;
+        changed_locked();
+    }
+}
 bool ApplicationService::submit(ApplicationCommand command) noexcept {
     try {
         std::lock_guard lock(mutex_);
@@ -1201,6 +1219,9 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     std::move(found + 1, end, found); --next.clock_output_count;
                 }
             }
+        } else if (command.action_id == "midi.clock-forward-set.v1") {
+            next.forward_external_clock =
+                *argument<bool>(command, "enabled");
         } else if (command.action_id == "midi.route-delete.v1") {
             const auto id = *argument<std::int64_t>(command, "id");
             auto begin = next.routes.begin();
@@ -1237,6 +1258,9 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             } else {
                 MidiClockOutputConfiguration clock;
                 clock.enabled = next.clock_source == MidiClockSource::internal && next.clock_output_count;
+                clock.forward_external =
+                    next.clock_source == MidiClockSource::external &&
+                    next.forward_external_clock;
                 clock.port_count = next.clock_output_count;
                 std::copy_n(next.clock_outputs.begin(), clock.port_count, clock.ports.begin());
                 if (!engine_.publish_midi_clock_output(clock))
@@ -1892,6 +1916,9 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     midi_clock.enabled =
                         project_.midi.clock_source == MidiClockSource::internal &&
                         project_.midi.clock_output_count != 0;
+                    midi_clock.forward_external =
+                        project_.midi.clock_source == MidiClockSource::external &&
+                        project_.midi.forward_external_clock;
                     midi_clock.port_count = project_.midi.clock_output_count;
                     std::copy_n(project_.midi.clock_outputs.begin(),
                                 midi_clock.port_count, midi_clock.ports.begin());
@@ -3670,7 +3697,8 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
 }
 void ApplicationService::synchronize_locked() const {
     state_.midi = project_.midi;
-    state_.midi_dropped = midi_output_.dropped();
+    state_.midi_dropped =
+        midi_output_.dropped() + engine_.dropped_midi_inputs();
     state_.midi_sent = midi_output_.sent();
     state_.external_midi_clock = engine_.external_clock_state();
     if (state_.external_midi_clock.available &&

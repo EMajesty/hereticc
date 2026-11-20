@@ -1,7 +1,9 @@
 # Project persistence
 
 `midi.ngm` stores the selected clock source, logical input/output selectors,
-clock output ports, route filters/remapping, and output-latency metadata.
+clock output ports, external forwarding preference, route filters/remapping,
+and output-latency metadata. Task 031 version-1 MIDI metadata remains readable;
+version 2 adds forwarding without persisting PLL phase or timestamps.
 Logical selectors are retained when devices are missing; loading never binds an
 unrelated physical port automatically. Track MIDI destinations remain in the
 timeline data.

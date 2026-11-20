@@ -69,6 +69,10 @@ class TimelineScheduler {
     void set_fill(bool active) noexcept { fill_active_ = active; }
     std::size_t schedule(std::uint64_t start_frame, std::uint32_t frames,
                          std::span<TimelineScheduledEvent>) noexcept;
+    std::size_t schedule_range(std::uint64_t start_frame,
+                               std::uint64_t end_frame,
+                               std::uint32_t output_frames,
+                               std::span<TimelineScheduledEvent>) noexcept;
     [[nodiscard]] std::uint64_t dropped_events() const noexcept {
         return dropped_events_;
     }
