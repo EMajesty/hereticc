@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -35,7 +36,14 @@ enum class ModulatorType : std::uint8_t {
     lfo = 1, adsr, sample_hold, smooth_random, envelope_follower, xy_manual,
     midi_cc, step_sequencer, euclidean, clocked_random, function_generator,
     scale_offset, invert, rectify, slew, quantize, minimum, maximum, sum,
-    multiply, logistic, velocity, gate
+    multiply, logistic, velocity, gate, performance_macro
+};
+enum class ModulationMappingCurve : std::uint8_t {
+    linear,
+    exponential,
+    logarithmic,
+    s_curve,
+    stepped
 };
 enum class ModulatorOwnerKind : std::uint8_t {
     track = 1, auxiliary, master, group, voice_definition
@@ -71,7 +79,8 @@ enum class ModulatorParameterId : std::uint32_t {
     curve,
     scale,
     offset,
-    chaos
+    chaos,
+    manual_value
 };
 enum class FollowerTapKind : std::uint8_t {
     master,
@@ -129,6 +138,7 @@ struct ModulationSourceSettings {
     float correlation{}, quantization{}, slew_seconds{};
     float rise_seconds{0.1F}, fall_seconds{0.1F}, curve{};
     float scale{1.0F}, offset{}, chaos{3.8F};
+    float manual_value{};
     bool unipolar{}, looping{};
 };
 struct ModulationRoute {
@@ -151,6 +161,10 @@ struct ModulationRoute {
     bool destination_owner_explicit{};
     ModulatorOwnerKind destination_owner_kind{ModulatorOwnerKind::master};
     std::uint64_t destination_owner_id{};
+    bool mapped_assignment{};
+    ModulationMappingCurve mapping_curve{ModulationMappingCurve::linear};
+    float mapped_minimum{}, mapped_maximum{1.0F}, mapped_default{};
+    std::uint16_t mapped_steps{2};
 };
 struct ModulatorInstanceConfiguration {
     ModulatorInstanceId id{};
@@ -226,6 +240,7 @@ class ModulationEngine {
     void set_automation(ParameterDestination, float) noexcept;
     void set_modulator_automation(ModulatorInstanceId, ModulatorParameterId,
                                   float) noexcept;
+    void set_modulator_value(ModulatorInstanceId, float) noexcept;
     template <class Apply> void process_frame(Apply &&apply) noexcept {
         if (++frames_until_update_ < configuration_.update_interval)
             return;
@@ -368,7 +383,38 @@ class ModulationEngine {
                     candidate.polarity == ModulationPolarity::bipolar
                         ? source
                         : (source + 1.0F) * 0.5F;
-                normalized += shaped * candidate.depth;
+                if (candidate.mapped_assignment) {
+                    const auto curve = [&](float input) noexcept {
+                        input = std::clamp(input, 0.0F, 1.0F);
+                        switch (candidate.mapping_curve) {
+                        case ModulationMappingCurve::exponential:
+                            return input * input;
+                        case ModulationMappingCurve::logarithmic:
+                            return std::sqrt(input);
+                        case ModulationMappingCurve::s_curve:
+                            return input * input * (3.0F - 2.0F * input);
+                        case ModulationMappingCurve::stepped: {
+                            const auto steps = std::max<std::uint16_t>(
+                                2, candidate.mapped_steps);
+                            return std::round(input * (steps - 1)) /
+                                   static_cast<float>(steps - 1);
+                        }
+                        case ModulationMappingCurve::linear: return input;
+                        }
+                        return input;
+                    };
+                    const auto input = (source + 1.0F) * 0.5F;
+                    const auto mapped = candidate.mapped_minimum +
+                                        curve(input) *
+                                            (candidate.mapped_maximum -
+                                             candidate.mapped_minimum);
+                    const auto at_default = candidate.mapped_minimum +
+                                            curve(candidate.mapped_default) *
+                                                (candidate.mapped_maximum -
+                                                 candidate.mapped_minimum);
+                    normalized += range > 0 ? (mapped - at_default) / range : 0;
+                } else
+                    normalized += shaped * candidate.depth;
             }
             const auto effective =
                 route.minimum + std::clamp(normalized, 0.0F, 1.0F) * range;

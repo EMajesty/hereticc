@@ -55,6 +55,12 @@ audio, saves, constructs a fresh engine, reloads and asserts audio again.
 
 ## Use synth tracks and modulation
 
+Create a performance macro with project, track, group or master ownership, add
+one or more numeric destinations and choose their ranges/curves. Capture macro
+values as a scene, then recall immediately or with a seconds/tempo-based morph.
+When arrangement automation is armed, macro gestures remain a single editable
+macro lane rather than duplicated destination lanes.
+
 Create tracks with instrument `synth.subtractive.v1` and distinct stable
 instance IDs. Use `instrument.instance-parameter-set.v1` for instance-local
 values. A track-scoped modulation route must name both its track and intended

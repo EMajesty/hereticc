@@ -307,6 +307,11 @@ Notes support deterministic probability, loop and Fill conditions, and 1-8
 evenly spaced ratchets. These properties live in the timeline, participate in
 Undo/Redo, and are available through semantic actions and Lua.
 
+Bounded [performance macros](docs/PERFORMANCE_MACROS.md) expose reusable
+project/track/group/master controls through the modulation graph, with
+nonlinear native-unit mappings, scene capture, smooth recall and editable
+semantic automation.
+
 ## License
 
 Original NEUROGENIC contributions are MIT-licensed. Dependencies retain their

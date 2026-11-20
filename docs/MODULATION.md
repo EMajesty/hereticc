@@ -29,6 +29,11 @@ For each destination the engine computes:
 
 `effective = clamp(automation-or-base + sum(source × bipolar depth))`
 
+[Performance macros](PERFORMANCE_MACROS.md) are discoverable manual modulator
+instances. Their assignments contribute native-unit deltas relative to the
+macro default, allowing several macros and ordinary modulators to share one
+destination without changing its stored base or automation value.
+
 The sum is performed in the destination's normalized range and converted back
 to native units. A step lock or automation event replaces the base layer until
 another event changes it; routes remain active. Snapshots expose stored base

@@ -304,6 +304,11 @@ GUI, controllers and Lua all call `TimelineTransaction` rather than duplicating
 destination validation or maintaining another pattern model.
 
 Modulation is a numeric layer after stored base and timeline automation.
+
+Performance macros compile to ordinary bounded modulator instances and routes;
+there is no parallel macro DSP path. Scene morph schedules are prepared and
+advanced on the control side, while the callback consumes only numeric source
+updates and the previously compiled graph.
 Global and per-track source banks are distinct; track banks own independent
 phase, envelope, retrigger, and seeded random state. See
 [MODULATION.md](MODULATION.md).

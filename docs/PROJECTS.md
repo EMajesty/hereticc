@@ -1,6 +1,6 @@
 # Project persistence
 
-Project format 4 uses timeline metadata version 7 to persist pattern
+Project format 5 uses timeline metadata version 7 to persist pattern
 collections, clips, song and loop
 ranges, stable-ID chain entries/repeats, follow actions, launch/voice policies,
 song-end behavior and committed live-recording automation in `timeline.ngt`.
@@ -37,8 +37,10 @@ Logical selectors are retained when devices are missing; loading never binds an
 unrelated physical port automatically. Track MIDI destinations remain in the
 timeline data.
 
-NEUROGENIC project format version 1 is a directory, independent of SDL, Lua,
-and controller layouts:
+NEUROGENIC projects use a directory format independent of SDL, Lua, and
+controller layouts. Project format 5 adds optional `macros.ngm`
+performance-macro and scene metadata. Formats through Task 046 load with an
+empty collection. Runtime morph progress is intentionally excluded.
 
 ```text
 My Set/

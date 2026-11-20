@@ -524,7 +524,7 @@ ModulationConfiguration load_modulation(const std::filesystem::path &path) {
               route.maximum >> route.base_value >> route.depth >>
               route.enabled >> polarity >> scope >> route.track_id) ||
             source >= static_cast<unsigned>(ModulationSourceId::count) ||
-            target > static_cast<unsigned>(ParameterTarget::mixer_group) ||
+            target > static_cast<unsigned>(ParameterTarget::performance_macro) ||
             polarity > static_cast<unsigned>(ModulationPolarity::unipolar) ||
             scope > static_cast<unsigned>(ModulationScope::voice))
             throw std::runtime_error("malformed modulation route");
@@ -687,6 +687,115 @@ MidiProjectConfiguration load_midi(const std::filesystem::path &path) {
     }
     return result;
 }
+std::string serialize_macros(const MacroProject &project) {
+    std::ostringstream out;
+    out << "NEUROGENIC_PERFORMANCE_MACROS 1\n" << std::setprecision(9)
+        << "macros " << project.macros.size() << '\n';
+    for (const auto &macro : project.macros) {
+        out << "macro " << macro.id << ' ' << macro.source_instance << ' '
+            << static_cast<unsigned>(macro.owner_kind) << ' ' << macro.owner_id
+            << ' ' << macro.value << ' ' << macro.default_value << ' '
+            << macro.enabled << ' ' << std::quoted(macro.name) << ' '
+            << std::quoted(macro.description) << ' ' << macro.assignments.size()
+            << '\n';
+        for (const auto &assignment : macro.assignments)
+            out << "assignment " << assignment.id << ' '
+                << std::quoted(assignment.destination_id) << ' '
+                << assignment.minimum << ' ' << assignment.maximum << ' '
+                << static_cast<unsigned>(assignment.polarity) << ' '
+                << static_cast<unsigned>(assignment.curve) << ' '
+                << assignment.enabled << ' ' << assignment.smoothing_seconds
+                << ' ' << assignment.steps << '\n';
+    }
+    out << "scenes " << project.scenes.size() << '\n';
+    for (const auto &scene : project.scenes) {
+        out << "scene " << scene.id << ' ' << scene.morph_duration << ' '
+            << scene.tempo_sync << ' ' << std::quoted(scene.name) << ' '
+            << scene.macro_values.size() << ' '
+            << scene.parameter_values.size() << '\n';
+        for (const auto &[id, value] : scene.macro_values)
+            out << "macro_value " << id << ' ' << value << '\n';
+        for (const auto &[id, value] : scene.parameter_values)
+            out << "parameter_value " << std::quoted(id) << ' ' << value
+                << '\n';
+    }
+    return out.str();
+}
+MacroProject load_macros(const std::filesystem::path &path) {
+    bounded(path);
+    std::ifstream input(path);
+    std::string magic, label;
+    unsigned version{};
+    MacroProject result;
+    std::size_t macro_count{};
+    if (!(input >> magic >> version) ||
+        magic != "NEUROGENIC_PERFORMANCE_MACROS" || version != 1 ||
+        !(input >> label >> macro_count) || label != "macros" ||
+        macro_count > MacroProject::default_macro_capacity)
+        throw std::runtime_error("unsupported performance macro metadata");
+    for (std::size_t i = 0; i < macro_count; ++i) {
+        PerformanceMacro macro;
+        unsigned owner{};
+        std::size_t assignment_count{};
+        if (!(input >> label >> macro.id >> macro.source_instance >> owner >>
+              macro.owner_id >> macro.value >> macro.default_value >>
+              macro.enabled >> std::quoted(macro.name) >>
+              std::quoted(macro.description) >> assignment_count) ||
+            label != "macro" || owner > static_cast<unsigned>(MacroOwnerKind::master) ||
+            assignment_count > MacroProject::default_assignment_capacity)
+            throw std::runtime_error("malformed performance macro");
+        macro.owner_kind = static_cast<MacroOwnerKind>(owner);
+        for (std::size_t assignment = 0; assignment < assignment_count;
+             ++assignment) {
+            MacroAssignment value;
+            unsigned polarity{}, curve{};
+            if (!(input >> label >> value.id >>
+                  std::quoted(value.destination_id) >> value.minimum >>
+                  value.maximum >> polarity >> curve >> value.enabled >>
+                  value.smoothing_seconds >> value.steps) ||
+                label != "assignment" ||
+                polarity > static_cast<unsigned>(ModulationPolarity::unipolar) ||
+                curve > static_cast<unsigned>(ModulationMappingCurve::stepped))
+                throw std::runtime_error("malformed macro assignment");
+            value.polarity = static_cast<ModulationPolarity>(polarity);
+            value.curve = static_cast<ModulationMappingCurve>(curve);
+            macro.assignments.push_back(std::move(value));
+        }
+        result.macros.push_back(std::move(macro));
+    }
+    std::size_t scene_count{};
+    if (!(input >> label >> scene_count) || label != "scenes" ||
+        scene_count > MacroProject::default_scene_capacity)
+        throw std::runtime_error("malformed performance scene count");
+    for (std::size_t i = 0; i < scene_count; ++i) {
+        PerformanceScene scene;
+        std::size_t macro_values{}, parameter_values{};
+        if (!(input >> label >> scene.id >> scene.morph_duration >>
+              scene.tempo_sync >> std::quoted(scene.name) >> macro_values >>
+              parameter_values) ||
+            label != "scene" ||
+            macro_values > MacroProject::default_macro_capacity ||
+            parameter_values > MacroProject::default_assignment_capacity)
+            throw std::runtime_error("malformed performance scene");
+        for (std::size_t value = 0; value < macro_values; ++value) {
+            PerformanceMacroId id{};
+            float amount{};
+            if (!(input >> label >> id >> amount) || label != "macro_value")
+                throw std::runtime_error("malformed scene macro value");
+            scene.macro_values.emplace_back(id, amount);
+        }
+        for (std::size_t value = 0; value < parameter_values; ++value) {
+            std::string id;
+            float amount{};
+            if (!(input >> label >> std::quoted(id) >> amount) ||
+                label != "parameter_value")
+                throw std::runtime_error("malformed scene parameter value");
+            scene.parameter_values.emplace_back(std::move(id), amount);
+        }
+        result.scenes.push_back(std::move(scene));
+    }
+    return result;
+}
 } // namespace
 
 void save_project(const Project &project,
@@ -729,6 +838,16 @@ void save_project(const Project &project,
                                     project.mixer,
                                     validation_error))
         throw std::invalid_argument("invalid project modulation owners: " +
+                                    validation_error);
+    PerformanceMacroService macro_validation;
+    if (!macro_validation.replace(project.performance_macros, project.timeline,
+                                  project.mixer, validation_error))
+        throw std::invalid_argument("invalid performance macros: " +
+                                    validation_error);
+    ModulationConfiguration macro_modulation;
+    if (!macro_validation.compile(project.modulation, macro_modulation,
+                                  validation_error))
+        throw std::invalid_argument("invalid macro modulation graph: " +
                                     validation_error);
     for (std::size_t i = 0; i < project.modulation.route_count; ++i)
         if (project.modulation.routes[i].destination_kind ==
@@ -774,6 +893,8 @@ void save_project(const Project &project,
         checked_write(temporary / "scenes.ngr", scenes.str());
         checked_write(temporary / "modulation.ngm",
                       serialize_modulation(project.modulation));
+        checked_write(temporary / "macros.ngm",
+                      serialize_macros(project.performance_macros));
         checked_write(temporary / "midi.ngm", serialize_midi(project.midi));
         std::filesystem::rename(temporary, committed);
         std::ostringstream manifest;
@@ -800,7 +921,8 @@ void save_project(const Project &project,
             std::filesystem::file_size(committed / "parameters.ngp") +
             std::filesystem::file_size(committed / "mixer.ngm") +
             std::filesystem::file_size(committed / "scenes.ngr") +
-            std::filesystem::file_size(committed / "modulation.ngm");
+            std::filesystem::file_size(committed / "modulation.ngm") +
+            std::filesystem::file_size(committed / "macros.ngm");
     }
 }
 
@@ -860,11 +982,18 @@ Project load_project(const std::filesystem::path &directory,
     }
     if (std::filesystem::exists(files / "modulation.ngm"))
         result.modulation = load_modulation(files / "modulation.ngm");
+    if (std::filesystem::exists(files / "macros.ngm"))
+        result.performance_macros = load_macros(files / "macros.ngm");
     std::string modulation_owner_error;
     if (!validate_modulation_owners(result.modulation, result.timeline,
                                     result.mixer,
                                     modulation_owner_error))
         throw std::runtime_error("invalid project modulation owners: " +
+                                 modulation_owner_error);
+    PerformanceMacroService macro_validation;
+    if (!macro_validation.replace(result.performance_macros, result.timeline,
+                                  result.mixer, modulation_owner_error))
+        throw std::runtime_error("invalid performance macros: " +
                                  modulation_owner_error);
     if (std::filesystem::exists(files / "midi.ngm"))
         result.midi = load_midi(files / "midi.ngm");

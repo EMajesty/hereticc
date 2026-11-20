@@ -370,3 +370,10 @@ distinguishes Start/Continue, holds over for 125 ms, freezes and cleans notes at
 reserved queue capacity. Exact-name input/output reconnect and port-state GUI
 feedback are implemented; physical jitter, reconnect timing and interoperability
 remain hardware-dependent and unverified.
+
+Task 047 adds stable project/track/group/master performance macros, bounded
+multi-destination assignments, linear/exponential/logarithmic/S-curve/stepped
+mapping, performance scenes, control-side seconds or tempo morphs, semantic
+automation, project format 5 persistence and a versioned discovery snapshot.
+Assignment smoothing currently delegates to the destination's existing DSP
+smoothing; general project-object Undo/Redo remains deferred.

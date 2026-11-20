@@ -1,4 +1,5 @@
 #pragma once
+#include "neurogenic/application/performance_macros.hpp"
 #include "neurogenic/audio/mixer.hpp"
 #include "neurogenic/audio/slicing.hpp"
 #include "neurogenic/dsp/modulation.hpp"
@@ -11,7 +12,7 @@
 
 namespace neurogenic {
 struct Project {
-    static constexpr unsigned format_version = 4;
+    static constexpr unsigned format_version = 5;
     std::string name{"Untitled"};
     Timeline timeline;
     SliceProject samples;
@@ -20,6 +21,7 @@ struct Project {
     std::vector<RoutingScene> routing_scenes;
     std::uint64_t active_routing_scene{};
     ModulationConfiguration modulation;
+    MacroProject performance_macros;
     MidiProjectConfiguration midi;
     std::vector<std::filesystem::path> missing_assets;
 };

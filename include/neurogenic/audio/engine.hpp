@@ -109,6 +109,7 @@ class AudioEngine {
     [[nodiscard]] bool
     publish_modulation(const ModulationConfiguration &configuration) noexcept;
     [[nodiscard]] bool set_modulation_input(ModulationSourceId, float) noexcept;
+    [[nodiscard]] bool set_modulator_value(ModulatorInstanceId, float) noexcept;
     [[nodiscard]] ModulationSnapshot modulation_snapshot() const noexcept {
         return modulation_.snapshot();
     }
@@ -314,7 +315,8 @@ class AudioEngine {
             synth,
             delay,
             delay_bypass,
-            modulation_input
+            modulation_input,
+            modulator_value
         };
         Target target{};
         std::uint32_t parameter{};

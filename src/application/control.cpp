@@ -237,6 +237,48 @@ ActionRegistry::ActionRegistry() {
                 {"value", ValueType::real}}));
     add(action("arrangement.automation-delete.v1", "Delete recorded automation",
                "Arrangement", {{"id", ValueType::integer}}));
+    add(action("macro.create.v1", "Create performance macro", "Performance",
+               {{"name", ValueType::text},
+                {"owner", ValueType::text},
+                {"owner_id", ValueType::integer, false},
+                {"value", ValueType::real, false}}));
+    add(action("macro.delete.v1", "Delete performance macro", "Performance",
+               {{"id", ValueType::integer}}));
+    add(action("macro.rename.v1", "Rename performance macro", "Performance",
+               {{"id", ValueType::integer},
+                {"name", ValueType::text},
+                {"description", ValueType::text, false}}));
+    add(action("macro.value-set.v1", "Set performance macro", "Performance",
+               {{"id", ValueType::integer}, {"value", ValueType::real}}));
+    add(action("macro.assignment-set.v1", "Assign macro destination",
+               "Performance",
+               {{"macro_id", ValueType::integer},
+                {"destination", ValueType::text},
+                {"minimum", ValueType::real},
+                {"maximum", ValueType::real},
+                {"curve", ValueType::text, false},
+                {"polarity", ValueType::text, false},
+                {"smoothing", ValueType::real, false},
+                {"steps", ValueType::integer, false}}));
+    add(action("macro.assignment-delete.v1", "Remove macro destination",
+               "Performance",
+               {{"macro_id", ValueType::integer},
+                {"assignment_id", ValueType::integer}}));
+    add(action("macro.scene-capture.v1", "Capture performance scene",
+               "Performance",
+               {{"name", ValueType::text},
+                {"duration", ValueType::real, false},
+                {"tempo_sync", ValueType::boolean, false}}));
+    add(action("macro.scene-delete.v1", "Delete performance scene",
+               "Performance", {{"id", ValueType::integer}}));
+    add(action("macro.scene-recall.v1", "Recall performance scene",
+               "Performance",
+               {{"id", ValueType::integer},
+                {"duration", ValueType::real, false},
+                {"tempo_sync", ValueType::boolean, false}}));
+    add(action("macro.morph-stop.v1", "Stop performance morph",
+               "Performance"));
+    add(action("macro.query.v1", "Query performance macros", "Performance"));
     add(action("step.select.v1", "Select step", "Sequencer",
                {{"step", ValueType::integer}}));
     add(action("step.toggle.v1", "Toggle step", "Sequencer",
@@ -1083,6 +1125,18 @@ ApplicationService::~ApplicationService() {
     engine_.set_midi_output_scheduler(nullptr);
     engine_.set_recording_service(nullptr);
 }
+bool ApplicationService::publish_modulation_with_macros(
+    const ModulationConfiguration &base, std::string &error) {
+    ModulationConfiguration compiled;
+    if (!performance_macros_.compile(base, compiled, error))
+        return false;
+    if (!engine_.publish_modulation(compiled)) {
+        error = "modulation publication queue is full";
+        return false;
+    }
+    error.clear();
+    return true;
+}
 void ApplicationService::set_midi_output_connections(
     const std::array<bool, maximum_midi_ports> &connections) {
     std::lock_guard lock(mutex_);
@@ -1177,7 +1231,8 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     changed = true;
                 }
             if (changed) {
-                if (!engine_.publish_modulation(next))
+                std::string modulation_error;
+                if (!publish_modulation_with_macros(next, modulation_error))
                     return false;
                 modulation_configuration_ = next;
                 project_.modulation = next;
@@ -1214,7 +1269,162 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
         state_.project_dirty = true;
         return true;
     };
-    if (command.action_id.rfind("recording.", 0) == 0) {
+    if (command.action_id.rfind("macro.", 0) == 0) {
+        const auto integer = [&](std::string_view name, std::int64_t fallback = 0) {
+            const auto *value = argument<std::int64_t>(command, name);
+            return value ? *value : fallback;
+        };
+        const auto real = [&](std::string_view name, double fallback = 0.0) {
+            const auto *value = argument<double>(command, name);
+            return value ? *value : fallback;
+        };
+        const auto boolean = [&](std::string_view name, bool fallback = false) {
+            const auto *value = argument<bool>(command, name);
+            return value ? *value : fallback;
+        };
+        const auto text = [&](std::string_view name,
+                              std::string fallback = {}) {
+            const auto *value = argument<std::string>(command, name);
+            return value ? *value : std::move(fallback);
+        };
+        const auto previous = performance_macros_.project();
+        bool structural{};
+        if (command.action_id == "macro.create.v1") {
+            const auto owner_text = text("owner", "project");
+            auto owner = MacroOwnerKind::project;
+            if (owner_text == "track")
+                owner = MacroOwnerKind::track;
+            else if (owner_text == "group")
+                owner = MacroOwnerKind::group;
+            else if (owner_text == "master")
+                owner = MacroOwnerKind::master;
+            else if (owner_text != "project")
+                error = "unknown macro owner";
+            PerformanceMacroId id{};
+            if (error.empty() &&
+                performance_macros_.create(
+                    text("name"), owner,
+                    static_cast<std::uint64_t>(integer("owner_id")),
+                    static_cast<float>(real("value")), id, error))
+                structural = true;
+        } else if (command.action_id == "macro.delete.v1") {
+            structural = performance_macros_.erase(
+                static_cast<PerformanceMacroId>(integer("id")), error);
+        } else if (command.action_id == "macro.rename.v1") {
+            structural = performance_macros_.rename(
+                static_cast<PerformanceMacroId>(integer("id")), text("name"),
+                text("description"), error);
+        } else if (command.action_id == "macro.value-set.v1") {
+            const auto id = static_cast<PerformanceMacroId>(integer("id"));
+            if (performance_macros_.set_value(id, static_cast<float>(real("value")),
+                                              error)) {
+                const auto &macros = performance_macros_.project().macros;
+                const auto found = std::find_if(macros.begin(), macros.end(),
+                                                [=](const auto &macro) {
+                                                    return macro.id == id;
+                                                });
+                if (found == macros.end() ||
+                    !engine_.set_modulator_value(found->source_instance,
+                                                 found->value))
+                    error = "DSP command queue is full";
+                else if (arrangement_recording_.status().automation_armed)
+                    arrangement_recording_.capture_automation(
+                        "macro." + std::to_string(found->source_instance) +
+                            ".value",
+                        state_.transport_tick, found->value,
+                        automation_thinning_ticks_);
+                if (!error.empty()) {
+                    std::string ignored;
+                    (void)performance_macros_.replace(
+                        previous, timeline_.snapshot().timeline,
+                        mixer_configuration_, ignored);
+                }
+            }
+        } else if (command.action_id == "macro.assignment-set.v1") {
+            MacroAssignment assignment;
+            assignment.destination_id = text("destination");
+            assignment.minimum = static_cast<float>(real("minimum"));
+            assignment.maximum = static_cast<float>(real("maximum"));
+            assignment.smoothing_seconds =
+                static_cast<float>(real("smoothing"));
+            assignment.steps = static_cast<std::uint16_t>(integer("steps", 2));
+            const auto curve = text("curve", "linear");
+            if (curve == "exponential")
+                assignment.curve = ModulationMappingCurve::exponential;
+            else if (curve == "logarithmic")
+                assignment.curve = ModulationMappingCurve::logarithmic;
+            else if (curve == "s-curve")
+                assignment.curve = ModulationMappingCurve::s_curve;
+            else if (curve == "stepped")
+                assignment.curve = ModulationMappingCurve::stepped;
+            else if (curve != "linear")
+                error = "unknown macro mapping curve";
+            const auto polarity = text("polarity", "unipolar");
+            if (polarity == "bipolar")
+                assignment.polarity = ModulationPolarity::bipolar;
+            else if (polarity != "unipolar")
+                error = "unknown macro assignment polarity";
+            MacroAssignmentId id{};
+            if (error.empty() && performance_macros_.assign(
+                                     static_cast<PerformanceMacroId>(
+                                         integer("macro_id")),
+                                     std::move(assignment), id, error))
+                structural = true;
+        } else if (command.action_id == "macro.assignment-delete.v1") {
+            structural = performance_macros_.remove_assignment(
+                static_cast<PerformanceMacroId>(integer("macro_id")),
+                static_cast<MacroAssignmentId>(integer("assignment_id")), error);
+        } else if (command.action_id == "macro.scene-capture.v1") {
+            PerformanceSceneId id{};
+            structural = performance_macros_.capture_scene(
+                text("name"), static_cast<float>(real("duration")),
+                boolean("tempo_sync"), id, error);
+        } else if (command.action_id == "macro.scene-delete.v1") {
+            structural = performance_macros_.erase_scene(
+                static_cast<PerformanceSceneId>(integer("id")), error);
+        } else if (command.action_id == "macro.scene-recall.v1") {
+            const auto duration = static_cast<float>(real("duration"));
+            const auto tempo_sync = boolean("tempo_sync");
+            if (performance_macros_.start_morph(
+                    static_cast<PerformanceSceneId>(integer("id")), duration,
+                    tempo_sync, state_.transport_tick, engine_.frame_position(),
+                    engine_.sample_rate(),
+                    60'000'000.0 /
+                        timeline_.snapshot().timeline.transport
+                            .microseconds_per_quarter,
+                    error)) {
+                std::vector<std::pair<ModulatorInstanceId, float>> updates;
+                performance_macros_.advance(state_.transport_tick,
+                                            engine_.frame_position(), updates);
+                for (const auto &[instance, value] : updates)
+                    if (!engine_.set_modulator_value(instance, value)) {
+                        error = "DSP command queue is full";
+                        std::string ignored;
+                        (void)performance_macros_.replace(
+                            previous, timeline_.snapshot().timeline,
+                            mixer_configuration_, ignored);
+                        break;
+                    }
+            }
+        } else if (command.action_id == "macro.morph-stop.v1") {
+            performance_macros_.stop_morph();
+        }
+        if (error.empty() && structural) {
+            if (!publish_modulation_with_macros(modulation_configuration_, error)) {
+                const auto publication_error = error;
+                std::string rollback_error;
+                (void)performance_macros_.replace(
+                    previous, timeline_.snapshot().timeline,
+                    mixer_configuration_, rollback_error);
+                error = publication_error;
+            }
+        }
+        if (error.empty() && command.action_id != "macro.query.v1") {
+            project_.performance_macros = performance_macros_.project();
+            state_.project_dirty = true;
+            changed_locked();
+        }
+    } else if (command.action_id.rfind("recording.", 0) == 0) {
         const auto previous_recording_configuration = recording_configuration_;
         const auto text = [&](std::string_view name) {
             return *argument<std::string>(command, name);
@@ -2510,6 +2720,7 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 saving.routing_scenes = project_.routing_scenes;
                 saving.active_routing_scene = project_.active_routing_scene;
                 saving.modulation = modulation_configuration_;
+                saving.performance_macros = performance_macros_.project();
                 saving.midi = project_.midi;
                 for (const auto &slot : samples_.states())
                     if (slot.has_sample && slot.source_path.empty()) {
@@ -2705,9 +2916,11 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 if (!engine_.publish_mixer(loaded_mixer, error))
                     throw std::runtime_error(error);
                 mixer_configuration_ = loaded_mixer;
-                if (!engine_.publish_modulation(loaded.modulation))
-                    throw std::runtime_error(
-                        "modulation publication queue is full");
+                if (!performance_macros_.replace(
+                        loaded.performance_macros, loaded.timeline,
+                        loaded_mixer, error) ||
+                    !publish_modulation_with_macros(loaded.modulation, error))
+                    throw std::runtime_error(error);
                 modulation_configuration_ = loaded.modulation;
                 synth_instance_parameters_.clear();
                 next_modulation_route_id_ = 1;
@@ -2891,9 +3104,12 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 if (!engine_.publish_mixer(replacement.mixer, error))
                     return {false, sequence, before.revision, std::move(error)};
                 mixer_configuration_ = replacement.mixer;
-                if (!engine_.publish_modulation(replacement.modulation))
-                    return {false, sequence, before.revision,
-                            "modulation publication queue is full"};
+                if (!performance_macros_.replace(
+                        replacement.performance_macros, replacement.timeline,
+                        replacement.mixer, error) ||
+                    !publish_modulation_with_macros(replacement.modulation,
+                                                    error))
+                    return {false, sequence, before.revision, std::move(error)};
                 modulation_configuration_ = replacement.modulation;
                 synth_instance_parameters_.clear();
                 next_modulation_route_id_ = 1;
@@ -4744,7 +4960,8 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                             static_cast<float>(value);
                         modulation_changed = true;
                     }
-                if (modulation_changed && !engine_.publish_modulation(next))
+                if (modulation_changed &&
+                    !publish_modulation_with_macros(next, error))
                     error = "modulation publication queue is full";
                 if (!error.empty())
                     return {false, sequence, before.revision, std::move(error)};
@@ -4941,7 +5158,8 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             if (error.empty() && !validate_modulation_graph(next, diagnostics))
                 error = "connection " + std::to_string(diagnostics.connection) +
                         ": " + diagnostics.message;
-            if (error.empty() && !engine_.publish_modulation(next))
+            if (error.empty() &&
+                !publish_modulation_with_macros(next, error))
                 error = "modulation publication queue is full";
             if (error.empty()) {
                 modulation_configuration_ = next;
@@ -5300,7 +5518,8 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 if (!validation.configure(next))
                     error = "invalid modulator ownership or route";
             }
-            if (error.empty() && !engine_.publish_modulation(next))
+            if (error.empty() &&
+                !publish_modulation_with_macros(next, error))
                 error = "modulation publication queue is full";
             if (error.empty()) {
                 modulation_configuration_ = next;
@@ -5397,7 +5616,7 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                             route.depth = static_cast<float>(depth);
                             route.scope = scope;
                             route.track_id = static_cast<std::uint64_t>(*track);
-                            if (!engine_.publish_modulation(next))
+                            if (!publish_modulation_with_macros(next, error))
                                 error = "modulation publication queue is full";
                             else {
                                 modulation_configuration_ = next;
@@ -5434,7 +5653,7 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                         route.scope = scope;
                         route.track_id =
                             track ? static_cast<std::uint64_t>(*track) : 0;
-                        if (!engine_.publish_modulation(next))
+                        if (!publish_modulation_with_macros(next, error))
                             error = "modulation publication queue is full";
                         else {
                             modulation_configuration_ = next;
@@ -5476,7 +5695,7 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     next.routes[index].enabled =
                         *argument<bool>(command, "enabled");
                 if (error.empty()) {
-                    if (!engine_.publish_modulation(next))
+                    if (!publish_modulation_with_macros(next, error))
                         error = "modulation publication queue is full";
                     else {
                         modulation_configuration_ = next;
@@ -5557,7 +5776,8 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                         next.routes[i].scope != settings.scope;
                 if (error.empty() && incompatible)
                     error = "source scope conflicts with an existing route";
-                else if (error.empty() && !engine_.publish_modulation(next))
+                else if (error.empty() &&
+                         !publish_modulation_with_macros(next, error))
                     error = "modulation publication queue is full";
                 else if (error.empty()) {
                     modulation_configuration_ = next;
@@ -5570,7 +5790,8 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             if (source < 0 ||
                 source >= static_cast<std::int64_t>(ModulationSourceId::count))
                 error = "invalid modulation source";
-            else if (!engine_.publish_modulation(modulation_configuration_))
+            else if (!publish_modulation_with_macros(modulation_configuration_,
+                                                     error))
                 error = "modulation publication queue is full";
             else
                 changed_locked();
@@ -5701,6 +5922,15 @@ void ApplicationService::synchronize_locked() const {
     const auto playing = engine_.playing();
     const auto frame = engine_.frame_position();
     auto timeline = timeline_.snapshot();
+    std::vector<std::pair<ModulatorInstanceId, float>> macro_updates;
+    if (performance_macros_.advance(state_.transport_tick, frame,
+                                    macro_updates))
+        for (const auto &[instance, value] : macro_updates)
+            if (!engine_.set_modulator_value(instance, value)) {
+                state_.project_error = "macro morph DSP command queue is full";
+                performance_macros_.stop_morph();
+                break;
+            }
     AudioEngine::TimelineActivationEvent activation;
     while (engine_.pop_timeline_activation(activation)) {
         ++observed_timeline_activation_count_;
@@ -6138,11 +6368,17 @@ void ApplicationService::synchronize_locked() const {
     }
     state_.sample_slots = std::move(slots);
     state_.parameters = std::move(parameters);
-    state_.modulation = modulation_configuration_;
+    std::string macro_graph_error;
+    if (!performance_macros_.compile(modulation_configuration_,
+                                     state_.modulation, macro_graph_error)) {
+        state_.modulation = modulation_configuration_;
+        state_.project_error = macro_graph_error;
+    }
     state_.modulation_runtime = modulation_runtime;
     ModulationGraphDiagnostics graph;
-    (void)validate_modulation_graph(modulation_configuration_, graph);
+    (void)validate_modulation_graph(state_.modulation, graph);
     state_.modulation_graph = std::move(graph);
+    state_.performance_macros = performance_macros_.snapshot();
     state_.performance.generation = system_monitor_.generation();
     state_.performance.monotonic_milliseconds =
         system_monitor_.monotonic_milliseconds();

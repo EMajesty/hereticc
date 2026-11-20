@@ -1,4 +1,5 @@
 #pragma once
+#include "neurogenic/application/performance_macros.hpp"
 #include "neurogenic/audio/recording.hpp"
 #include "neurogenic/audio/slicing.hpp"
 #include "neurogenic/performance/monitor.hpp"
@@ -240,6 +241,7 @@ struct ApplicationState {
     std::vector<CapturedPatternLaunch> captured_pattern_launches;
     std::vector<CapturedAutomationChange> captured_automation_changes;
     std::vector<MusicalEvent> arrangement_automation;
+    MacroDiscoverySnapshot performance_macros;
     std::array<bool, maximum_midi_ports> midi_output_connected{};
     std::array<bool, maximum_midi_ports> midi_input_connected{};
 };
@@ -278,6 +280,9 @@ class ApplicationService {
     arrangement_recording() noexcept {
         return arrangement_recording_;
     }
+    [[nodiscard]] PerformanceMacroService &performance_macros() noexcept {
+        return performance_macros_;
+    }
     [[nodiscard]] MidiOutputScheduler &midi_output() noexcept {
         return midi_output_;
     }
@@ -291,6 +296,8 @@ class ApplicationService {
 
   private:
     CommandResult execute_locked(const ApplicationCommand &, std::uint64_t);
+    bool publish_modulation_with_macros(const ModulationConfiguration &,
+                                        std::string &);
     void synchronize_locked() const;
     void changed_locked();
     AudioEngine &engine_;
@@ -299,6 +306,7 @@ class ApplicationService {
     mutable SliceService slices_;
     mutable RecordingService recording_;
     mutable ArrangementRecordingService arrangement_recording_;
+    mutable PerformanceMacroService performance_macros_;
     RecordingConfiguration recording_configuration_;
     std::uint64_t recording_fixed_bars_{};
     mutable MixerConfiguration mixer_configuration_;

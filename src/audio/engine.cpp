@@ -361,6 +361,15 @@ bool AudioEngine::set_modulation_input(ModulationSourceId source,
     }
     return true;
 }
+bool AudioEngine::set_modulator_value(ModulatorInstanceId instance,
+                                      float value) noexcept {
+    if (!dsp_commands_.push(
+            {DspCommand::Target::modulator_value, instance, value})) {
+        dropped_dsp_commands_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    return true;
+}
 
 bool AudioEngine::queue_pattern(const Pattern &pattern) noexcept {
     if (!valid_pattern(pattern))
@@ -765,9 +774,11 @@ void AudioEngine::process(std::span<float> left,
             delay_.set_parameter(dsp.parameter, dsp.value);
         else if (dsp.target == DspCommand::Target::delay_bypass)
             delay_.set_bypass(dsp.value >= 0.5F);
-        else
+        else if (dsp.target == DspCommand::Target::modulation_input)
             modulation_.set_input(
                 static_cast<ModulationSourceId>(dsp.parameter), dsp.value);
+        else
+            modulation_.set_modulator_value(dsp.parameter, dsp.value);
     }
     SynthTrigger synth_trigger;
     while (synth_triggers_.pop(synth_trigger)) {
@@ -1142,6 +1153,12 @@ void AudioEngine::process(std::span<float> left,
                timeline_events_[timeline_index].frame == frame) {
             const auto &event = timeline_events_[timeline_index++];
             if (event.type == MusicalEventType::parameter) {
+                if (event.parameter_target == static_cast<std::uint32_t>(
+                                                  ParameterTarget::performance_macro)) {
+                    modulation_.set_modulator_value(event.instrument_instance,
+                                                    event.value);
+                    continue;
+                }
                 modulation_.set_automation(
                     {static_cast<ParameterTarget>(event.parameter_target),
                      event.parameter_id,

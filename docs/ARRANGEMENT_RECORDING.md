@@ -36,6 +36,10 @@ replaces the prior captured value. Modulation samples are not recorded. Base
 values remain separate; playback uses automation-or-base plus modulation and
 then destination clamping.
 
+Macro gestures are recorded as `macro.<source-instance>.value` semantic
+automation. Downstream mapped parameters are deliberately not expanded into
+separate automation lanes, preserving the editable macro performance.
+
 Commit is one validated `TimelineService` transaction, so a pass is one
 undo/redo operation. Revision or publication failure leaves history and the
 active timeline unchanged.
@@ -48,7 +52,7 @@ and Commit fail explicitly, so truncated capture is never reported successful.
 Application snapshots expose API version 1, phase, mode, arms, boundaries,
 counts, overflow, pending events, commit state and validation error.
 
-Timeline metadata version 7 and project format 4 persist committed clips and
+Timeline metadata version 7 and project format 5 persist committed clips and
 absolute song automation. Capture queues and pending passes are transient.
 Task 045 data migrates with an empty automation lane.
 

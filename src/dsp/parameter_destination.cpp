@@ -27,6 +27,12 @@ std::optional<ParameterDestination>
 resolve_parameter_destination(std::string_view id) noexcept {
     using S = SynthParameter;
     using D = DelayParameter;
+    if (const auto scoped = scoped_parameter(id, "macro.")) {
+        const auto [instance, parameter] = *scoped;
+        if (parameter == "value")
+            return {{ParameterTarget::performance_macro, 1, instance}};
+        return std::nullopt;
+    }
     if (id.starts_with("fx.")) {
         id.remove_prefix(3);
         const auto separator = id.find('.');
@@ -237,6 +243,8 @@ bool valid_legacy_parameter(ParameterTarget target,
         return parameter >= 1 &&
                parameter <= static_cast<std::uint32_t>(
                                 ExternalFxModulationParameter::return_gain);
+    if (target == ParameterTarget::performance_macro)
+        return parameter == 1;
     if (target == ParameterTarget::native_effect)
         return parameter >= 1 && parameter <= maximum_effect_parameters;
     if (target == ParameterTarget::mixer_group)

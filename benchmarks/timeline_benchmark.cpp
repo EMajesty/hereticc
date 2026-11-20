@@ -1060,6 +1060,59 @@ void modulation_graph_case(std::string name, std::size_t instance_count,
                iterations,
            preparation_ns);
 }
+
+void performance_macro_case(std::size_t macro_count,
+                            std::size_t assignment_count) {
+    neurogenic::Timeline timeline;
+    neurogenic::MixerConfiguration mixer;
+    neurogenic::PerformanceMacroService service;
+    std::string error;
+    for (std::size_t i = 0; i < macro_count; ++i) {
+        neurogenic::PerformanceMacroId id{};
+        if (!service.create("Macro " + std::to_string(i),
+                            neurogenic::MacroOwnerKind::project, 0, 0.5F, id,
+                            error))
+            throw std::runtime_error(error);
+        for (std::size_t route = i; route < assignment_count;
+             route += macro_count) {
+            neurogenic::MacroAssignment assignment;
+            assignment.destination_id = "effect.delay.mix";
+            assignment.minimum = 0;
+            assignment.maximum = 1;
+            assignment.curve = route % 2
+                                   ? neurogenic::ModulationMappingCurve::s_curve
+                                   : neurogenic::ModulationMappingCurve::linear;
+            neurogenic::MacroAssignmentId assignment_id{};
+            if (!service.assign(id, assignment, assignment_id, error))
+                throw std::runtime_error(error);
+        }
+    }
+    neurogenic::ModulationConfiguration configuration;
+    const auto preparation_begin = Clock::now();
+    if (!service.compile({}, configuration, error))
+        throw std::runtime_error(error);
+    const auto preparation = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            Clock::now() - preparation_begin)
+            .count());
+    neurogenic::ModulationEngine engine(48000);
+    if (!engine.configure(configuration))
+        throw std::runtime_error("performance macro benchmark configuration");
+    const auto begin = Clock::now();
+    for (std::size_t iteration = 0; iteration < iterations; ++iteration) {
+        for (std::size_t frame = 0; frame < 256; ++frame)
+            engine.process_frame([](auto, float value) {
+                checksum += static_cast<std::uint64_t>(value * 1000.0F);
+            });
+    }
+    const auto elapsed = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - begin)
+            .count() /
+        iterations);
+    result("performance_macros_" + std::to_string(macro_count) + "_" +
+               std::to_string(assignment_count),
+           48000, 256, elapsed, preparation);
+}
 void synth_instance_case(std::size_t instance_count, bool voice_modulation) {
     neurogenic::AudioEngine engine(48000, 32);
     neurogenic::Timeline timeline;
@@ -1590,6 +1643,8 @@ int main(int argc, char **argv) {
     modulation_graph_case("native_modulators_mixed_16", 16, 32, false, true);
     modulation_graph_case("native_modulators_mixed_32", 32, 64, false, true);
     modulation_graph_case("native_modulators_mixed_64", 64, 128, false, true);
+    performance_macro_case(8, 32);
+    performance_macro_case(16, 64);
     synth_instance_case(4, false);
     synth_instance_case(8, false);
     synth_instance_case(16, false);

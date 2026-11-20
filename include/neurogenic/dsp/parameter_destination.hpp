@@ -13,7 +13,8 @@ enum class ParameterTarget : std::uint32_t {
     mixer_master,
     external_fx,
     native_effect,
-    mixer_group
+    mixer_group,
+    performance_macro
 };
 enum class SampleModulationParameter : std::uint32_t { pitch = 1, gain, pan };
 enum class MixerTrackModulationParameter : std::uint32_t {

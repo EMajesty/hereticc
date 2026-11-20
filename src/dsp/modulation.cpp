@@ -100,6 +100,9 @@ constexpr std::array chaos_parameters{
                                  ModulatorParameterId::chaos},
     ModulatorParameterDescriptor{"rate", "Rate", "Hz", 0.01F, 100, 4, false,
                                  ModulatorParameterId::rate}};
+constexpr std::array macro_parameters{
+    ModulatorParameterDescriptor{"value", "Value", "%", 0, 1, 0, false,
+                                 ModulatorParameterId::manual_value}};
 constexpr std::array<ModulatorParameterDescriptor, 0> no_parameters{};
 constexpr std::array<ModulatorPortDescriptor, 0> no_inputs{};
 constexpr std::array input_one{
@@ -225,7 +228,12 @@ const std::array registry{
     ModulatorTypeDescriptor{"native.gate.v1", "Note gate", "Voice",
                             ModulatorType::gate, no_parameters, no_inputs,
                             output_gate_trigger, voice_owner, true, true,
-                            ModulatorUpdateRate::per_voice_control, 16}};
+                            ModulatorUpdateRate::per_voice_control, 16},
+    ModulatorTypeDescriptor{"native.performance-macro.v1", "Performance macro",
+                            "Control", ModulatorType::performance_macro,
+                            macro_parameters, no_inputs, output_unipolar,
+                            all_owners, false, false,
+                            ModulatorUpdateRate::control, 16}};
 } // namespace
 
 std::span<const ModulatorTypeDescriptor> modulator_type_registry() noexcept {
@@ -491,6 +499,8 @@ bool ModulationEngine::configure(
                std::isfinite(source.offset) && source.offset >= -1 &&
                source.offset <= 1 && std::isfinite(source.chaos) &&
                source.chaos >= 3.5F && source.chaos <= 4 &&
+               std::isfinite(source.manual_value) &&
+               source.manual_value >= 0 && source.manual_value <= 1 &&
                std::all_of(source.step_values.begin(), source.step_values.end(),
                            [](float value) {
                                return std::isfinite(value) && value >= -1 &&
@@ -536,6 +546,13 @@ bool ModulationEngine::configure(
             !std::isfinite(route.depth) || route.depth < -1.0F ||
             route.depth > 1.0F || !std::isfinite(route.minimum) ||
             !std::isfinite(route.maximum) || route.minimum >= route.maximum ||
+            (route.mapped_assignment &&
+             (!std::isfinite(route.mapped_minimum) ||
+              !std::isfinite(route.mapped_maximum) ||
+              !std::isfinite(route.mapped_default) ||
+              route.mapped_default < 0 || route.mapped_default > 1 ||
+              route.mapped_steps < 2 ||
+              route.mapping_curve > ModulationMappingCurve::stepped)) ||
             (!route.source_instance &&
              configuration.sources[static_cast<std::size_t>(route.source)]
                      .scope != route.scope))
@@ -657,6 +674,11 @@ bool ModulationEngine::configure(
         auto seed = configuration_.modulators[instance].settings.seed ^
                     configuration_.modulators[instance].id;
         modulator_states_[instance].random = seed ? seed : 1;
+        if (configuration_.modulators[instance].type ==
+            ModulatorType::performance_macro)
+            modulator_states_[instance].value =
+                configuration_.modulators[instance].settings.manual_value * 2.0F -
+                1.0F;
     }
     effective_.fill(0);
     for (auto &value : published_effective_)
@@ -844,6 +866,21 @@ void ModulationEngine::set_modulator_automation(
             entry = {instance, parameter, value, true};
             return;
         }
+}
+void ModulationEngine::set_modulator_value(ModulatorInstanceId instance,
+                                           float value) noexcept {
+    if (!std::isfinite(value))
+        return;
+    const auto found = std::find_if(
+        configuration_.modulators.begin(),
+        configuration_.modulators.begin() + configuration_.modulator_count,
+        [&](const auto &candidate) { return candidate.id == instance; });
+    if (found == configuration_.modulators.begin() +
+                     configuration_.modulator_count ||
+        found->type != ModulatorType::performance_macro)
+        return;
+    set_modulator_automation(instance, ModulatorParameterId::manual_value,
+                             std::clamp(value, 0.0F, 1.0F));
 }
 void ModulationEngine::set_automation(ParameterDestination destination,
                                       float value) noexcept {
@@ -1064,6 +1101,9 @@ ModulationEngine::effective_settings(std::size_t index) const noexcept {
         case ModulatorParameterId::scale: base = settings.scale; break;
         case ModulatorParameterId::offset: base = settings.offset; break;
         case ModulatorParameterId::chaos: base = settings.chaos; break;
+        case ModulatorParameterId::manual_value:
+            base = settings.manual_value;
+            break;
         default: continue;
         }
         for (const auto &automation : modulator_automation_)
@@ -1150,6 +1190,9 @@ ModulationEngine::effective_settings(std::size_t index) const noexcept {
         case ModulatorParameterId::scale: settings.scale = effective; break;
         case ModulatorParameterId::offset: settings.offset = effective; break;
         case ModulatorParameterId::chaos: settings.chaos = effective; break;
+        case ModulatorParameterId::manual_value:
+            settings.manual_value = effective;
+            break;
         default: break;
         }
     }
@@ -1454,6 +1497,11 @@ void ModulationEngine::update_modulators(std::uint32_t elapsed) noexcept {
                 x = settings.chaos * x * (1.0F - x);
                 state.value = std::isfinite(x) ? x * 2.0F - 1.0F : 0.0F;
             }
+        } else if (instance.type == ModulatorType::performance_macro) {
+            // The value is supplied by a bounded control command. Keeping it
+            // in runtime state allows automation and morphing without graph
+            // publication at control rate.
+            state.value = settings.manual_value * 2.0F - 1.0F;
         }
         state.value = std::isfinite(state.value)
                           ? std::clamp(state.value, -1.0F, 1.0F)

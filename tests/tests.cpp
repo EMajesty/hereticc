@@ -814,7 +814,7 @@ void test_modulation_engine() {
     check(follower_attack > follower_release && follower_release > -1.0F,
           "envelope follower attack and release smoothing");
 
-    check(modulator_type_registry().size() == 23 &&
+    check(modulator_type_registry().size() == 24 &&
               find_modulator_type(ModulatorType::lfo)->parameters.size() >= 2,
           "modulator type discovery metadata");
     ModulationConfiguration dynamic;
@@ -1559,6 +1559,90 @@ void test_modulation_engine() {
                              {"instance_id", std::int64_t{1}}}})
                   .accepted,
           "semantic per-voice modulation route creation");
+}
+
+void test_performance_macros() {
+    using namespace neurogenic;
+    Timeline timeline;
+    timeline.tracks.push_back({1, "Macro track", false,
+                               {ticks_per_quarter * 4, {}}});
+    MixerConfiguration mixer;
+    mixer.track_count = 1;
+    mixer.tracks[0].track = 1;
+    PerformanceMacroService macros;
+    PerformanceMacroId macro_id{};
+    std::string error;
+    check(macros.create("Tone", MacroOwnerKind::track, 1, 0.25F, macro_id,
+                        error),
+          "create track performance macro");
+    MacroAssignment cutoff;
+    cutoff.destination_id = "synth.instance.1.cutoff";
+    cutoff.minimum = 100.0F;
+    cutoff.maximum = 10100.0F;
+    cutoff.curve = ModulationMappingCurve::s_curve;
+    MacroAssignmentId assignment_id{};
+    check(macros.assign(macro_id, cutoff, assignment_id, error),
+          "assign macro destination");
+
+    ModulationConfiguration compiled;
+    check(macros.compile({}, compiled, error) && compiled.modulator_count == 1 &&
+              compiled.route_count == 1 && compiled.graph_prepared,
+          "compile macro into modulation graph");
+    ModulationEngine engine(48000);
+    check(engine.configure(compiled), "configure compiled macro graph");
+    float effective{};
+    for (int frame = 0; frame < 32; ++frame)
+        engine.process_frame([&](ParameterDestination destination, float value) {
+            if (destination.target == ParameterTarget::subtractive_synth)
+                effective = value;
+        });
+    near(effective, 1662.5F, "S-curve macro default mapping");
+    engine.set_modulator_value(compiled.modulators[0].id, 1.0F);
+    for (int frame = 0; frame < 32; ++frame)
+        engine.process_frame([&](ParameterDestination destination, float value) {
+            if (destination.target == ParameterTarget::subtractive_synth)
+                effective = value;
+        });
+    near(effective, 10100.0F, "macro reaches mapped maximum");
+
+    PerformanceMacroId second{};
+    check(macros.create("Second", MacroOwnerKind::project, 0, 0.5F, second,
+                        error),
+          "create second macro");
+    cutoff.curve = ModulationMappingCurve::linear;
+    cutoff.minimum = 100.0F;
+    cutoff.maximum = 5100.0F;
+    check(macros.assign(second, cutoff, assignment_id, error),
+          "assign multiple macros to one destination");
+    check(macros.compile({}, compiled, error), "compile summed macros");
+    check(compiled.modulators[0].id != compiled.modulators[1].id,
+          "stable independent macro source identities");
+
+    PerformanceSceneId scene{};
+    check(macros.capture_scene("A", 2.0F, false, scene, error),
+          "capture performance scene");
+    check(macros.set_value(macro_id, 1.0F, error), "change macro before recall");
+    check(macros.start_morph(scene, 1.0F, false, 0, 100, 1000, 120.0,
+                             error),
+          "start scene morph");
+    std::vector<std::pair<ModulatorInstanceId, float>> updates;
+    check(macros.advance(0, 600, updates) && !updates.empty(),
+          "advance scene morph");
+    near(macros.snapshot().macros.front().value, 0.625F,
+         "scene morph midpoint");
+    check(macros.advance(0, 1100, updates) &&
+              !macros.snapshot().morph.active,
+          "complete scene morph");
+
+    MacroProject invalid = macros.project();
+    invalid.macros.front().owner_id = 99;
+    check(!macros.replace(invalid, timeline, mixer, error),
+          "reject missing macro owner");
+    check(resolve_parameter_destination(
+              "macro." + std::to_string(compiled.modulators[0].id) +
+              ".value")
+              .has_value(),
+          "macro automation destination discovery");
 }
 
 void test_midi_routing_and_clock() {
@@ -3681,6 +3765,22 @@ void test_unified_project_persistence() {
     project.modulation.routes[3].depth = 1;
     project.modulation.routes[3].scope = ModulationScope::voice;
     project.modulation.routes[3].track_id = 77;
+    PerformanceMacro persisted_macro;
+    persisted_macro.id = 41;
+    persisted_macro.source_instance = 0x40000041U;
+    persisted_macro.name = "Performance";
+    persisted_macro.description = "Round-trip macro";
+    persisted_macro.owner_kind = MacroOwnerKind::track;
+    persisted_macro.owner_id = 77;
+    persisted_macro.value = 0.75F;
+    persisted_macro.default_value = 0.25F;
+    persisted_macro.assignments.push_back(
+        {71, "synth.instance.2.cutoff", 100.0F, 8000.0F,
+         ModulationPolarity::unipolar, ModulationMappingCurve::exponential,
+         true, 0.02F, 2});
+    project.performance_macros.macros.push_back(persisted_macro);
+    project.performance_macros.scenes.push_back(
+        {81, "Drop", {{41, 0.1F}}, {}, 4.0F, true});
     project.midi.clock_source = MidiClockSource::external;
     project.midi.forward_external_clock = true;
     project.midi.route_count = 1;
@@ -3739,6 +3839,12 @@ void test_unified_project_persistence() {
             loaded.modulation.modulators[4].owner_kind ==
                 ModulatorOwnerKind::voice_definition &&
             loaded.modulation.routes[3].scope == ModulationScope::voice &&
+            loaded.performance_macros.macros.size() == 1 &&
+            loaded.performance_macros.macros[0].id == 41 &&
+            loaded.performance_macros.macros[0].assignments[0].curve ==
+                ModulationMappingCurve::exponential &&
+            loaded.performance_macros.scenes.size() == 1 &&
+            loaded.performance_macros.scenes[0].macro_values[0].first == 41 &&
             loaded.modulation.sources[0].tempo_sync &&
             loaded.midi.clock_source == MidiClockSource::external &&
             loaded.midi.forward_external_clock &&
@@ -4799,6 +4905,43 @@ void test_application_control_and_controllers() {
         initial);
     SampleManager samples(engine);
     ApplicationService application(engine, timeline, samples, 64);
+    check(application
+              .execute({"macro.create.v1",
+                        {{"name", std::string("Live")},
+                         {"owner", std::string("project")},
+                         {"value", 0.25}},
+                        "test",
+                        1})
+              .accepted,
+          "macro create semantic action");
+    const auto created_macro =
+        application.snapshot().performance_macros.macros.front().id;
+    check(application
+              .execute({"macro.assignment-set.v1",
+                        {{"macro_id", static_cast<std::int64_t>(created_macro)},
+                         {"destination", std::string("effect.delay.mix")},
+                         {"minimum", 0.0},
+                         {"maximum", 1.0},
+                         {"curve", std::string("logarithmic")}},
+                        "test",
+                        2})
+              .accepted &&
+              application.snapshot()
+                      .performance_macros.macros.front()
+                      .assignments.size() == 1,
+          "macro assignment semantic action and discovery state");
+    check(application
+              .execute({"macro.value-set.v1",
+                        {{"id", static_cast<std::int64_t>(created_macro)},
+                         {"value", 0.8}},
+                        "test",
+                        3})
+              .accepted &&
+              std::fabs(application.snapshot()
+                            .performance_macros.macros.front()
+                            .value -
+                        0.8F) < 0.0001F,
+          "macro value semantic action");
     auto selection = application.execute(
         {"track.select.v1", {{"track_id", std::int64_t{2}}}, "test", 1});
     check(selection.accepted && application.snapshot().selected_track == 2,
@@ -6784,6 +6927,7 @@ int main() {
         test_performance_monitoring();
         test_midi_routing_and_clock();
         test_modulation_engine();
+        test_performance_macros();
         test_polyphonic_sample_modulation();
         test_native_synthesis_and_dsp();
         test_native_effect_chains();

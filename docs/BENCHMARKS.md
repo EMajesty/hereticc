@@ -295,3 +295,11 @@ microsecond observed callback peak, zero deadline overruns, MIDI drops and
 recording overflows, about 15.0 microseconds of GUI/state overhead, and about
 40.4 MiB RSS. This is a short offline regression
 run, not N150, Raspberry Pi 5, GPU-presentation or hardware-XRUN evidence.
+
+Task 047 adds `performance_macros_8_32` and `performance_macros_16_64`.
+Preparation time covers macro-to-graph compilation; processing time covers the
+bounded control-rate graph evaluation for a 256-frame buffer. Results are host
+measurements only and must not be treated as Raspberry Pi 5 or N150 claims.
+On the 2026-11-20 Ryzen 7 7800X3D Debug host, a 20-iteration run measured
+approximately 12.4 microseconds per buffer for 8/32 and 35.9 microseconds for
+16/64, with 3.8/6.5 microseconds of graph preparation and about 74.2 MiB RSS.
