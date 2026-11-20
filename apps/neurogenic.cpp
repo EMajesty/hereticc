@@ -2,6 +2,7 @@
 #include "neurogenic/audio/engine.hpp"
 #include "neurogenic/audio/sample.hpp"
 #include "neurogenic/audio/sample_manager.hpp"
+#include "neurogenic/application/lifecycle.hpp"
 #include "neurogenic/core/control_dispatcher.hpp"
 #include "neurogenic/midi/input.hpp"
 #include "neurogenic/midi/mapping.hpp"
@@ -47,6 +48,11 @@ void usage() {
            "  --script FILE     Lua action for MIDI note 36\n"
            "  --timeline FILE   load a NEUROGENIC_TIMELINE version 1 file\n"
            "  --project PATH    restore a versioned NEUROGENIC project\n"
+           "  --preferences PATH  appliance preference file\n"
+           "  --reopen-last     reopen the last project when --project is absent\n"
+           "  --no-reopen-last  disable automatic last-project restoration\n"
+           "  --shutdown-dirty CHOICE  save, discard, or cancel (default cancel)\n"
+           "  --run-for SECONDS diagnostic bounded appliance run\n"
            "  --interactive     accept live load/unload/status/quit commands "
            "on stdin\n"
            "  --list-devices    enumerate audio and MIDI devices\n"
@@ -106,35 +112,57 @@ std::uint32_t unsigned_number(std::string_view value, const char *option) {
 int main(int argc, char **argv) {
     try {
         std::string wav, audio_name, input_name,
-            script = "examples/generate.lua", timeline_file, project_file;
+            script = "examples/generate.lua", timeline_file, project_file,
+            preferences_file, shutdown_dirty{"cancel"};
         std::vector<std::string> midi_inputs, midi_outputs;
         std::vector<std::pair<std::uint32_t, std::filesystem::path>> slot_files;
         std::vector<std::pair<std::uint8_t, std::uint32_t>> note_maps;
         bool list = false, headless = false, interactive = false, gui = false,
              fullscreen = false, reset_ui_scale = false, stats = false,
              synth = false;
+        bool audio_explicit{}, input_explicit{}, midi_input_explicit{},
+             midi_output_explicit{}, fullscreen_explicit{}, scale_explicit{},
+             input_channels_explicit{}, output_channels_explicit{};
+        std::optional<bool> reopen_last_override;
         std::optional<float> ui_scale;
+        std::optional<double> run_for_seconds;
         std::uint32_t input_channels{2}, output_channels{2};
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
-            if (arg == "--audio" && i + 1 < argc)
-                audio_name = argv[++i];
-            else if (arg == "--input" && i + 1 < argc)
-                input_name = argv[++i];
+            if (arg == "--audio" && i + 1 < argc) {
+                audio_name = argv[++i]; audio_explicit = true;
+            } else if (arg == "--input" && i + 1 < argc) {
+                input_name = argv[++i]; input_explicit = true;
+            }
             else if (arg == "--input-channels" && i + 1 < argc)
-                input_channels = unsigned_number(argv[++i], "--input-channels");
+                input_channels = unsigned_number(argv[++i], "--input-channels"), input_channels_explicit = true;
             else if (arg == "--output-channels" && i + 1 < argc)
-                output_channels = unsigned_number(argv[++i], "--output-channels");
-            else if (arg == "--midi" && i + 1 < argc)
-                midi_inputs.emplace_back(argv[++i]);
-            else if (arg == "--midi-out" && i + 1 < argc)
-                midi_outputs.emplace_back(argv[++i]);
+                output_channels = unsigned_number(argv[++i], "--output-channels"), output_channels_explicit = true;
+            else if (arg == "--midi" && i + 1 < argc) {
+                midi_inputs.emplace_back(argv[++i]); midi_input_explicit = true;
+            } else if (arg == "--midi-out" && i + 1 < argc) {
+                midi_outputs.emplace_back(argv[++i]); midi_output_explicit = true;
+            }
             else if (arg == "--script" && i + 1 < argc)
                 script = argv[++i];
             else if (arg == "--timeline" && i + 1 < argc)
                 timeline_file = argv[++i];
             else if (arg == "--project" && i + 1 < argc)
                 project_file = argv[++i];
+            else if (arg == "--preferences" && i + 1 < argc)
+                preferences_file = argv[++i];
+            else if (arg == "--reopen-last")
+                reopen_last_override = true;
+            else if (arg == "--no-reopen-last")
+                reopen_last_override = false;
+            else if (arg == "--shutdown-dirty" && i + 1 < argc)
+                shutdown_dirty = argv[++i];
+            else if (arg == "--run-for" && i + 1 < argc) {
+                run_for_seconds = std::stod(argv[++i]);
+                if (!std::isfinite(*run_for_seconds) || *run_for_seconds <= 0.0 ||
+                    *run_for_seconds > 3600.0)
+                    throw std::invalid_argument("--run-for must be greater than zero and at most 3600 seconds");
+            }
             else if (arg == "--slot" && i + 1 < argc) {
                 auto [id, path] = assignment(argv[++i], "--slot");
                 slot_files.emplace_back(id, path);
@@ -160,15 +188,18 @@ int main(int argc, char **argv) {
             else if (arg == "--fullscreen") {
                 gui = true;
                 fullscreen = true;
+                fullscreen_explicit = true;
             } else if (arg == "--ui-scale" && i + 1 < argc) {
                 gui = true;
                 ui_scale = std::stof(argv[++i]);
+                scale_explicit = true;
                 if (!std::isfinite(*ui_scale) || *ui_scale < 1.0F ||
                     *ui_scale > 2.5F)
                     throw std::invalid_argument("--ui-scale must be 1.0..2.5");
             } else if (arg == "--reset-ui-scale") {
                 gui = true;
                 reset_ui_scale = true;
+                scale_explicit = true;
             } else if (arg == "--help") {
                 usage();
                 return 0;
@@ -179,6 +210,55 @@ int main(int argc, char **argv) {
                 return 2;
             }
         }
+
+        neurogenic::ApplianceLifecycle lifecycle;
+        auto announce = [&](neurogenic::StartupStage stage, float progress) {
+            lifecycle.transition(stage, progress);
+            std::cerr << "startup[" << neurogenic::startup_stage_name(stage)
+                      << "] " << static_cast<int>(progress * 100) << "%\n";
+        };
+        announce(neurogenic::StartupStage::configuration, 0.05F);
+        neurogenic::AppliancePreferences preferences;
+        const auto preference_path = preferences_file.empty()
+                                         ? neurogenic::default_preferences_path()
+                                         : std::filesystem::path(preferences_file);
+        std::string preference_error;
+        if (!neurogenic::load_preferences(preference_path, preferences,
+                                          preference_error)) {
+            lifecycle.issue(neurogenic::StartupStage::configuration,
+                            preference_error, true);
+            std::cerr << "preferences ignored: " << preference_error << '\n';
+            preferences = {};
+        }
+        if (reopen_last_override)
+            preferences.reopen_last_project = *reopen_last_override;
+        if (!audio_explicit) audio_name = preferences.audio_output;
+        if (!input_explicit) input_name = preferences.audio_input;
+        if (!input_channels_explicit) input_channels = preferences.audio_input_channels;
+        if (!output_channels_explicit) output_channels = preferences.audio_output_channels;
+        if (!midi_input_explicit) midi_inputs = preferences.midi_inputs;
+        if (!midi_output_explicit) midi_outputs = preferences.midi_outputs;
+        if (!fullscreen_explicit) fullscreen = preferences.fullscreen;
+        if (!scale_explicit && preferences.ui_scale) ui_scale = preferences.ui_scale;
+        announce(neurogenic::StartupStage::project_selection, 0.12F);
+        std::string project_warning;
+        project_file = neurogenic::select_startup_project(
+                           preferences, project_file, project_warning)
+                           .string();
+        if (!project_warning.empty()) {
+            lifecycle.issue(neurogenic::StartupStage::project_selection,
+                            project_warning, true);
+            std::cerr << project_warning << '\n';
+        }
+        neurogenic::UnsavedShutdownChoice shutdown_choice;
+        if (shutdown_dirty == "save")
+            shutdown_choice = neurogenic::UnsavedShutdownChoice::save;
+        else if (shutdown_dirty == "discard")
+            shutdown_choice = neurogenic::UnsavedShutdownChoice::discard;
+        else if (shutdown_dirty == "cancel")
+            shutdown_choice = neurogenic::UnsavedShutdownChoice::cancel;
+        else
+            throw std::invalid_argument("--shutdown-dirty must be save, discard, or cancel");
 
         neurogenic::AudioEngine engine;
         neurogenic::SampleManager samples(engine);
@@ -237,11 +317,20 @@ int main(int argc, char **argv) {
         }
 
         std::optional<neurogenic::Project> startup_project;
+        announce(neurogenic::StartupStage::project_restoration, 0.2F);
         if (!project_file.empty()) {
             if (!timeline_file.empty() || !wav.empty() || !slot_files.empty())
                 throw std::invalid_argument(
                     "--project cannot be combined with sample or timeline inputs");
-            startup_project = neurogenic::load_project(project_file);
+            try {
+                startup_project = neurogenic::load_project(project_file);
+            } catch (const std::exception &exception) {
+                lifecycle.issue(neurogenic::StartupStage::project_restoration,
+                                exception.what(), false);
+                std::cerr << neurogenic::lifecycle_json(lifecycle.snapshot())
+                          << '\n';
+                throw;
+            }
             for (const auto &[slot, path] :
                  startup_project->samples.sample_paths)
                 if (std::filesystem::exists(path))
@@ -359,6 +448,7 @@ int main(int argc, char **argv) {
         });
         dispatcher.start();
         std::string error;
+        announce(neurogenic::StartupStage::audio, 0.55F);
         if (input_channels == 0 || input_channels > 6 || output_channels == 0 ||
             output_channels > 6)
             throw std::invalid_argument("audio channel counts must be 1..6");
@@ -372,19 +462,23 @@ int main(int argc, char **argv) {
                                                             error,
                                                             output_channels);
         if (!audio_started) {
+            lifecycle.issue(neurogenic::StartupStage::audio, error,
+                            gui || interactive);
             std::cerr << "audio unavailable: " << error << '\n';
-            return 1;
+            if (!gui && !interactive)
+                return 1;
+            std::cerr << "continuing in degraded control-only mode\n";
         }
-        if (midi_inputs.empty())
-            midi_inputs.emplace_back();
+        announce(neurogenic::StartupStage::midi, 0.68F);
         for (std::size_t i = 0; i < midi_inputs.size() &&
                                 i < neurogenic::maximum_midi_ports;
              ++i) {
             if (!midi.connect(static_cast<neurogenic::MidiPortId>(i + 1),
-                              midi_inputs[i], error))
+                              midi_inputs[i], error)) {
+                lifecycle.issue(neurogenic::StartupStage::midi, error, true);
                 std::cerr << "MIDI input unavailable (audio continues): "
                           << error << '\n';
-            else
+            } else
                 std::cout << "MIDI input " << i + 1 << " active\n";
         }
         for (std::size_t i = 0; i < midi_outputs.size() &&
@@ -392,9 +486,10 @@ int main(int argc, char **argv) {
              ++i) {
             if (!midi_output.connect(
                     static_cast<neurogenic::MidiPortId>(i + 1),
-                    midi_outputs[i], error))
+                    midi_outputs[i], error)) {
+                lifecycle.issue(neurogenic::StartupStage::midi, error, true);
                 std::cerr << "MIDI output unavailable: " << error << '\n';
-            else
+            } else
                 std::cout << "MIDI output " << i + 1 << " active\n";
         }
         std::jthread midi_output_dispatcher([&](std::stop_token stop_token) {
@@ -423,18 +518,59 @@ int main(int argc, char **argv) {
         });
         std::signal(SIGINT, stop);
         std::signal(SIGTERM, stop);
+        announce(neurogenic::StartupStage::controllers, 0.78F);
+        // Controller adapters are optional clients; absence is a supported state.
+        if (gui)
+            announce(neurogenic::StartupStage::gui, 0.9F);
+        lifecycle.ready();
+        std::cerr << neurogenic::lifecycle_json(lifecycle.snapshot()) << '\n';
+        std::jthread automatic_stop;
+        if (run_for_seconds)
+            automatic_stop = std::jthread([duration = *run_for_seconds](std::stop_token token) {
+                const auto deadline = std::chrono::steady_clock::now() +
+                    std::chrono::duration<double>(duration);
+                while (!token.stop_requested() &&
+                       std::chrono::steady_clock::now() < deadline)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                if (!token.stop_requested()) running = false;
+            });
         std::cout << "Playing " << engine.sample_slot_count()
                   << " sample slot(s). MIDI note 36 runs " << script
                   << ". Press Ctrl-C to stop.\n";
         int exit_code{};
+        auto approve_shutdown = [&]() {
+            const auto state = application.snapshot();
+            if (!state.project_dirty)
+                return true;
+            if (shutdown_choice == neurogenic::UnsavedShutdownChoice::save) {
+                const auto saved = application.execute({"project.save.v1", {}});
+                if (!saved.accepted) {
+                    std::cerr << "shutdown save failed: " << saved.error << '\n';
+                    return false;
+                }
+                return true;
+            }
+            std::string reason;
+            const auto allowed = lifecycle.request_shutdown(
+                true, shutdown_choice, reason);
+            if (!allowed)
+                std::cerr << "shutdown cancelled: " << reason << '\n';
+            if (!allowed)
+                running = true;
+            return allowed;
+        };
         if (gui) {
             neurogenic::GuiOptions gui_options;
             gui_options.fullscreen = fullscreen;
             gui_options.ui_scale = ui_scale;
             gui_options.reset_ui_scale = reset_ui_scale;
+            gui_options.request_close = approve_shutdown;
+            gui_options.external_stop_requested = [] { return !running.load(); };
             exit_code = neurogenic::run_gui(application, gui_options, error);
-            if (exit_code != 0)
+            if (exit_code != 0) {
+                lifecycle.issue(neurogenic::StartupStage::gui, error, true);
                 std::cerr << "GUI unavailable: " << error << '\n';
+            }
         } else if (interactive) {
             std::cout << "Commands: load ID FILE | replace ID FILE | unload ID "
                          "| status [ID] | record-start ID SOURCE | record-stop "
@@ -514,12 +650,47 @@ int main(int argc, char **argv) {
         } else
             while (running.load())
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        if (!gui && !approve_shutdown()) {
+            // A non-GUI appliance remains alive after a rejected signal rather
+            // than silently discarding a dirty project.
+            running = true;
+            while (running.load())
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            if (!approve_shutdown())
+                return 3;
+        }
+        std::string shutdown_reason;
+        if (application.snapshot().recording.state !=
+            neurogenic::RecordingState::idle)
+            (void)application.execute({"recording.cancel.v1", {}});
+        engine.stop();
+        engine.midi_panic();
+        if (audio_started)
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        (void)lifecycle.request_shutdown(false, shutdown_choice,
+                                         shutdown_reason);
         audio.stop();
+        automatic_stop.request_stop();
         midi_output_dispatcher.request_stop();
         midi_output_dispatcher.join();
         midi.close();
         dispatcher.stop();
         samples.shutdown();
+        if (!application.snapshot().project_path.empty())
+            preferences.last_project = application.snapshot().project_path;
+        preferences.audio_output = audio_name;
+        preferences.audio_input = input_name;
+        preferences.audio_input_channels = static_cast<std::uint16_t>(input_channels);
+        preferences.audio_output_channels = static_cast<std::uint16_t>(output_channels);
+        preferences.midi_inputs = midi_inputs;
+        preferences.midi_outputs = midi_outputs;
+        preferences.fullscreen = fullscreen;
+        preferences.ui_scale = ui_scale;
+        if (!neurogenic::save_preferences(preference_path, preferences,
+                                          preference_error))
+            std::cerr << "preferences not saved: " << preference_error << '\n';
+        lifecycle.stopped();
+        std::cerr << neurogenic::lifecycle_json(lifecycle.snapshot()) << '\n';
         std::cout << "Stopped. dropped MIDI=" << mapper.dropped_messages()
                   << ", triggers=" << engine.dropped_triggers()
                   << ", patterns=" << engine.dropped_patterns()

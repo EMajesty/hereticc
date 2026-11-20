@@ -1,6 +1,7 @@
 #pragma once
 #include "neurogenic/application/control.hpp"
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -179,6 +180,8 @@ struct GuiOptions {
     bool reset_ui_scale{};
     std::filesystem::path settings_path;
     std::uint32_t max_frames{};
+    std::function<bool()> request_close;
+    std::function<bool()> external_stop_requested;
 };
 [[nodiscard]] bool gui_available() noexcept;
 int run_gui(ApplicationService &, const GuiOptions &, std::string &error);

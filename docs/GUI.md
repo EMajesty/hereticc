@@ -173,3 +173,11 @@ GLOBAL/TRACK/VOICE scope plus `ALL` or the concrete instance.
 Sample, mixer, aux and external-FX destinations appear through the same route
 rows and effective-value feedback; unsupported voice/sample combinations are
 reported by the shared application action.
+
+## Appliance close behavior
+
+Window close, Ctrl+Q, and SIGTERM pass through the appliance shutdown request.
+A dirty project remains open when the configured choice is `cancel`; a `save`
+shutdown proceeds only after Save succeeds. Touch is not required for recovery:
+the Project view and encoder/Enter/Back navigation expose Save and project text
+entry. Explicit discard is a policy choice, never an implicit GUI side effect.

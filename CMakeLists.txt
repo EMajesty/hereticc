@@ -33,7 +33,7 @@ include(cmake/Dependencies.cmake)
 find_package(Threads REQUIRED)
 
 add_library(neurogenic_engine
-  src/application/control.cpp src/application/controller.cpp
+  src/application/control.cpp src/application/controller.cpp src/application/lifecycle.cpp
   src/audio/engine.cpp src/audio/mixer.cpp src/audio/recording.cpp src/audio/sample.cpp src/audio/sample_manager.cpp src/audio/slicing.cpp src/core/command.cpp src/core/control_dispatcher.cpp
   src/dsp/modulation.cpp src/dsp/purest_gain.cpp src/dsp/processor.cpp src/dsp/parameter_destination.cpp src/dsp/time_stretch.cpp src/instrument/subtractive_synth.cpp src/midi/mapping.cpp src/midi/routing.cpp src/project/project.cpp
   src/diagnostics/hardware.cpp
@@ -88,6 +88,8 @@ install(TARGETS neurogenic neurogenic_diagnostics RUNTIME DESTINATION bin)
 install(FILES examples/generate.lua examples/timeline_drums.lua examples/timeline_mutate.lua
   examples/timeline_polyrhythm.lua examples/timeline_variation.lua DESTINATION share/neurogenic/examples)
 install(DIRECTORY examples/controllers DESTINATION share/neurogenic/examples)
+install(PROGRAMS packaging/neurogenic-appliance DESTINATION share/neurogenic/appliance)
+install(FILES packaging/neurogenic-appliance.service DESTINATION share/neurogenic/appliance)
 
 if(NEUROGENIC_BUILD_TESTS)
   enable_testing()
@@ -125,6 +127,23 @@ if(NEUROGENIC_BUILD_TESTS)
     COMMAND neurogenic_diagnostics --stress 1 --buffer 0)
   set_tests_properties(neurogenic_diagnostics_invalid_configuration PROPERTIES
     WILL_FAIL TRUE TIMEOUT 10)
+  add_test(NAME neurogenic_appliance_lifecycle_schema
+    COMMAND neurogenic_diagnostics --lifecycle-test)
+  set_tests_properties(neurogenic_appliance_lifecycle_schema PROPERTIES
+    PASS_REGULAR_EXPRESSION "neurogenic.appliance-lifecycle.v1" TIMEOUT 10)
+  add_test(NAME neurogenic_appliance_start_stop
+    COMMAND neurogenic --headless --gui --run-for 0.05 --preferences
+      ${CMAKE_CURRENT_BINARY_DIR}/appliance-smoke.conf)
+  set_tests_properties(neurogenic_appliance_start_stop PROPERTIES
+    PASS_REGULAR_EXPRESSION "Stopped. dropped MIDI=" TIMEOUT 10
+    ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+  add_test(NAME neurogenic_appliance_missing_hardware
+    COMMAND neurogenic --headless --gui --audio definitely-missing-audio
+      --midi definitely-missing-midi --run-for 0.05 --preferences
+      ${CMAKE_CURRENT_BINARY_DIR}/appliance-missing-hardware.conf)
+  set_tests_properties(neurogenic_appliance_missing_hardware PROPERTIES
+    PASS_REGULAR_EXPRESSION "\"degraded\":true" TIMEOUT 10
+    ENVIRONMENT "SDL_VIDEODRIVER=dummy")
   add_executable(neurogenic_workflows tests/workflow_scenarios.cpp)
   target_link_libraries(neurogenic_workflows PRIVATE neurogenic_engine neurogenic_gui)
   add_test(NAME neurogenic_workflows COMMAND neurogenic_workflows all)

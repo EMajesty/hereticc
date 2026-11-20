@@ -267,13 +267,16 @@ ActionRegistry::ActionRegistry() {
                {{"quality", ValueType::text}}));
     add(action("pad.stretch-reset.v1", "Reset stretch settings", "Samples"));
     add(action("project.new.v1", "New project", "Project",
-               {{"name", ValueType::text, false}}));
+               {{"name", ValueType::text, false},
+                {"discard", ValueType::boolean, false}}));
     add(action("project.open.v1", "Open project", "Project",
-               {{"path", ValueType::text}}));
+               {{"path", ValueType::text},
+                {"discard", ValueType::boolean, false}}));
     add(action("project.save.v1", "Save project", "Project"));
     add(action("project.save-as.v1", "Save project as", "Project",
                {{"path", ValueType::text}, {"name", ValueType::text, false}}));
-    add(action("project.close.v1", "Close project", "Project"));
+    add(action("project.close.v1", "Close project", "Project",
+               {{"discard", ValueType::boolean, false}}));
     add(action("project.rename.v1", "Rename project", "Project",
                {{"name", ValueType::text}}));
     add(action(
@@ -1675,6 +1678,15 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
     }
     if (command.action_id.rfind("project.", 0) == 0) {
         try {
+            if ((command.action_id == "project.new.v1" ||
+                 command.action_id == "project.open.v1" ||
+                 command.action_id == "project.close.v1") &&
+                before.project_dirty) {
+                const auto discard = argument<bool>(command, "discard");
+                if (!discard || !*discard)
+                    return {false, sequence, before.revision,
+                            "project has unsaved changes; save or explicitly discard"};
+            }
             if (command.action_id == "project.query.v1")
                 return {true, sequence, before.revision, {}};
             if (command.action_id == "project.rename.v1") {

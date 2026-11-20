@@ -295,6 +295,20 @@ snapshots. Device tests enter audio only through `AudioDevice` and
 are enumerated on the control thread, and startup explicitly verifies the
 negotiated 48 kHz rate. System tuning and hardware policy remain outside the
 engine.
+
+## Appliance lifecycle
+
+`ApplianceLifecycle` is a control-side state machine. Configuration, project
+selection/restoration, audio, MIDI, controller discovery, GUI, ready, shutdown,
+and stopped stages produce revisioned snapshots and versioned diagnostic JSON.
+Recoverable device failures mark the session degraded without hiding their
+reason. `AppliancePreferences` is separate from project musical data; an
+explicit project always wins over reopen-last. Filesystem access, device
+startup, restoration, and shutdown coordination remain outside audio.
+
+Dirty-session protection exists at both boundaries: lifecycle shutdown requires
+save/discard/cancel, while destructive `project.new/open/close` actions reject
+dirty state unless the caller explicitly supplies `discard=true`.
 Trigger probability and conditions are immutable compiled-plan metadata.
 Scheduling uses a stateless integer hash rather than a callback RNG, and Fill
 crosses into the audio thread through the bounded transport queue. Ratchets are

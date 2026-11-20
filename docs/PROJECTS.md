@@ -115,3 +115,16 @@ float32 `recordings/slot-ID.wav` asset and then referenced relatively. Failure
 to write that asset aborts the new generation instead of silently dropping the
 capture. Missing recorded assets use the same reporting and relinking path as
 other samples.
+
+## Appliance preferences and unsaved work
+
+Appliance preferences are not project data. Versioned `appliance.conf` stores
+reopen-last, last project path, preferred audio/MIDI device names,
+channel/buffer preferences, fullscreen, and UI scale. `--project` overrides the
+preference. A missing remembered project is a recoverable startup issue and
+opens an empty session.
+
+`project.new.v1`, `project.open.v1`, and `project.close.v1` reject a dirty
+project unless the client saves first or explicitly passes `discard=true`.
+Shutdown applies the same Save/Discard/Cancel choice. Save uses the existing
+generation-based writer; no stronger power-loss guarantee is implied.

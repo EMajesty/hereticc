@@ -1,5 +1,12 @@
 # Implementation status
 
+Task 035 adds revisioned appliance startup/shutdown stages, separate persistent
+preferences, explicit project override/reopen-last behavior, degraded GUI or
+interactive startup without audio, coordinated recording/transport/MIDI/device
+shutdown, and shared dirty-session protection. Example launcher/systemd user
+units are shipped but never installed or enabled automatically. Unexpected
+power-loss recovery remains limited to generation-based project save guarantees.
+
 Task 034 adds versioned system/audio/MIDI/display inventories, native audio
 format and negotiated-rate diagnostics, bounded offline/device stress reports,
 display QA profiles, and a controller event inspector. Headless CI covers all

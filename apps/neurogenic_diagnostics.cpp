@@ -1,6 +1,7 @@
 #include "neurogenic/audio/device.hpp"
 #include "neurogenic/audio/engine.hpp"
 #include "neurogenic/audio/sample.hpp"
+#include "neurogenic/application/lifecycle.hpp"
 #include "neurogenic/diagnostics/hardware.hpp"
 #include "neurogenic/midi/input.hpp"
 #include "neurogenic/midi/mapping.hpp"
@@ -19,7 +20,7 @@
 namespace {
 using namespace neurogenic;
 struct Options {
-    bool json{}, headless{}, stress{}, realtime{}, controller_inspect{}, display_test{};
+    bool json{}, headless{}, stress{}, realtime{}, controller_inspect{}, display_test{}, lifecycle_test{};
     double seconds{2.0};
     std::uint32_t buffer{256}, sample_voices{8}, synth_voices{4};
     std::uint16_t input_channels{}, output_channels{2};
@@ -56,6 +57,7 @@ void usage() {
         "  --input-channels N     requested capture channels (0..6)\n"
         "  --output-channels N    requested playback channels (1..6)\n"
         "  --display-test         report native display and scaling test profiles\n"
+        "  --lifecycle-test       emit simulated bounded startup/shutdown stages\n"
         "  --controller-inspect   inspect lines: CONTROL TYPE RAW [ACTION]\n";
 }
 PerformanceSnapshot performance(AudioEngine &engine) {
@@ -177,6 +179,7 @@ int main(int argc, char **argv) {
             else if (arg == "--realtime") options.realtime = true;
             else if (arg == "--controller-inspect") options.controller_inspect = true;
             else if (arg == "--display-test") options.display_test = true;
+            else if (arg == "--lifecycle-test") options.lifecycle_test = true;
             else if (arg == "--stress" && i + 1 < argc) { options.stress = true; options.seconds = std::stod(argv[++i]); }
             else if (arg == "--buffer" && i + 1 < argc) options.buffer = number(argv[++i], "--buffer");
             else if (arg == "--sample-voices" && i + 1 < argc) options.sample_voices = number(argv[++i], "--sample-voices");
@@ -196,6 +199,24 @@ int main(int argc, char **argv) {
             throw std::invalid_argument("duration/buffer/channel configuration is outside diagnostic limits");
         if (options.controller_inspect) { inspect_controller(); return 0; }
         if (options.display_test) { display_test(); return 0; }
+        if (options.lifecycle_test) {
+            ApplianceLifecycle lifecycle;
+            for (const auto stage : {StartupStage::configuration,
+                                     StartupStage::project_selection,
+                                     StartupStage::project_restoration,
+                                     StartupStage::audio, StartupStage::midi,
+                                     StartupStage::controllers, StartupStage::gui}) {
+                lifecycle.transition(stage, 0.5F);
+                std::cout << lifecycle_json(lifecycle.snapshot()) << '\n';
+            }
+            lifecycle.ready();
+            std::cout << lifecycle_json(lifecycle.snapshot()) << '\n';
+            std::string reason;
+            (void)lifecycle.request_shutdown(false, UnsavedShutdownChoice::cancel, reason);
+            lifecycle.stopped();
+            std::cout << lifecycle_json(lifecycle.snapshot()) << '\n';
+            return 0;
+        }
         AudioEngine engine(48000, std::max<std::size_t>(32, options.sample_voices));
         MidiMapper mapper;
         AudioDevice audio(engine, options.headless);

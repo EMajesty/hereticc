@@ -127,13 +127,19 @@ int run_gui(ApplicationService &application, const GuiOptions &options,
     bool running = true;
     std::uint32_t frames{};
     while (running) {
+        if (options.external_stop_requested &&
+            options.external_stop_requested() &&
+            (!options.request_close || options.request_close()))
+            running = false;
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             const auto display = metrics(window);
             GuiInput input;
             input.timestamp_ms = event.common.timestamp;
-            if (event.type == SDL_EVENT_QUIT)
-                running = false;
+            if (event.type == SDL_EVENT_QUIT) {
+                if (!options.request_close || options.request_close())
+                    running = false;
+            }
             else if (event.type == SDL_EVENT_KEY_DOWN ||
                      event.type == SDL_EVENT_KEY_UP) {
                 int number{};
@@ -142,8 +148,10 @@ int run_gui(ApplicationService &application, const GuiOptions &options,
                                  : GuiInput::Type::key_up;
                 input.key = key(event.key.key, number);
                 input.number = number;
-                if (event.key.key == SDLK_Q && (event.key.mod & SDL_KMOD_CTRL))
-                    running = false;
+                if (event.key.key == SDLK_Q && (event.key.mod & SDL_KMOD_CTRL)) {
+                    if (!options.request_close || options.request_close())
+                        running = false;
+                }
                 else
                     model.input(input, display.drawable_width,
                                 display.drawable_height);

@@ -260,3 +260,10 @@ the displayed tempo now changes the authoritative timeline rather than a
 detached UI value. Project naming uses `project.rename.v1` and the reusable text
 entry model. These actions are reachable from minimal data-wheel clients and do
 not depend on Lua or pointer input.
+
+## Appliance recovery
+
+Minimal and full controllers use the same project Save action and dirty-state
+feedback. Destructive New/Open/Close commands cannot bypass unsaved-work
+protection accidentally; an explicit `discard` argument is required. Startup,
+degraded-device recovery, and shutdown do not depend on touchscreen input.

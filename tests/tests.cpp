@@ -1,5 +1,6 @@
 #include "neurogenic/application/control.hpp"
 #include "neurogenic/application/controller.hpp"
+#include "neurogenic/application/lifecycle.hpp"
 #include "neurogenic/audio/engine.hpp"
 #include "neurogenic/audio/sample_manager.hpp"
 #include "neurogenic/core/control_dispatcher.hpp"
@@ -93,6 +94,74 @@ void test_hardware_diagnostics() {
     check(!host.architecture.empty() && !host.kernel.empty() &&
               !host.application_version.empty(),
           "host system diagnostic failure handling");
+}
+
+void test_appliance_lifecycle() {
+    using namespace neurogenic;
+    ApplianceLifecycle lifecycle;
+    lifecycle.transition(StartupStage::configuration, 0.1F);
+    lifecycle.issue(StartupStage::audio, "missing interface", true);
+    lifecycle.transition(StartupStage::midi, 0.7F);
+    lifecycle.issue(StartupStage::midi, "missing configured port", true);
+    lifecycle.ready();
+    auto state = lifecycle.snapshot();
+    check(state.ready && state.degraded && state.issues.size() == 2 &&
+              lifecycle_json(state).find("neurogenic.appliance-lifecycle.v1") !=
+                  std::string::npos,
+          "observable degraded startup lifecycle");
+    std::string reason;
+    check(!lifecycle.request_shutdown(true, UnsavedShutdownChoice::cancel,
+                                      reason) &&
+              !reason.empty() && lifecycle.snapshot().shutdown_cancelled,
+          "dirty project shutdown cancellation");
+    check(lifecycle.request_shutdown(true, UnsavedShutdownChoice::discard,
+                                     reason),
+          "explicit dirty discard shutdown");
+    lifecycle.stopped();
+    check(lifecycle.snapshot().stage == StartupStage::stopped,
+          "coordinated lifecycle stop");
+
+    const auto root = std::filesystem::temp_directory_path() /
+                      "neurogenic-appliance-preferences-test";
+    std::filesystem::remove_all(root);
+    const auto path = root / "appliance.conf";
+    AppliancePreferences preferences;
+    preferences.reopen_last_project = true;
+    preferences.last_project = root / "last project";
+    preferences.audio_output = "SSL 12";
+    preferences.audio_input = "SSL 12";
+    preferences.audio_input_channels = 6;
+    preferences.audio_output_channels = 6;
+    preferences.audio_buffer_frames = 128;
+    preferences.midi_inputs = {"A-Series Keyboard"};
+    preferences.midi_outputs = {"External Synth"};
+    preferences.fullscreen = true;
+    preferences.ui_scale = 1.5F;
+    std::string error;
+    check(save_preferences(path, preferences, error),
+          "save appliance preferences");
+    AppliancePreferences restored;
+    check(load_preferences(path, restored, error) &&
+              restored.last_project == preferences.last_project &&
+              restored.audio_output == "SSL 12" &&
+              restored.midi_outputs == preferences.midi_outputs &&
+              restored.ui_scale == preferences.ui_scale,
+          "appliance preference round-trip");
+    std::string warning;
+    const auto explicit_project = root / "explicit.ngp";
+    check(select_startup_project(restored, explicit_project, warning) ==
+              explicit_project && warning.empty(),
+          "explicit project did not override reopen-last");
+    check(select_startup_project(restored, {}, warning).empty() &&
+              warning.find("unavailable") != std::string::npos,
+          "missing last project recovery");
+    {
+        std::ofstream invalid(path, std::ios::trunc);
+        invalid << "version 1\naudio_buffer_frames 0\n";
+    }
+    check(!load_preferences(path, restored, error) && !error.empty(),
+          "invalid preferences accepted");
+    std::filesystem::remove_all(root);
 }
 
 void test_modulation_engine() {
@@ -2504,9 +2573,15 @@ void test_unified_project_persistence() {
                   .accepted &&
               application.snapshot().project_dirty,
           "project parameter dirty tracking");
+    check(!application
+                   .execute(
+                       {"project.open.v1", {{"path", action_project.string()}}})
+                   .accepted && application.snapshot().project_dirty,
+          "dirty project open lacked unsaved-work protection");
     check(application
-                  .execute(
-                      {"project.open.v1", {{"path", action_project.string()}}})
+                  .execute({"project.open.v1",
+                            {{"path", action_project.string()},
+                             {"discard", true}}})
                   .accepted &&
               !application.snapshot().project_dirty &&
               application.snapshot().project_name == "Actions",
@@ -4958,6 +5033,7 @@ void test_lua_and_offline() {
 
 int main() {
     try {
+        test_appliance_lifecycle();
         test_hardware_diagnostics();
         test_performance_monitoring();
         test_midi_routing_and_clock();

@@ -127,6 +127,40 @@ The package retains ALSA in ELF RUNPATH and does not need global
 governor, and restart policy separately. The project enables none of these and
 does not edit NixOS configuration or services.
 
+### Standalone launch and recovery
+
+Preferences default to `$XDG_CONFIG_HOME/neurogenic/appliance.conf` (or
+`~/.config/neurogenic/appliance.conf`) and are separate from projects. Launch
+with `--reopen-last`, or use `--project PATH` to override it. Preferred named
+devices are never replaced with another named port. GUI and interactive
+sessions may continue in control-only degraded mode when audio cannot open.
+Transport never starts automatically.
+
+Shutdown defaults to `--shutdown-dirty cancel`. Alternatives are
+`--shutdown-dirty save` (requires a project path and successful Save) and the
+explicit `discard`. Shutdown cancels recording, stops transport, sends MIDI
+panic, stops devices/dispatchers, joins workers, then persists preferences.
+`--run-for SECONDS` exists only for bounded diagnostic lifecycle runs.
+
+Optional examples are installed under `share/neurogenic/appliance/`:
+
+- `neurogenic-appliance` is configured with `NEUROGENIC_BIN`,
+  `NEUROGENIC_PREFERENCES`, `NEUROGENIC_PROJECT`, and optional
+  `NEUROGENIC_EXTRA_ARGS`. It requests Save on shutdown; an untitled project
+  without a Save-As path still refuses shutdown rather than being discarded.
+- `neurogenic-appliance.service` is a systemd **user** unit with bounded
+  restart, journal logging, SIGTERM, and a 20-second stop timeout.
+
+Copy and edit these manually. The unit expects the launcher at
+`~/.local/bin/neurogenic-appliance`; nothing installs or enables it. The
+launcher requires Bash and assumes `neurogenic` is on `PATH` (or
+`NEUROGENIC_BIN` is absolute) plus a working graphical session. It does not
+force Wayland, X11, or DRM/KMS. Verify display/audio permissions and project
+paths first.
+If Save cannot complete, NEUROGENIC refuses graceful exit; systemd may still
+terminate it after the example's 20-second timeout. Save-As untitled work before
+service maintenance and do not treat this as power-loss recovery.
+
 Troubleshooting:
 
 - Unexpected Null audio: check runtime audio services, permissions, and ALSA.

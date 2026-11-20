@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+neurogenic_bin="${NEUROGENIC_BIN:-neurogenic}"
+preferences_path="${NEUROGENIC_PREFERENCES:-${XDG_CONFIG_HOME:-$HOME/.config}/neurogenic/appliance.conf}"
+arguments=(--gui --fullscreen --shutdown-dirty save --preferences "$preferences_path")
+
+if [[ -n "${NEUROGENIC_PROJECT:-}" ]]; then
+  arguments+=(--project "$NEUROGENIC_PROJECT")
+else
+  arguments+=(--reopen-last)
+fi
+
+# Extra arguments are intentionally parsed as shell words by the launcher only;
+# prefer the structured variables above for paths containing whitespace.
+if [[ -n "${NEUROGENIC_EXTRA_ARGS:-}" ]]; then
+  read -r -a extra_arguments <<< "$NEUROGENIC_EXTRA_ARGS"
+  arguments+=("${extra_arguments[@]}")
+fi
+
+exec "$neurogenic_bin" "${arguments[@]}"
