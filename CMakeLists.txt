@@ -33,7 +33,7 @@ include(cmake/Dependencies.cmake)
 find_package(Threads REQUIRED)
 
 add_library(neurogenic_engine
-  src/application/control.cpp src/application/controller.cpp src/application/controller_protocol.cpp src/application/lifecycle.cpp src/application/performance_macros.cpp
+  src/application/control.cpp src/application/controller.cpp src/application/controller_protocol.cpp src/application/discovery.cpp src/application/lifecycle.cpp src/application/performance_macros.cpp
   src/audio/engine.cpp src/audio/mixer.cpp src/audio/recording.cpp src/audio/sample.cpp src/audio/sample_manager.cpp src/audio/slicing.cpp src/core/command.cpp src/core/control_dispatcher.cpp
   src/dsp/effect_chain.cpp src/dsp/modulation.cpp src/dsp/voice_modulation.cpp src/dsp/purest_gain.cpp src/dsp/processor.cpp src/dsp/parameter_destination.cpp src/dsp/time_stretch.cpp src/instrument/subtractive_synth.cpp src/midi/mapping.cpp src/midi/routing.cpp src/project/project.cpp
   src/diagnostics/hardware.cpp
@@ -84,7 +84,10 @@ target_link_libraries(neurogenic PRIVATE neurogenic_engine neurogenic_live neuro
 add_executable(neurogenic_diagnostics apps/neurogenic_diagnostics.cpp)
 target_link_libraries(neurogenic_diagnostics PRIVATE neurogenic_engine neurogenic_live neurogenic_gui)
 set_target_properties(neurogenic_diagnostics PROPERTIES OUTPUT_NAME neurogenic-diagnostics)
-install(TARGETS neurogenic neurogenic_diagnostics RUNTIME DESTINATION bin)
+add_executable(neurogenic_discovery apps/neurogenic_discovery.cpp)
+target_link_libraries(neurogenic_discovery PRIVATE neurogenic_engine)
+set_target_properties(neurogenic_discovery PROPERTIES OUTPUT_NAME neurogenic-discovery)
+install(TARGETS neurogenic neurogenic_diagnostics neurogenic_discovery RUNTIME DESTINATION bin)
 install(FILES examples/generate.lua examples/timeline_drums.lua examples/timeline_mutate.lua
   examples/timeline_polyrhythm.lua examples/timeline_variation.lua DESTINATION share/neurogenic/examples)
 install(DIRECTORY examples/controllers DESTINATION share/neurogenic/examples)
@@ -106,6 +109,14 @@ if(NEUROGENIC_BUILD_TESTS)
   set_tests_properties(neurogenic_diagnostics_schema PROPERTIES
     PASS_REGULAR_EXPRESSION "neurogenic.hardware-diagnostics.v1" TIMEOUT 10
     ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+  add_test(NAME neurogenic_discovery_schema COMMAND neurogenic-discovery --json)
+  set_tests_properties(neurogenic_discovery_schema PROPERTIES
+    PASS_REGULAR_EXPRESSION "neurogenic.application-discovery.v1" TIMEOUT 10)
+  add_executable(neurogenic_discovery_tests tests/discovery_tests.cpp)
+  target_link_libraries(neurogenic_discovery_tests PRIVATE neurogenic_engine)
+  add_test(NAME neurogenic_discovery_tests COMMAND neurogenic_discovery_tests)
+  set_tests_properties(neurogenic_discovery_tests PROPERTIES
+    PASS_REGULAR_EXPRESSION "neurogenic.discovery-tests.v1 passed" TIMEOUT 10)
   add_test(NAME neurogenic_diagnostics_stress
     COMMAND neurogenic_diagnostics --headless --stress 0.05 --buffer 127
       --sample-voices 8 --synth-voices 4)

@@ -1894,13 +1894,21 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             const auto raw_id = *argument<std::int64_t>(command, "id");
             const auto &type_name = *argument<std::string>(command, "type");
             EffectProcessorType type{};
-            if (type_name == "gain")
+            if (type_name == "gain" ||
+                type_name == effect_processor_type_id(
+                                 EffectProcessorType::gain))
                 type = EffectProcessorType::gain;
-            else if (type_name == "delay")
+            else if (type_name == "delay" ||
+                     type_name == effect_processor_type_id(
+                                      EffectProcessorType::stereo_delay))
                 type = EffectProcessorType::stereo_delay;
-            else if (type_name == "filter")
+            else if (type_name == "filter" ||
+                     type_name == effect_processor_type_id(
+                                      EffectProcessorType::low_pass_filter))
                 type = EffectProcessorType::low_pass_filter;
-            else if (type_name == "saturation")
+            else if (type_name == "saturation" ||
+                     type_name == effect_processor_type_id(
+                                      EffectProcessorType::saturation))
                 type = EffectProcessorType::saturation;
             else
                 error = "unknown effect processor type";

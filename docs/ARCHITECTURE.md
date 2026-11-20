@@ -1,5 +1,11 @@
 # Architecture
 
+The versioned [application discovery contract](APPLICATION_DISCOVERY.md)
+projects existing actions, parameters, objects and subsystem descriptors into a
+single copied control-side model. It performs no callback work and does not own
+state. Toolkits and hardware clients bind stable identities and semantic actions
+without accessing engine objects.
+
 Integrated ownership and publication are exercised by the headless four-tier
 harness in [INTEGRATION_VALIDATION.md](INTEGRATION_VALIDATION.md). It combines
 immutable samples, compiled timelines, prepared mixer/effect/modulation

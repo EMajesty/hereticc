@@ -1,0 +1,101 @@
+# Application discovery contract
+
+NEUROGENIC exposes a presentation-neutral discovery document for native GUI,
+UI Studio, controllers, MIDI mapping, Lua and future remote clients. Discovery
+is a control-side view over `ApplicationService`, `ActionRegistry`, parameter
+descriptors and copied subsystem snapshots. It is not another action system or
+authoritative engine model.
+
+Export capabilities and the current object model without audio or GUI hardware:
+
+```sh
+neurogenic-discovery --json
+```
+
+Output is deterministic for identical capabilities and state. Schema
+`neurogenic.application-discovery.v1` has `schema_version: 1` and
+`minimum_client_version: 1`.
+
+## Document sections
+
+- `capabilities`: stable feature ID, version, availability and reason.
+- `object_types`: presentation-neutral create/delete/select capabilities.
+- `objects`: typed identities, parent, label, availability and diagnostics.
+- `parameters`: stable ID, parent, type, unit, bounds, default, base/effective
+  values, access flags, automation/modulation eligibility and choices.
+- `actions`: the existing semantic registry with descriptions, availability
+  and typed required/optional arguments.
+- `state_bindings`: stable paths, value kinds and update-rate classification.
+- `limits`: current usage and configured bounded maximum.
+- `validation_errors`: graph and subsystem diagnostics.
+
+Static metadata, ordinary state and telemetry are distinct. `static` changes
+only with capabilities, `state` follows revisioned application changes, and
+`telemetry` may update at a bounded display rate. PCM, waveform caches and
+callback-owned pointers are never exported.
+
+## Objects and identities
+
+IDs use typed forms such as `track:17`, `fx-instance:42`, `modulator:91` and
+`pattern:5`, plus singletons `project:current`, `transport:main`,
+`arrangement:main` and `master:main`. Collection order is not identity. Missing
+objects remain missing; clients must not bind to another object in their place.
+
+The schema covers project, transport, tracks, instruments, sample slots,
+patterns, clips, arrangement, groups, aux buses, master, FX processor types and
+instances, modulator types and instances, modulation connections, macros,
+scenes, recording, and stable logical MIDI ports. Unconnected MIDI ports remain
+visible but unavailable so a project binding cannot silently move.
+
+Native FX and modulator registries are type objects with parameter metadata. FX
+instances additionally expose current instance-aware parameters. Existing DSP
+and semantic parameter IDs are retained.
+
+## Actions and state bindings
+
+Clients invoke the action ID and argument object through `ApplicationService`;
+discovery describes that registry rather than inventing callbacks. Validation
+and execution errors remain authoritative application errors. FX creation
+accepts both legacy aliases and registered stable processor type IDs.
+
+State paths cover project status, transport, selected track,
+track/pattern/clip collections, mixer meters, modulator outputs, effective macro
+values, recording, queued patterns and validation errors.
+`validate_state_binding` rejects unknown paths rather than returning defaults.
+
+## Future UI document references
+
+A toolkit-neutral UI definition can reference discovered IDs:
+
+```json
+{
+  "component": "continuous-control",
+  "object": "fx-instance:42",
+  "parameter": "fx.42.mix",
+  "action": "effect.parameter-set.v1",
+  "enabled_when": "project.dirty",
+  "navigation_target": "fx-instance:42",
+  "theme_token": "control.accent",
+  "asset": "assets/filter.svg",
+  "modifier": "shift"
+}
+```
+
+Discovery does not prescribe component classes, layout, SVG rendering,
+navigation pages, browser DOM behavior or controller positions.
+
+## Compatibility and safety
+
+Clients provide a supported version interval; it is compatible when it contains
+the current version. Unknown JSON fields must be ignored. Unknown object,
+parameter, action or capability IDs are unsupported and never substituted.
+Future removals retain deprecated IDs or increment the schema when interpretation
+cannot remain safe. Unsupported processors and absent objects carry diagnostics.
+
+Assembly, validation and JSON serialization run outside the audio callback.
+Discovery adds no callback allocation, locking, JSON work or DSP processing.
+
+Current limitations: historical action descriptors do not all expose numeric
+ranges or enum choices; modulator current instance values remain primarily in
+the modulation runtime snapshot; export is local rather than a network service;
+and no declarative renderer or UI Studio editor exists yet.

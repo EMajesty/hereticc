@@ -17,6 +17,15 @@ The mixer supports bounded native track, group, aux and master effect chains. Se
 
 # NEUROGENIC
 
+Inspect the presentation-neutral application API without audio or GUI hardware:
+
+```sh
+./build/dev/neurogenic-discovery --json
+```
+
+See [application discovery](docs/APPLICATION_DISCOVERY.md) for the schema,
+stable identities and future UI Studio binding contract.
+
 Dynamic modulation sources are discoverable stable instances owned by tracks,
 groups, aux buses or master; see
 [docs/MODULATOR_INSTANCES.md](docs/MODULATOR_INSTANCES.md) for the API,

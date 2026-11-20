@@ -1,5 +1,10 @@
 # Application control and controller API
 
+Controller clients may inspect
+[application discovery](APPLICATION_DISCOVERY.md) for semantic actions,
+parameters, object availability and resource limits. Discovery contains no
+button counts or physical layout; profiles continue to map stable semantic IDs.
+
 Pattern and arrangement actions are semantic and layout-independent. Task 045
 adds `pattern.chain-entry-set/chain-play/chain-stop/chain-reset/follow-set.v1`,
 `pattern.launch-quantization.v1`, `arrangement.voice-transition/song-end/return.v1`

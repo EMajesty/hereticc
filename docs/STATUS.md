@@ -1,5 +1,13 @@
 # Implementation status
 
+Task 050 adds `neurogenic.application-discovery.v1`, a deterministic typed
+contract for capabilities, object types/instances, native FX and modulator
+registries, instance parameters, semantic actions, state bindings and resource
+limits. `neurogenic-discovery --json` is headless. Tests cover object creation,
+stable IDs, deterministic serialization, negotiation, binding validation and
+stale-reference removal after project replacement. Historical action
+descriptors still lack complete numeric-range metadata.
+
 Task 049 adds a deterministic four-tier integrated engine suite covering
 sample/synth playback, maximum track/group routing, native FX, aux sends, dense
 modulation, macro morphs, variable callbacks, MIDI clock, internal recording,
