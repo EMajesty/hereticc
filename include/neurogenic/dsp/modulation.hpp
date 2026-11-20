@@ -35,7 +35,7 @@ enum class ModulatorType : std::uint8_t {
     lfo = 1, adsr, sample_hold, smooth_random, envelope_follower, xy_manual,
     midi_cc, step_sequencer, euclidean, clocked_random, function_generator,
     scale_offset, invert, rectify, slew, quantize, minimum, maximum, sum,
-    multiply, logistic
+    multiply, logistic, velocity, gate
 };
 enum class ModulatorOwnerKind : std::uint8_t {
     track = 1, auxiliary, master, group, voice_definition
@@ -207,6 +207,7 @@ struct ModulationSnapshot {
         modulator_outputs{};
     std::size_t modulator_count{};
     std::uint64_t generation{};
+    std::size_t voice_definition_count{};
 };
 
 class ModulationEngine {

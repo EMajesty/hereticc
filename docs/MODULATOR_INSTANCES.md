@@ -1,5 +1,13 @@
 # Dynamic modulator instances
 
+## Voice definitions
+
+`voice_definition` owners are persisted track templates. Each sample note
+resets preallocated private state, so overlapping voices have independent
+envelopes, LFO phase, function/step position and deterministic random streams.
+Compatible types are discoverable through the registry owner mask. Runtime
+memory scales with voice capacity; transient phase and gate state is not saved.
+
 NEUROGENIC uses a bounded collection of stable modulator instances rather than
 a user-visible fixed source bank. The legacy twelve-source bank remains a
 compatibility adapter. New clients discover native types with

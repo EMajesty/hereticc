@@ -282,7 +282,7 @@ bool validate_modulation_owners(const ModulationConfiguration &configuration,
 }
 std::string serialize_modulation(const ModulationConfiguration &configuration) {
     std::ostringstream out;
-    out << "NEUROGENIC_MODULATION 6\n"
+    out << "NEUROGENIC_MODULATION 7\n"
         << std::setprecision(9) << "interval " << configuration.update_interval
         << '\n';
     for (std::size_t i = 0; i < configuration.source_count; ++i) {
@@ -360,7 +360,7 @@ ModulationConfiguration load_modulation(const std::filesystem::path &path) {
     unsigned version{};
     ModulationConfiguration result;
     if (!(input >> magic >> version) || magic != "NEUROGENIC_MODULATION" ||
-        (version == 0 || version > 6) ||
+        (version == 0 || version > 7) ||
         !(input >> label >> result.update_interval) || label != "interval")
         throw std::runtime_error(
             "unsupported or malformed modulation metadata");
@@ -408,8 +408,9 @@ ModulationConfiguration load_modulation(const std::filesystem::path &path) {
                 label != "modulator" ||
                 type < static_cast<unsigned>(ModulatorType::lfo) ||
                 type > static_cast<unsigned>(
-                           version >= 6 ? ModulatorType::logistic
-                                        : ModulatorType::midi_cc) ||
+                           version >= 7 ? ModulatorType::gate
+                           : version >= 6 ? ModulatorType::logistic
+                                          : ModulatorType::midi_cc) ||
                 owner < static_cast<unsigned>(ModulatorOwnerKind::track) ||
                 owner >
                     static_cast<unsigned>(ModulatorOwnerKind::voice_definition) ||

@@ -6,6 +6,7 @@
 #include "neurogenic/dsp/processor.hpp"
 #include "neurogenic/dsp/purest_gain.hpp"
 #include "neurogenic/dsp/time_stretch.hpp"
+#include "neurogenic/dsp/voice_modulation.hpp"
 #include "neurogenic/instrument/subtractive_synth.hpp"
 #include "neurogenic/midi/routing.hpp"
 #include "neurogenic/performance/monitor.hpp"
@@ -303,6 +304,7 @@ class AudioEngine {
         std::uint64_t start_frame{}, end_frame{};
         float gain{}, base_gain{}, modulation_gain{1.0F}, modulation_pan{},
             modulation_pitch{}, envelope_level{1.0F};
+        SampleVoiceModulationState voice_modulation;
         enum class EnvelopeStage : std::uint8_t {
             attack,
             decay,

@@ -1,4 +1,5 @@
 #include "neurogenic/dsp/modulation.hpp"
+#include "neurogenic/dsp/voice_modulation.hpp"
 #include "neurogenic/instrument/subtractive_synth.hpp"
 #include <cmath>
 #include <limits>
@@ -119,28 +120,32 @@ constexpr std::array output_gate_accent{
 constexpr std::array output_function{
     ModulatorPortDescriptor{1, "value", "Value", ModulationPolarity::bipolar},
     ModulatorPortDescriptor{2, "eoc", "End of cycle", ModulationPolarity::unipolar}};
+constexpr std::array output_gate_trigger{
+    ModulatorPortDescriptor{1, "gate", "Gate", ModulationPolarity::unipolar},
+    ModulatorPortDescriptor{2, "trigger", "Trigger", ModulationPolarity::unipolar}};
 constexpr auto all_owners = owner_bit(ModulatorOwnerKind::track) |
                             owner_bit(ModulatorOwnerKind::auxiliary) |
                             owner_bit(ModulatorOwnerKind::master) |
                             owner_bit(ModulatorOwnerKind::group);
+constexpr auto voice_owner = owner_bit(ModulatorOwnerKind::voice_definition);
 const std::array registry{
     ModulatorTypeDescriptor{"native.lfo.v1", "LFO", "Oscillators",
                             ModulatorType::lfo, common_parameters, no_inputs,
-                            output_bipolar, all_owners, true, true,
-                            ModulatorUpdateRate::control, 32},
+                            output_bipolar, all_owners | voice_owner, true, true,
+                            ModulatorUpdateRate::per_voice_control, 32},
     ModulatorTypeDescriptor{"native.adsr.v1", "ADSR", "Envelopes",
                             ModulatorType::adsr, envelope_parameters, no_inputs,
                             output_bipolar,
-                            all_owners | owner_bit(ModulatorOwnerKind::voice_definition),
-                            true, true, ModulatorUpdateRate::control, 32},
+                            all_owners | voice_owner, true, true,
+                            ModulatorUpdateRate::per_voice_control, 32},
     ModulatorTypeDescriptor{"native.sample-hold.v1", "Sample and hold", "Random",
                             ModulatorType::sample_hold, common_parameters,
-                            no_inputs, output_bipolar, all_owners, false, false,
-                            ModulatorUpdateRate::control, 32},
+                            no_inputs, output_bipolar, all_owners | voice_owner,
+                            false, false, ModulatorUpdateRate::per_voice_control, 32},
     ModulatorTypeDescriptor{"native.smooth-random.v1", "Smooth random", "Random",
                             ModulatorType::smooth_random, common_parameters,
-                            no_inputs, output_bipolar, all_owners, false, false,
-                            ModulatorUpdateRate::control, 32},
+                            no_inputs, output_bipolar, all_owners | voice_owner,
+                            false, false, ModulatorUpdateRate::per_voice_control, 32},
     ModulatorTypeDescriptor{"native.envelope-follower.v1", "Envelope follower",
                             "Audio", ModulatorType::envelope_follower,
                             follower_parameters, no_inputs, output_unipolar,
@@ -156,8 +161,9 @@ const std::array registry{
                             ModulatorUpdateRate::control, 16},
     ModulatorTypeDescriptor{"native.step.v1", "Step modulator", "Sequencers",
                             ModulatorType::step_sequencer, step_parameters,
-                            no_inputs, output_value_trigger, all_owners, true,
-                            true, ModulatorUpdateRate::control, 192},
+                            no_inputs, output_value_trigger,
+                            all_owners | voice_owner, true, true,
+                            ModulatorUpdateRate::per_voice_control, 192},
     ModulatorTypeDescriptor{"native.euclidean.v1", "Euclidean", "Sequencers",
                             ModulatorType::euclidean, euclidean_parameters,
                             no_inputs, output_gate_accent, all_owners, true, true,
@@ -165,53 +171,61 @@ const std::array registry{
     ModulatorTypeDescriptor{"native.clocked-random.v1", "Clocked random",
                             "Random", ModulatorType::clocked_random,
                             random_parameters, no_inputs, output_value_trigger,
-                            all_owners, true, true, ModulatorUpdateRate::control,
-                            48},
+                            all_owners | voice_owner, true, true,
+                            ModulatorUpdateRate::per_voice_control, 48},
     ModulatorTypeDescriptor{"native.function.v1", "Function generator",
                             "Envelopes", ModulatorType::function_generator,
                             function_parameters, input_one, output_function,
-                            all_owners, true, true, ModulatorUpdateRate::control,
-                            48},
+                            all_owners | voice_owner, true, true,
+                            ModulatorUpdateRate::per_voice_control, 48},
     ModulatorTypeDescriptor{"native.scale-offset.v1", "Scale / offset", "Math",
                             ModulatorType::scale_offset, scale_parameters,
-                            input_one, output_bipolar, all_owners, false, false,
+                            input_one, output_bipolar, all_owners | voice_owner, false, false,
                             ModulatorUpdateRate::control, 24},
     ModulatorTypeDescriptor{"native.invert.v1", "Invert", "Math",
                             ModulatorType::invert, no_parameters, input_one,
-                            output_bipolar, all_owners, false, false,
+                            output_bipolar, all_owners | voice_owner, false, false,
                             ModulatorUpdateRate::control, 16},
     ModulatorTypeDescriptor{"native.rectify.v1", "Rectify", "Math",
                             ModulatorType::rectify, no_parameters, input_one,
-                            output_unipolar, all_owners, false, false,
+                            output_unipolar, all_owners | voice_owner, false, false,
                             ModulatorUpdateRate::control, 16},
     ModulatorTypeDescriptor{"native.slew.v1", "Slew / lag", "Math",
                             ModulatorType::slew, slew_parameters, input_one,
-                            output_bipolar, all_owners, false, false,
+                            output_bipolar, all_owners | voice_owner, false, false,
                             ModulatorUpdateRate::control, 24},
     ModulatorTypeDescriptor{"native.quantize.v1", "Quantize", "Math",
                             ModulatorType::quantize, quantize_parameters,
-                            input_one, output_bipolar, all_owners, false, false,
+                            input_one, output_bipolar, all_owners | voice_owner, false, false,
                             ModulatorUpdateRate::control, 16},
     ModulatorTypeDescriptor{"native.minimum.v1", "Minimum", "Math",
                             ModulatorType::minimum, no_parameters, input_two,
-                            output_bipolar, all_owners, false, false,
+                            output_bipolar, all_owners | voice_owner, false, false,
                             ModulatorUpdateRate::control, 16},
     ModulatorTypeDescriptor{"native.maximum.v1", "Maximum", "Math",
                             ModulatorType::maximum, no_parameters, input_two,
-                            output_bipolar, all_owners, false, false,
+                            output_bipolar, all_owners | voice_owner, false, false,
                             ModulatorUpdateRate::control, 16},
     ModulatorTypeDescriptor{"native.sum.v1", "Sum", "Math",
                             ModulatorType::sum, no_parameters, input_two,
-                            output_bipolar, all_owners, false, false,
+                            output_bipolar, all_owners | voice_owner, false, false,
                             ModulatorUpdateRate::control, 16},
     ModulatorTypeDescriptor{"native.multiply.v1", "Multiply", "Math",
                             ModulatorType::multiply, no_parameters, input_two,
-                            output_bipolar, all_owners, false, false,
+                            output_bipolar, all_owners | voice_owner, false, false,
                             ModulatorUpdateRate::control, 16},
     ModulatorTypeDescriptor{"native.logistic.v1", "Logistic chaos", "Experimental",
                             ModulatorType::logistic, chaos_parameters, no_inputs,
                             output_bipolar, all_owners, true, true,
-                            ModulatorUpdateRate::control, 32}};
+                            ModulatorUpdateRate::control, 32},
+    ModulatorTypeDescriptor{"native.velocity.v1", "Note velocity", "Voice",
+                            ModulatorType::velocity, no_parameters, no_inputs,
+                            output_unipolar, voice_owner, true, true,
+                            ModulatorUpdateRate::per_voice_control, 16},
+    ModulatorTypeDescriptor{"native.gate.v1", "Note gate", "Voice",
+                            ModulatorType::gate, no_parameters, no_inputs,
+                            output_gate_trigger, voice_owner, true, true,
+                            ModulatorUpdateRate::per_voice_control, 16}};
 } // namespace
 
 std::span<const ModulatorTypeDescriptor> modulator_type_registry() noexcept {
@@ -261,6 +275,20 @@ bool validate_modulation_graph(const ModulationConfiguration &configuration,
                          })) {
             diagnostics.message = "connection references missing output port";
             return false;
+        }
+        if (source->owner_kind == ModulatorOwnerKind::voice_definition) {
+            if (route.scope != ModulationScope::voice) {
+                diagnostics.message = "voice source requires voice scope";
+                return false;
+            }
+            if (route.destination_kind == ModulationDestinationKind::parameter) {
+                if (route.destination.target != ParameterTarget::sample_voice ||
+                    route.track_id != source->owner_id) {
+                    diagnostics.message =
+                        "voice source must target its parent track's sample voices";
+                    return false;
+                }
+            }
         }
         if (route.destination_owner_explicit &&
             (route.destination_owner_kind != source->owner_kind ||
@@ -317,6 +345,17 @@ bool validate_modulation_graph(const ModulationConfiguration &configuration,
                 diagnostics.message =
                     "cross-owner modulator connection requires an explicitly "
                     "shared source and matching destination owner";
+                return false;
+            }
+            if ((source->owner_kind == ModulatorOwnerKind::voice_definition ||
+                 destination->owner_kind ==
+                     ModulatorOwnerKind::voice_definition) &&
+                (source->owner_kind != ModulatorOwnerKind::voice_definition ||
+                 destination->owner_kind !=
+                     ModulatorOwnerKind::voice_definition ||
+                 source->owner_id != destination->owner_id)) {
+                diagnostics.message =
+                    "voice-local modulator connections cannot cross voices or parents";
                 return false;
             }
             if (!cross_owner && route.destination_owner_explicit &&
@@ -463,6 +502,8 @@ bool ModulationEngine::configure(
         const auto *type = find_modulator_type(instance.type);
         if (!instance.id || !type ||
             !(type->owner_mask & owner_bit(instance.owner_kind)) ||
+            (instance.owner_kind == ModulatorOwnerKind::voice_definition &&
+             !voice_modulator_supported(instance.type)) ||
             ((instance.owner_kind == ModulatorOwnerKind::track ||
               instance.owner_kind == ModulatorOwnerKind::group ||
               instance.owner_kind == ModulatorOwnerKind::voice_definition) &&
@@ -545,16 +586,26 @@ bool ModulationEngine::configure(
             (route.scope == ModulationScope::track &&
              route.destination.instance == 0))
             return false;
-        if (route.scope == ModulationScope::voice &&
-            (route.destination.target != ParameterTarget::subtractive_synth ||
-             route.destination.instance == 0 ||
-             (route.destination.parameter !=
-                  static_cast<std::uint32_t>(SynthParameter::pitch) &&
-              route.destination.parameter !=
-                  static_cast<std::uint32_t>(SynthParameter::cutoff) &&
-              route.destination.parameter !=
-                  static_cast<std::uint32_t>(SynthParameter::gain))))
-            return false;
+        if (route.scope == ModulationScope::voice) {
+            const auto synth_voice =
+                route.destination.target == ParameterTarget::subtractive_synth &&
+                route.destination.instance != 0 &&
+                (route.destination.parameter ==
+                     static_cast<std::uint32_t>(SynthParameter::pitch) ||
+                 route.destination.parameter ==
+                     static_cast<std::uint32_t>(SynthParameter::cutoff) ||
+                 route.destination.parameter ==
+                     static_cast<std::uint32_t>(SynthParameter::gain));
+            const auto sample_voice =
+                route.destination.target == ParameterTarget::sample_voice &&
+                route.track_id != 0 && route.destination.instance == route.track_id &&
+                route.destination.parameter >=
+                    static_cast<std::uint32_t>(SampleModulationParameter::pitch) &&
+                route.destination.parameter <=
+                    static_cast<std::uint32_t>(SampleModulationParameter::pan);
+            if (!synth_voice && !sample_voice)
+                return false;
+        }
         for (std::size_t other = 0; other < i; ++other)
             if (configuration.routes[other].id == route.id)
                 return false;
@@ -1428,6 +1479,12 @@ ModulationSnapshot ModulationEngine::snapshot() const noexcept {
         result.route_source_values[route] =
             published_route_sources_[route].load(std::memory_order_relaxed);
     result.modulator_count = configuration_.modulator_count;
+    result.voice_definition_count = static_cast<std::size_t>(std::count_if(
+        configuration_.modulators.begin(),
+        configuration_.modulators.begin() + configuration_.modulator_count,
+        [](const auto &instance) {
+            return instance.owner_kind == ModulatorOwnerKind::voice_definition;
+        }));
     for (std::size_t instance = 0; instance < result.modulator_count; ++instance) {
         result.modulator_values[instance] =
             published_modulators_[instance].load(std::memory_order_relaxed);

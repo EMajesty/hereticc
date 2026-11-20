@@ -1,5 +1,13 @@
 # Live sample management
 
+## Polyphonic modulation
+
+Sample and slice voices instantiate track-owned voice definitions. Note-on
+resets or deterministically initializes private state; note-off lowers its gate
+even for one-shots. Gate release, choke, toggle and voice stealing affect only
+the corresponding voice. Stretch retains independent time and pitch ratios;
+reverse keeps its documented non-stretched fallback.
+
 `SampleManager` is the hardware-independent command/state boundary for sample
 slots. Its stable semantic actions are `sample.load.v1`, `sample.replace.v1`,
 `sample.unload.v1`, and `sample.query.v1`. A desktop UI, hardware adapter, Lua

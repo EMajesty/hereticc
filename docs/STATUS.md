@@ -1,5 +1,11 @@
 # Implementation status
 
+Task 042 adds track-owned sample voice definitions with independent envelope,
+LFO, function, step and random state. Velocity and gate/trigger are native
+voice sources; pitch, gain and pan are supported destinations. Metadata is
+version 7 with version 6 compatibility. Position/filter modulation and
+arbitrary cross-voice routing remain deferred.
+
 Task 041 expands the native registry to 21 types: step, Euclidean, clocked
 weighted random, looping function, nine math/signal utilities and logistic
 chaos join the existing sources. Stable multi-input/multi-output ports,

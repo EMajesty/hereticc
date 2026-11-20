@@ -10,6 +10,7 @@
 #include "neurogenic/dsp/modulation.hpp"
 #include "neurogenic/dsp/parameter_destination.hpp"
 #include "neurogenic/dsp/processor.hpp"
+#include "neurogenic/dsp/voice_modulation.hpp"
 #include "neurogenic/instrument/subtractive_synth.hpp"
 #include "neurogenic/midi/mapping.hpp"
 #include "neurogenic/midi/routing.hpp"
@@ -365,7 +366,7 @@ void test_modulation_engine() {
     check(follower_attack > follower_release && follower_release > -1.0F,
           "envelope follower attack and release smoothing");
 
-    check(modulator_type_registry().size() == 21 &&
+    check(modulator_type_registry().size() == 23 &&
               find_modulator_type(ModulatorType::lfo)->parameters.size() >= 2,
           "modulator type discovery metadata");
     ModulationConfiguration dynamic;
@@ -929,6 +930,13 @@ void test_modulation_engine() {
     TimelineService timeline([&](const Timeline &value, std::string &error) {
         return audio.queue_timeline(value, error);
     });
+    auto sample_track = timeline.edit();
+    check(sample_track.create_track(7, "sample voice", ticks_per_quarter,
+                                    instance_error) &&
+              timeline.commit(std::move(sample_track),
+                              TimelineCommitPolicy::next_audio_callback,
+                              instance_error),
+          "sample voice owner track setup");
     SampleManager samples(audio);
     ApplicationService application(audio, timeline, samples);
     check(application
@@ -993,6 +1001,26 @@ void test_modulation_engine() {
                   0.75F,
           "semantic step modulator editing");
     audio.process(left, right);
+    check(application
+                  .execute({"modulator.create.v1",
+                            {{"type", std::int64_t{static_cast<std::int64_t>(
+                                          ModulatorType::velocity)}},
+                             {"owner", std::int64_t{static_cast<std::int64_t>(
+                                           ModulatorOwnerKind::voice_definition)}},
+                             {"owner_id", std::int64_t{7}}}})
+                  .accepted &&
+              application
+                  .execute({"modulator.route-create.v1",
+                            {{"source_id", std::int64_t{4}},
+                             {"destination", std::string("sample.gain")},
+                             {"depth", 0.5}}})
+                  .accepted &&
+              application.snapshot().modulation.modulators[3].owner_kind ==
+                  ModulatorOwnerKind::voice_definition &&
+              application.snapshot().modulation.routes[2].scope ==
+                  ModulationScope::voice,
+          "semantic voice-definition creation and sample routing");
+    audio.process(left, right);
     auto created = application.execute(
         {"modulation.route-create.v1",
          {{"source",
@@ -1002,7 +1030,7 @@ void test_modulation_engine() {
           {"scope",
            std::int64_t{static_cast<std::int64_t>(ModulationScope::global)}}}});
     check(created.accepted &&
-              application.snapshot().modulation.route_count == 3 &&
+              application.snapshot().modulation.route_count == 4 &&
               application.snapshot().project_dirty,
           "semantic modulation route creation");
     check(application
@@ -1018,7 +1046,7 @@ void test_modulation_engine() {
               .accepted,
           "XY modulation action");
     audio.process(left, right);
-    check(audio.modulation_snapshot().effective_values[2] > 8000,
+    check(audio.modulation_snapshot().effective_values[3] > 8000,
           "application modulation reached audio engine");
     check(application
               .execute({"modulation.route-create.v1",
@@ -1479,6 +1507,145 @@ void test_performance_monitoring() {
                   std::string::npos &&
               json.find("\"sample_rate\":48000") != std::string::npos,
           "machine-readable performance output");
+}
+
+void test_polyphonic_sample_modulation() {
+    using namespace neurogenic;
+    ModulationConfiguration configuration;
+    configuration.update_interval = 1;
+    configuration.modulator_count = 4;
+    configuration.modulators[0].id = 2001;
+    configuration.modulators[0].type = ModulatorType::adsr;
+    configuration.modulators[0].owner_kind =
+        ModulatorOwnerKind::voice_definition;
+    configuration.modulators[0].owner_id = 7;
+    configuration.modulators[0].settings.attack_seconds = 0.1F;
+    configuration.modulators[0].settings.release_seconds = 0.1F;
+    configuration.modulators[1] = configuration.modulators[0];
+    configuration.modulators[1].id = 2002;
+    configuration.modulators[1].type = ModulatorType::lfo;
+    configuration.modulators[1].settings.rate_hz = 1;
+    configuration.modulators[1].settings.retrigger = true;
+    configuration.modulators[2] = configuration.modulators[0];
+    configuration.modulators[2].id = 2003;
+    configuration.modulators[2].type = ModulatorType::clocked_random;
+    configuration.modulators[2].settings.seed = 99;
+    configuration.modulators[2].settings.rate_hz = 10;
+    configuration.modulators[3] = configuration.modulators[0];
+    configuration.modulators[3].id = 2004;
+    configuration.modulators[3].type = ModulatorType::velocity;
+    configuration.route_count = 3;
+    for (std::size_t i = 0; i < configuration.route_count; ++i) {
+        auto &route = configuration.routes[i];
+        route.id = static_cast<ModulationRouteId>(2101 + i);
+        route.source_instance = configuration.modulators[i].id;
+        route.source_output = 1;
+        route.destination = {
+            ParameterTarget::sample_voice,
+            static_cast<std::uint32_t>(
+                i == 0 ? SampleModulationParameter::gain
+                : i == 1 ? SampleModulationParameter::pitch
+                         : SampleModulationParameter::pan),
+            7};
+        route.minimum = i == 0 ? 0.0F : (i == 1 ? -12.0F : -1.0F);
+        route.maximum = i == 0 ? 1.0F : (i == 1 ? 12.0F : 1.0F);
+        route.base_value = 0;
+        route.depth = i == 1 ? 0.25F : 1.0F;
+        route.scope = ModulationScope::voice;
+        route.track_id = 7;
+    }
+    ModulationGraphDiagnostics diagnostics;
+    check(prepare_modulation_graph(configuration, diagnostics),
+          "voice-local graph preparation");
+    SampleVoiceModulationState first, second;
+    reset_sample_voice_modulation(first, configuration, 7, 0.25F, 1);
+    reset_sample_voice_modulation(second, configuration, 7, 0.9F, 2);
+    SampleVoiceModulationValues first_value, second_value;
+    for (int frame = 0; frame < 5; ++frame) {
+        first_value = process_sample_voice_modulation(first, configuration,
+                                                      100, 120);
+        second_value = process_sample_voice_modulation(second, configuration,
+                                                       100, 120);
+    }
+    check(first_value.gain > 0 && second_value.gain > 0 &&
+              first.instances[1].phase == second.instances[1].phase &&
+              first.instances[2].held != second.instances[2].held,
+          "overlapping sample voices own independent envelope and random state");
+    for (int frame = 0; frame < 5; ++frame)
+        (void)process_sample_voice_modulation(first, configuration, 100, 120);
+    check(first.instances[1].phase != second.instances[1].phase,
+          "sample voice LFO phases evolve independently");
+    release_sample_voice_modulation(first);
+    const auto second_before = second.instances[0].value;
+    for (int frame = 0; frame < 5; ++frame) {
+        first_value = process_sample_voice_modulation(first, configuration,
+                                                      100, 120);
+        second_value = process_sample_voice_modulation(second, configuration,
+                                                       100, 120);
+    }
+    check(first.instances[0].value < second.instances[0].value &&
+              second.instances[0].value >= second_before,
+          "note-off releases only the corresponding voice envelope");
+
+    auto cross_voice = configuration;
+    cross_voice.modulators[1].owner_id = 8;
+    cross_voice.routes[1].destination_kind =
+        ModulationDestinationKind::modulator_input;
+    cross_voice.routes[1].destination_modulator = 2001;
+    cross_voice.routes[1].destination_input = 1;
+    check(!validate_modulation_graph(cross_voice, diagnostics) &&
+              !diagnostics.message.empty(),
+          "ambiguous cross-voice route rejected");
+
+    auto unsupported = configuration;
+    unsupported.modulators[0].type = ModulatorType::envelope_follower;
+    ModulationEngine validation_engine(100);
+    check(!validation_engine.configure(unsupported),
+          "unsupported voice-local modulator rejected");
+
+    ModulationConfiguration partition = configuration;
+    SampleVoiceModulationState partition_a, partition_b;
+    reset_sample_voice_modulation(partition_a, partition, 7, 0.7F, 42);
+    reset_sample_voice_modulation(partition_b, partition, 7, 0.7F, 42);
+    for (int frame = 0; frame < 97; ++frame)
+        (void)process_sample_voice_modulation(partition_a, partition, 48000,
+                                              123.5F);
+    for (const int block : {3, 17, 29, 48})
+        for (int frame = 0; frame < block; ++frame)
+            (void)process_sample_voice_modulation(partition_b, partition, 48000,
+                                                  123.5F);
+    near(partition_a.instances[1].outputs[0],
+         partition_b.instances[1].outputs[0],
+         "sample voice callback partition independence");
+
+    auto render_velocity_voice = [&](bool modulated) {
+        AudioEngine audio(100, 4);
+        audio.set_sample({100, 1, std::vector<float>(64, 1.0F)});
+        if (modulated)
+            check(audio.publish_modulation(configuration),
+                  "publish sample voice modulation");
+        Timeline timeline;
+        timeline.transport.microseconds_per_quarter = 500000;
+        Track track;
+        track.id = 7;
+        track.instrument_id = std::string(sample_instrument_id);
+        track.pattern.length = ticks_per_quarter;
+        track.pattern.events.push_back(
+            {1, 0, MusicalEventType::note, 60, 0.5F, ticks_per_quarter});
+        timeline.tracks.push_back(std::move(track));
+        std::string error;
+        check(audio.queue_timeline(timeline, error), error.c_str());
+        std::array<float, 16> left{}, right{};
+        audio.process(left, right);
+        float total{};
+        for (const auto sample : left)
+            total += sample;
+        return total;
+    };
+    const auto plain_audio = render_velocity_voice(false);
+    const auto modulated_audio = render_velocity_voice(true);
+    check(modulated_audio > 0 && modulated_audio < plain_audio,
+          "voice-local velocity modulation changes rendered sample audio");
 }
 
 void test_native_synthesis_and_dsp() {
@@ -3026,6 +3193,23 @@ void test_unified_project_persistence() {
     project.modulation.routes[2].minimum = -1;
     project.modulation.routes[2].maximum = 1;
     project.modulation.routes[2].depth = 1;
+    project.modulation.modulator_count = 5;
+    project.modulation.modulators[4].id = 9005;
+    project.modulation.modulators[4].type = ModulatorType::velocity;
+    project.modulation.modulators[4].owner_kind =
+        ModulatorOwnerKind::voice_definition;
+    project.modulation.modulators[4].owner_id = 77;
+    project.modulation.route_count = 4;
+    project.modulation.routes[3].id = 84;
+    project.modulation.routes[3].source_instance = 9005;
+    project.modulation.routes[3].destination = {
+        ParameterTarget::sample_voice,
+        static_cast<std::uint32_t>(SampleModulationParameter::gain), 77};
+    project.modulation.routes[3].minimum = 0;
+    project.modulation.routes[3].maximum = 1;
+    project.modulation.routes[3].depth = 1;
+    project.modulation.routes[3].scope = ModulationScope::voice;
+    project.modulation.routes[3].track_id = 77;
     project.midi.clock_source = MidiClockSource::external;
     project.midi.forward_external_clock = true;
     project.midi.route_count = 1;
@@ -3059,11 +3243,11 @@ void test_unified_project_persistence() {
               loaded.mixer.effects.instances[0].type ==
                   EffectProcessorType::low_pass_filter &&
               loaded.mixer.effects.master.instances[0] == 700 &&
-              loaded.modulation.route_count == 3 &&
+              loaded.modulation.route_count == 4 &&
               loaded.modulation.routes[0].id == 81 &&
               loaded.modulation.routes[0].destination.instance == 2 &&
               loaded.modulation.routes[0].source_instance == 9001 &&
-              loaded.modulation.modulator_count == 4 &&
+              loaded.modulation.modulator_count == 5 &&
               loaded.modulation.modulators[0].id == 9001 &&
               std::string(loaded.modulation.modulators[0].display_name.data()) ==
                   "Project LFO" &&
@@ -3079,6 +3263,11 @@ void test_unified_project_persistence() {
               loaded.modulation.routes[2].destination_kind ==
                   ModulationDestinationKind::modulator_input &&
               loaded.modulation.routes[2].destination_input == 1 &&
+              loaded.modulation.modulators[4].type ==
+                  ModulatorType::velocity &&
+              loaded.modulation.modulators[4].owner_kind ==
+                  ModulatorOwnerKind::voice_definition &&
+              loaded.modulation.routes[3].scope == ModulationScope::voice &&
               loaded.modulation.sources[0].tempo_sync &&
               loaded.midi.clock_source == MidiClockSource::external &&
               loaded.midi.forward_external_clock &&
@@ -3096,12 +3285,12 @@ void test_unified_project_persistence() {
           "unified project round trip");
 
     auto missing_owner = project;
-    missing_owner.modulation.modulator_count = 5;
-    missing_owner.modulation.modulators[4].id = 9999;
-    missing_owner.modulation.modulators[4].type = ModulatorType::lfo;
-    missing_owner.modulation.modulators[4].owner_kind =
+    missing_owner.modulation.modulator_count = 6;
+    missing_owner.modulation.modulators[5].id = 9999;
+    missing_owner.modulation.modulators[5].type = ModulatorType::lfo;
+    missing_owner.modulation.modulators[5].owner_kind =
         ModulatorOwnerKind::track;
-    missing_owner.modulation.modulators[4].owner_id = 999999;
+    missing_owner.modulation.modulators[5].owner_id = 999999;
     bool rejected_missing_owner{};
     try {
         save_project(missing_owner, root / "missing-owner");
@@ -5918,6 +6107,7 @@ int main() {
         test_performance_monitoring();
         test_midi_routing_and_clock();
         test_modulation_engine();
+        test_polyphonic_sample_modulation();
         test_native_synthesis_and_dsp();
         test_native_effect_chains();
         test_queue_and_scheduler();

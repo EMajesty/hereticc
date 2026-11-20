@@ -2,6 +2,7 @@
 #include "neurogenic/audio/engine.hpp"
 #include "neurogenic/audio/sample_manager.hpp"
 #include "neurogenic/dsp/processor.hpp"
+#include "neurogenic/dsp/voice_modulation.hpp"
 #include "neurogenic/instrument/subtractive_synth.hpp"
 #include "neurogenic/midi/routing.hpp"
 #include "neurogenic/performance/monitor.hpp"
@@ -1061,6 +1062,76 @@ void synth_instance_case(std::size_t instance_count, bool voice_modulation) {
                    .count() /
                iterations);
 }
+void sample_voice_modulation_case(std::size_t voice_count,
+                                  std::size_t definition_count) {
+    neurogenic::ModulationConfiguration configuration;
+    configuration.update_interval = 32;
+    configuration.modulator_count = std::min(
+        definition_count,
+        neurogenic::ModulationConfiguration::maximum_modulators);
+    constexpr std::array types{
+        neurogenic::ModulatorType::adsr, neurogenic::ModulatorType::lfo,
+        neurogenic::ModulatorType::clocked_random,
+        neurogenic::ModulatorType::function_generator,
+        neurogenic::ModulatorType::step_sequencer,
+        neurogenic::ModulatorType::velocity};
+    for (std::size_t i = 0; i < configuration.modulator_count; ++i) {
+        auto &definition = configuration.modulators[i];
+        definition.id = static_cast<neurogenic::ModulatorInstanceId>(i + 1);
+        definition.type = types[i % types.size()];
+        definition.owner_kind = neurogenic::ModulatorOwnerKind::voice_definition;
+        definition.owner_id = 1;
+        definition.settings.rate_hz = 0.5F + static_cast<float>(i) * 0.1F;
+        definition.settings.retrigger = true;
+    }
+    configuration.route_count = configuration.modulator_count;
+    for (std::size_t i = 0; i < configuration.route_count; ++i) {
+        auto &route = configuration.routes[i];
+        route.id = static_cast<neurogenic::ModulationRouteId>(i + 1);
+        route.source_instance = static_cast<neurogenic::ModulatorInstanceId>(i + 1);
+        route.destination = {
+            neurogenic::ParameterTarget::sample_voice,
+            static_cast<std::uint32_t>(
+                i % 3 == 0 ? neurogenic::SampleModulationParameter::pitch
+                : i % 3 == 1 ? neurogenic::SampleModulationParameter::gain
+                             : neurogenic::SampleModulationParameter::pan),
+            1};
+        route.minimum = i % 3 == 0 ? -12.0F : (i % 3 == 1 ? 0.0F : -1.0F);
+        route.maximum = i % 3 == 0 ? 12.0F : (i % 3 == 1 ? 2.0F : 1.0F);
+        route.base_value = i % 3 == 1 ? 1.0F : 0.0F;
+        route.depth = 0.1F;
+        route.scope = neurogenic::ModulationScope::voice;
+        route.track_id = 1;
+    }
+    neurogenic::ModulationGraphDiagnostics diagnostics;
+    const auto prepare = Clock::now();
+    if (!neurogenic::prepare_modulation_graph(configuration, diagnostics))
+        throw std::runtime_error("voice modulation benchmark preparation: " +
+                                 diagnostics.message);
+    std::vector<neurogenic::SampleVoiceModulationState> voices(voice_count);
+    for (std::size_t i = 0; i < voices.size(); ++i)
+        neurogenic::reset_sample_voice_modulation(
+            voices[i], configuration, 1, 0.5F,
+            static_cast<std::uint64_t>(i + 1));
+    const auto preparation_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - prepare)
+            .count();
+    const auto begin = Clock::now();
+    for (std::size_t block = 0; block < iterations; ++block)
+        for (std::size_t frame = 0; frame < 256; ++frame)
+            for (auto &voice : voices) {
+                const auto value = neurogenic::process_sample_voice_modulation(
+                    voice, configuration, 48000, 120);
+                checksum += value.gain > 0;
+            }
+    result("sample_voice_modulation_" + std::to_string(voice_count) + "v_" +
+               std::to_string(definition_count) + "m",
+           48000, 256,
+           std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - begin)
+                   .count() /
+               iterations,
+           preparation_ns);
+}
 void integrated_workstation_case() {
     constexpr std::size_t sample_tracks = 8;
     constexpr std::size_t synth_tracks = 4;
@@ -1299,6 +1370,10 @@ int main(int argc, char **argv) {
     synth_instance_case(16, false);
     synth_instance_case(8, true);
     synth_instance_case(16, true);
+    sample_voice_modulation_case(8, 4);
+    sample_voice_modulation_case(16, 4);
+    sample_voice_modulation_case(32, 6);
+    sample_voice_modulation_case(64, 6);
     integrated_workstation_case();
     std::cout << "{\"schema\":\"neurogenic.benchmark.summary.v1\",\"checksum\":"
               << checksum

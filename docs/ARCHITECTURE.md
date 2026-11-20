@@ -1,5 +1,10 @@
 # Architecture
 
+Sample voices contain preallocated `SampleVoiceModulationState`. Persisted
+definitions are immutable shared configuration, while phase, envelopes and
+random state live in the bounded voice pool. Note events allocate and lock
+nothing, and publication remains control-side prepared.
+
 Dynamic modulators have stable identities and explicit track, aux or master
 ownership. Discovery metadata stays separate from compact callback state and
 complete configurations are validated before bounded publication. See

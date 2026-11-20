@@ -120,6 +120,24 @@ bool valid_legacy_parameter(ParameterTarget target,
     if (target == ParameterTarget::stereo_delay)
         return parameter >= 1 &&
                parameter <= static_cast<std::uint32_t>(DelayParameter::mix);
+    if (target == ParameterTarget::sample_voice)
+        return parameter >= static_cast<std::uint32_t>(
+                                SampleModulationParameter::pitch) &&
+               parameter <=
+                   static_cast<std::uint32_t>(SampleModulationParameter::pan);
+    if (target == ParameterTarget::mixer_track)
+        return parameter >= 1 &&
+               parameter <= static_cast<std::uint32_t>(
+                                MixerTrackModulationParameter::aux_send_2);
+    if (target == ParameterTarget::mixer_aux ||
+        target == ParameterTarget::mixer_master)
+        return parameter == 1;
+    if (target == ParameterTarget::external_fx)
+        return parameter >= 1 &&
+               parameter <= static_cast<std::uint32_t>(
+                                ExternalFxModulationParameter::return_gain);
+    if (target == ParameterTarget::native_effect)
+        return parameter >= 1 && parameter <= maximum_effect_parameters;
     return false;
 }
 } // namespace neurogenic

@@ -1,5 +1,10 @@
 # Modulation graph
 
+Voice definitions use the same validated DAG. They may target pitch, gain or
+pan on their parent track's sample voices, or compatible inputs/parameters of
+another definition with the same parent. Cross-parent/cross-voice edges are
+rejected, and persisted edges never identify transient voice objects.
+
 NEUROGENIC compiles dynamic modulators and connections into a bounded directed
 acyclic control-rate graph. Editable configuration stays on the control side;
 the callback receives fixed arrays and a prepared evaluation order.

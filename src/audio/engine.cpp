@@ -549,10 +549,14 @@ void AudioEngine::start_voice(std::uint8_t note, float velocity, TrackId track,
     voice.choke_release = settings.choke_release;
     voice.timeline_owned = timeline_owned;
     voice.preview = preview;
+    reset_sample_voice_modulation(voice.voice_modulation,
+                                  modulation_.configuration(), track,
+                                  velocity, occurrence ^ voice.age);
     voice.active = true;
 }
 
 void AudioEngine::release_voice(Voice &voice, bool immediate) noexcept {
+    release_sample_voice_modulation(voice.voice_modulation);
     if (immediate || voice.release_step >= 1.0F) {
         voice.active = false;
         return;
@@ -569,6 +573,7 @@ void AudioEngine::release_note(std::uint8_t note, TrackId track, EventId event,
             (!timeline_owned ||
              (voice.timeline_owned && voice.track == track &&
               voice.event == event && voice.occurrence == occurrence))) {
+            release_sample_voice_modulation(voice.voice_modulation);
             if (voice.mode == SamplePlaybackMode::gate)
                 release_voice(voice);
             if (timeline_owned)
@@ -1087,6 +1092,15 @@ void AudioEngine::process(std::span<float> left,
         for (auto &voice : voices_) {
             if (!voice.active)
                 continue;
+            const auto voice_modulation = process_sample_voice_modulation(
+                voice.voice_modulation, modulation_.configuration(), rate_,
+                project_tempo_bpm_);
+            const auto effective_pitch =
+                voice.modulation_pitch + voice_modulation.pitch_semitones;
+            voice.increment =
+                voice.base_increment * std::exp2(effective_pitch / 12.0F);
+            voice.stretch_configuration.pitch_ratio =
+                static_cast<float>(voice.increment);
             const auto &sample = *voice.sample;
             if ((voice.stretched &&
                  voice.stretch_state.output_frame >= voice.stretch_duration) ||
@@ -1122,9 +1136,11 @@ void AudioEngine::process(std::span<float> left,
                 sample_left = interpolate(0);
                 sample_right = interpolate(1);
             }
-            const auto level =
-                voice.base_gain * voice.modulation_gain * voice.envelope_level;
-            const auto pan = std::clamp(voice.modulation_pan, -1.0F, 1.0F);
+            const auto level = voice.base_gain * voice.modulation_gain *
+                               voice_modulation.gain * voice.envelope_level;
+            const auto pan = std::clamp(voice.modulation_pan +
+                                            voice_modulation.pan,
+                                        -1.0F, 1.0F);
             sample_left *= pan > 0 ? 1.0F - pan : 1.0F;
             sample_right *= pan < 0 ? 1.0F + pan : 1.0F;
             const auto routed =

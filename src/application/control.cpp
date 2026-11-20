@@ -1,4 +1,5 @@
 #include "neurogenic/application/control.hpp"
+#include "neurogenic/dsp/voice_modulation.hpp"
 #include "neurogenic/dsp/parameter_destination.hpp"
 #include <algorithm>
 #include <chrono>
@@ -3944,10 +3945,14 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     route.depth = static_cast<float>(depth);
                     route.minimum = -1;
                     route.maximum = 1;
-                    route.scope = source->owner_kind == ModulatorOwnerKind::track
-                                      ? ModulationScope::track
-                                      : ModulationScope::global;
-                    route.track_id = route.scope == ModulationScope::track
+                    route.scope =
+                        source->owner_kind == ModulatorOwnerKind::track
+                            ? ModulationScope::track
+                        : source->owner_kind ==
+                                  ModulatorOwnerKind::voice_definition
+                            ? ModulationScope::voice
+                            : ModulationScope::global;
+                    route.track_id = route.scope != ModulationScope::global
                                          ? source->owner_id
                                          : 0;
                     route.destination_owner_explicit = true;
@@ -4031,22 +4036,28 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 const auto owner_value = *argument<std::int64_t>(command, "owner");
                 const auto owner_id = *argument<std::int64_t>(command, "owner_id");
                 if (type_value < static_cast<std::int64_t>(ModulatorType::lfo) ||
-                    type_value > static_cast<std::int64_t>(ModulatorType::logistic) ||
+                    type_value > static_cast<std::int64_t>(ModulatorType::gate) ||
                     owner_value < static_cast<std::int64_t>(ModulatorOwnerKind::track) ||
-                    owner_value > static_cast<std::int64_t>(ModulatorOwnerKind::group) ||
+                    owner_value > static_cast<std::int64_t>(
+                                      ModulatorOwnerKind::voice_definition) ||
                     owner_id < 0)
                     error = "invalid modulator type or owner";
                 else if (next.modulator_count == next.modulators.size())
                     error = "modulator capacity is exhausted (64 instances)";
                 else {
                     const auto owner = static_cast<ModulatorOwnerKind>(owner_value);
-                    if (owner == ModulatorOwnerKind::track) {
+                    if (owner == ModulatorOwnerKind::track ||
+                        owner == ModulatorOwnerKind::voice_definition) {
                         const auto timeline = timeline_.snapshot().timeline;
                         if (std::none_of(timeline.tracks.begin(), timeline.tracks.end(),
                                          [&](const auto &track) {
                                              return track.id == static_cast<TrackId>(owner_id);
                                          }))
                             error = "modulator owner track does not exist";
+                        else if (owner == ModulatorOwnerKind::voice_definition &&
+                                 !voice_modulator_supported(
+                                     static_cast<ModulatorType>(type_value)))
+                            error = "modulator type does not support voice ownership";
                     } else if (owner == ModulatorOwnerKind::auxiliary && owner_id >= 2)
                         error = "modulator auxiliary owner does not exist";
                     else if (owner == ModulatorOwnerKind::master && owner_id != 0)
@@ -4096,13 +4107,18 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     route.base_value =
                         static_cast<float>(number(descriptor->current_value));
                     route.depth = static_cast<float>(depth);
-                    route.scope = source->owner_kind == ModulatorOwnerKind::track
-                                      ? ModulationScope::track
-                                      : ModulationScope::global;
-                    route.track_id = route.scope == ModulationScope::track
+                    route.scope =
+                        source->owner_kind == ModulatorOwnerKind::track
+                            ? ModulationScope::track
+                        : source->owner_kind ==
+                                  ModulatorOwnerKind::voice_definition
+                            ? ModulationScope::voice
+                            : ModulationScope::global;
+                    route.track_id = route.scope != ModulationScope::global
                                          ? source->owner_id
                                          : 0;
-                    if (route.scope == ModulationScope::track)
+                    if (route.scope == ModulationScope::track ||
+                        route.scope == ModulationScope::voice)
                         route.destination.instance =
                             static_cast<std::uint32_t>(source->owner_id);
                     if (source->owner_kind == ModulatorOwnerKind::auxiliary)
@@ -4127,7 +4143,7 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                              (*owner < static_cast<std::int64_t>(
                                            ModulatorOwnerKind::track) ||
                               *owner > static_cast<std::int64_t>(
-                                           ModulatorOwnerKind::group) ||
+                                           ModulatorOwnerKind::voice_definition) ||
                               *owner_id < 0))
                         error = "invalid destination owner";
                     else if (owner) {

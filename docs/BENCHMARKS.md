@@ -1,5 +1,15 @@
 # Performance monitoring and benchmarks
 
+Task 042 adds `sample_voice_modulation_8v_4m`, `16v_4m`, `32v_6m` and
+`64v_6m`. They isolate per-voice graph evaluation from PCM/stretch cost.
+Preparation covers graph validation, voice allocation and deterministic reset.
+
+Debug GCC 15.3 results on the development Ryzen 7 7800X3D at 48 kHz/256
+frames (200 iterations) were 10.2, 20.9, 53.5 and 103.6 microseconds per
+buffer respectively. Preparation was 3.6, 3.4, 7.6 and 13.2 microseconds;
+process RSS was 77.0 MB. These are offline development-host measurements, not
+Raspberry Pi 5 or N150 real-time claims.
+
 Task 041 adds mixed native-generator workloads using LFO, step, Euclidean,
 clocked random, function, logistic and follower instances with dense normal
 destinations. On the 2026-11-20 x86-64 Debug host (Ryzen 7 7800X3D, GCC 15.3,

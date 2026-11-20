@@ -1,9 +1,11 @@
 # Project persistence
 
-Modulation metadata version 6 persists stable instances and owners plus graph
+Modulation metadata version 7 persists stable instances and owners plus graph
 destination kinds, explicit owner and sharing metadata, and follower tap
 identities. It adds native type settings, bounded step values, named source
-output and destination input IDs. Version-5 projects load unchanged;
+output and destination input IDs. Version 7 adds voice definitions, velocity
+and gate sources, and voice-scoped sample routes. Version-6 projects load
+unchanged;
 version-4 projects retain their implicit local routes and sound, and older
 fixed-bank files migrate during load. Unknown future types are rejected rather
 than substituted. Transient phase, envelope, voice state and prepared graph

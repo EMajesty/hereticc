@@ -1,5 +1,11 @@
 # Modulation matrix
 
+For samples, effective values combine base or automation, global/track
+contributions and private voice contributions exactly once. Voice pitch is
+additive in semitones, gain is multiplicative and pan is summed then clamped.
+Realtime stretch keeps time ratio independent from modulated pitch. Pitch,
+gain and pan are supported; position and filter modulation remain deferred.
+
 New configurations use independently creatable stable-ID instances owned by a
 track, aux bus or master. The fixed bank remains a compatibility adapter. See
 [Dynamic modulator instances](MODULATOR_INSTANCES.md).
