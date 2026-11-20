@@ -1,5 +1,9 @@
 # Project persistence
 
+Mixer metadata version 3 persists native FX instances and serial track, aux and
+master chains. Older versions load empty chains. Unsupported types are reported,
+not substituted.
+
 `midi.ngm` stores the selected clock source, logical input/output selectors,
 clock output ports, external forwarding preference, route filters/remapping,
 and output-latency metadata. Task 031 version-1 MIDI metadata remains readable;

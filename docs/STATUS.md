@@ -1,5 +1,11 @@
 # Implementation status
 
+Task 038 adds bounded serial native FX chains for tracks, two aux buses and
+master. Gain, stereo delay, low-pass filter and saturation instances have stable
+IDs, typed descriptors, semantic actions, modulation/automation destinations and
+versioned persistence. Plugin hosting, topology crossfades, presets and latency
+compensation remain deferred.
+
 Task 037 advances the controller protocol to compatible version 1.1 with
 bounded formatted values/ranges/units/revisions, explicit page mappings shared
 by GUI and hardware, finalized dedicated IDs, fine/accelerated encoders,

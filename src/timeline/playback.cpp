@@ -146,7 +146,8 @@ bool compile_timeline(const Timeline &timeline, PlaybackPlan &output,
         auto append = [&](MusicalTick raw_tick, EventId id, EventId target,
                           MusicalEventType type, std::uint8_t pitch,
                           std::uint32_t parameter,
-                          std::uint32_t parameter_target, float value,
+                          std::uint32_t parameter_target,
+                          std::uint32_t parameter_instance, float value,
                           float probability = 1.0F,
                           TriggerCondition condition = TriggerCondition::always,
                           std::uint16_t n = 1, std::uint16_t m = 1,
@@ -154,7 +155,7 @@ bool compile_timeline(const Timeline &timeline, PlaybackPlan &output,
             const auto length = track.pattern.length;
             plan.events.push_back(
                 {raw_tick % length, id, target, type, pitch, parameter,
-                 parameter_target, value,
+                 parameter_target, parameter_instance, value,
                  static_cast<std::uint64_t>(raw_tick / length), probability,
                  condition, n, m, ratchet});
         };
@@ -179,12 +180,12 @@ bool compile_timeline(const Timeline &timeline, PlaybackPlan &output,
                                                       (ratchet + 1) /
                                                       event.ratchet_count;
                     append(begin, event.id, event.id, MusicalEventType::note_on,
-                           event.pitch, 0, 0, event.velocity,
+                           event.pitch, 0, 0, 0, event.velocity,
                            event.trigger_probability, event.trigger_condition,
                            event.condition_n, event.condition_m, ratchet);
                     append(end, event.id, event.id, MusicalEventType::note_off,
-                           event.pitch, 0, 0, 0, 1.0F, TriggerCondition::always,
-                           1, 1, ratchet);
+                           event.pitch, 0, 0, 0, 0, 1.0F,
+                           TriggerCondition::always, 1, 1, ratchet);
                 }
             } else {
                 if (event.type == MusicalEventType::note_off) {
@@ -207,7 +208,7 @@ bool compile_timeline(const Timeline &timeline, PlaybackPlan &output,
                         return false;
                     }
                 }
-                std::uint32_t parameter_target{};
+                std::uint32_t parameter_target{}, parameter_instance{};
                 auto parameter = event.parameter_id;
                 if (event.type == MusicalEventType::parameter) {
                     if (event.parameter_destination.empty()) {
@@ -233,6 +234,7 @@ bool compile_timeline(const Timeline &timeline, PlaybackPlan &output,
                         parameter = destination->parameter;
                         parameter_target =
                             static_cast<std::uint32_t>(destination->target);
+                        parameter_instance = destination->instance;
                     }
                 }
                 append(event.tick, event.id,
@@ -240,6 +242,7 @@ bool compile_timeline(const Timeline &timeline, PlaybackPlan &output,
                            ? event.target_event_id
                            : event.id,
                        event.type, event.pitch, parameter, parameter_target,
+                       parameter_instance,
                        event.type == MusicalEventType::parameter
                            ? event.value
                            : event.velocity);
@@ -449,13 +452,13 @@ std::size_t TimelineScheduler::schedule_range(
                     track.previous_trigger_fired = emit;
                 }
             }
-            const auto offset = absolute_frame <= start || end == start
-                                    ? 0
-                                    : static_cast<std::uint32_t>(
-                                          (static_cast<WideInteger>(
-                                               absolute_frame - start) *
-                                           output_frames) /
-                                          (end - start));
+            const auto offset =
+                absolute_frame <= start || end == start
+                    ? 0
+                    : static_cast<std::uint32_t>(
+                          (static_cast<WideInteger>(absolute_frame - start) *
+                           output_frames) /
+                          (end - start));
             if (emit)
                 output[count++] = {offset,
                                    track.id,
@@ -468,7 +471,10 @@ std::size_t TimelineScheduler::schedule_range(
                                    event.parameter_target,
                                    event.value,
                                    track.instrument,
-                                   track.instrument_instance,
+                                   event.type == MusicalEventType::parameter &&
+                                           event.parameter_instance
+                                       ? event.parameter_instance
+                                       : track.instrument_instance,
                                    track.midi_output_port,
                                    track.midi_channel};
         }

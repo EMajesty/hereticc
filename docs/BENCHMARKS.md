@@ -1,5 +1,15 @@
 # Performance monitoring and benchmarks
 
+Native-chain scenarios cover four tracks with two processors each, and sixteen
+tracks with one processor each plus both aux chains and master. Results remain
+offline measurements rather than Raspberry Pi 5 hardware claims.
+
+Task 038 debug-build sample (Ryzen 7 7800X3D, Linux 7.3, GCC 15.3, 48 kHz,
+256 frames, 50 iterations): four tracks/two effects averaged 24.9 us per
+buffer; sixteen tracks/one effect plus two aux and master averaged 46.5 us.
+Resident process memory was approximately 51.5 MB. Run the benchmark on target
+hardware before assigning a device budget.
+
 Device-backed bring-up uses `neurogenic-diagnostics --stress SECONDS
 --realtime` and emits `neurogenic.hardware-test-report.v1`. Callback deadline
 misses are not backend XRUN claims. See

@@ -46,7 +46,7 @@ std::string generation_name() {
 }
 std::string serialize_mixer(const MixerConfiguration &mixer) {
     std::ostringstream out;
-    out << "NEUROGENIC_MIXER 2\n"
+    out << "NEUROGENIC_MIXER 3\n"
         << std::setprecision(9) << "master " << mixer.master.gain << ' '
         << static_cast<unsigned>(mixer.master.output_left) << ' '
         << static_cast<unsigned>(mixer.master.output_right) << ' '
@@ -89,6 +89,33 @@ std::string serialize_mixer(const MixerConfiguration &mixer) {
             << ' ' << loop.return_mute << ' ' << loop.mono_send << ' '
             << loop.mono_return << '\n';
     }
+    out << "effects " << mixer.effects.instance_count << '\n';
+    for (std::size_t i = 0; i < mixer.effects.instance_count; ++i) {
+        const auto &effect = mixer.effects.instances[i];
+        out << "effect " << effect.id << ' '
+            << static_cast<unsigned>(effect.type) << ' ' << effect.enabled
+            << ' ' << effect.bypass << ' ' << effect.wet << ' '
+            << static_cast<unsigned>(effect.input_channels) << ' '
+            << static_cast<unsigned>(effect.output_channels) << ' '
+            << effect.parameter_count;
+        for (std::size_t p = 0; p < effect.parameter_count; ++p)
+            out << ' ' << effect.parameters[p].id << ' '
+                << effect.parameters[p].value;
+        out << '\n';
+    }
+    const auto chain = [&](std::string_view kind, std::size_t index,
+                           const EffectChainConfiguration &value) {
+        out << "chain " << kind << ' ' << index << ' ' << value.bypass << ' '
+            << value.count;
+        for (std::size_t i = 0; i < value.count; ++i)
+            out << ' ' << value.instances[i];
+        out << '\n';
+    };
+    for (std::size_t i = 0; i < mixer.effects.tracks.size(); ++i)
+        chain("track", i, mixer.effects.tracks[i]);
+    for (std::size_t i = 0; i < mixer.effects.aux.size(); ++i)
+        chain("aux", i, mixer.effects.aux[i]);
+    chain("master", 0, mixer.effects.master);
     return out.str();
 }
 MixerConfiguration load_mixer(const std::filesystem::path &path) {
@@ -99,7 +126,7 @@ MixerConfiguration load_mixer(const std::filesystem::path &path) {
     MixerConfiguration result;
     int output{};
     if (!(input >> magic >> version) || magic != "NEUROGENIC_MIXER" ||
-        (version != 1 && version != 2) || !(input >> label) ||
+        (version < 1 || version > 3) || !(input >> label) ||
         label != "master" ||
         !(input >> result.master.gain >> left >> right >> result.master.mute) ||
         left >= maximum_mixer_outputs || right >= maximum_mixer_outputs ||
@@ -170,6 +197,50 @@ MixerConfiguration load_mixer(const std::filesystem::path &path) {
             loop.return_left = static_cast<std::uint8_t>(return_left);
             loop.return_right = static_cast<std::uint8_t>(return_right);
         }
+    if (version >= 3) {
+        if (!(input >> label >> result.effects.instance_count) ||
+            label != "effects" ||
+            result.effects.instance_count > maximum_effect_instances)
+            throw std::runtime_error("malformed effect instance count");
+        for (std::size_t i = 0; i < result.effects.instance_count; ++i) {
+            auto &effect = result.effects.instances[i];
+            unsigned type{}, inputs{}, outputs{};
+            if (!(input >> label >> effect.id >> type >> effect.enabled >>
+                  effect.bypass >> effect.wet >> inputs >> outputs >>
+                  effect.parameter_count) ||
+                label != "effect" || type < 1 || type > 4 || inputs < 1 ||
+                inputs > 2 || outputs < 1 || outputs > 2 ||
+                effect.parameter_count > maximum_effect_parameters)
+                throw std::runtime_error("malformed effect instance");
+            effect.type = static_cast<EffectProcessorType>(type);
+            effect.input_channels = static_cast<std::uint8_t>(inputs);
+            effect.output_channels = static_cast<std::uint8_t>(outputs);
+            for (std::size_t p = 0; p < effect.parameter_count; ++p)
+                if (!(input >> effect.parameters[p].id >>
+                      effect.parameters[p].value))
+                    throw std::runtime_error("malformed effect parameter");
+        }
+        const auto read_chain = [&](std::string_view expected,
+                                    std::size_t expected_index,
+                                    EffectChainConfiguration &chain) {
+            std::string kind;
+            std::size_t index{};
+            if (!(input >> label >> kind >> index >> chain.bypass >>
+                  chain.count) ||
+                label != "chain" || kind != expected ||
+                index != expected_index ||
+                chain.count > maximum_effects_per_chain)
+                throw std::runtime_error("malformed effect chain");
+            for (std::size_t i = 0; i < chain.count; ++i)
+                if (!(input >> chain.instances[i]))
+                    throw std::runtime_error("malformed effect chain instance");
+        };
+        for (std::size_t i = 0; i < result.effects.tracks.size(); ++i)
+            read_chain("track", i, result.effects.tracks[i]);
+        for (std::size_t i = 0; i < result.effects.aux.size(); ++i)
+            read_chain("aux", i, result.effects.aux[i]);
+        read_chain("master", 0, result.effects.master);
+    }
     std::string error;
     if (!validate_mixer_configuration(result, maximum_mixer_inputs,
                                       maximum_mixer_outputs, error))

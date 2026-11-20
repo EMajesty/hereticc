@@ -14,6 +14,7 @@ struct PlaybackEvent {
     std::uint8_t pitch{};
     std::uint32_t parameter_id{};
     std::uint32_t parameter_target{};
+    std::uint32_t parameter_instance{};
     float value{};
     std::uint64_t first_cycle{};
     float trigger_probability{1.0F};

@@ -130,10 +130,10 @@ ActionRegistry::ActionRegistry() {
     add(action("track.instrument-set.v1", "Set track instrument", "Tracks",
                {{"instrument_id", ValueType::text},
                 {"instance_id", ValueType::integer, false}}));
-    add(action("track.midi-destination-set.v1",
-               "Set external MIDI destination", "Tracks",
-               {{"port", ValueType::integer},
-                {"channel", ValueType::integer}}));
+    add(action(
+        "track.midi-destination-set.v1", "Set external MIDI destination",
+        "Tracks",
+        {{"port", ValueType::integer}, {"channel", ValueType::integer}}));
     add(action("instrument.instance-parameter-set.v1",
                "Set instrument instance parameter", "Instruments",
                {{"instance_id", ValueType::integer},
@@ -269,9 +269,9 @@ ActionRegistry::ActionRegistry() {
     add(action("project.new.v1", "New project", "Project",
                {{"name", ValueType::text, false},
                 {"discard", ValueType::boolean, false}}));
-    add(action("project.open.v1", "Open project", "Project",
-               {{"path", ValueType::text},
-                {"discard", ValueType::boolean, false}}));
+    add(action(
+        "project.open.v1", "Open project", "Project",
+        {{"path", ValueType::text}, {"discard", ValueType::boolean, false}}));
     add(action("project.save.v1", "Save project", "Project"));
     add(action("project.save-as.v1", "Save project as", "Project",
                {{"path", ValueType::text}, {"name", ValueType::text, false}}));
@@ -285,17 +285,21 @@ ActionRegistry::ActionRegistry() {
     add(action("project.query.v1", "Query project status", "Project"));
     add(action("midi.clock-source-set.v1", "Set MIDI clock source", "MIDI",
                {{"source", ValueType::text}}));
-    add(action("midi.clock-output-set.v1", "Set MIDI clock output", "MIDI",
-               {{"port", ValueType::integer}, {"enabled", ValueType::boolean}}));
+    add(action(
+        "midi.clock-output-set.v1", "Set MIDI clock output", "MIDI",
+        {{"port", ValueType::integer}, {"enabled", ValueType::boolean}}));
     add(action("midi.clock-forward-set.v1", "Forward external MIDI clock",
                "MIDI", {{"enabled", ValueType::boolean}}));
     add(action("midi.route-set.v1", "Create or update MIDI route", "MIDI",
-               {{"id", ValueType::integer}, {"input_port", ValueType::integer},
+               {{"id", ValueType::integer},
+                {"input_port", ValueType::integer},
                 {"output_port", ValueType::integer},
                 {"input_channel", ValueType::integer},
                 {"output_channel", ValueType::integer},
-                {"notes", ValueType::boolean}, {"cc", ValueType::boolean},
-                {"clock", ValueType::boolean}, {"transport", ValueType::boolean}}));
+                {"notes", ValueType::boolean},
+                {"cc", ValueType::boolean},
+                {"clock", ValueType::boolean},
+                {"transport", ValueType::boolean}}));
     add(action("midi.route-delete.v1", "Delete MIDI route", "MIDI",
                {{"id", ValueType::integer}}));
     add(action("midi.panic.v1", "MIDI panic", "MIDI"));
@@ -395,6 +399,35 @@ ActionRegistry::ActionRegistry() {
                {{"id", ValueType::integer}, {"name", ValueType::text}}));
     add(action("mixer.scene-delete.v1", "Delete routing scene", "Routing",
                {{"id", ValueType::integer}}));
+    add(action("effect.create.v1", "Create effect instance", "Effects",
+               {{"id", ValueType::integer}, {"type", ValueType::text}}));
+    add(action("effect.delete.v1", "Delete effect instance", "Effects",
+               {{"id", ValueType::integer}}));
+    add(action("effect.insert.v1", "Insert effect into chain", "Effects",
+               {{"id", ValueType::integer},
+                {"chain", ValueType::text},
+                {"index", ValueType::integer},
+                {"position", ValueType::integer}}));
+    add(action("effect.remove.v1", "Remove effect from chain", "Effects",
+               {{"chain", ValueType::text},
+                {"index", ValueType::integer},
+                {"position", ValueType::integer}}));
+    add(action("effect.reorder.v1", "Reorder effect chain", "Effects",
+               {{"chain", ValueType::text},
+                {"index", ValueType::integer},
+                {"from", ValueType::integer},
+                {"to", ValueType::integer}}));
+    add(action("effect.bypass.v1", "Bypass effect instance", "Effects",
+               {{"id", ValueType::integer}, {"bypass", ValueType::boolean}}));
+    add(action("effect.chain-bypass.v1", "Bypass effect chain", "Effects",
+               {{"chain", ValueType::text},
+                {"index", ValueType::integer},
+                {"bypass", ValueType::boolean}}));
+    add(action("effect.parameter-set.v1", "Set effect parameter", "Effects",
+               {{"id", ValueType::integer},
+                {"parameter", ValueType::integer},
+                {"value", ValueType::real}}));
+    add(action("effect.query.v1", "Query effect chains", "Effects"));
     add(action("edit.undo.v1", "Undo", "Editing"));
     add(action("edit.redo.v1", "Redo", "Editing"));
     add(action("edit.group-begin.v1", "Begin grouped edit", "Editing"));
@@ -923,10 +956,11 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             auto transaction = timeline_.edit();
             std::string tempo_error;
             return transaction.set_tempo_bpm(
-                       std::get<double>(descriptor->current_value), tempo_error) &&
-                   timeline_.commit(
-                       std::move(transaction),
-                       TimelineCommitPolicy::next_audio_callback, tempo_error);
+                       std::get<double>(descriptor->current_value),
+                       tempo_error) &&
+                   timeline_.commit(std::move(transaction),
+                                    TimelineCommitPolicy::next_audio_callback,
+                                    tempo_error);
         }
         if (id.rfind("mixer.", 0) != 0) {
             if (!publish_dsp_parameter(engine_, parameters_, id))
@@ -1235,27 +1269,35 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             engine_.midi_panic();
         } else if (command.action_id == "midi.clock-source-set.v1") {
             const auto &source = *argument<std::string>(command, "source");
-            if (source == "internal") next.clock_source = MidiClockSource::internal;
-            else if (source == "external") next.clock_source = MidiClockSource::external;
-            else error = "MIDI clock source must be internal or external";
+            if (source == "internal")
+                next.clock_source = MidiClockSource::internal;
+            else if (source == "external")
+                next.clock_source = MidiClockSource::external;
+            else
+                error = "MIDI clock source must be internal or external";
         } else if (command.action_id == "midi.clock-output-set.v1") {
             const auto port = *argument<std::int64_t>(command, "port");
             const auto enabled = *argument<bool>(command, "enabled");
-            if (port < 1 || port > static_cast<std::int64_t>(maximum_midi_ports))
+            if (port < 1 ||
+                port > static_cast<std::int64_t>(maximum_midi_ports))
                 error = "MIDI output port is out of range";
             else {
                 auto begin = next.clock_outputs.begin();
-                auto end = begin + static_cast<std::ptrdiff_t>(next.clock_output_count);
-                auto found = std::find(begin, end, static_cast<MidiPortId>(port));
-                if (enabled && found == end && next.clock_output_count < maximum_midi_ports)
-                    next.clock_outputs[next.clock_output_count++] = static_cast<MidiPortId>(port);
+                auto end = begin +
+                           static_cast<std::ptrdiff_t>(next.clock_output_count);
+                auto found =
+                    std::find(begin, end, static_cast<MidiPortId>(port));
+                if (enabled && found == end &&
+                    next.clock_output_count < maximum_midi_ports)
+                    next.clock_outputs[next.clock_output_count++] =
+                        static_cast<MidiPortId>(port);
                 else if (!enabled && found != end) {
-                    std::move(found + 1, end, found); --next.clock_output_count;
+                    std::move(found + 1, end, found);
+                    --next.clock_output_count;
                 }
             }
         } else if (command.action_id == "midi.clock-forward-set.v1") {
-            next.forward_external_clock =
-                *argument<bool>(command, "enabled");
+            next.forward_external_clock = *argument<bool>(command, "enabled");
         } else if (command.action_id == "midi.route-delete.v1") {
             const auto id = *argument<std::int64_t>(command, "id");
             auto begin = next.routes.begin();
@@ -1263,40 +1305,59 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             const auto found = std::find_if(begin, end, [&](const auto &route) {
                 return route.id == static_cast<std::uint32_t>(id);
             });
-            if (found == end) error = "MIDI route was not found";
-            else { std::move(found + 1, end, found); --next.route_count; }
+            if (found == end)
+                error = "MIDI route was not found";
+            else {
+                std::move(found + 1, end, found);
+                --next.route_count;
+            }
         } else if (command.action_id == "midi.route-set.v1") {
             MidiRoute route;
-            route.id = static_cast<std::uint32_t>(*argument<std::int64_t>(command, "id"));
-            route.input_port = static_cast<MidiPortId>(*argument<std::int64_t>(command, "input_port"));
-            route.output_port = static_cast<MidiPortId>(*argument<std::int64_t>(command, "output_port"));
-            route.input_channel = static_cast<std::int8_t>(*argument<std::int64_t>(command, "input_channel"));
-            route.output_channel = static_cast<std::int8_t>(*argument<std::int64_t>(command, "output_channel"));
+            route.id = static_cast<std::uint32_t>(
+                *argument<std::int64_t>(command, "id"));
+            route.input_port = static_cast<MidiPortId>(
+                *argument<std::int64_t>(command, "input_port"));
+            route.output_port = static_cast<MidiPortId>(
+                *argument<std::int64_t>(command, "output_port"));
+            route.input_channel = static_cast<std::int8_t>(
+                *argument<std::int64_t>(command, "input_channel"));
+            route.output_channel = static_cast<std::int8_t>(
+                *argument<std::int64_t>(command, "output_channel"));
             route.notes = *argument<bool>(command, "notes");
             route.control_change = *argument<bool>(command, "cc");
             route.clock = *argument<bool>(command, "clock");
             route.transport = *argument<bool>(command, "transport");
-            auto found = std::find_if(next.routes.begin(),
-                                      next.routes.begin() + static_cast<std::ptrdiff_t>(next.route_count),
-                                      [&](const auto &candidate) { return candidate.id == route.id; });
-            if (found != next.routes.begin() + static_cast<std::ptrdiff_t>(next.route_count))
+            auto found =
+                std::find_if(next.routes.begin(),
+                             next.routes.begin() +
+                                 static_cast<std::ptrdiff_t>(next.route_count),
+                             [&](const auto &candidate) {
+                                 return candidate.id == route.id;
+                             });
+            if (found != next.routes.begin() +
+                             static_cast<std::ptrdiff_t>(next.route_count))
                 *found = route;
             else if (next.route_count == maximum_midi_routes)
                 error = "MIDI route capacity is exhausted";
-            else next.routes[next.route_count++] = route;
+            else
+                next.routes[next.route_count++] = route;
         } else if (command.action_id == "midi.learn.v1") {
             error = "MIDI learn capture is not implemented";
         }
         if (error.empty()) {
-            if (!midi_router_.configure({next.routes.data(), next.route_count}, error)) {
+            if (!midi_router_.configure({next.routes.data(), next.route_count},
+                                        error)) {
             } else {
                 MidiClockOutputConfiguration clock;
-                clock.enabled = next.clock_source == MidiClockSource::internal && next.clock_output_count;
+                clock.enabled =
+                    next.clock_source == MidiClockSource::internal &&
+                    next.clock_output_count;
                 clock.forward_external =
                     next.clock_source == MidiClockSource::external &&
                     next.forward_external_clock;
                 clock.port_count = next.clock_output_count;
-                std::copy_n(next.clock_outputs.begin(), clock.port_count, clock.ports.begin());
+                std::copy_n(next.clock_outputs.begin(), clock.port_count,
+                            clock.ports.begin());
                 if (!engine_.publish_midi_clock_output(clock))
                     error = "MIDI clock publication queue is full";
                 MidiRoutingConfiguration routing;
@@ -1313,6 +1374,206 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             project_.midi = next;
             state_.midi = next;
             state_.project_dirty = true;
+        }
+        changed_locked();
+        return {error.empty(), sequence, snapshot().revision, std::move(error)};
+    }
+    if (command.action_id.rfind("effect.", 0) == 0) {
+        if (command.action_id == "effect.query.v1")
+            return {true, sequence, snapshot().revision, {}};
+        auto next = mixer_configuration_;
+        auto &rack = next.effects;
+        const auto chain_for =
+            [&](std::string_view kind,
+                std::int64_t index) -> EffectChainConfiguration * {
+            if (kind == "track" && index >= 0 &&
+                static_cast<std::size_t>(index) < rack.tracks.size())
+                return &rack.tracks[static_cast<std::size_t>(index)];
+            if (kind == "aux" && index >= 0 &&
+                static_cast<std::size_t>(index) < rack.aux.size())
+                return &rack.aux[static_cast<std::size_t>(index)];
+            if (kind == "master" && index == 0)
+                return &rack.master;
+            return nullptr;
+        };
+        const auto find_instance = [&](EffectInstanceId id) {
+            return std::find_if(
+                rack.instances.begin(),
+                rack.instances.begin() + rack.instance_count,
+                [&](const auto &value) { return value.id == id; });
+        };
+        if (command.action_id == "effect.create.v1") {
+            const auto raw_id = *argument<std::int64_t>(command, "id");
+            const auto &type_name = *argument<std::string>(command, "type");
+            EffectProcessorType type{};
+            if (type_name == "gain")
+                type = EffectProcessorType::gain;
+            else if (type_name == "delay")
+                type = EffectProcessorType::stereo_delay;
+            else if (type_name == "filter")
+                type = EffectProcessorType::low_pass_filter;
+            else if (type_name == "saturation")
+                type = EffectProcessorType::saturation;
+            else
+                error = "unknown effect processor type";
+            if (error.empty() &&
+                (raw_id <= 0 ||
+                 raw_id > std::numeric_limits<std::uint32_t>::max()))
+                error = "effect instance ID must be a positive 32-bit value";
+            const auto id = static_cast<EffectInstanceId>(
+                std::max<std::int64_t>(0, raw_id));
+            if (error.empty() && find_instance(id) != rack.instances.begin() +
+                                                          rack.instance_count)
+                error = "effect instance ID already exists";
+            else if (error.empty() &&
+                     rack.instance_count == rack.instances.size())
+                error = "effect instance capacity is full";
+            else if (error.empty()) {
+                auto &instance = rack.instances[rack.instance_count++];
+                instance.id = id;
+                instance.type = type;
+                const auto descriptors = effect_parameter_descriptors(type);
+                instance.parameter_count = descriptors.size();
+                for (std::size_t i = 0; i < descriptors.size(); ++i)
+                    instance.parameters[i] = {descriptors[i].id,
+                                              descriptors[i].default_value};
+            }
+        } else if (command.action_id == "effect.delete.v1") {
+            const auto id = static_cast<EffectInstanceId>(
+                *argument<std::int64_t>(command, "id"));
+            const auto found = find_instance(id);
+            if (found == rack.instances.begin() + rack.instance_count)
+                error = "unknown effect instance ID";
+            else {
+                const auto used = [&](const EffectChainConfiguration &chain) {
+                    return std::find(chain.instances.begin(),
+                                     chain.instances.begin() + chain.count,
+                                     id) !=
+                           chain.instances.begin() + chain.count;
+                };
+                bool referenced = used(rack.master);
+                for (const auto &chain : rack.tracks)
+                    referenced |= used(chain);
+                for (const auto &chain : rack.aux)
+                    referenced |= used(chain);
+                if (referenced)
+                    error = "effect instance is still assigned to a chain";
+                else {
+                    std::move(found + 1,
+                              rack.instances.begin() + rack.instance_count,
+                              found);
+                    --rack.instance_count;
+                }
+            }
+        } else if (command.action_id == "effect.bypass.v1" ||
+                   command.action_id == "effect.parameter-set.v1") {
+            const auto id = static_cast<EffectInstanceId>(
+                *argument<std::int64_t>(command, "id"));
+            const auto found = find_instance(id);
+            if (found == rack.instances.begin() + rack.instance_count)
+                error = "unknown effect instance ID";
+            else if (command.action_id == "effect.bypass.v1")
+                found->bypass = *argument<bool>(command, "bypass");
+            else {
+                const auto parameter = static_cast<std::uint32_t>(
+                    *argument<std::int64_t>(command, "parameter"));
+                const auto value =
+                    static_cast<float>(*argument<double>(command, "value"));
+                const auto descriptor = std::find_if(
+                    effect_parameter_descriptors(found->type).begin(),
+                    effect_parameter_descriptors(found->type).end(),
+                    [&](const auto &item) { return item.id == parameter; });
+                if (descriptor ==
+                        effect_parameter_descriptors(found->type).end() ||
+                    value < descriptor->minimum || value > descriptor->maximum)
+                    error = "invalid effect parameter value";
+                else {
+                    const auto existing = std::find_if(
+                        found->parameters.begin(),
+                        found->parameters.begin() + found->parameter_count,
+                        [&](const auto &item) { return item.id == parameter; });
+                    if (existing !=
+                        found->parameters.begin() + found->parameter_count)
+                        existing->value = value;
+                    else if (found->parameter_count < found->parameters.size())
+                        found->parameters[found->parameter_count++] = {
+                            parameter, value};
+                }
+            }
+        } else {
+            const auto &kind = *argument<std::string>(command, "chain");
+            const auto index = *argument<std::int64_t>(command, "index");
+            auto *chain = chain_for(kind, index);
+            if (!chain)
+                error = "unknown effect chain";
+            else if (command.action_id == "effect.chain-bypass.v1")
+                chain->bypass = *argument<bool>(command, "bypass");
+            else if (command.action_id == "effect.insert.v1") {
+                const auto id = static_cast<EffectInstanceId>(
+                    *argument<std::int64_t>(command, "id"));
+                const auto position =
+                    *argument<std::int64_t>(command, "position");
+                if (find_instance(id) ==
+                    rack.instances.begin() + rack.instance_count)
+                    error = "unknown effect instance ID";
+                else if (position < 0 ||
+                         static_cast<std::size_t>(position) > chain->count ||
+                         chain->count == chain->instances.size())
+                    error = "effect chain position or capacity is invalid";
+                else if (std::find(chain->instances.begin(),
+                                   chain->instances.begin() + chain->count,
+                                   id) !=
+                         chain->instances.begin() + chain->count)
+                    error = "effect instance is already in this chain";
+                else {
+                    std::move_backward(chain->instances.begin() + position,
+                                       chain->instances.begin() + chain->count,
+                                       chain->instances.begin() + chain->count +
+                                           1);
+                    chain->instances[position] = id;
+                    ++chain->count;
+                }
+            } else if (command.action_id == "effect.remove.v1") {
+                const auto position =
+                    *argument<std::int64_t>(command, "position");
+                if (position < 0 ||
+                    static_cast<std::size_t>(position) >= chain->count)
+                    error = "effect chain position is invalid";
+                else {
+                    std::move(chain->instances.begin() + position + 1,
+                              chain->instances.begin() + chain->count,
+                              chain->instances.begin() + position);
+                    --chain->count;
+                }
+            } else if (command.action_id == "effect.reorder.v1") {
+                const auto from = *argument<std::int64_t>(command, "from");
+                const auto to = *argument<std::int64_t>(command, "to");
+                if (from < 0 || to < 0 ||
+                    static_cast<std::size_t>(from) >= chain->count ||
+                    static_cast<std::size_t>(to) >= chain->count)
+                    error = "effect reorder position is invalid";
+                else {
+                    const auto id = chain->instances[from];
+                    if (from < to)
+                        std::move(chain->instances.begin() + from + 1,
+                                  chain->instances.begin() + to + 1,
+                                  chain->instances.begin() + from);
+                    else
+                        std::move_backward(chain->instances.begin() + to,
+                                           chain->instances.begin() + from,
+                                           chain->instances.begin() + from + 1);
+                    chain->instances[to] = id;
+                }
+            }
+        }
+        if (error.empty()) {
+            ++next.revision;
+            if (!engine_.publish_mixer(next, error)) {
+            } else {
+                mixer_configuration_ = next;
+                project_.mixer = next;
+                state_.project_dirty = true;
+            }
         }
         changed_locked();
         return {error.empty(), sequence, snapshot().revision, std::move(error)};
@@ -1687,7 +1948,8 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 const auto discard = argument<bool>(command, "discard");
                 if (!discard || !*discard)
                     return {false, sequence, before.revision,
-                            "project has unsaved changes; save or explicitly discard"};
+                            "project has unsaved changes; save or explicitly "
+                            "discard"};
             }
             if (command.action_id == "project.query.v1")
                 return {true, sequence, before.revision, {}};
@@ -1969,21 +2231,22 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     std::lock_guard lock(mutex_);
                     project_ = std::move(loaded);
                     std::string midi_error;
-                    if (!midi_router_.configure(
-                            {project_.midi.routes.data(),
-                             project_.midi.route_count},
-                            midi_error))
+                    if (!midi_router_.configure({project_.midi.routes.data(),
+                                                 project_.midi.route_count},
+                                                midi_error))
                         state_.project_error = std::move(midi_error);
                     MidiClockOutputConfiguration midi_clock;
-                    midi_clock.enabled =
-                        project_.midi.clock_source == MidiClockSource::internal &&
-                        project_.midi.clock_output_count != 0;
+                    midi_clock.enabled = project_.midi.clock_source ==
+                                             MidiClockSource::internal &&
+                                         project_.midi.clock_output_count != 0;
                     midi_clock.forward_external =
-                        project_.midi.clock_source == MidiClockSource::external &&
+                        project_.midi.clock_source ==
+                            MidiClockSource::external &&
                         project_.midi.forward_external_clock;
                     midi_clock.port_count = project_.midi.clock_output_count;
                     std::copy_n(project_.midi.clock_outputs.begin(),
-                                midi_clock.port_count, midi_clock.ports.begin());
+                                midi_clock.port_count,
+                                midi_clock.ports.begin());
                     if (!engine_.publish_midi_clock_output(midi_clock) &&
                         state_.project_error.empty())
                         state_.project_error =
@@ -2378,7 +2641,8 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             const auto name = argument<std::string>(command, "name");
             const auto instrument =
                 argument<std::string>(command, "instrument_id");
-            const auto instance = argument<std::int64_t>(command, "instance_id");
+            const auto instance =
+                argument<std::int64_t>(command, "instance_id");
             if ((requested && *requested <= 0) || length <= 0) {
                 error = "track ID and length must be positive";
             } else if (!transaction.create_track(
@@ -2387,8 +2651,9 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             } else if (instrument &&
                        !transaction.set_track_instrument(
                            id, *instrument, error,
-                           instance ? static_cast<InstrumentInstanceId>(*instance)
-                                    : default_synth_instance_id)) {
+                           instance
+                               ? static_cast<InstrumentInstanceId>(*instance)
+                               : default_synth_instance_id)) {
             } else if (!timeline_.commit(
                            std::move(transaction),
                            TimelineCommitPolicy::next_audio_callback, error)) {
@@ -2411,7 +2676,8 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                          TimelineCommitPolicy::next_audio_callback, error)) {
             } else {
                 const auto remaining = timeline_.snapshot().timeline.tracks;
-                state_.selected_track = remaining.empty() ? 0 : remaining.front().id;
+                state_.selected_track =
+                    remaining.empty() ? 0 : remaining.front().id;
                 selected_event_id_.reset();
                 changed_locked();
             }
@@ -2471,9 +2737,8 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             const auto channel = *argument<std::int64_t>(command, "channel");
             auto transaction = timeline_.edit();
             if (port < 1 ||
-                     port > static_cast<std::int64_t>(maximum_midi_ports) ||
-                     channel < 1 ||
-                     channel > 16)
+                port > static_cast<std::int64_t>(maximum_midi_ports) ||
+                channel < 1 || channel > 16)
                 error = "MIDI destination requires port 1..8 and channel 1..16";
             else if (!transaction.set_track_midi_destination(
                          state_.selected_track,
@@ -3272,9 +3537,9 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
         } else if (command.action_id == "controller.context-select.v1") {
             const auto context = argument<std::string>(command, "context");
             static constexpr std::string_view contexts[]{
-                "sequencer", "samples", "parameters", "xy", "performance",
-                "settings", "recording", "mixer", "routing", "modulation",
-                "midi"};
+                "sequencer",   "samples",    "parameters", "xy",
+                "performance", "settings",   "recording",  "mixer",
+                "routing",     "modulation", "midi"};
             if (!context || std::find(std::begin(contexts), std::end(contexts),
                                       *context) == std::end(contexts))
                 error = context ? "unknown controller context" : error;

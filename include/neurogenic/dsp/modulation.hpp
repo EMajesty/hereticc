@@ -1,4 +1,5 @@
 #pragma once
+#include "neurogenic/dsp/effect_chain.hpp"
 #include "neurogenic/dsp/parameter_destination.hpp"
 #include <algorithm>
 #include <array>

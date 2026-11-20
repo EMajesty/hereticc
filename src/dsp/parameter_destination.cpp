@@ -1,11 +1,34 @@
 #include "neurogenic/dsp/parameter_destination.hpp"
+#include "neurogenic/dsp/effect_chain.hpp"
 #include "neurogenic/dsp/processor.hpp"
 #include "neurogenic/instrument/subtractive_synth.hpp"
+#include <charconv>
 namespace neurogenic {
 std::optional<ParameterDestination>
 resolve_parameter_destination(std::string_view id) noexcept {
     using S = SynthParameter;
     using D = DelayParameter;
+    if (id.starts_with("fx.")) {
+        id.remove_prefix(3);
+        const auto separator = id.find('.');
+        std::uint32_t instance{}, parameter{};
+        if (separator != std::string_view::npos) {
+            const auto instance_text = id.substr(0, separator);
+            const auto parameter_text = id.substr(separator + 1);
+            const auto a = std::from_chars(
+                instance_text.data(),
+                instance_text.data() + instance_text.size(), instance);
+            const auto b = std::from_chars(
+                parameter_text.data(),
+                parameter_text.data() + parameter_text.size(), parameter);
+            if (a.ec == std::errc{} && a.ptr == instance_text.end() &&
+                b.ec == std::errc{} && b.ptr == parameter_text.end() &&
+                instance && parameter >= 1 &&
+                parameter <= maximum_effect_parameters)
+                return {{ParameterTarget::native_effect, parameter, instance}};
+        }
+        return std::nullopt;
+    }
     if (id == "synth.waveform")
         return {{ParameterTarget::subtractive_synth,
                  static_cast<std::uint32_t>(S::waveform)}};

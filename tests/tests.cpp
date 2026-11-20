@@ -1274,6 +1274,90 @@ void write_wav_payload(const std::filesystem::path &path, std::uint16_t format,
     output.write(payload.data(), payload.size());
 }
 
+void test_native_effect_chains() {
+    using namespace neurogenic;
+    EffectRackConfiguration configuration;
+    configuration.instance_count = 3;
+    configuration.instances[0] = {
+        101,  EffectProcessorType::gain, {{{1, 2.0F}}}, 1, 1.0F, 2, 2, true,
+        false};
+    configuration.instances[1] = {
+        102,  EffectProcessorType::gain, {{{1, 0.5F}}}, 1, 1.0F, 2, 2, true,
+        false};
+    configuration.instances[2] = {103,
+                                  EffectProcessorType::saturation,
+                                  {{{1, 4.0F}, {2, 1.0F}}},
+                                  2,
+                                  1.0F,
+                                  2,
+                                  2,
+                                  true,
+                                  false};
+    configuration.master.instances = {101, 102};
+    configuration.master.count = 2;
+    std::string error;
+    check(validate_effect_rack(configuration, error),
+          "valid bounded effect rack");
+    NativeEffectRack rack(48000);
+    rack.activate(configuration);
+    std::array<float, 4> left{0.25F, -0.25F, 0.5F, -0.5F}, right = left;
+    rack.process(configuration.master, left, right);
+    near(left[0], 0.25F, "serial independent gain instances");
+    configuration.instances[1].bypass = true;
+    rack.activate(configuration);
+    left.fill(0.25F);
+    right = left;
+    rack.process(configuration.master, left, right);
+    near(left[0], 0.5F, "individual effect bypass");
+    configuration.master.bypass = true;
+    rack.activate(configuration);
+    left.fill(0.25F);
+    right = left;
+    rack.process(configuration.master, left, right);
+    near(left[0], 0.25F, "whole chain bypass");
+
+    configuration.master.bypass = false;
+    configuration.master.instances = {101, 103};
+    configuration.instances[1].bypass = false;
+    rack.activate(configuration);
+    left.fill(0.2F);
+    right = left;
+    rack.process(configuration.master, left, right);
+    const auto gain_then_saturate = left[0];
+    configuration.master.instances = {103, 101};
+    rack.activate(configuration);
+    left.fill(0.2F);
+    right = left;
+    rack.process(configuration.master, left, right);
+    check(std::fabs(left[0] - gain_then_saturate) > 0.01F,
+          "effect chain serial order changes audio");
+
+    Mixer mixer(48000);
+    MixerConfiguration mixer_configuration;
+    mixer_configuration.revision = 1;
+    mixer_configuration.track_count = 1;
+    mixer_configuration.tracks[0].track = 1;
+    mixer_configuration.effects = configuration;
+    mixer_configuration.effects.tracks[0] = {{101}, 1, false};
+    mixer_configuration.effects.master = {{102}, 1, false};
+    check(mixer.publish(mixer_configuration, error), "publish mixer FX chains");
+    mixer.begin_block(4);
+    for (std::size_t frame = 0; frame < 4; ++frame)
+        check(mixer.add_track(1, frame, 0.25F, 0.25F),
+              "route effect test track");
+    left.fill(0);
+    right.fill(0);
+    mixer.process(left, right);
+    near(left[0], 0.5F, "track chain runs before mixer fader");
+    mixer.apply_master_gain(left, right);
+    mixer.process_master_effects(left, right);
+    near(left[0], 0.25F, "master chain runs after master gain");
+
+    configuration.instances[0].type = static_cast<EffectProcessorType>(99);
+    check(!validate_effect_rack(configuration, error),
+          "unknown native processor type rejected");
+}
+
 void test_queue_and_scheduler() {
     using namespace neurogenic;
     SpscQueue<int, 4> queue;
@@ -2433,6 +2517,17 @@ void test_unified_project_persistence() {
     project.parameters["synth.cutoff"] = 4321.0;
     project.parameters["effect.delay.mix"] = 0.25;
     project.parameters["instance.2.synth.cutoff"] = 2500.0;
+    project.mixer.effects.instance_count = 1;
+    project.mixer.effects.instances[0] = {700,
+                                          EffectProcessorType::low_pass_filter,
+                                          {{{1, 2400.0F}, {2, 0.4F}}},
+                                          2,
+                                          0.75F,
+                                          2,
+                                          2,
+                                          true,
+                                          false};
+    project.mixer.effects.master = {{700}, 1, false};
     project.modulation.sources[0].waveform = LfoWaveform::triangle;
     project.modulation.sources[0].tempo_sync = true;
     project.modulation.sources[0].beats_per_cycle = 2;
@@ -2481,6 +2576,11 @@ void test_unified_project_persistence() {
                   StretchMode::realtime &&
               loaded.parameters.at("synth.cutoff") == 4321.0 &&
               loaded.parameters.at("instance.2.synth.cutoff") == 2500.0 &&
+              loaded.mixer.effects.instance_count == 1 &&
+              loaded.mixer.effects.instances[0].id == 700 &&
+              loaded.mixer.effects.instances[0].type ==
+                  EffectProcessorType::low_pass_filter &&
+              loaded.mixer.effects.master.instances[0] == 700 &&
               loaded.modulation.route_count == 1 &&
               loaded.modulation.routes[0].id == 81 &&
               loaded.modulation.routes[0].destination.instance == 2 &&
@@ -4988,6 +5088,25 @@ void test_mixer_and_routing() {
         },
         timeline);
     ApplicationService application(app_engine, service, samples);
+    check(application
+                  .execute({"effect.create.v1",
+                            {{"id", std::int64_t{901}}, {"type", "gain"}}})
+                  .accepted &&
+              application
+                  .execute({"effect.insert.v1",
+                            {{"id", std::int64_t{901}},
+                             {"chain", "track"},
+                             {"index", std::int64_t{0}},
+                             {"position", std::int64_t{0}}}})
+                  .accepted &&
+              application
+                  .execute({"effect.parameter-set.v1",
+                            {{"id", std::int64_t{901}},
+                             {"parameter", std::int64_t{1}},
+                             {"value", 1.5}}})
+                  .accepted,
+          "controller-independent effect chain actions");
+    app_engine.process(rendered_left, rendered_right);
     check(application.execute({"mixer.gain-set.v1", {{"value", 0.25}}})
                   .accepted &&
               application
@@ -5008,7 +5127,11 @@ void test_mixer_and_routing() {
           "controller-independent mixer actions");
     app_engine.process(rendered_left, rendered_right);
     const auto app_state = application.snapshot();
-    check(std::fabs(app_state.mixer.configuration.tracks[0].gain - 0.25F) <
+    check(app_state.mixer.configuration.effects.instance_count == 1 &&
+              app_state.mixer.configuration.effects.instances[0].id == 901 &&
+              app_state.mixer.configuration.effects.tracks[0].instances[0] ==
+                  901 &&
+              std::fabs(app_state.mixer.configuration.tracks[0].gain - 0.25F) <
                   0.0001F &&
               std::fabs(app_state.mixer.configuration.tracks[0].aux_send[1] -
                         0.4F) < 0.0001F &&
@@ -5283,6 +5406,7 @@ int main() {
         test_midi_routing_and_clock();
         test_modulation_engine();
         test_native_synthesis_and_dsp();
+        test_native_effect_chains();
         test_queue_and_scheduler();
         test_polyphony_and_events();
         test_sample_slots();

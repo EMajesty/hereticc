@@ -1,5 +1,9 @@
 # Mixer and audio routing
 
+Tracks, both aux buses and master have bounded serial native chains. Track
+chains are pre-fader, aux chains precede aux gain/return, and master follows
+master gain. See [FX_CHAINS.md](FX_CHAINS.md) for complete signal order.
+
 NEUROGENIC uses a bounded mixer between instruments and the existing master
 effects. GUI, controller, MIDI and future remote clients submit semantic
 actions through `ApplicationService`; none mutate callback state directly.

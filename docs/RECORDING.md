@@ -1,5 +1,8 @@
 # Audio recording and internal resampling
 
+Track and aux taps include their native chains. Master pre-effects is before
+master gain/chain; master post-effects includes native and legacy processors.
+
 The master pre-effects signal also feeds the initial modulation envelope
 follower with one-block observation latency. Recording taps remain independent;
 follower processing never reallocates or writes into recording buffers.

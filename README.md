@@ -6,6 +6,9 @@ check out
 [neurogenic-control](https://github.com/EMajesty/neurogenic-control)
 [neurogenic-audio](https://github.com/EMajesty/neurogenic-audio)
 
+The mixer supports bounded native track, aux and master effect chains. See
+[Native FX chains](docs/FX_CHAINS.md).
+
 # NEUROGENIC
 
 The dedicated controller host interface uses a versioned USB CDC binary

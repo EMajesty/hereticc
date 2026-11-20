@@ -75,6 +75,8 @@ bool validate_mixer_configuration(const MixerConfiguration &value,
             error = "invalid auxiliary bus configuration";
             return false;
         }
+    if (!validate_effect_rack(value.effects, error))
+        return false;
     std::array<bool, maximum_mixer_outputs> claimed_outputs{};
     if (outputs) {
         claimed_outputs[value.master.output_left] = true;
@@ -170,6 +172,7 @@ bool validate_mixer_configuration(const MixerConfiguration &value,
 Mixer::Mixer(std::uint32_t sample_rate)
     : sample_rate_(sample_rate),
       aux_effects_{StereoDelay(sample_rate), StereoDelay(sample_rate)},
+      effect_rack_(std::make_unique<NativeEffectRack>(sample_rate)),
       modulation_lanes_(std::make_unique<ModulationLanes>()) {
     for (auto &effect : aux_effects_) {
         effect.set_parameter(static_cast<std::uint32_t>(DelayParameter::mix),
@@ -307,6 +310,7 @@ void Mixer::begin_block(std::size_t frames) noexcept {
     while (publications_.pop(pending))
         active_ = pending;
     if (active_.revision != previous_revision) {
+        effect_rack_->activate(active_.effects);
         external_delay_cursor_.fill(0);
         external_delay_valid_.fill(0);
         for (std::size_t index = 0; index < mixer_external_fx_count; ++index) {
@@ -406,6 +410,9 @@ void Mixer::process(std::span<float> master_left, std::span<float> master_right,
         any_solo |= active_.tracks[i].solo;
     for (std::size_t channel = 0; channel < active_.track_count; ++channel) {
         const auto &settings = active_.tracks[channel];
+        effect_rack_->process(active_.effects.tracks[channel],
+                              {track_left_[channel].data(), frames},
+                              {track_right_[channel].data(), frames});
         float peak_l{}, peak_r{};
         for (std::size_t frame = 0; frame < frames; ++frame) {
             const auto [pan_l, pan_r] =
@@ -468,6 +475,9 @@ void Mixer::process(std::span<float> master_left, std::span<float> master_right,
     }
     for (std::size_t aux = 0; aux < mixer_aux_count; ++aux) {
         const auto &settings = active_.aux[aux];
+        effect_rack_->process(active_.effects.aux[aux],
+                              {aux_left_[aux].data(), frames},
+                              {aux_right_[aux].data(), frames});
         if (settings.effect_enabled)
             aux_effects_[aux].process({aux_left_[aux].data(), frames},
                                       {aux_right_[aux].data(), frames});

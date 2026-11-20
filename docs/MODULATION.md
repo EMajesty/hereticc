@@ -1,5 +1,9 @@
 # Modulation matrix
 
+Native effects use `fx.INSTANCE.PARAMETER` destinations. Only descriptor-approved
+numeric values are modulatable; topology and resources are rejected. Base values
+remain separate from effective automation/modulation values.
+
 The modulation matrix is a bounded control-rate client of the existing numeric
 DSP destinations. It does not replace stored parameters or timeline events.
 For each destination the engine computes:

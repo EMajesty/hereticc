@@ -80,7 +80,9 @@ bool ModulationEngine::configure(
             (target == ParameterTarget::mixer_master && instance == 0 &&
              parameter == 1) ||
             (target == ParameterTarget::external_fx && instance >= 1 &&
-             instance <= 2 && parameter >= 1 && parameter <= 3);
+             instance <= 2 && parameter >= 1 && parameter <= 3) ||
+            (target == ParameterTarget::native_effect && instance >= 1 &&
+             parameter >= 1 && parameter <= maximum_effect_parameters);
         if (!valid_numeric_destination ||
             (route.scope == ModulationScope::track &&
              route.destination.instance == 0))

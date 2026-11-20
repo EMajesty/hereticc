@@ -1,5 +1,9 @@
 # Architecture
 
+Native processing uses a bounded effect-rack snapshot within mixer publication.
+Track, aux and master chains own stable instance IDs; preallocated runtime state
+never enters application snapshots. See [FX_CHAINS.md](FX_CHAINS.md).
+
 The dedicated physical controller is an `ApplicationService` client.
 `ControllerSerialTransport` owns nonblocking Linux TTY I/O,
 `ControllerFrameDecoder` owns bounded wire framing, and `ControllerHost` owns

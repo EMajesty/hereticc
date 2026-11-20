@@ -144,14 +144,81 @@ void effect_case(bool enabled) {
                    .count() /
                iterations);
 }
+void effect_chain_case(std::string name, std::size_t tracks,
+                       std::size_t effects_per_track, bool aux_and_master) {
+    neurogenic::Mixer mixer;
+    neurogenic::MixerConfiguration configuration;
+    configuration.revision = 1;
+    configuration.track_count = tracks;
+    for (std::size_t track = 0; track < tracks; ++track) {
+        configuration.tracks[track].track = track + 1;
+        for (std::size_t effect = 0; effect < effects_per_track; ++effect) {
+            auto &instance =
+                configuration.effects
+                    .instances[configuration.effects.instance_count++];
+            instance.id = static_cast<std::uint32_t>(track * effects_per_track +
+                                                     effect + 1);
+            instance.type = effect % 2
+                                ? neurogenic::EffectProcessorType::saturation
+                                : neurogenic::EffectProcessorType::gain;
+            const auto descriptors =
+                neurogenic::effect_parameter_descriptors(instance.type);
+            instance.parameter_count = descriptors.size();
+            for (std::size_t p = 0; p < descriptors.size(); ++p)
+                instance.parameters[p] = {descriptors[p].id,
+                                          descriptors[p].default_value};
+            configuration.effects.tracks[track].instances[effect] = instance.id;
+            ++configuration.effects.tracks[track].count;
+        }
+    }
+    if (aux_and_master && configuration.effects.instance_count + 3 <=
+                              neurogenic::maximum_effect_instances) {
+        for (std::size_t i = 0; i < 3; ++i) {
+            auto &instance =
+                configuration.effects
+                    .instances[configuration.effects.instance_count++];
+            instance.id = static_cast<std::uint32_t>(100 + i);
+            instance.type = neurogenic::EffectProcessorType::gain;
+            instance.parameter_count = 1;
+            instance.parameters[0] = {1, 1.0F};
+        }
+        configuration.effects.aux[0] = {{100}, 1, false};
+        configuration.effects.aux[1] = {{101}, 1, false};
+        configuration.effects.master = {{102}, 1, false};
+        for (auto &track : configuration.tracks)
+            track.aux_send = {0.2F, 0.2F};
+    }
+    std::string error;
+    if (!mixer.publish(configuration, error))
+        throw std::runtime_error(error);
+    std::array<float, 256> left{}, right{};
+    mixer.begin_block(left.size());
+    const auto begin = Clock::now();
+    for (std::size_t run = 0; run < iterations; ++run) {
+        mixer.begin_block(left.size());
+        left.fill(0);
+        right.fill(0);
+        for (std::size_t track = 0; track < tracks; ++track)
+            for (std::size_t frame = 0; frame < left.size(); ++frame)
+                (void)mixer.add_track(track + 1, frame, 0.05F, 0.05F);
+        mixer.process(left, right);
+        mixer.apply_master_gain(left, right);
+        mixer.process_master_effects(left, right);
+        checksum += left[0] != 0;
+    }
+    result(std::move(name), 48000, left.size(),
+           std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
+                                                                begin)
+                   .count() /
+               iterations);
+}
 void midi_case() {
     neurogenic::MidiOutputScheduler output;
     neurogenic::MidiClockGenerator clock(48000, 487805);
     neurogenic::MidiRouter router;
     std::string error;
-    const std::array<neurogenic::MidiRoute, 4> routes{{
-        {1, 1, 1, 0, 1}, {2, 1, 2, 0, 2}, {3, 1, 3, 0, 3},
-        {4, 1, 4, 0, 4}}};
+    const std::array<neurogenic::MidiRoute, 4> routes{
+        {{1, 1, 1, 0, 1}, {2, 1, 2, 0, 2}, {3, 1, 3, 0, 3}, {4, 1, 4, 0, 4}}};
     if (!router.configure(routes, error))
         throw std::runtime_error(error);
     const std::array<neurogenic::MidiPortId, 4> ports{1, 2, 3, 4};
@@ -884,9 +951,9 @@ void integrated_workstation_case() {
     constexpr std::size_t synth_tracks = 4;
     neurogenic::AudioEngine engine(48000, 64);
     for (std::size_t slot = 0; slot < sample_tracks; ++slot)
-        engine.set_sample_slot(neurogenic::SampleSlotId{
-                                   static_cast<std::uint32_t>(slot)},
-                               sample(48000, 32768));
+        engine.set_sample_slot(
+            neurogenic::SampleSlotId{static_cast<std::uint32_t>(slot)},
+            sample(48000, 32768));
     neurogenic::Timeline source;
     for (std::size_t index = 0; index < sample_tracks + synth_tracks; ++index) {
         neurogenic::Track track;
@@ -946,14 +1013,14 @@ void integrated_workstation_case() {
         source);
     neurogenic::SampleManager samples(engine);
     neurogenic::ApplicationService application(engine, timeline_service,
-                                                samples);
+                                               samples);
     neurogenic::GuiModel gui(application);
     // ApplicationService publishes its initial snapshots during construction;
     // restore the combined-workload mixer and modulation snapshots afterward.
     if (!engine.publish_mixer(mixer, error) ||
         !engine.publish_modulation(modulation))
-        throw std::runtime_error(error.empty() ? "integrated state publication failed"
-                                               : error);
+        throw std::runtime_error(
+            error.empty() ? "integrated state publication failed" : error);
     neurogenic::RecordingService recorder(48000, iterations * 256 + 256);
     neurogenic::RecordingConfiguration recording;
     recording.source = neurogenic::RecordingSource::master_post_effects;
@@ -978,10 +1045,9 @@ void integrated_workstation_case() {
     for (std::size_t index = 0; index < iterations; ++index) {
         const auto callback_begin = Clock::now();
         engine.process(left, right);
-        callback_total +=
-            std::chrono::duration_cast<std::chrono::nanoseconds>(
-                Clock::now() - callback_begin)
-                .count();
+        callback_total += std::chrono::duration_cast<std::chrono::nanoseconds>(
+                              Clock::now() - callback_begin)
+                              .count();
         checksum += left[0] != 0;
         checksum += midi.dispatch([](const auto &) { return true; });
         checksum += gui.frame(1920 + static_cast<int>(index & 1U), 1200)
@@ -999,10 +1065,11 @@ void integrated_workstation_case() {
     const auto callback = engine.callback_statistics();
     std::cout << "{\"schema\":\"neurogenic.integration.metrics.v1\","
                  "\"peak_callback_ns\":"
-              << callback.peak_nanoseconds << ",\"deadline_overruns\":"
-              << callback.deadline_overruns << ",\"midi_dropped\":"
-              << midi.dropped() << ",\"recording_overflows\":"
-              << recorder.status().overflow_count << "}\n";
+              << callback.peak_nanoseconds
+              << ",\"deadline_overruns\":" << callback.deadline_overruns
+              << ",\"midi_dropped\":" << midi.dropped()
+              << ",\"recording_overflows\":" << recorder.status().overflow_count
+              << "}\n";
     engine.set_midi_output_scheduler(nullptr);
     engine.set_recording_service(nullptr);
     samples.shutdown();
@@ -1039,6 +1106,8 @@ int main(int argc, char **argv) {
     synth_case(16, false);
     effect_case(false);
     effect_case(true);
+    effect_chain_case("fx_chains_4_tracks_2_each", 4, 2, false);
+    effect_chain_case("fx_chains_16_tracks_1_each_aux_master", 16, 1, true);
     midi_case();
     external_clock_case();
     mixed_case();

@@ -20,7 +20,8 @@ AudioEngine::AudioEngine(std::uint32_t rate, std::size_t voice_capacity,
       sample_version_capacity_(sample_version_capacity),
       voices_(voice_capacity), legacy_events_(event_staging_capacity),
       timeline_events_(event_staging_capacity), midi_clock_(rate),
-      midi_clock_follower_(rate), delay_(rate), modulation_(rate), mixer_(rate) {
+      midi_clock_follower_(rate), delay_(rate), modulation_(rate),
+      mixer_(rate) {
     if (rate == 0 || voice_capacity == 0 || event_staging_capacity == 0 ||
         sample_version_capacity == 0)
         throw std::invalid_argument(
@@ -756,11 +757,10 @@ void AudioEngine::process(std::span<float> left,
         }
     }
     const auto phase_to_frame = [&](std::uint64_t phase) noexcept {
-        const auto numerator = static_cast<__uint128_t>(phase) * rate_ *
-                               active_timeline_tempo_us_;
+        const auto numerator =
+            static_cast<__uint128_t>(phase) * rate_ * active_timeline_tempo_us_;
         constexpr auto denominator =
-            static_cast<__uint128_t>(24) * 1'000'000 *
-            (std::uint64_t{1} << 32);
+            static_cast<__uint128_t>(24) * 1'000'000 * (std::uint64_t{1} << 32);
         const auto frame = numerator / denominator;
         return frame > std::numeric_limits<std::uint64_t>::max()
                    ? std::numeric_limits<std::uint64_t>::max()
@@ -822,9 +822,9 @@ void AudioEngine::process(std::span<float> left,
             modulation_.clear_automation();
             if (auto *midi = midi_output_.load(std::memory_order_acquire))
                 if (midi_clock_configuration_.enabled)
-                    midi_clock_.stop(
-                        *midi, {midi_clock_configuration_.ports.data(),
-                                midi_clock_configuration_.port_count});
+                    midi_clock_.stop(*midi,
+                                     {midi_clock_configuration_.ports.data(),
+                                      midi_clock_configuration_.port_count});
             if (auto *midi = midi_output_.load(std::memory_order_acquire))
                 midi->panic();
         } else if (command == TransportCommand::restart) {
@@ -834,9 +834,9 @@ void AudioEngine::process(std::span<float> left,
             modulation_.restart();
             if (auto *midi = midi_output_.load(std::memory_order_acquire))
                 if (midi_clock_configuration_.enabled)
-                    midi_clock_.start(
-                        *midi, {midi_clock_configuration_.ports.data(),
-                                midi_clock_configuration_.port_count});
+                    midi_clock_.start(*midi,
+                                      {midi_clock_configuration_.ports.data(),
+                                       midi_clock_configuration_.port_count});
             if (auto *midi = midi_output_.load(std::memory_order_acquire))
                 midi->panic();
         } else if (command == TransportCommand::midi_panic) {
@@ -855,10 +855,10 @@ void AudioEngine::process(std::span<float> left,
         pending_triggers_[pending_trigger_count_++] = incoming;
     if (transport_playing_ && midi_clock_configuration_.enabled)
         if (auto *midi = midi_output_.load(std::memory_order_acquire))
-            midi_clock_.process(
-                static_cast<std::uint32_t>(frames), callback_frame, *midi,
-                {midi_clock_configuration_.ports.data(),
-                 midi_clock_configuration_.port_count});
+            midi_clock_.process(static_cast<std::uint32_t>(frames),
+                                callback_frame, *midi,
+                                {midi_clock_configuration_.ports.data(),
+                                 midi_clock_configuration_.port_count});
     for (std::size_t i = 1; i < pending_trigger_count_; ++i) {
         auto value = pending_triggers_[i];
         auto j = i;
@@ -937,7 +937,10 @@ void AudioEngine::process(std::span<float> left,
                         break;
                     }
                 }
-            } else
+            } else if (destination.target == ParameterTarget::native_effect)
+                (void)mixer_.set_effect_parameter(destination.instance,
+                                                  destination.parameter, value);
+            else
                 (void)mixer_.set_modulation(destination, value);
         });
         mixer_.capture_modulation_frame(frame);
@@ -982,9 +985,12 @@ void AudioEngine::process(std::span<float> left,
                 modulation_.set_automation(
                     {static_cast<ParameterTarget>(event.parameter_target),
                      event.parameter_id,
-                     event.parameter_target ==
-                             static_cast<std::uint32_t>(
-                                 ParameterTarget::subtractive_synth)
+                     (event.parameter_target ==
+                          static_cast<std::uint32_t>(
+                              ParameterTarget::subtractive_synth) ||
+                      event.parameter_target ==
+                          static_cast<std::uint32_t>(
+                              ParameterTarget::native_effect))
                          ? event.instrument_instance
                          : 0},
                     event.value);
@@ -993,6 +999,12 @@ void AudioEngine::process(std::span<float> left,
                         ParameterTarget::subtractive_synth))
                     synths_[event.instrument_instance - 1]->set_parameter(
                         event.parameter_id, event.value);
+                else if (event.parameter_target ==
+                         static_cast<std::uint32_t>(
+                             ParameterTarget::native_effect))
+                    (void)mixer_.set_effect_parameter(event.instrument_instance,
+                                                      event.parameter_id,
+                                                      event.value);
             } else if (event.instrument == subtractive_instrument_key) {
                 const NoteIdentity owner{event.track, event.target_event_id,
                                          event.occurrence};
@@ -1233,6 +1245,7 @@ void AudioEngine::process(std::span<float> left,
                                    callback_frame);
     }
     mixer_.apply_master_gain(left.first(frames), right.first(frames));
+    mixer_.process_master_effects(left.first(frames), right.first(frames));
     const auto effect_begin = monitoring
                                   ? std::chrono::steady_clock::now()
                                   : std::chrono::steady_clock::time_point{};

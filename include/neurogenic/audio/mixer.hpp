@@ -1,5 +1,6 @@
 #pragma once
 #include "neurogenic/core/spsc_queue.hpp"
+#include "neurogenic/dsp/effect_chain.hpp"
 #include "neurogenic/dsp/parameter_destination.hpp"
 #include "neurogenic/dsp/processor.hpp"
 #include "neurogenic/timeline/model.hpp"
@@ -70,6 +71,7 @@ struct MixerConfiguration {
     std::array<MixerAuxSettings, mixer_aux_count> aux{};
     std::array<ExternalFxLoopSettings, mixer_external_fx_count> external_fx{};
     MixerMasterSettings master;
+    EffectRackConfiguration effects;
 };
 struct RoutingScene {
     std::uint64_t id{};
@@ -114,6 +116,15 @@ class Mixer {
                  std::span<float> physical_interleaved = {},
                  std::uint8_t physical_channels = 0) noexcept;
     void apply_master_gain(std::span<float>, std::span<float>) noexcept;
+    void process_master_effects(std::span<float> left,
+                                std::span<float> right) noexcept {
+        effect_rack_->process(active_.effects.master, left, right);
+    }
+    [[nodiscard]] bool set_effect_parameter(EffectInstanceId instance,
+                                            std::uint32_t parameter,
+                                            float value) noexcept {
+        return effect_rack_->set_parameter(instance, parameter, value);
+    }
     void route_master_output(std::span<const float>, std::span<const float>,
                              std::span<float> physical_interleaved = {},
                              std::uint8_t physical_channels = 0) noexcept;
@@ -181,6 +192,7 @@ class Mixer {
         external_send_available_{}, external_return_available_{};
     AtomicMeter master_meter_;
     std::array<StereoDelay, mixer_aux_count> aux_effects_;
+    std::unique_ptr<NativeEffectRack> effect_rack_;
     struct NumericModulation {
         std::array<float, maximum_mixer_tracks> track_gain{}, track_pan{};
         std::array<std::array<float, mixer_aux_count>, maximum_mixer_tracks>
