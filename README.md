@@ -53,6 +53,9 @@ have explicit global or independent per-track scope. Voice scope supports synth
 pitch, cutoff, and gain through independent per-voice ADSR, velocity, and
 note-triggered LFO state. Tracks may use independent bounded synth instances or
 deliberately share one.
+Sample pitch/gain/pan, mixer gain/pan/aux sends, aux/master gain and external-FX
+wet/send/return now use the same bounded matrix without overwriting stored
+settings or republishing routing topology.
 
 The Samples view provides the first complete chopping workflow: immutable
 loaded samples are displayed through cached waveform peaks, slices use prepared

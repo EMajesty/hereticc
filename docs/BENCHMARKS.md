@@ -171,3 +171,11 @@ LFO/envelope workloads. On the 2026-11-20 Ryzen 7 7800X3D Debug host, plain
 instances averaged about 50.3/104.8/201.7 µs and the 8/16-instance voice
 modulation cases averaged 105.1/206.1 µs per 256-frame buffer. Idle instances
 are skipped. These are offline averages, not Pi 5/N150 or hardware guarantees.
+
+Task 030 broadens the 16/32-route scenarios across synth, delay, sample, mixer
+and external-FX numeric destinations. Timed work is callback dispatch and
+effective-value application; configuration preparation remains excluded. A
+20-iteration Debug run on the 2026-11-20 Ryzen 7 7800X3D host measured about
+16.0/18.1/16.2 µs for 16 routes, 32 routes and 16 tempo-synchronized routes,
+with approximately 38.8 MiB process RSS. These short offline averages are not
+worst-case, Pi 5/N150 or physical-audio results.

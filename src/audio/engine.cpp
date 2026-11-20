@@ -300,15 +300,13 @@ bool AudioEngine::configure_note_playback(
     return slice_map_commands_.push(
         {SliceMapCommand::Type::settings, note, target});
 }
-void AudioEngine::trigger_synth(std::uint8_t note, float velocity,
-                                bool note_on,
+void AudioEngine::trigger_synth(std::uint8_t note, float velocity, bool note_on,
                                 InstrumentInstanceId instance) noexcept {
     if (instance == 0 || instance > synths_.size() ||
         !synth_triggers_.push({note, velocity, note_on, instance}))
         dropped_triggers_.fetch_add(1, std::memory_order_relaxed);
 }
-bool AudioEngine::set_synth_parameter(SynthParameter parameter,
-                                      float value,
+bool AudioEngine::set_synth_parameter(SynthParameter parameter, float value,
                                       InstrumentInstanceId instance) noexcept {
     if (instance == 0 || instance > synths_.size())
         return false;
@@ -489,6 +487,7 @@ void AudioEngine::start_voice(std::uint8_t note, float velocity, TrackId track,
     voice.increment = std::exp2(
         (settings.semitones + settings.fine_cents / 100.0F + pitch_offset) /
         12.0F);
+    voice.base_increment = voice.increment;
     const auto time_ratio = std::clamp(
         RealtimeTimeStretcher::resolve_time_ratio(
             settings.stretch_ratio, settings.source_beats, settings.source_bpm,
@@ -506,6 +505,8 @@ void AudioEngine::start_voice(std::uint8_t note, float velocity, TrackId track,
         voice.stretch_duration = static_cast<double>(end - start) * time_ratio;
     }
     voice.gain = velocity * settings.gain * (slice ? slice->gain : 1.0F);
+    voice.base_gain = voice.gain;
+    voice.modulation_gain = 1.0F;
     voice.sustain = settings.sustain;
     if (settings.attack_seconds > 0) {
         voice.envelope_level = 0;
@@ -633,11 +634,14 @@ void AudioEngine::process(std::span<float> left,
     Pattern pattern;
     ModulationConfiguration modulation_configuration;
     while (modulation_configurations_.pop(modulation_configuration)) {
-        if (modulation_.configure(modulation_configuration))
-            for (std::size_t instance = 0; instance < synths_.size(); ++instance)
+        if (modulation_.configure(modulation_configuration)) {
+            mixer_.clear_modulation();
+            for (std::size_t instance = 0; instance < synths_.size();
+                 ++instance)
                 (void)synths_[instance]->configure_voice_modulation(
                     modulation_configuration,
                     static_cast<std::uint32_t>(instance + 1));
+        }
     }
     DspCommand dsp;
     while (dsp_commands_.pop(dsp)) {
@@ -765,7 +769,32 @@ void AudioEngine::process(std::span<float> left,
                             destination.parameter, value);
             } else if (destination.target == ParameterTarget::stereo_delay)
                 (void)delay_.set_parameter(destination.parameter, value);
+            else if (destination.target == ParameterTarget::sample_voice) {
+                for (auto &voice : voices_) {
+                    if (!voice.active || (destination.instance != 0 &&
+                                          voice.track != destination.instance))
+                        continue;
+                    switch (static_cast<SampleModulationParameter>(
+                        destination.parameter)) {
+                    case SampleModulationParameter::pitch:
+                        voice.modulation_pitch = value;
+                        voice.increment =
+                            voice.base_increment * std::exp2(value / 12.0F);
+                        voice.stretch_configuration.pitch_ratio =
+                            static_cast<float>(voice.increment);
+                        break;
+                    case SampleModulationParameter::gain:
+                        voice.modulation_gain = std::clamp(value, 0.0F, 2.0F);
+                        break;
+                    case SampleModulationParameter::pan:
+                        voice.modulation_pan = std::clamp(value, -1.0F, 1.0F);
+                        break;
+                    }
+                }
+            } else
+                (void)mixer_.set_modulation(destination, value);
         });
+        mixer_.capture_modulation_frame(frame);
         while (external_index < pending_trigger_count_ &&
                pending_triggers_[external_index].frame_offset == frame) {
             const auto &event = pending_triggers_[external_index++];
@@ -807,8 +836,9 @@ void AudioEngine::process(std::span<float> left,
                 modulation_.set_automation(
                     {static_cast<ParameterTarget>(event.parameter_target),
                      event.parameter_id,
-                     event.parameter_target == static_cast<std::uint32_t>(
-                                                   ParameterTarget::subtractive_synth)
+                     event.parameter_target ==
+                             static_cast<std::uint32_t>(
+                                 ParameterTarget::subtractive_synth)
                          ? event.instrument_instance
                          : 0},
                     event.value);
@@ -884,7 +914,11 @@ void AudioEngine::process(std::span<float> left,
                 sample_left = interpolate(0);
                 sample_right = interpolate(1);
             }
-            const auto level = voice.gain * voice.envelope_level;
+            const auto level =
+                voice.base_gain * voice.modulation_gain * voice.envelope_level;
+            const auto pan = std::clamp(voice.modulation_pan, -1.0F, 1.0F);
+            sample_left *= pan > 0 ? 1.0F - pan : 1.0F;
+            sample_right *= pan < 0 ? 1.0F + pan : 1.0F;
             const auto routed =
                 voice.timeline_owned &&
                 mixer_.add_track(voice.track, frame, sample_left * level,
@@ -925,9 +959,9 @@ void AudioEngine::process(std::span<float> left,
                 continue;
             auto &synth = synths_[synth_index];
             float synth_unrouted{};
-            synth->render_sample_tracks({mixer_tracks.data(), mixer_track_count},
-                                        {synth_tracks.data(), mixer_track_count},
-                                        synth_unrouted);
+            synth->render_sample_tracks(
+                {mixer_tracks.data(), mixer_track_count},
+                {synth_tracks.data(), mixer_track_count}, synth_unrouted);
             left[frame] += synth_unrouted;
             right[frame] += synth_unrouted;
             for (std::size_t i = 0; i < mixer_track_count; ++i)
@@ -979,6 +1013,13 @@ void AudioEngine::process(std::span<float> left,
                                                        physical_output_samples_}
                                     : std::span<float>{},
                    physical_output_channels_);
+    float follower_peak{};
+    for (std::size_t frame = 0; frame < frames; ++frame)
+        follower_peak =
+            std::max(follower_peak,
+                     std::max(std::fabs(left[frame]), std::fabs(right[frame])));
+    modulation_.set_input(ModulationSourceId::envelope_follower,
+                          std::min(follower_peak, 1.0F));
     if (auto *recorder = recording_.load(std::memory_order_acquire)) {
         for (std::size_t i = 0; i < mixer_track_count; ++i)
             recorder->capture_internal(

@@ -238,3 +238,6 @@ navigates the MOD route list and reads copied source/effective feedback.
 `track.instrument-set.v1` accepts an optional stable `instance_id`, and
 `instrument.instance-parameter-set.v1` edits one instance. Route creation also
 carries `instance_id`; adapters never infer global scope for a local target.
+Destination categories include synth, sample, mixer/aux/master and external
+FX. Numeric identities select tracks, channel slots or loop slots; adapters do
+not manipulate a routing graph or republish mixer configurations.

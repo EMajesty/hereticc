@@ -20,6 +20,7 @@ enum class ModulationSourceId : std::uint8_t {
     xy_y,
     velocity,
     midi_cc,
+    envelope_follower,
     count
 };
 enum class LfoWaveform : std::uint8_t { sine, triangle, saw, square, random };
@@ -36,6 +37,8 @@ struct ModulationSourceSettings {
     float attack_seconds{0.01F}, decay_seconds{0.1F}, sustain{1.0F},
         release_seconds{0.2F};
     std::uint32_t seed{1};
+    float follower_attack_seconds{0.01F}, follower_release_seconds{0.1F},
+        follower_gain{1.0F}, follower_threshold{};
 };
 struct ModulationRoute {
     ModulationRouteId id{};
@@ -80,8 +83,7 @@ class ModulationEngine {
     void restart() noexcept;
     void clear_automation() noexcept;
     void set_automation(ParameterDestination, float) noexcept;
-    template <class Apply>
-    void process_frame(Apply &&apply) noexcept {
+    template <class Apply> void process_frame(Apply &&apply) noexcept {
         if (++frames_until_update_ < configuration_.update_interval)
             return;
         const auto elapsed = frames_until_update_;
@@ -90,7 +92,8 @@ class ModulationEngine {
         apply_routes(static_cast<Apply &&>(apply));
     }
     [[nodiscard]] ModulationSnapshot snapshot() const noexcept;
-    [[nodiscard]] const ModulationConfiguration &configuration() const noexcept {
+    [[nodiscard]] const ModulationConfiguration &
+    configuration() const noexcept {
         return configuration_;
     }
 
@@ -157,7 +160,8 @@ class ModulationEngine {
                     candidate.destination.target != route.destination.target ||
                     candidate.destination.parameter !=
                         route.destination.parameter ||
-                    candidate.destination.instance != route.destination.instance)
+                    candidate.destination.instance !=
+                        route.destination.instance)
                     continue;
                 const auto source_index =
                     static_cast<std::size_t>(candidate.source);
@@ -178,8 +182,8 @@ class ModulationEngine {
                         : (source + 1.0F) * 0.5F;
                 normalized += shaped * candidate.depth;
             }
-            const auto effective = route.minimum +
-                                   std::clamp(normalized, 0.0F, 1.0F) * range;
+            const auto effective =
+                route.minimum + std::clamp(normalized, 0.0F, 1.0F) * range;
             for (std::size_t matching = route_index;
                  matching < configuration_.route_count; ++matching)
                 if (configuration_.routes[matching].destination.target ==

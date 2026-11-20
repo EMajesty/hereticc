@@ -7,8 +7,8 @@
 #include "neurogenic/project/project.hpp"
 #include "neurogenic/timeline/playback.hpp"
 #include "neurogenic/ui/gui.hpp"
-#include <chrono>
 #include <charconv>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -681,9 +681,16 @@ void external_fx_case() {
 void modulation_case(std::string name, std::size_t route_count,
                      bool tempo_sync = false) {
     neurogenic::AudioEngine engine(48000, 32);
+    neurogenic::MixerConfiguration mixer;
+    mixer.revision = 1;
+    mixer.track_count = 1;
+    mixer.tracks[0].track = 1;
+    std::string mixer_error;
+    if (!engine.publish_mixer(mixer, mixer_error))
+        throw std::runtime_error(mixer_error);
     neurogenic::ModulationConfiguration configuration;
-    configuration.route_count = std::min(route_count,
-                                         configuration.routes.size());
+    configuration.route_count =
+        std::min(route_count, configuration.routes.size());
     configuration.update_interval = 32;
     for (std::size_t source = 0; source < 4; ++source) {
         configuration.sources[source].waveform =
@@ -697,28 +704,53 @@ void modulation_case(std::string name, std::size_t route_count,
         value.id = static_cast<neurogenic::ModulationRouteId>(route + 1);
         value.source = static_cast<neurogenic::ModulationSourceId>(route % 4);
         value.depth = (route & 1U) ? -0.1F : 0.1F;
-        if (route % 3 == 0) {
+        if (route % 6 == 0) {
             value.destination = {
                 neurogenic::ParameterTarget::subtractive_synth,
                 static_cast<std::uint32_t>(neurogenic::SynthParameter::cutoff)};
             value.minimum = 20;
             value.maximum = 20000;
             value.base_value = 8000;
-        } else if (route % 3 == 1) {
-            value.destination = {
-                neurogenic::ParameterTarget::subtractive_synth,
-                static_cast<std::uint32_t>(
-                    neurogenic::SynthParameter::resonance)};
+        } else if (route % 6 == 1) {
+            value.destination = {neurogenic::ParameterTarget::subtractive_synth,
+                                 static_cast<std::uint32_t>(
+                                     neurogenic::SynthParameter::resonance)};
             value.minimum = 0;
             value.maximum = 0.95F;
             value.base_value = 0.15F;
-        } else {
+        } else if (route % 6 == 2) {
             value.destination = {
                 neurogenic::ParameterTarget::stereo_delay,
                 static_cast<std::uint32_t>(neurogenic::DelayParameter::mix)};
             value.minimum = 0;
             value.maximum = 1;
             value.base_value = 0.2F;
+        } else if (route % 6 == 3) {
+            value.destination = {
+                neurogenic::ParameterTarget::sample_voice,
+                static_cast<std::uint32_t>(
+                    neurogenic::SampleModulationParameter::pitch)};
+            value.minimum = -24;
+            value.maximum = 24;
+            value.base_value = 0;
+        } else if (route % 6 == 4) {
+            value.destination = {
+                neurogenic::ParameterTarget::mixer_track,
+                static_cast<std::uint32_t>(
+                    neurogenic::MixerTrackModulationParameter::pan),
+                1};
+            value.minimum = -1;
+            value.maximum = 1;
+            value.base_value = 0;
+        } else {
+            value.destination = {
+                neurogenic::ParameterTarget::external_fx,
+                static_cast<std::uint32_t>(
+                    neurogenic::ExternalFxModulationParameter::wet),
+                1};
+            value.minimum = 0;
+            value.maximum = 1;
+            value.base_value = 0.5F;
         }
     }
     (void)engine.publish_modulation(configuration);
@@ -741,22 +773,24 @@ void synth_instance_case(std::size_t instance_count, bool voice_modulation) {
     for (std::size_t i = 0; i < instance_count; ++i) {
         neurogenic::Track track;
         track.id = i + 1;
-        track.instrument_id = std::string(neurogenic::subtractive_instrument_id);
+        track.instrument_id =
+            std::string(neurogenic::subtractive_instrument_id);
         track.instrument_instance_id =
             static_cast<neurogenic::InstrumentInstanceId>(i + 1);
         track.pattern.length = neurogenic::ticks_per_quarter * 4;
-        track.pattern.events.push_back(
-            {i + 1, 0, neurogenic::MusicalEventType::note,
-             static_cast<std::uint8_t>(48 + i), 0.8F,
-             neurogenic::ticks_per_quarter * 4});
+        track.pattern.events.push_back({i + 1, 0,
+                                        neurogenic::MusicalEventType::note,
+                                        static_cast<std::uint8_t>(48 + i), 0.8F,
+                                        neurogenic::ticks_per_quarter * 4});
         timeline.tracks.push_back(std::move(track));
     }
     if (voice_modulation) {
         neurogenic::ModulationConfiguration configuration;
         configuration.update_interval = 32;
-        configuration.sources[static_cast<std::size_t>(
-            neurogenic::ModulationSourceId::envelope)].scope =
-            neurogenic::ModulationScope::voice;
+        configuration
+            .sources[static_cast<std::size_t>(
+                neurogenic::ModulationSourceId::envelope)]
+            .scope = neurogenic::ModulationScope::voice;
         configuration.sources[0].scope = neurogenic::ModulationScope::voice;
         configuration.route_count = std::min<std::size_t>(
             instance_count * 2, configuration.routes.size());
@@ -765,12 +799,12 @@ void synth_instance_case(std::size_t instance_count, bool voice_modulation) {
             route.id = static_cast<std::uint32_t>(i + 1);
             route.source = (i & 1U) ? neurogenic::ModulationSourceId::envelope
                                     : neurogenic::ModulationSourceId::lfo_1;
-            route.destination = {
-                neurogenic::ParameterTarget::subtractive_synth,
-                static_cast<std::uint32_t>(
-                    (i & 1U) ? neurogenic::SynthParameter::gain
-                             : neurogenic::SynthParameter::cutoff),
-                static_cast<std::uint32_t>(i / 2 + 1)};
+            route.destination = {neurogenic::ParameterTarget::subtractive_synth,
+                                 static_cast<std::uint32_t>(
+                                     (i & 1U)
+                                         ? neurogenic::SynthParameter::gain
+                                         : neurogenic::SynthParameter::cutoff),
+                                 static_cast<std::uint32_t>(i / 2 + 1)};
             route.minimum = (i & 1U) ? 0.0F : 20.0F;
             route.maximum = (i & 1U) ? 1.0F : 20000.0F;
             route.base_value = (i & 1U) ? 0.25F : 8000.0F;

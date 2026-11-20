@@ -169,13 +169,120 @@ bool validate_mixer_configuration(const MixerConfiguration &value,
 
 Mixer::Mixer(std::uint32_t sample_rate)
     : sample_rate_(sample_rate),
-      aux_effects_{StereoDelay(sample_rate), StereoDelay(sample_rate)} {
+      aux_effects_{StereoDelay(sample_rate), StereoDelay(sample_rate)},
+      modulation_lanes_(std::make_unique<ModulationLanes>()) {
     for (auto &effect : aux_effects_) {
         effect.set_parameter(static_cast<std::uint32_t>(DelayParameter::mix),
                              0.25F);
         effect.set_parameter(
             static_cast<std::uint32_t>(DelayParameter::feedback), 0.25F);
     }
+}
+void Mixer::clear_modulation() noexcept { modulation_ = {}; }
+bool Mixer::set_modulation(ParameterDestination destination,
+                           float value) noexcept {
+    if (!std::isfinite(value))
+        return false;
+    const auto index = destination.instance
+                           ? static_cast<std::size_t>(destination.instance - 1)
+                           : std::numeric_limits<std::size_t>::max();
+    if (destination.target == ParameterTarget::mixer_track &&
+        index < active_.track_count) {
+        switch (
+            static_cast<MixerTrackModulationParameter>(destination.parameter)) {
+        case MixerTrackModulationParameter::gain:
+            modulation_.track_gain[index] = std::clamp(value, 0.0F, 2.0F);
+            modulation_.has_track_gain[index] = true;
+            return true;
+        case MixerTrackModulationParameter::pan:
+            modulation_.track_pan[index] = std::clamp(value, -1.0F, 1.0F);
+            modulation_.has_track_pan[index] = true;
+            return true;
+        case MixerTrackModulationParameter::aux_send_1:
+        case MixerTrackModulationParameter::aux_send_2: {
+            const auto send = destination.parameter -
+                              static_cast<std::uint32_t>(
+                                  MixerTrackModulationParameter::aux_send_1);
+            modulation_.track_send[index][send] = std::clamp(value, 0.0F, 1.0F);
+            modulation_.has_track_send[index][send] = true;
+            return true;
+        }
+        }
+    } else if (destination.target == ParameterTarget::mixer_aux &&
+               index < mixer_aux_count && destination.parameter == 1) {
+        modulation_.aux_return[index] = std::clamp(value, 0.0F, 2.0F);
+        modulation_.has_aux_return[index] = true;
+        return true;
+    } else if (destination.target == ParameterTarget::mixer_master &&
+               destination.instance == 0 && destination.parameter == 1) {
+        modulation_.master_gain = std::clamp(value, 0.0F, 2.0F);
+        modulation_.has_master_gain = true;
+        return true;
+    } else if (destination.target == ParameterTarget::external_fx &&
+               index < mixer_external_fx_count) {
+        switch (
+            static_cast<ExternalFxModulationParameter>(destination.parameter)) {
+        case ExternalFxModulationParameter::wet:
+            modulation_.fx_wet[index] = std::clamp(value, 0.0F, 1.0F);
+            modulation_.has_fx_wet[index] = true;
+            return true;
+        case ExternalFxModulationParameter::send_gain:
+            modulation_.fx_send[index] = std::clamp(value, 0.0F, 2.0F);
+            modulation_.has_fx_send[index] = true;
+            return true;
+        case ExternalFxModulationParameter::return_gain:
+            modulation_.fx_return[index] = std::clamp(value, 0.0F, 2.0F);
+            modulation_.has_fx_return[index] = true;
+            return true;
+        }
+    }
+    return false;
+}
+void Mixer::capture_modulation_frame(std::size_t frame) noexcept {
+    if (frame >= frames_)
+        return;
+    for (std::size_t channel = 0; channel < active_.track_count; ++channel) {
+        modulation_lanes_->track_gain[channel][frame] =
+            modulation_.has_track_gain[channel]
+                ? modulation_.track_gain[channel]
+                : active_.tracks[channel].gain;
+        modulation_lanes_->track_pan[channel][frame] =
+            modulation_.has_track_pan[channel] ? modulation_.track_pan[channel]
+                                               : active_.tracks[channel].pan;
+        for (std::size_t aux = 0; aux < mixer_aux_count; ++aux)
+            modulation_lanes_->track_send[channel][aux][frame] =
+                modulation_.has_track_send[channel][aux]
+                    ? modulation_.track_send[channel][aux]
+                    : active_.tracks[channel].aux_send[aux];
+    }
+    for (std::size_t aux = 0; aux < mixer_aux_count; ++aux)
+        modulation_lanes_->aux_return[aux][frame] =
+            modulation_.has_aux_return[aux] ? modulation_.aux_return[aux]
+                                            : active_.aux[aux].return_gain;
+    for (std::size_t index = 0; index < mixer_external_fx_count; ++index) {
+        const auto wet_target = modulation_.has_fx_wet[index]
+                                    ? modulation_.fx_wet[index]
+                                    : active_.external_fx[index].wet;
+        const auto send_target = modulation_.has_fx_send[index]
+                                     ? modulation_.fx_send[index]
+                                     : active_.external_fx[index].send_gain;
+        const auto return_target = modulation_.has_fx_return[index]
+                                       ? modulation_.fx_return[index]
+                                       : active_.external_fx[index].return_gain;
+        constexpr float smoothing = 0.125F;
+        smoothed_fx_wet_[index] +=
+            (wet_target - smoothed_fx_wet_[index]) * smoothing;
+        smoothed_fx_send_[index] +=
+            (send_target - smoothed_fx_send_[index]) * smoothing;
+        smoothed_fx_return_[index] +=
+            (return_target - smoothed_fx_return_[index]) * smoothing;
+        modulation_lanes_->fx_wet[index][frame] = smoothed_fx_wet_[index];
+        modulation_lanes_->fx_send[index][frame] = smoothed_fx_send_[index];
+        modulation_lanes_->fx_return[index][frame] = smoothed_fx_return_[index];
+    }
+    modulation_lanes_->master_gain[frame] = modulation_.has_master_gain
+                                                ? modulation_.master_gain
+                                                : active_.master.gain;
 }
 bool Mixer::publish(const MixerConfiguration &value,
                     std::string &error) noexcept {
@@ -202,9 +309,36 @@ void Mixer::begin_block(std::size_t frames) noexcept {
     if (active_.revision != previous_revision) {
         external_delay_cursor_.fill(0);
         external_delay_valid_.fill(0);
+        for (std::size_t index = 0; index < mixer_external_fx_count; ++index) {
+            smoothed_fx_wet_[index] = active_.external_fx[index].wet;
+            smoothed_fx_send_[index] = active_.external_fx[index].send_gain;
+            smoothed_fx_return_[index] = active_.external_fx[index].return_gain;
+        }
     }
     revision_.store(active_.revision, std::memory_order_release);
     frames_ = std::min(frames, maximum_mixer_block);
+    for (std::size_t channel = 0; channel < active_.track_count; ++channel) {
+        std::fill_n(modulation_lanes_->track_gain[channel].begin(), frames_,
+                    active_.tracks[channel].gain);
+        std::fill_n(modulation_lanes_->track_pan[channel].begin(), frames_,
+                    active_.tracks[channel].pan);
+        for (std::size_t aux = 0; aux < mixer_aux_count; ++aux)
+            std::fill_n(modulation_lanes_->track_send[channel][aux].begin(),
+                        frames_, active_.tracks[channel].aux_send[aux]);
+    }
+    for (std::size_t aux = 0; aux < mixer_aux_count; ++aux)
+        std::fill_n(modulation_lanes_->aux_return[aux].begin(), frames_,
+                    active_.aux[aux].return_gain);
+    for (std::size_t index = 0; index < mixer_external_fx_count; ++index) {
+        std::fill_n(modulation_lanes_->fx_wet[index].begin(), frames_,
+                    active_.external_fx[index].wet);
+        std::fill_n(modulation_lanes_->fx_send[index].begin(), frames_,
+                    active_.external_fx[index].send_gain);
+        std::fill_n(modulation_lanes_->fx_return[index].begin(), frames_,
+                    active_.external_fx[index].return_gain);
+    }
+    std::fill_n(modulation_lanes_->master_gain.begin(), frames_,
+                active_.master.gain);
     physical_input_channels_ = 0;
     for (auto &buffer : track_left_)
         std::fill_n(buffer.begin(), frames_, 0.0F);
@@ -272,15 +406,18 @@ void Mixer::process(std::span<float> master_left, std::span<float> master_right,
         any_solo |= active_.tracks[i].solo;
     for (std::size_t channel = 0; channel < active_.track_count; ++channel) {
         const auto &settings = active_.tracks[channel];
-        const auto [pan_l, pan_r] = pan(settings.pan);
         float peak_l{}, peak_r{};
         for (std::size_t frame = 0; frame < frames; ++frame) {
+            const auto [pan_l, pan_r] =
+                pan(modulation_lanes_->track_pan[channel][frame]);
+            const auto effective_gain =
+                modulation_lanes_->track_gain[channel][frame];
             const auto raw_l = track_left_[channel][frame];
             const auto raw_r = track_right_[channel][frame];
             const auto pre_l = raw_l * pan_l, pre_r = raw_r * pan_r;
             const auto audible = !settings.mute && (!any_solo || settings.solo);
-            const auto post_l = audible ? pre_l * settings.gain : 0.0F;
-            const auto post_r = audible ? pre_r * settings.gain : 0.0F;
+            const auto post_l = audible ? pre_l * effective_gain : 0.0F;
+            const auto post_r = audible ? pre_r * effective_gain : 0.0F;
             track_left_[channel][frame] = post_l;
             track_right_[channel][frame] = post_r;
             for (std::size_t aux = 0; aux < mixer_aux_count; ++aux) {
@@ -288,8 +425,10 @@ void Mixer::process(std::span<float> master_left, std::span<float> master_right,
                     settings.aux_pre_fader[aux] ? pre_l : post_l;
                 const auto send_r =
                     settings.aux_pre_fader[aux] ? pre_r : post_r;
-                aux_left_[aux][frame] += send_l * settings.aux_send[aux];
-                aux_right_[aux][frame] += send_r * settings.aux_send[aux];
+                const auto amount =
+                    modulation_lanes_->track_send[channel][aux][frame];
+                aux_left_[aux][frame] += send_l * amount;
+                aux_right_[aux][frame] += send_r * amount;
             }
             if (settings.output_pair < 0) {
                 master_left[frame] += post_l;
@@ -341,8 +480,10 @@ void Mixer::process(std::span<float> master_left, std::span<float> master_right,
             aux_left_[aux][frame] = l;
             aux_right_[aux][frame] = r;
             if (settings.output_pair < 0) {
-                master_left[frame] += l * settings.return_gain;
-                master_right[frame] += r * settings.return_gain;
+                const auto return_gain =
+                    modulation_lanes_->aux_return[aux][frame];
+                master_left[frame] += l * return_gain;
+                master_right[frame] += r * return_gain;
             } else if (channels && physical.size() >= frames * channels) {
                 physical[frame * channels + settings.output_pair] += l;
                 physical[frame * channels + settings.output_pair + 1] += r;
@@ -395,28 +536,30 @@ void Mixer::process(std::span<float> master_left, std::span<float> master_right,
         }
         float peak_l{}, peak_r{};
         for (std::size_t frame = 0; frame < frames; ++frame) {
+            const auto send_gain = modulation_lanes_->fx_send[index][frame];
+            const auto return_gain = modulation_lanes_->fx_return[index][frame];
+            const auto wet = modulation_lanes_->fx_wet[index][frame];
             const auto dry_l = source_l[frame] * source_master_gain;
             const auto dry_r = source_r[frame] * source_master_gain;
             if (send_available) {
                 if (loop.mono_send) {
                     physical[frame * channels + loop.send_left] +=
-                        (source_l[frame] + source_r[frame]) * 0.5F *
-                        loop.send_gain;
+                        (source_l[frame] + source_r[frame]) * 0.5F * send_gain;
                 } else {
                     physical[frame * channels + loop.send_left] +=
-                        source_l[frame] * loop.send_gain;
+                        source_l[frame] * send_gain;
                     physical[frame * channels + loop.send_right] +=
-                        source_r[frame] * loop.send_gain;
+                        source_r[frame] * send_gain;
                 }
             }
             float returned_l{}, returned_r{};
             if (return_available && !loop.return_mute) {
                 returned_l =
-                    physical_input_[loop.return_left][frame] * loop.return_gain;
+                    physical_input_[loop.return_left][frame] * return_gain;
                 returned_r = loop.mono_return
                                  ? returned_l
                                  : physical_input_[loop.return_right][frame] *
-                                       loop.return_gain;
+                                       return_gain;
             }
             external_return_left_[index][frame] = returned_l;
             external_return_right_[index][frame] = returned_r;
@@ -439,20 +582,17 @@ void Mixer::process(std::span<float> master_left, std::span<float> master_right,
             const auto aligned_r = !delay  ? dry_r
                                    : ready ? external_delay_right_[index][read]
                                            : 0.0F;
-            external_delay_cursor_[index] =
-                (cursor + 1) % delay_capacity;
-            const auto mixed_l =
-                aligned_l * (1.0F - loop.wet) + returned_l * loop.wet;
-            const auto mixed_r =
-                aligned_r * (1.0F - loop.wet) + returned_r * loop.wet;
+            external_delay_cursor_[index] = (cursor + 1) % delay_capacity;
+            const auto mixed_l = aligned_l * (1.0F - wet) + returned_l * wet;
+            const auto mixed_r = aligned_r * (1.0F - wet) + returned_r * wet;
             external_mix_left_[index][frame] = mixed_l;
             external_mix_right_[index][frame] = mixed_r;
             if (source_routes_to_master) {
                 master_left[frame] += mixed_l - dry_l;
                 master_right[frame] += mixed_r - dry_r;
             } else {
-                master_left[frame] += returned_l * loop.wet;
-                master_right[frame] += returned_r * loop.wet;
+                master_left[frame] += returned_l * wet;
+                master_right[frame] += returned_r * wet;
             }
             peak_l = std::max(peak_l, std::fabs(returned_l));
             peak_r = std::max(peak_r, std::fabs(returned_r));
@@ -467,8 +607,8 @@ void Mixer::apply_master_gain(std::span<float> left,
         if (active_.master.mute)
             left[frame] = right[frame] = 0;
         else {
-            left[frame] *= active_.master.gain;
-            right[frame] *= active_.master.gain;
+            left[frame] *= modulation_lanes_->master_gain[frame];
+            right[frame] *= modulation_lanes_->master_gain[frame];
         }
     }
 }

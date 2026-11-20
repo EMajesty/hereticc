@@ -4,6 +4,11 @@ NEUROGENIC uses a bounded mixer between instruments and the existing master
 effects. GUI, controller, MIDI and future remote clients submit semantic
 actions through `ApplicationService`; none mutate callback state directly.
 
+Track gain/pan/aux sends, aux return gain, master gain, and external-loop
+wet/send/return gain accept fixed-size numeric modulation overlays. The mixer
+consumes effective values without rebuilding or publishing routing snapshots;
+physical assignments, loop latency and topology are never modulatable.
+
 ## Signal flow
 
 ```text

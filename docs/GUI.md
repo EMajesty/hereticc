@@ -157,3 +157,6 @@ depth, and Enter toggles the route. The same workflow works with a minimal data
 wheel at every display breakpoint; the GUI owns no parallel modulation graph.
 The sequencer labels synth tracks with their instance number. MOD rows show
 GLOBAL/TRACK/VOICE scope plus `ALL` or the concrete instance.
+Sample, mixer, aux and external-FX destinations appear through the same route
+rows and effective-value feedback; unsupported voice/sample combinations are
+reported by the shared application action.

@@ -1,5 +1,9 @@
 # Native instruments and DSP
 
+The shared matrix also targets sample pitch/gain/pan and mixer/external-FX
+numeric controls as effective overlays. Synth voices remain the only fully
+polyphonic modulation-source implementation in this revision.
+
 Timeline, MIDI and controller clients emit semantic note and parameter events.
 Timeline tracks route those events to a stable instrument ID; the first IDs are
 `sample.main` and `synth.subtractive.v1`. Routing is compiled with the timeline,

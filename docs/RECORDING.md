@@ -1,5 +1,9 @@
 # Audio recording and internal resampling
 
+The master pre-effects signal also feeds the initial modulation envelope
+follower with one-block observation latency. Recording taps remain independent;
+follower processing never reallocates or writes into recording buffers.
+
 External processors add `external-fx-return` for an isolated return and
 `external-fx-mix` for the compensated wet/dry result, with loop index as
 `source_id`. Existing track, aux, physical-input and master sources are

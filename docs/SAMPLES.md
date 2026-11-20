@@ -6,6 +6,12 @@ slots. Its stable semantic actions are `sample.load.v1`, `sample.replace.v1`,
 binding, MIDI mapping, or remote protocol can call the same interface without
 exposing audio-engine objects.
 
+The shared modulation matrix can apply control-rate pitch, gain and pan to
+active sample voices without touching immutable PCM or persisted pad settings.
+When realtime stretch is enabled, pitch modulation changes its pitch ratio but
+not its independent time ratio. Per-voice sample sources and filtering remain
+deferred.
+
 Loading is asynchronous. A bounded control queue feeds one preparation worker;
 that worker performs file I/O, WAV decoding, allocation, and resampling. Slot
 state is queryable as `empty`, `queued`, `preparing`, `prepared`,

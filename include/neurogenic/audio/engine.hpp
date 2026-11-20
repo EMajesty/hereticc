@@ -2,8 +2,8 @@
 #include "neurogenic/audio/mixer.hpp"
 #include "neurogenic/audio/sample.hpp"
 #include "neurogenic/core/spsc_queue.hpp"
-#include "neurogenic/dsp/processor.hpp"
 #include "neurogenic/dsp/modulation.hpp"
+#include "neurogenic/dsp/processor.hpp"
 #include "neurogenic/dsp/purest_gain.hpp"
 #include "neurogenic/dsp/time_stretch.hpp"
 #include "neurogenic/instrument/subtractive_synth.hpp"
@@ -93,10 +93,9 @@ class AudioEngine {
     [[nodiscard]] bool clear_note_slice(std::uint8_t note) noexcept;
     [[nodiscard]] bool configure_note_playback(std::uint8_t note,
                                                SamplePlaybackSettings) noexcept;
-    void trigger_synth(std::uint8_t note, float velocity,
-                       bool note_on = true,
-                       InstrumentInstanceId instance =
-                           default_synth_instance_id) noexcept;
+    void trigger_synth(
+        std::uint8_t note, float velocity, bool note_on = true,
+        InstrumentInstanceId instance = default_synth_instance_id) noexcept;
     [[nodiscard]] bool set_synth_parameter(
         SynthParameter, float,
         InstrumentInstanceId instance = default_synth_instance_id) noexcept;
@@ -258,12 +257,13 @@ class AudioEngine {
     struct Voice {
         const Sample *sample{};
         std::size_t sample_version{};
-        double position{}, increment{1.0};
+        double position{}, increment{1.0}, base_increment{1.0};
         TimeStretchConfiguration stretch_configuration;
         TimeStretchState stretch_state;
         double stretch_duration{};
         std::uint64_t start_frame{}, end_frame{};
-        float gain{}, envelope_level{1.0F};
+        float gain{}, base_gain{}, modulation_gain{1.0F}, modulation_pan{},
+            modulation_pitch{}, envelope_level{1.0F};
         enum class EnvelopeStage : std::uint8_t {
             attack,
             decay,

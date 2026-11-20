@@ -261,6 +261,12 @@ instances or one instance; track routes require both track and instance IDs;
 voice routes are installed into the selected synth instance and evaluated in
 each active voice. No callback lookup uses strings and no instance or voice is
 created or destroyed on the audio thread.
+
+Sample and mixer modulation uses the same destination IDs and control-rate
+engine. Active sample voices hold only scalar pitch/gain/pan overlays. Mixer,
+aux, master and external-loop overlays live in fixed arrays adjacent to the
+compiled mixer configuration. They alter effective DSP values only; stored
+settings, immutable samples and routing ownership are unchanged.
 Trigger probability and conditions are immutable compiled-plan metadata.
 Scheduling uses a stateless integer hash rather than a callback RNG, and Fill
 crosses into the audio thread through the bounded transport queue. Ratchets are

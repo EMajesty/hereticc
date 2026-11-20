@@ -85,14 +85,15 @@ count are visible; Shift+Enter invokes Save. Open, Save As, and relinking are
 available through semantic actions, while a complete embedded filesystem
 browser is still deferred.
 
-Version-1 projects may include `modulation.ngm`. This optional versioned file
+Version-1 projects may include `modulation.ngm`. Its current metadata version 3
 stores source definitions, deterministic seeds, explicit scopes, and stable
-routes. Absence means an empty matrix for backward compatibility. Unsafe or
+routes, including numeric sample/mixer/FX identities and follower settings.
+Versions 1 and 2 remain readable. Absence means an empty matrix for backward compatibility. Unsafe or
 unavailable destinations and unsupported voice destinations are rejected before
 publication.
 
 Timeline version 3 stores track-to-instance assignments and modulation metadata
-version 2 stores destination instance IDs. Older projects and timelines migrate
+version 3 stores destination identities and follower coefficients. Older projects and timelines migrate
 their former singleton synth routing to shared instance 1. Instance parameter
 overrides use stable `instance.N.synth.*` entries in parameter metadata. Active
 voices, phases, envelopes, and random runtime state are never persisted.

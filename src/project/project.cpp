@@ -179,8 +179,9 @@ MixerConfiguration load_mixer(const std::filesystem::path &path) {
 }
 std::string serialize_modulation(const ModulationConfiguration &configuration) {
     std::ostringstream out;
-    out << "NEUROGENIC_MODULATION 2\n" << std::setprecision(9)
-        << "interval " << configuration.update_interval << '\n';
+    out << "NEUROGENIC_MODULATION 3\n"
+        << std::setprecision(9) << "interval " << configuration.update_interval
+        << '\n';
     for (std::size_t i = 0; i < configuration.source_count; ++i) {
         const auto &source = configuration.sources[i];
         out << "source " << i << ' ' << static_cast<unsigned>(source.waveform)
@@ -189,18 +190,19 @@ std::string serialize_modulation(const ModulationConfiguration &configuration) {
             << static_cast<unsigned>(source.scope) << ' '
             << source.attack_seconds << ' ' << source.decay_seconds << ' '
             << source.sustain << ' ' << source.release_seconds << ' '
-            << source.seed << '\n';
+            << source.seed << ' ' << source.follower_attack_seconds << ' '
+            << source.follower_release_seconds << ' ' << source.follower_gain
+            << ' ' << source.follower_threshold << '\n';
     }
     out << "routes " << configuration.route_count << '\n';
     for (std::size_t i = 0; i < configuration.route_count; ++i) {
         const auto &route = configuration.routes[i];
         out << route.id << ' ' << static_cast<unsigned>(route.source) << ' '
             << static_cast<unsigned>(route.destination.target) << ' '
-            << route.destination.instance << ' '
-            << route.destination.parameter << ' ' << route.minimum << ' '
-            << route.maximum << ' ' << route.base_value << ' ' << route.depth
-            << ' ' << route.enabled << ' '
-            << static_cast<unsigned>(route.polarity) << ' '
+            << route.destination.instance << ' ' << route.destination.parameter
+            << ' ' << route.minimum << ' ' << route.maximum << ' '
+            << route.base_value << ' ' << route.depth << ' ' << route.enabled
+            << ' ' << static_cast<unsigned>(route.polarity) << ' '
             << static_cast<unsigned>(route.scope) << ' ' << route.track_id
             << '\n';
     }
@@ -213,11 +215,13 @@ ModulationConfiguration load_modulation(const std::filesystem::path &path) {
     unsigned version{};
     ModulationConfiguration result;
     if (!(input >> magic >> version) || magic != "NEUROGENIC_MODULATION" ||
-        (version == 0 || version > 2) ||
-        !(input >> label >> result.update_interval) ||
-        label != "interval")
-        throw std::runtime_error("unsupported or malformed modulation metadata");
-    for (std::size_t i = 0; i < result.source_count; ++i) {
+        (version == 0 || version > 3) ||
+        !(input >> label >> result.update_interval) || label != "interval")
+        throw std::runtime_error(
+            "unsupported or malformed modulation metadata");
+    const auto stored_source_count =
+        version >= 3 ? result.source_count : result.source_count - 1;
+    for (std::size_t i = 0; i < stored_source_count; ++i) {
         std::size_t index{};
         unsigned waveform{}, scope{};
         auto &source = result.sources[i];
@@ -231,6 +235,11 @@ ModulationConfiguration load_modulation(const std::filesystem::path &path) {
             throw std::runtime_error("malformed modulation source");
         source.waveform = static_cast<LfoWaveform>(waveform);
         source.scope = static_cast<ModulationScope>(scope);
+        if (version >= 3 &&
+            !(input >> source.follower_attack_seconds >>
+              source.follower_release_seconds >> source.follower_gain >>
+              source.follower_threshold))
+            throw std::runtime_error("malformed modulation follower source");
     }
     if (!(input >> label >> result.route_count) || label != "routes" ||
         result.route_count > result.routes.size())
@@ -240,11 +249,11 @@ ModulationConfiguration load_modulation(const std::filesystem::path &path) {
         auto &route = result.routes[i];
         if (!(input >> route.id >> source >> target) ||
             (version >= 2 && !(input >> route.destination.instance)) ||
-            !(input >> route.destination.parameter >> route.minimum >> route.maximum >>
-              route.base_value >> route.depth >> route.enabled >> polarity >>
-              scope >> route.track_id) ||
+            !(input >> route.destination.parameter >> route.minimum >>
+              route.maximum >> route.base_value >> route.depth >>
+              route.enabled >> polarity >> scope >> route.track_id) ||
             source >= static_cast<unsigned>(ModulationSourceId::count) ||
-            target > static_cast<unsigned>(ParameterTarget::stereo_delay) ||
+            target > static_cast<unsigned>(ParameterTarget::external_fx) ||
             polarity > static_cast<unsigned>(ModulationPolarity::unipolar) ||
             scope > static_cast<unsigned>(ModulationScope::voice))
             throw std::runtime_error("malformed modulation route");

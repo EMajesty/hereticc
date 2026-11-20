@@ -262,3 +262,9 @@ instance 1, and numeric callback routing isolates local parameters/modulation
 while permitting explicit sharing. Per-voice ADSR, velocity,
 retrigger/free-running LFO, pitch, cutoff, and gain modulation are embedded in
 synth voices. Sample-voice modulation remains future work.
+
+Task 030 adds callback-safe numeric destinations for sample pitch/gain/pan,
+track gain/pan/aux sends, aux/master gain and external-FX wet/send/return. An
+attack/release follower observes the preceding master pre-effects block. Global
+and track sample routes are supported; per-voice sample sources, sample filters
+and selectable follower taps remain explicit deferred work.

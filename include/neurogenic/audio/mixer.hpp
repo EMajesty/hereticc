@@ -1,11 +1,13 @@
 #pragma once
 #include "neurogenic/core/spsc_queue.hpp"
+#include "neurogenic/dsp/parameter_destination.hpp"
 #include "neurogenic/dsp/processor.hpp"
 #include "neurogenic/timeline/model.hpp"
 #include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <span>
 #include <string>
@@ -100,6 +102,9 @@ class Mixer {
     explicit Mixer(std::uint32_t sample_rate = 48000);
     [[nodiscard]] bool publish(const MixerConfiguration &,
                                std::string &error) noexcept;
+    void clear_modulation() noexcept;
+    [[nodiscard]] bool set_modulation(ParameterDestination, float) noexcept;
+    void capture_modulation_frame(std::size_t frame) noexcept;
     void begin_block(std::size_t frames) noexcept;
     [[nodiscard]] bool add_track(TrackId, std::size_t frame, float left,
                                  float right) noexcept;
@@ -176,5 +181,39 @@ class Mixer {
         external_send_available_{}, external_return_available_{};
     AtomicMeter master_meter_;
     std::array<StereoDelay, mixer_aux_count> aux_effects_;
+    struct NumericModulation {
+        std::array<float, maximum_mixer_tracks> track_gain{}, track_pan{};
+        std::array<std::array<float, mixer_aux_count>, maximum_mixer_tracks>
+            track_send{};
+        std::array<float, mixer_aux_count> aux_return{};
+        std::array<float, mixer_external_fx_count> fx_wet{}, fx_send{},
+            fx_return{};
+        float master_gain{};
+        std::array<bool, maximum_mixer_tracks> has_track_gain{},
+            has_track_pan{};
+        std::array<std::array<bool, mixer_aux_count>, maximum_mixer_tracks>
+            has_track_send{};
+        std::array<bool, mixer_aux_count> has_aux_return{};
+        std::array<bool, mixer_external_fx_count> has_fx_wet{}, has_fx_send{},
+            has_fx_return{};
+        bool has_master_gain{};
+    } modulation_;
+    struct ModulationLanes {
+        std::array<std::array<float, maximum_mixer_block>, maximum_mixer_tracks>
+            track_gain{}, track_pan{};
+        std::array<
+            std::array<std::array<float, maximum_mixer_block>, mixer_aux_count>,
+            maximum_mixer_tracks>
+            track_send{};
+        std::array<std::array<float, maximum_mixer_block>, mixer_aux_count>
+            aux_return{};
+        std::array<std::array<float, maximum_mixer_block>,
+                   mixer_external_fx_count>
+            fx_wet{}, fx_send{}, fx_return{};
+        std::array<float, maximum_mixer_block> master_gain{};
+    };
+    std::unique_ptr<ModulationLanes> modulation_lanes_;
+    std::array<float, mixer_external_fx_count> smoothed_fx_wet_{},
+        smoothed_fx_send_{}, smoothed_fx_return_{};
 };
 } // namespace neurogenic

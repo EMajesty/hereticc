@@ -34,14 +34,24 @@ bool ModulationEngine::configure(
             source.decay_seconds > 60 || !std::isfinite(source.sustain) ||
             source.sustain < 0 || source.sustain > 1 ||
             !std::isfinite(source.release_seconds) ||
-            source.release_seconds < 0 || source.release_seconds > 60)
+            source.release_seconds < 0 || source.release_seconds > 60 ||
+            !std::isfinite(source.follower_attack_seconds) ||
+            source.follower_attack_seconds < 0 ||
+            source.follower_attack_seconds > 10 ||
+            !std::isfinite(source.follower_release_seconds) ||
+            source.follower_release_seconds < 0 ||
+            source.follower_release_seconds > 10 ||
+            !std::isfinite(source.follower_gain) || source.follower_gain < 0 ||
+            source.follower_gain > 100 ||
+            !std::isfinite(source.follower_threshold) ||
+            source.follower_threshold < 0 || source.follower_threshold > 1)
             return false;
-    for (std::size_t source = 0; source < configuration.sources.size(); ++source)
+    for (std::size_t source = 0; source < configuration.sources.size();
+         ++source)
         if (configuration.sources[source].scope == ModulationScope::voice &&
-            source >= 4 && source != static_cast<std::size_t>(
-                                         ModulationSourceId::envelope) &&
-            source != static_cast<std::size_t>(
-                                         ModulationSourceId::velocity))
+            source >= 4 &&
+            source != static_cast<std::size_t>(ModulationSourceId::envelope) &&
+            source != static_cast<std::size_t>(ModulationSourceId::velocity))
             return false;
     std::array<std::uint64_t, ModulationConfiguration::maximum_tracks> tracks{};
     std::size_t count = 1;
@@ -50,15 +60,28 @@ bool ModulationEngine::configure(
         if (route.id == 0 || route.source >= ModulationSourceId::count ||
             !std::isfinite(route.depth) || route.depth < -1.0F ||
             route.depth > 1.0F || !std::isfinite(route.minimum) ||
-            !std::isfinite(route.maximum) ||
-            route.minimum >= route.maximum ||
+            !std::isfinite(route.maximum) || route.minimum >= route.maximum ||
             configuration.sources[static_cast<std::size_t>(route.source)]
                     .scope != route.scope)
             return false;
-        if ((route.destination.target == ParameterTarget::subtractive_synth &&
-             route.destination.instance > configuration.maximum_instances) ||
-            (route.destination.target != ParameterTarget::subtractive_synth &&
-             route.destination.instance != 0) ||
+        const auto target = route.destination.target;
+        const auto instance = route.destination.instance;
+        const auto parameter = route.destination.parameter;
+        const auto valid_numeric_destination =
+            (target == ParameterTarget::subtractive_synth &&
+             instance <= configuration.maximum_instances) ||
+            (target == ParameterTarget::stereo_delay && instance == 0) ||
+            (target == ParameterTarget::sample_voice && parameter >= 1 &&
+             parameter <= 3) ||
+            (target == ParameterTarget::mixer_track && instance >= 1 &&
+             instance <= 32 && parameter >= 1 && parameter <= 4) ||
+            (target == ParameterTarget::mixer_aux && instance >= 1 &&
+             instance <= 2 && parameter == 1) ||
+            (target == ParameterTarget::mixer_master && instance == 0 &&
+             parameter == 1) ||
+            (target == ParameterTarget::external_fx && instance >= 1 &&
+             instance <= 2 && parameter >= 1 && parameter <= 3);
+        if (!valid_numeric_destination ||
             (route.scope == ModulationScope::track &&
              route.destination.instance == 0))
             return false;
@@ -76,7 +99,7 @@ bool ModulationEngine::configure(
             if (configuration.routes[other].id == route.id)
                 return false;
         if (configuration.sources[static_cast<std::size_t>(route.source)]
-                    .scope == ModulationScope::track) {
+                .scope == ModulationScope::track) {
             if (route.track_id == 0)
                 return false;
             bool found{};
@@ -130,9 +153,13 @@ void ModulationEngine::set_input(ModulationSourceId id, float value) noexcept {
     const auto source = static_cast<std::size_t>(id);
     if (source >= configuration_.source_count || !std::isfinite(value))
         return;
-    source_states_[0][source].value = clamp_source(value);
+    if (id == ModulationSourceId::envelope_follower)
+        source_states_[0][source].target = std::clamp(value, 0.0F, 1.0F);
+    else
+        source_states_[0][source].value = clamp_source(value);
 }
-void ModulationEngine::note_on(std::uint64_t track_id, float velocity) noexcept {
+void ModulationEngine::note_on(std::uint64_t track_id,
+                               float velocity) noexcept {
     const auto local_slot = track_slot(track_id);
     const auto envelope_slot =
         configuration_.sources[envelope_source].scope == ModulationScope::global
@@ -153,10 +180,10 @@ void ModulationEngine::note_on(std::uint64_t track_id, float velocity) noexcept 
         source_states_[velocity_slot][velocity_source].value =
             std::clamp(velocity, 0.0F, 1.0F) * 2.0F - 1.0F;
     for (std::size_t source = 0; source < 4; ++source) {
-        const auto slot = configuration_.sources[source].scope ==
-                                  ModulationScope::global
-                              ? 0
-                              : local_slot;
+        const auto slot =
+            configuration_.sources[source].scope == ModulationScope::global
+                ? 0
+                : local_slot;
         if (slot < track_count_ && configuration_.sources[source].retrigger)
             source_states_[slot][source].phase = 0;
     }
@@ -242,16 +269,16 @@ void ModulationEngine::update_sources(std::uint32_t elapsed) noexcept {
             if ((settings.scope == ModulationScope::global && track != 0) ||
                 (settings.scope == ModulationScope::track && track == 0))
                 continue;
-            const auto rate = settings.tempo_sync
-                                  ? tempo_bpm_ /
-                                        (60.0F * std::max(0.03125F,
-                                                          settings.beats_per_cycle))
-                                  : std::max(0.0F, settings.rate_hz);
+            const auto rate =
+                settings.tempo_sync
+                    ? tempo_bpm_ /
+                          (60.0F * std::max(0.03125F, settings.beats_per_cycle))
+                    : std::max(0.0F, settings.rate_hz);
             auto &state = source_states_[track][source];
             const auto previous = state.phase;
             state.phase = std::fmod(state.phase + seconds * rate, 1.0);
-            state.value = waveform(track, source, state.phase,
-                                   state.phase < previous);
+            state.value =
+                waveform(track, source, state.phase, state.phase < previous);
         }
         for (const auto source_id : {ModulationSourceId::sample_hold,
                                      ModulationSourceId::smooth_random}) {
@@ -270,11 +297,32 @@ void ModulationEngine::update_sources(std::uint32_t elapsed) noexcept {
                 state.held = state.target;
                 state.target = random(track, source);
             }
-            state.value = source_id == ModulationSourceId::sample_hold
-                              ? state.target
-                              : state.held +
-                                    (state.target - state.held) *
-                                        static_cast<float>(state.phase);
+            state.value =
+                source_id == ModulationSourceId::sample_hold
+                    ? state.target
+                    : state.held + (state.target - state.held) *
+                                       static_cast<float>(state.phase);
+        }
+        const auto follower_index =
+            static_cast<std::size_t>(ModulationSourceId::envelope_follower);
+        const auto &follower_settings = configuration_.sources[follower_index];
+        if (track == 0 && follower_settings.scope == ModulationScope::global) {
+            auto &follower = source_states_[0][follower_index];
+            const auto target = std::clamp(
+                (follower.target - follower_settings.follower_threshold) *
+                    follower_settings.follower_gain,
+                0.0F, 1.0F);
+            const auto duration =
+                target > (follower.value + 1.0F) * 0.5F
+                    ? follower_settings.follower_attack_seconds
+                    : follower_settings.follower_release_seconds;
+            const auto coefficient =
+                duration <= 0
+                    ? 1.0F
+                    : 1.0F - std::exp(-static_cast<float>(seconds) / duration);
+            const auto current = (follower.value + 1.0F) * 0.5F;
+            follower.value =
+                (current + (target - current) * coefficient) * 2.0F - 1.0F;
         }
         auto &envelope = source_states_[track][envelope_source];
         const auto &settings = configuration_.sources[envelope_source];

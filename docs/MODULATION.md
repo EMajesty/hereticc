@@ -14,8 +14,9 @@ values, effective values, route source values, and a generation counter.
 ## Sources, scope, and timing
 
 The source bank contains four sine/triangle/saw/square/random LFOs, an ADSR
-modulation envelope, sample-and-hold, smooth random, X/Y, note velocity, and
-MIDI CC. Every source declares `global`, `track`, or `voice` scope. Global
+modulation envelope, sample-and-hold, smooth random, X/Y, note velocity, MIDI
+CC, and a peak envelope follower. Every source declares `global`, `track`, or
+`voice` scope. Global
 sources have one state. Track sources create fixed-capacity independent state
 for every routed track, including phase, envelope gate/stage, retrigger state,
 and a random stream derived deterministically from `(seed, track ID)`.
@@ -35,20 +36,27 @@ independent gate. Runtime phase is not persisted.
 
 Random sources use a fixed integer generator with an explicit seed, never
 process randomness. Reconfiguration produces repeatable output for identical
-settings and track IDs. X/Y and MIDI CC enter through bounded commands.
+settings and track IDs. X/Y and MIDI CC enter through bounded commands. The
+initial follower reads the previous master pre-effects block and applies
+configurable attack, release, sensitivity and threshold. This deliberate
+one-block observation latency keeps the tap bounded; selectable track, aux and
+physical-input taps remain deferred.
 
 ## Routes and destinations
 
 Routes have stable IDs, source, explicit scope/track ID, numeric destination,
 bipolar depth, polarity, and enabled state. Sources may feed multiple
 destinations and contributions to one destination sum before clamping. Initial
-real-time destinations are subtractive-synth pitch, oscillator, filter,
-envelope and gain controls, plus native-delay time, feedback, mix, and gain.
+real-time destinations are subtractive-synth and native-delay controls; sample
+pitch/gain/pan; track gain/pan/two aux sends; aux return and master gain; and
+external-FX wet/send/return gain. Fixed-size transient overlays feed the mixer,
+so modulation never republishes its configuration. With stretching enabled,
+sample pitch changes the independent pitch ratio without changing time ratio.
 
-Sample pad settings, mixer configuration, external-FX routing, discrete values,
-file paths, and topology are rejected because they require prepared snapshots
-or control actions. Additional numeric DSP destinations can opt in through the
-parameter registry once they have a bounded callback path.
+Discrete values, files, channel assignments, latency sizes, routing topology
+and immutable sample ownership are rejected. Sample filter cutoff is deferred
+because sample voices do not yet own a filter. Stored pad, mixer and scene
+values remain unchanged.
 
 ## Ownership and clients
 
@@ -62,23 +70,21 @@ The GUI `MOD` view selects routes with Up/Down, adjusts depth with Left/Right,
 and toggles enable with Enter. The same actions support pointer clients, eight
 encoders, a data wheel, XY, MIDI, and remote clients without Lua.
 
-Projects write optional `modulation.ngm`. It preserves source settings, seeds,
+Projects write optional version-3 `modulation.ngm`. It preserves source settings, seeds,
 route IDs, scopes, track IDs, depths, and destinations. Older projects load an
 empty matrix. Forward versions and unsafe destinations are rejected.
 
-Current limitations: no per-voice sample modulation, audio-rate modulation,
-recursive graphs, modulation curves, per-track MIDI CC/XY lanes, or modulation
-of prepared mixer/routing state. Delay destinations remain block-applied.
+Current limitations: no per-voice sample modulation, sample filter, selectable
+follower taps, audio-rate modulation, recursive graphs, modulation curves, or
+per-track MIDI CC/XY lanes. Delay destinations remain block-applied.
 
 ## Scope resolution
 
-Destinations carry a stable numeric instrument instance. Instance `0` means all
-synth instances only for a global route. A global route may instead name one
-instance. Track routes require track and instance IDs, so their independent
-source state can affect only the routed instrument. Voice routes require a
-concrete synth instance and execute inside its active voices. Ambiguous local
-routes, voice routes to shared delay state, and out-of-range instances fail
-control-side validation.
+Destinations carry a stable numeric identity. Synth identities select an
+instrument instance, sample identities select a timeline track (`0` means all
+sample voices), and mixer/FX identities are one-based channel or bus slots.
+Track routes always carry a track ID. Voice routes require a concrete synth
+instance. Ambiguous routes and out-of-range identities fail validation.
 
 For a voice destination, the instance-level effective parameter is the base.
 The voice's normalized contributions are then summed once and clamped. This

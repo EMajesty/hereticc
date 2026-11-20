@@ -4,8 +4,8 @@
 #include "neurogenic/audio/sample_manager.hpp"
 #include "neurogenic/core/control_dispatcher.hpp"
 #include "neurogenic/core/spsc_queue.hpp"
-#include "neurogenic/dsp/parameter_destination.hpp"
 #include "neurogenic/dsp/modulation.hpp"
+#include "neurogenic/dsp/parameter_destination.hpp"
 #include "neurogenic/dsp/processor.hpp"
 #include "neurogenic/instrument/subtractive_synth.hpp"
 #include "neurogenic/midi/mapping.hpp"
@@ -53,11 +53,18 @@ void test_modulation_engine() {
     configuration.sources[0].retrigger = true;
     configuration.route_count = 2;
     configuration.routes[0] = {
-        1, ModulationSourceId::lfo_1,
+        1,
+        ModulationSourceId::lfo_1,
         {ParameterTarget::subtractive_synth,
          static_cast<std::uint32_t>(SynthParameter::cutoff), 1},
-        20, 20000, 10000, 0.5F, true, ModulationPolarity::bipolar,
-        ModulationScope::track, 10};
+        20,
+        20000,
+        10000,
+        0.5F,
+        true,
+        ModulationPolarity::bipolar,
+        ModulationScope::track,
+        10};
     configuration.routes[1] = configuration.routes[0];
     configuration.routes[1].id = 2;
     configuration.routes[1].destination.parameter =
@@ -71,14 +78,14 @@ void test_modulation_engine() {
     float cutoff{}, resonance{};
     const auto process = [&](int frames) {
         for (int i = 0; i < frames; ++i)
-            engine.process_frame([&](ParameterDestination destination,
-                                     float value) {
-                if (destination.parameter ==
-                    static_cast<std::uint32_t>(SynthParameter::cutoff))
-                    cutoff = value;
-                else
-                    resonance = value;
-            });
+            engine.process_frame(
+                [&](ParameterDestination destination, float value) {
+                    if (destination.parameter ==
+                        static_cast<std::uint32_t>(SynthParameter::cutoff))
+                        cutoff = value;
+                    else
+                        resonance = value;
+                });
     };
     process(40);
     engine.note_on(10, 1.0F);
@@ -104,25 +111,21 @@ void test_modulation_engine() {
     engine.set_input(ModulationSourceId::xy_x, 1);
     engine.set_input(ModulationSourceId::xy_y, 1);
     float effective{};
-    engine.process_frame([&](ParameterDestination, float value) {
-        effective = value;
-    });
+    engine.process_frame(
+        [&](ParameterDestination, float value) { effective = value; });
     near(effective, 0.75F, "multiple route normalized summation");
-    engine.set_automation(
-        {ParameterTarget::stereo_delay,
-         static_cast<std::uint32_t>(DelayParameter::mix)},
-        0.1F);
-    engine.process_frame([&](ParameterDestination, float value) {
-        effective = value;
-    });
+    engine.set_automation({ParameterTarget::stereo_delay,
+                           static_cast<std::uint32_t>(DelayParameter::mix)},
+                          0.1F);
+    engine.process_frame(
+        [&](ParameterDestination, float value) { effective = value; });
     near(effective, 0.6F, "automation and modulation remain separate");
     summed.routes[0].enabled = false;
     summed.routes[1].depth = -1.0F;
     check(engine.configure(summed), "bypass modulation configuration");
     engine.set_input(ModulationSourceId::xy_y, 1);
-    engine.process_frame([&](ParameterDestination, float value) {
-        effective = value;
-    });
+    engine.process_frame(
+        [&](ParameterDestination, float value) { effective = value; });
     near(effective, 0.0F, "bipolar modulation clamps destination");
 
     auto invalid = summed;
@@ -133,16 +136,21 @@ void test_modulation_engine() {
 
     ModulationConfiguration random_configuration;
     random_configuration.update_interval = 1;
-    auto &random_source = random_configuration.sources[static_cast<std::size_t>(
-        ModulationSourceId::sample_hold)];
+    auto &random_source =
+        random_configuration
+            .sources[static_cast<std::size_t>(ModulationSourceId::sample_hold)];
     random_source.rate_hz = 100;
     random_source.seed = 12345;
     random_configuration.route_count = 1;
     random_configuration.routes[0] = {
-        1, ModulationSourceId::sample_hold,
+        1,
+        ModulationSourceId::sample_hold,
         {ParameterTarget::stereo_delay,
          static_cast<std::uint32_t>(DelayParameter::feedback)},
-        0, 1, 0.5F, 0.5F};
+        0,
+        1,
+        0.5F,
+        0.5F};
     ModulationEngine first(1000), second(1000);
     check(first.configure(random_configuration) &&
               second.configure(random_configuration),
@@ -156,10 +164,165 @@ void test_modulation_engine() {
     }
     near(a, b, "sample-and-hold seed reproducibility");
 
+    ModulationConfiguration expanded;
+    expanded.update_interval = 1;
+    expanded.route_count = 3;
+    expanded.routes[0] = {
+        1,
+        ModulationSourceId::xy_x,
+        {ParameterTarget::sample_voice,
+         static_cast<std::uint32_t>(SampleModulationParameter::pitch)},
+        -12,
+        12,
+        0,
+        0.5F};
+    expanded.routes[1] = {
+        2,
+        ModulationSourceId::xy_x,
+        {ParameterTarget::mixer_track,
+         static_cast<std::uint32_t>(MixerTrackModulationParameter::pan), 1},
+        -1,
+        1,
+        0,
+        1.0F};
+    expanded.routes[2] = {
+        3,
+        ModulationSourceId::xy_x,
+        {ParameterTarget::external_fx,
+         static_cast<std::uint32_t>(ExternalFxModulationParameter::wet), 1},
+        0,
+        1,
+        0.5F,
+        0.5F};
+    check(engine.configure(expanded),
+          "expanded numeric modulation destinations");
+    engine.set_input(ModulationSourceId::xy_x, 1.0F);
+    std::array<float, 3> expanded_values{};
+    engine.process_frame([&](ParameterDestination destination, float value) {
+        if (destination.target == ParameterTarget::sample_voice)
+            expanded_values[0] = value;
+        if (destination.target == ParameterTarget::mixer_track)
+            expanded_values[1] = value;
+        if (destination.target == ParameterTarget::external_fx)
+            expanded_values[2] = value;
+    });
+    near(expanded_values[0], 12.0F, "sample pitch modulation composition");
+    near(expanded_values[1], 1.0F, "mixer pan modulation clamping");
+    near(expanded_values[2], 1.0F, "external FX wet modulation composition");
+
+    ModulationConfiguration follower;
+    follower.update_interval = 10;
+    auto &follower_source = follower.sources[static_cast<std::size_t>(
+        ModulationSourceId::envelope_follower)];
+    follower_source.follower_attack_seconds = 0.01F;
+    follower_source.follower_release_seconds = 0.1F;
+    follower.route_count = 1;
+    follower.routes[0] = {1,
+                          ModulationSourceId::envelope_follower,
+                          {ParameterTarget::mixer_master, 1},
+                          0,
+                          2,
+                          1,
+                          0.5F};
+    check(engine.configure(follower), "envelope follower configuration");
+    engine.set_input(ModulationSourceId::envelope_follower, 1.0F);
+    float follower_attack{};
+    process(10);
+    follower_attack = engine.snapshot().source_values[static_cast<std::size_t>(
+        ModulationSourceId::envelope_follower)];
+    engine.set_input(ModulationSourceId::envelope_follower, 0.0F);
+    process(10);
+    const auto follower_release =
+        engine.snapshot().source_values[static_cast<std::size_t>(
+            ModulationSourceId::envelope_follower)];
+    check(follower_attack > follower_release && follower_release > -1.0F,
+          "envelope follower attack and release smoothing");
+
+    Mixer numeric_mixer(1000);
+    MixerConfiguration numeric_config;
+    numeric_config.revision = 1;
+    numeric_config.track_count = 1;
+    numeric_config.tracks[0].track = 1;
+    std::string numeric_error;
+    check(numeric_mixer.publish(numeric_config, numeric_error),
+          "numeric mixer configuration");
+    numeric_mixer.begin_block(1);
+    check(
+        numeric_mixer.set_modulation(
+            {ParameterTarget::mixer_track,
+             static_cast<std::uint32_t>(MixerTrackModulationParameter::pan), 1},
+            1.0F),
+        "mixer numeric overlay");
+    numeric_mixer.capture_modulation_frame(0);
+    check(numeric_mixer.add_track(1, 0, 1.0F, 1.0F), "mixer test signal");
+    std::array<float, 1> mix_left{}, mix_right{};
+    numeric_mixer.process(mix_left, mix_right);
+    near(mix_left[0], 0.0F, "mixer pan overlay left");
+    near(mix_right[0], 1.0F, "mixer pan overlay right");
+
+    const auto render_partitioned_mixer = [&](bool split) {
+        Mixer mixer(1000);
+        std::string error;
+        check(mixer.publish(numeric_config, error), "partition mixer publish");
+        std::array<float, 64> rendered_left{}, rendered_right{};
+        const auto render = [&](std::size_t offset, std::size_t count,
+                                float pan_value) {
+            mixer.begin_block(count);
+            check(mixer.set_modulation({ParameterTarget::mixer_track,
+                                        static_cast<std::uint32_t>(
+                                            MixerTrackModulationParameter::pan),
+                                        1},
+                                       pan_value),
+                  "partition mixer modulation");
+            for (std::size_t frame = 0; frame < count; ++frame) {
+                mixer.capture_modulation_frame(frame);
+                check(mixer.add_track(1, frame, 1, 1), "partition mixer input");
+            }
+            mixer.process(
+                std::span<float>(rendered_left).subspan(offset, count),
+                std::span<float>(rendered_right).subspan(offset, count));
+        };
+        if (split) {
+            render(0, 32, -1);
+            render(32, 32, 1);
+        } else {
+            mixer.begin_block(64);
+            check(mixer.set_modulation({ParameterTarget::mixer_track,
+                                        static_cast<std::uint32_t>(
+                                            MixerTrackModulationParameter::pan),
+                                        1},
+                                       -1),
+                  "whole mixer first modulation");
+            for (std::size_t frame = 0; frame < 64; ++frame) {
+                if (frame == 32)
+                    check(mixer.set_modulation(
+                              {ParameterTarget::mixer_track,
+                               static_cast<std::uint32_t>(
+                                   MixerTrackModulationParameter::pan),
+                               1},
+                              1),
+                          "whole mixer second modulation");
+                mixer.capture_modulation_frame(frame);
+                check(mixer.add_track(1, frame, 1, 1), "whole mixer input");
+            }
+            mixer.process(rendered_left, rendered_right);
+        }
+        return std::pair{rendered_left, rendered_right};
+    };
+    const auto whole_mixer = render_partitioned_mixer(false);
+    const auto split_mixer = render_partitioned_mixer(true);
+    for (std::size_t frame = 0; frame < 64; ++frame) {
+        near(whole_mixer.first[frame], split_mixer.first[frame],
+             "mixer modulation left callback partition independence");
+        near(whole_mixer.second[frame], split_mixer.second[frame],
+             "mixer modulation right callback partition independence");
+    }
+
     ModulationConfiguration voice_velocity;
     voice_velocity.update_interval = 1;
-    voice_velocity.sources[static_cast<std::size_t>(
-        ModulationSourceId::velocity)].scope = ModulationScope::voice;
+    voice_velocity
+        .sources[static_cast<std::size_t>(ModulationSourceId::velocity)]
+        .scope = ModulationScope::voice;
     voice_velocity.route_count = 1;
     voice_velocity.routes[0] = {
         1,
@@ -208,16 +371,16 @@ void test_modulation_engine() {
         split_right{};
     whole.process(whole_left, whole_right);
     for (std::size_t offset = 0; offset < split_left.size(); offset += 64)
-        partitioned.process(
-            std::span<float>(split_left).subspan(offset, 64),
-            std::span<float>(split_right).subspan(offset, 64));
+        partitioned.process(std::span<float>(split_left).subspan(offset, 64),
+                            std::span<float>(split_right).subspan(offset, 64));
     for (std::size_t i = 0; i < whole_left.size(); ++i)
         near(split_left[i], whole_left[i],
              "per-voice modulation callback partition independence");
 
     ModulationConfiguration voice_envelope = voice_velocity;
-    auto &envelope_settings = voice_envelope.sources[static_cast<std::size_t>(
-        ModulationSourceId::envelope)];
+    auto &envelope_settings =
+        voice_envelope
+            .sources[static_cast<std::size_t>(ModulationSourceId::envelope)];
     envelope_settings.scope = ModulationScope::voice;
     envelope_settings.attack_seconds = 1.0F;
     voice_envelope.routes[0].source = ModulationSourceId::envelope;
@@ -251,9 +414,9 @@ void test_modulation_engine() {
         track.instrument_id = std::string(subtractive_instrument_id);
         track.instrument_instance_id = static_cast<InstrumentInstanceId>(id);
         track.pattern.length = ticks_per_quarter;
-        track.pattern.events.push_back(
-            {id, 0, MusicalEventType::note, static_cast<std::uint8_t>(59 + id),
-             1.0F, ticks_per_quarter});
+        track.pattern.events.push_back({id, 0, MusicalEventType::note,
+                                        static_cast<std::uint8_t>(59 + id),
+                                        1.0F, ticks_per_quarter});
         instances.tracks.push_back(std::move(track));
     }
     AudioEngine instance_audio(1000, 4);
@@ -275,12 +438,12 @@ void test_modulation_engine() {
     ApplicationService application(audio, timeline, samples);
     auto created = application.execute(
         {"modulation.route-create.v1",
-         {{"source", std::int64_t{static_cast<std::int64_t>(
-                         ModulationSourceId::xy_x)}},
+         {{"source",
+           std::int64_t{static_cast<std::int64_t>(ModulationSourceId::xy_x)}},
           {"destination", std::string("synth.cutoff")},
           {"depth", 0.25},
-          {"scope", std::int64_t{static_cast<std::int64_t>(
-                        ModulationScope::global)}}}});
+          {"scope",
+           std::int64_t{static_cast<std::int64_t>(ModulationScope::global)}}}});
     check(created.accepted &&
               application.snapshot().modulation.route_count == 1 &&
               application.snapshot().project_dirty,
@@ -293,33 +456,44 @@ void test_modulation_engine() {
               .accepted,
           "instrument instance parameter action");
     check(application
-                  .execute({"modulation.xy.v1",
-                            {{"position", NormalizedXY{1.0, 0.5}}}})
-                  .accepted,
+              .execute(
+                  {"modulation.xy.v1", {{"position", NormalizedXY{1.0, 0.5}}}})
+              .accepted,
           "XY modulation action");
     std::array<float, 64> left{}, right{};
     audio.process(left, right);
     check(audio.modulation_snapshot().effective_values[0] > 8000,
           "application modulation reached audio engine");
+    check(application
+              .execute({"modulation.route-create.v1",
+                        {{"source", std::int64_t{static_cast<std::int64_t>(
+                                        ModulationSourceId::xy_x)}},
+                         {"destination", std::string("mixer.track.pan")},
+                         {"depth", 0.5},
+                         {"scope", std::int64_t{static_cast<std::int64_t>(
+                                       ModulationScope::global)}},
+                         {"instance_id", std::int64_t{1}}}})
+              .accepted,
+          "semantic mixer modulation destination");
     check(!application
-                   .execute({"modulation.route-create.v1",
-                             {{"source", std::int64_t{0}},
-                              {"destination", std::string("transport.tempo")},
-                              {"depth", 0.5},
-                              {"scope", std::int64_t{0}}}})
-                   .accepted,
+               .execute({"modulation.route-create.v1",
+                         {{"source", std::int64_t{0}},
+                          {"destination", std::string("transport.tempo")},
+                          {"depth", 0.5},
+                          {"scope", std::int64_t{0}}}})
+               .accepted,
           "unsafe modulation destination rejection");
     check(application
-              .execute({"modulation.source-configure.v1",
-                        {{"source", std::int64_t{static_cast<std::int64_t>(
-                                        ModulationSourceId::velocity)}},
-                         {"waveform", std::int64_t{0}},
-                         {"rate", 0.0},
-                         {"tempo_sync", false},
-                         {"beats", 1.0},
-                         {"scope", std::int64_t{static_cast<std::int64_t>(
-                                       ModulationScope::voice)}}}})
-              .accepted &&
+                  .execute({"modulation.source-configure.v1",
+                            {{"source", std::int64_t{static_cast<std::int64_t>(
+                                            ModulationSourceId::velocity)}},
+                             {"waveform", std::int64_t{0}},
+                             {"rate", 0.0},
+                             {"tempo_sync", false},
+                             {"beats", 1.0},
+                             {"scope", std::int64_t{static_cast<std::int64_t>(
+                                           ModulationScope::voice)}}}})
+                  .accepted &&
               application
                   .execute({"modulation.route-create.v1",
                             {{"source", std::int64_t{static_cast<std::int64_t>(
@@ -327,7 +501,7 @@ void test_modulation_engine() {
                              {"destination", std::string("synth.gain")},
                              {"depth", 0.5},
                              {"scope", std::int64_t{static_cast<std::int64_t>(
-                                            ModulationScope::voice)}},
+                                           ModulationScope::voice)}},
                              {"instance_id", std::int64_t{1}}}})
                   .accepted,
           "semantic per-voice modulation route creation");
@@ -1778,12 +1952,23 @@ void test_unified_project_persistence() {
     project.modulation.sources[0].waveform = LfoWaveform::triangle;
     project.modulation.sources[0].tempo_sync = true;
     project.modulation.sources[0].beats_per_cycle = 2;
+    auto &persisted_follower =
+        project.modulation.sources[static_cast<std::size_t>(
+            ModulationSourceId::envelope_follower)];
+    persisted_follower.follower_attack_seconds = 0.025F;
+    persisted_follower.follower_release_seconds = 0.3F;
+    persisted_follower.follower_gain = 2.0F;
+    persisted_follower.follower_threshold = 0.1F;
     project.modulation.route_count = 1;
     project.modulation.routes[0] = {
-        81, ModulationSourceId::lfo_1,
+        81,
+        ModulationSourceId::lfo_1,
         {ParameterTarget::subtractive_synth,
          static_cast<std::uint32_t>(SynthParameter::cutoff), 2},
-        20, 20000, 4321, -0.25F};
+        20,
+        20000,
+        4321,
+        -0.25F};
 
     ProjectIoMetrics save_metrics, load_metrics;
     save_project(project, root, &save_metrics);
@@ -1810,6 +1995,11 @@ void test_unified_project_persistence() {
               loaded.modulation.routes[0].id == 81 &&
               loaded.modulation.routes[0].destination.instance == 2 &&
               loaded.modulation.sources[0].tempo_sync &&
+              std::fabs(loaded.modulation
+                            .sources[static_cast<std::size_t>(
+                                ModulationSourceId::envelope_follower)]
+                            .follower_release_seconds -
+                        0.3F) < 0.0001F &&
               loaded.timeline.tracks[0].instrument_instance_id == 2 &&
               loaded.missing_assets.empty() &&
               save_metrics.metadata_bytes > 0 &&

@@ -45,6 +45,47 @@ resolve_parameter_destination(std::string_view id) noexcept {
     if (id == "effect.delay.mix")
         return {{ParameterTarget::stereo_delay,
                  static_cast<std::uint32_t>(D::mix)}};
+    if (id == "sample.pitch")
+        return {{ParameterTarget::sample_voice,
+                 static_cast<std::uint32_t>(SampleModulationParameter::pitch)}};
+    if (id == "sample.gain")
+        return {{ParameterTarget::sample_voice,
+                 static_cast<std::uint32_t>(SampleModulationParameter::gain)}};
+    if (id == "sample.pan")
+        return {{ParameterTarget::sample_voice,
+                 static_cast<std::uint32_t>(SampleModulationParameter::pan)}};
+    if (id == "mixer.track.gain")
+        return {
+            {ParameterTarget::mixer_track,
+             static_cast<std::uint32_t>(MixerTrackModulationParameter::gain)}};
+    if (id == "mixer.track.pan")
+        return {
+            {ParameterTarget::mixer_track,
+             static_cast<std::uint32_t>(MixerTrackModulationParameter::pan)}};
+    if (id == "mixer.track.aux-1")
+        return {{ParameterTarget::mixer_track,
+                 static_cast<std::uint32_t>(
+                     MixerTrackModulationParameter::aux_send_1)}};
+    if (id == "mixer.track.aux-2")
+        return {{ParameterTarget::mixer_track,
+                 static_cast<std::uint32_t>(
+                     MixerTrackModulationParameter::aux_send_2)}};
+    if (id == "mixer.aux.return")
+        return {{ParameterTarget::mixer_aux, 1}};
+    if (id == "mixer.master.gain")
+        return {{ParameterTarget::mixer_master, 1}};
+    if (id == "external-fx.wet")
+        return {
+            {ParameterTarget::external_fx,
+             static_cast<std::uint32_t>(ExternalFxModulationParameter::wet)}};
+    if (id == "external-fx.send-gain")
+        return {{ParameterTarget::external_fx,
+                 static_cast<std::uint32_t>(
+                     ExternalFxModulationParameter::send_gain)}};
+    if (id == "external-fx.return-gain")
+        return {{ParameterTarget::external_fx,
+                 static_cast<std::uint32_t>(
+                     ExternalFxModulationParameter::return_gain)}};
     return std::nullopt;
 }
 bool valid_legacy_parameter(ParameterTarget target,
