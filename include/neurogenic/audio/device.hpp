@@ -8,6 +8,12 @@ class AudioEngine;
 struct AudioPortCapabilities {
     std::string name;
     std::uint16_t maximum_channels{};
+    struct NativeFormat {
+        std::uint32_t sample_rate{};
+        std::uint16_t channels{};
+        friend bool operator==(const NativeFormat &, const NativeFormat &) = default;
+    };
+    std::vector<NativeFormat> native_formats;
 };
 class AudioDevice {
   public:
@@ -25,6 +31,10 @@ class AudioDevice {
                       std::uint16_t input_channels, std::string &error,
                       std::uint16_t output_channels = 2);
     void stop() noexcept;
+    [[nodiscard]] std::uint32_t selected_sample_rate() const noexcept;
+    [[nodiscard]] std::uint32_t selected_buffer_frames() const noexcept;
+    [[nodiscard]] std::uint16_t selected_input_channels() const noexcept;
+    [[nodiscard]] std::uint16_t selected_output_channels() const noexcept;
 
   private:
     struct Impl;

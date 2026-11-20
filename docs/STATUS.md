@@ -1,5 +1,12 @@
 # Implementation status
 
+Task 034 adds versioned system/audio/MIDI/display inventories, native audio
+format and negotiated-rate diagnostics, bounded offline/device stress reports,
+display QA profiles, and a controller event inspector. Headless CI covers all
+schemas with simulated capabilities. Physical N150/Pi 5 performance, touch
+alignment, six-channel I/O, audio/MIDI loopback and backend XRUN reporting remain
+hardware-dependent and are not claimed.
+
 Task 033 adds a bounded production-path workflow runner covering beat creation,
 sample loading/slicing, synth instances/modulation, mixer/resampling, simulated
 external FX, external MIDI/clock, performance-grid modes, compact GUI text

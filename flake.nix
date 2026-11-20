@@ -12,6 +12,10 @@
   outputs = inputs@{ self, nixpkgs, miniaudio, libremidi, sol2, lua, ... }:
     let
       supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
+      sourceRevision =
+        if self ? rev && self.rev != null then self.rev
+        else if self ? dirtyRev && self.dirtyRev != null then self.dirtyRev
+        else "local-path-unversioned";
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
       packageFor = pkgs: runTests: withGuiBackend: pkgs.stdenv.mkDerivation {
         pname = "neurogenic";
@@ -29,6 +33,7 @@
           "-DNEUROGENIC_FETCH_DEPENDENCIES=ON"
           "-DNEUROGENIC_BUILD_TESTS=${if runTests then "ON" else "OFF"}"
           "-DNEUROGENIC_ENABLE_GUI=${if withGuiBackend then "ON" else "OFF"}"
+          "-DNEUROGENIC_BUILD_COMMIT=${sourceRevision}"
           "-DFETCHCONTENT_FULLY_DISCONNECTED=ON"
           "-DFETCHCONTENT_SOURCE_DIR_MINIAUDIO=${miniaudio}"
           "-DFETCHCONTENT_SOURCE_DIR_LIBREMIDI=${libremidi}"

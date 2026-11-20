@@ -6,6 +6,33 @@
 #include <cmath>
 
 namespace neurogenic {
+DisplayDiagnostic query_display_diagnostic() noexcept {
+#ifdef NEUROGENIC_HAS_SDL3
+    DisplayDiagnostic result;
+    if (!SDL_Init(SDL_INIT_VIDEO)) {
+        result.error = SDL_GetError();
+        return result;
+    }
+    const SDL_DisplayID display = SDL_GetPrimaryDisplay();
+    const SDL_DisplayMode *mode = SDL_GetCurrentDisplayMode(display);
+    if (!display || !mode) {
+        result.error = SDL_GetError();
+        SDL_QuitSubSystem(SDL_INIT_VIDEO);
+        return result;
+    }
+    result.available = true;
+    result.width = mode->w;
+    result.height = mode->h;
+    result.drawable_width = mode->w;
+    result.drawable_height = mode->h;
+    result.content_scale = SDL_GetDisplayContentScale(display);
+    result.backend = SDL_GetCurrentVideoDriver() ? SDL_GetCurrentVideoDriver() : "unknown";
+    SDL_QuitSubSystem(SDL_INIT_VIDEO);
+    return result;
+#else
+    return {false, 0, 0, 0, 0, 1.0F, "not compiled", "SDL3 support unavailable"};
+#endif
+}
 #ifdef NEUROGENIC_HAS_SDL3
 namespace {
 void color(SDL_Renderer *renderer, UiColor value) {

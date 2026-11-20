@@ -97,6 +97,8 @@ ctest --preset sanitize
 ./build/dev/neurogenic --stats
 ./build/dev/neurogenic --list-devices
 ./build/dev/neurogenic --headless --list-devices
+./build/dev/neurogenic-diagnostics --json
+./build/dev/neurogenic-diagnostics --headless --stress 10
 ./build/dev/neurogenic --synth --headless
 ./build/dev/neurogenic path/to/sample.wav
 ./build/dev/neurogenic --interactive
@@ -120,6 +122,8 @@ emits JSON Lines for commit comparisons. See
 The bounded [workflow suite](docs/WORKFLOWS.md) exercises beat, synth,
 resampling, external-routing, MIDI and controller/GUI paths through production
 application services and runs in CTest without hardware.
+Physical bring-up commands and report schemas are documented in
+[docs/HARDWARE_TESTING.md](docs/HARDWARE_TESTING.md).
 
 With direnv installed, run `direnv allow` once; `.envrc` enters the same flake
 shell. Build the installable package with `nix build`, run it with

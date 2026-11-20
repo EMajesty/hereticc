@@ -7,6 +7,7 @@
 #include "neurogenic/dsp/modulation.hpp"
 #include "neurogenic/dsp/parameter_destination.hpp"
 #include "neurogenic/dsp/processor.hpp"
+#include "neurogenic/diagnostics/hardware.hpp"
 #include "neurogenic/instrument/subtractive_synth.hpp"
 #include "neurogenic/midi/mapping.hpp"
 #include "neurogenic/midi/routing.hpp"
@@ -42,6 +43,56 @@ void check(bool value, const char *message) {
 void near(float actual, float expected, const char *message) {
     if (std::fabs(actual - expected) > 0.0001F)
         throw std::runtime_error(message);
+}
+
+void test_hardware_diagnostics() {
+    using namespace neurogenic;
+    HardwareDiagnosticSnapshot snapshot;
+    snapshot.application_version = "test";
+    snapshot.application_commit = "abc123";
+    snapshot.architecture = "aarch64";
+    snapshot.cpu_model = "simulated & safe";
+    snapshot.kernel = "Linux test";
+    snapshot.distribution = "Test \"Linux\"";
+    snapshot.total_memory_bytes = 16ULL * 1024 * 1024 * 1024;
+    snapshot.audio_backend = "simulated";
+    snapshot.selected_buffer_frames = 256;
+    snapshot.audio_outputs.push_back({"six output", {{48000, 6}, {96000, 2}}});
+    snapshot.audio_inputs.push_back({"six input", {{48000, 6}}});
+    snapshot.midi_input_backend = "simulated";
+    snapshot.midi_output_backend = "simulated";
+    snapshot.midi_inputs.push_back({1, "controller", true});
+    snapshot.midi_outputs.push_back({1, "synth", false});
+    snapshot.display = {true, 1920, 1200, 1920, 1200, 1.5F, "dummy"};
+    const auto json = hardware_diagnostics_json(snapshot);
+    check(json.find("neurogenic.hardware-diagnostics.v1") != std::string::npos &&
+              json.find("\"sample_rate\":48000,\"channels\":6") != std::string::npos &&
+              json.find("Test \\\"Linux\\\"") != std::string::npos &&
+              json.find("\"content_scale\":1.5") != std::string::npos,
+          "hardware diagnostic JSON schema/capabilities");
+    check(hardware_diagnostics_summary(snapshot).find("1920x1200") !=
+              std::string::npos,
+          "hardware diagnostic human summary");
+    HardwareTestReport report;
+    report.application_commit = "abc123";
+    report.hardware_identity = "simulated";
+    report.os_kernel = "test";
+    report.audio_configuration = "48000 Hz / 256 frames / 6 channels";
+    report.scenario = "six-channel-routing";
+    report.status = "passed";
+    report.limitations = "simulated hardware";
+    report.measurements.audio.available = true;
+    report.measurements.audio.callback_count = 100;
+    const auto report_json = hardware_test_report_json(report);
+    check(report_json.find("neurogenic.hardware-test-report.v1") !=
+                  std::string::npos &&
+              report_json.find("six-channel-routing") != std::string::npos &&
+              report_json.find("neurogenic.performance.v1") != std::string::npos,
+          "versioned hardware report");
+    const auto host = system_diagnostics();
+    check(!host.architecture.empty() && !host.kernel.empty() &&
+              !host.application_version.empty(),
+          "host system diagnostic failure handling");
 }
 
 void test_modulation_engine() {
@@ -4907,6 +4958,7 @@ void test_lua_and_offline() {
 
 int main() {
     try {
+        test_hardware_diagnostics();
         test_performance_monitoring();
         test_midi_routing_and_clock();
         test_modulation_engine();

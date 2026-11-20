@@ -1,6 +1,17 @@
 cmake_minimum_required(VERSION 3.22)
 project(neurogenic VERSION 0.1.0 LANGUAGES C CXX)
 
+set(NEUROGENIC_BUILD_COMMIT "" CACHE STRING "Source commit recorded in diagnostics")
+if(NOT NEUROGENIC_BUILD_COMMIT)
+  execute_process(COMMAND git rev-parse --short=12 HEAD
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    OUTPUT_VARIABLE NEUROGENIC_BUILD_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET)
+endif()
+if(NOT NEUROGENIC_BUILD_COMMIT)
+  set(NEUROGENIC_BUILD_COMMIT "unknown")
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -25,10 +36,14 @@ add_library(neurogenic_engine
   src/application/control.cpp src/application/controller.cpp
   src/audio/engine.cpp src/audio/mixer.cpp src/audio/recording.cpp src/audio/sample.cpp src/audio/sample_manager.cpp src/audio/slicing.cpp src/core/command.cpp src/core/control_dispatcher.cpp
   src/dsp/modulation.cpp src/dsp/purest_gain.cpp src/dsp/processor.cpp src/dsp/parameter_destination.cpp src/dsp/time_stretch.cpp src/instrument/subtractive_synth.cpp src/midi/mapping.cpp src/midi/routing.cpp src/project/project.cpp
+  src/diagnostics/hardware.cpp
   src/performance/monitor.cpp
   src/sequencer/scheduler.cpp src/sequencer/pattern_adapter.cpp src/scripting/runtime.cpp src/timeline/edit.cpp src/timeline/io.cpp src/timeline/playback.cpp)
 target_include_directories(neurogenic_engine PUBLIC include)
 target_compile_options(neurogenic_engine PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_definitions(neurogenic_engine PRIVATE
+  NEUROGENIC_VERSION="${PROJECT_VERSION}"
+  NEUROGENIC_COMMIT="${NEUROGENIC_BUILD_COMMIT}")
 target_link_libraries(neurogenic_engine PUBLIC Threads::Threads)
 
 add_library(neurogenic_gui src/ui/gui.cpp src/ui/sdl_backend.cpp)
@@ -66,7 +81,10 @@ endif()
 
 add_executable(neurogenic apps/neurogenic.cpp)
 target_link_libraries(neurogenic PRIVATE neurogenic_engine neurogenic_live neurogenic_gui)
-install(TARGETS neurogenic RUNTIME DESTINATION bin)
+add_executable(neurogenic_diagnostics apps/neurogenic_diagnostics.cpp)
+target_link_libraries(neurogenic_diagnostics PRIVATE neurogenic_engine neurogenic_live neurogenic_gui)
+set_target_properties(neurogenic_diagnostics PROPERTIES OUTPUT_NAME neurogenic-diagnostics)
+install(TARGETS neurogenic neurogenic_diagnostics RUNTIME DESTINATION bin)
 install(FILES examples/generate.lua examples/timeline_drums.lua examples/timeline_mutate.lua
   examples/timeline_polyrhythm.lua examples/timeline_variation.lua DESTINATION share/neurogenic/examples)
 install(DIRECTORY examples/controllers DESTINATION share/neurogenic/examples)
@@ -81,6 +99,32 @@ if(NEUROGENIC_BUILD_TESTS)
   target_link_libraries(neurogenic_gui_smoke PRIVATE neurogenic_engine neurogenic_gui)
   add_test(NAME neurogenic_gui_smoke COMMAND neurogenic_gui_smoke)
   set_tests_properties(neurogenic_gui_smoke PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+  add_test(NAME neurogenic_diagnostics_schema
+    COMMAND neurogenic_diagnostics --headless --json)
+  set_tests_properties(neurogenic_diagnostics_schema PROPERTIES
+    PASS_REGULAR_EXPRESSION "neurogenic.hardware-diagnostics.v1" TIMEOUT 10
+    ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+  add_test(NAME neurogenic_diagnostics_stress
+    COMMAND neurogenic_diagnostics --headless --stress 0.05 --buffer 127
+      --sample-voices 8 --synth-voices 4)
+  set_tests_properties(neurogenic_diagnostics_stress PROPERTIES
+    PASS_REGULAR_EXPRESSION "neurogenic.hardware-test-report.v1" TIMEOUT 10
+    ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+  add_test(NAME neurogenic_diagnostics_device_lifecycle
+    COMMAND neurogenic_diagnostics --headless --realtime --stress 0.05
+      --output-channels 2)
+  set_tests_properties(neurogenic_diagnostics_device_lifecycle PROPERTIES
+    PASS_REGULAR_EXPRESSION "realtime-device-stress" TIMEOUT 10
+    ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+  add_test(NAME neurogenic_display_diagnostics
+    COMMAND neurogenic_diagnostics --display-test)
+  set_tests_properties(neurogenic_display_diagnostics PROPERTIES
+    PASS_REGULAR_EXPRESSION "neurogenic.display-test.v1" TIMEOUT 10
+    ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+  add_test(NAME neurogenic_diagnostics_invalid_configuration
+    COMMAND neurogenic_diagnostics --stress 1 --buffer 0)
+  set_tests_properties(neurogenic_diagnostics_invalid_configuration PROPERTIES
+    WILL_FAIL TRUE TIMEOUT 10)
   add_executable(neurogenic_workflows tests/workflow_scenarios.cpp)
   target_link_libraries(neurogenic_workflows PRIVATE neurogenic_engine neurogenic_gui)
   add_test(NAME neurogenic_workflows COMMAND neurogenic_workflows all)

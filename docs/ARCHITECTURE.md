@@ -285,6 +285,16 @@ between otherwise unit-tested modules and provides bounded CI coverage. Track
 creation/deletion, authoritative tempo changes, project rename and external
 MIDI destinations are application actions; adapters no longer need direct
 timeline mutation for those workflows.
+
+## Hardware diagnostics boundary
+
+The `neurogenic-diagnostics` client combines Linux system data, copied
+audio/MIDI capabilities, SDL display metrics, and existing performance
+snapshots. Device tests enter audio only through `AudioDevice` and
+`AudioEngine`; report serialization never runs in a callback. Native formats
+are enumerated on the control thread, and startup explicitly verifies the
+negotiated 48 kHz rate. System tuning and hardware policy remain outside the
+engine.
 Trigger probability and conditions are immutable compiled-plan metadata.
 Scheduling uses a stateless integer hash rather than a callback RNG, and Fill
 crosses into the audio thread through the bounded transport queue. Ratchets are

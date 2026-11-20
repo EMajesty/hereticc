@@ -1,5 +1,10 @@
 # Performance monitoring and benchmarks
 
+Device-backed bring-up uses `neurogenic-diagnostics --stress SECONDS
+--realtime` and emits `neurogenic.hardware-test-report.v1`. Callback deadline
+misses are not backend XRUN claims. See
+[hardware testing](HARDWARE_TESTING.md).
+
 Mixer scenarios cover 4, 8 and 16 channels, both stereo aux buses and simulated
 six-input/six-output routing. These host measurements do not establish physical
 Raspberry Pi 5 or Intel N150 performance.

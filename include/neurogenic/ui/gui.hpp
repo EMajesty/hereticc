@@ -30,6 +30,14 @@ struct DisplayMetrics {
     int window_width{}, window_height{}, drawable_width{}, drawable_height{};
     float pixel_ratio_x{1}, pixel_ratio_y{1};
 };
+struct DisplayDiagnostic {
+    bool available{};
+    int width{}, height{}, drawable_width{}, drawable_height{};
+    float content_scale{1.0F};
+    std::string backend;
+    std::string error;
+};
+[[nodiscard]] DisplayDiagnostic query_display_diagnostic() noexcept;
 struct UiPoint {
     float x{}, y{};
 };
