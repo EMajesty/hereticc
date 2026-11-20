@@ -1,4 +1,5 @@
 #include "neurogenic/midi/input.hpp"
+#include "neurogenic/midi/routing.hpp"
 #ifdef NEUROGENIC_HAS_LIBREMIDI
 #include <libremidi/libremidi.hpp>
 #endif
@@ -6,54 +7,160 @@
 #include <alsa/asoundlib.h>
 #endif
 #include <algorithm>
+#include <array>
+#include <chrono>
+
 namespace neurogenic {
 namespace {
 #ifdef NEUROGENIC_HAS_LIBREMIDI
-bool alsa_compiled(){
+bool alsa_compiled() {
 #if defined(LIBREMIDI_ALSA)
-return true;
+    return true;
 #else
-return false;
+    return false;
 #endif
 }
 #endif
-}
-struct MidiInput::Impl { MidiMapper& mapper;
+} // namespace
+struct MidiInput::Impl {
+    MidiMapper &mapper;
 #ifdef NEUROGENIC_HAS_LIBREMIDI
-  libremidi::observer observer;std::unique_ptr<libremidi::midi_in> input;
+#ifdef __linux__
+    libremidi::observer observer{
+        libremidi::observer_configuration{.track_any = true},
+        libremidi::observer_configuration_for(libremidi::API::ALSA_SEQ)};
+#else
+    libremidi::observer observer;
 #endif
-  explicit Impl(MidiMapper& m):mapper(m){}
+    std::array<std::unique_ptr<libremidi::midi_in>, maximum_midi_ports> inputs;
+#endif
+    explicit Impl(MidiMapper &value) : mapper(value) {}
 };
-MidiInput::MidiInput(MidiMapper& m):impl_(std::make_unique<Impl>(m)){}
-MidiInput::~MidiInput(){close();}
-std::string MidiInput::backend() const{
+MidiInput::MidiInput(MidiMapper &mapper)
+    : impl_(std::make_unique<Impl>(mapper)) {}
+MidiInput::~MidiInput() { close(); }
+std::string MidiInput::backend() const {
 #ifdef NEUROGENIC_HAS_LIBREMIDI
-const auto api=impl_->observer.get_current_api();if(api==libremidi::API::DUMMY){if(!alsa_compiled())return "not compiled (ALSA sequencer backend missing)";
+    const auto api = impl_->observer.get_current_api();
+    if (api == libremidi::API::DUMMY) {
+        if (!alsa_compiled())
+            return "not compiled (ALSA sequencer backend missing)";
 #ifdef NEUROGENIC_HAS_ALSA
-return "ALSA sequencer compiled and libasound "+std::string(snd_asoundlib_version())+" linked, but unavailable";
+        return "ALSA sequencer compiled and libasound " +
+               std::string(snd_asoundlib_version()) +
+               " linked, but unavailable";
 #else
-return "ALSA sequencer compiled, but runtime library unavailable";
+        return "ALSA sequencer compiled, but runtime library unavailable";
 #endif
-}return std::string(libremidi::get_api_display_name(api));
+    }
+    return std::string(libremidi::get_api_display_name(api));
 #else
-return "not compiled (configure with NEUROGENIC_FETCH_DEPENDENCIES=ON)";
+    return "not compiled (configure with NEUROGENIC_FETCH_DEPENDENCIES=ON)";
 #endif
 }
-std::vector<std::string> MidiInput::inputs() const {std::vector<std::string> result;
+std::vector<std::string> MidiInput::inputs() const {
+    std::vector<std::string> result;
 #ifdef NEUROGENIC_HAS_LIBREMIDI
-for(const auto& port:impl_->observer.get_input_ports())result.push_back(port.display_name.empty()?port.port_name:port.display_name);
+    for (const auto &port : impl_->observer.get_input_ports())
+        result.push_back(port.display_name.empty() ? port.port_name
+                                                   : port.display_name);
 #endif
-return result;}
-bool MidiInput::open(const std::string& selector,std::string& error){
+    return result;
+}
+bool MidiInput::open(const std::string &selector, std::string &error) {
+    return connect(1, selector, error);
+}
+bool MidiInput::connect(std::uint32_t logical, const std::string &selector,
+                        std::string &error) {
 #ifdef NEUROGENIC_HAS_LIBREMIDI
-try{if(impl_->observer.get_current_api()==libremidi::API::DUMMY){error=alsa_compiled()?"ALSA sequencer backend was compiled, but is unavailable (is /dev/snd/seq accessible?)":"libremidi was compiled without the ALSA sequencer backend";return false;}auto ports=impl_->observer.get_input_ports();auto selected=ports.end();if(selector.empty()){if(!ports.empty())selected=ports.begin();}else{const bool numeric=std::all_of(selector.begin(),selector.end(),[](unsigned char c){return c>='0'&&c<='9';});if(numeric){const auto index=std::stoul(selector);if(index<ports.size())selected=ports.begin()+static_cast<std::ptrdiff_t>(index);}else selected=std::find_if(ports.begin(),ports.end(),[&](const auto& p){return p.port_name.find(selector)!=std::string::npos||p.display_name.find(selector)!=std::string::npos;});}if(selected==ports.end()){error=ports.empty()?"ALSA sequencer backend is active, but no MIDI inputs were discovered":"ALSA sequencer backend found no MIDI input matching: "+selector;return false;}libremidi::input_configuration config;config.on_message=[this](const libremidi::message& message){if(message.size()>=3)impl_->mapper.receive({message[0],message[1],message[2],static_cast<std::uint64_t>(message.timestamp)});};impl_->input=std::make_unique<libremidi::midi_in>(config);auto status=impl_->input->open_port(*selected);if(status!=stdx::error{})status.throw_exception();return true;}catch(const std::exception& e){error="MIDI device was discovered but could not be opened: "+std::string(e.what());impl_->input.reset();return false;}
+    if (!logical || logical > maximum_midi_ports) {
+        error = "invalid logical MIDI input port";
+        return false;
+    }
+    try {
+        if (impl_->observer.get_current_api() == libremidi::API::DUMMY) {
+            error = alsa_compiled()
+                        ? "ALSA sequencer backend was compiled, but is "
+                          "unavailable (is /dev/snd/seq accessible?)"
+                        : "libremidi was compiled without the ALSA sequencer "
+                          "backend";
+            return false;
+        }
+        const auto ports = impl_->observer.get_input_ports();
+        auto selected = ports.end();
+        const bool numeric =
+            !selector.empty() &&
+            std::all_of(selector.begin(), selector.end(),
+                        [](unsigned char c) { return c >= '0' && c <= '9'; });
+        if (numeric) {
+            const auto index = std::stoul(selector);
+            if (index < ports.size())
+                selected = ports.begin() + index;
+        } else
+            selected =
+                std::find_if(ports.begin(), ports.end(), [&](const auto &port) {
+                    return selector.empty() ||
+                           port.port_name.find(selector) != std::string::npos ||
+                           port.display_name.find(selector) !=
+                               std::string::npos;
+                });
+        if (selected == ports.end()) {
+            error = ports.empty()
+                        ? "ALSA sequencer backend is active, but no MIDI "
+                          "inputs were discovered"
+                        : "ALSA sequencer backend found no matching MIDI input";
+            return false;
+        }
+        libremidi::input_configuration configuration;
+        configuration.on_message = [this, logical](
+                                       const libremidi::message &message) {
+            if (message.empty())
+                return;
+            const auto size = static_cast<std::uint8_t>(
+                std::min<std::size_t>(message.size(), 3));
+            impl_->mapper.receive(
+                {message[0], size > 1 ? message[1] : std::uint8_t{},
+                 size > 2 ? message[2] : std::uint8_t{},
+                 static_cast<std::uint64_t>(
+                     std::chrono::duration_cast<std::chrono::nanoseconds>(
+                         std::chrono::steady_clock::now().time_since_epoch())
+                         .count()),
+                 logical, size});
+        };
+        auto input = std::make_unique<libremidi::midi_in>(
+            configuration,
+            libremidi::midi_in_configuration_for(impl_->observer));
+        auto status = input->open_port(*selected);
+        if (status != stdx::error{})
+            status.throw_exception();
+        impl_->inputs[logical - 1] = std::move(input);
+        error.clear();
+        return true;
+    } catch (const std::exception &exception) {
+        error = "MIDI device was discovered but could not be opened: " +
+                std::string(exception.what());
+        impl_->inputs[logical - 1].reset();
+        return false;
+    }
 #else
-(void)selector;error="libremidi support was not built";return false;
+    (void)logical;
+    (void)selector;
+    error = "libremidi support was not built";
+    return false;
 #endif
 }
-void MidiInput::close() noexcept{
+void MidiInput::disconnect(std::uint32_t logical) noexcept {
 #ifdef NEUROGENIC_HAS_LIBREMIDI
-impl_->input.reset();
+    if (logical && logical <= maximum_midi_ports)
+        impl_->inputs[logical - 1].reset();
+#else
+    (void)logical;
 #endif
 }
+void MidiInput::close() noexcept {
+#ifdef NEUROGENIC_HAS_LIBREMIDI
+    for (auto &input : impl_->inputs)
+        input.reset();
+#endif
 }
+} // namespace neurogenic

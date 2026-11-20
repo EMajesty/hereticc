@@ -1,5 +1,11 @@
 # Graphical interface
 
+The MIDI view reports clock ownership, measured external tempo/dropout,
+configured outputs/routes and queue counters. Enter toggles internal/external
+clock ownership and Shift+Enter invokes panic. Detailed port and routing-rule
+editing currently uses semantic actions, project data, and native CLI port
+selection.
+
 NEUROGENIC uses SDL3's built-in 2D renderer behind a renderer-independent C++
 UI model. SDL3 supplies X11/Wayland windows and keyboard, pointer and touch
 events while leaving a future KMSDRM route. GLFW was considered, but would also

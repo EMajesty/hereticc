@@ -30,8 +30,9 @@ authoritative transport -> scheduler -> instrument routing -> track/master DSP -
 - `sequencer`: the legacy 16-step compatibility scheduler and adapter, including
   next-bar Lua pattern swaps.
 - `audio`: prepared sample voices, miniaudio playback adapter, and offline renderer.
-- `midi`: timestamped messages, stable action mappings, simulated input, and a
-  libremidi adapter. MIDI timing does not drive the musical clock.
+- `midi`: multi-port libremidi input/output adapters, stable controller
+  mappings, validated thru routes, a bounded outbound scheduler, external MIDI
+  timeline tracks, and rational 24-PPQN clock generation/reception.
 - `scripting`: genuine Lua 5.4/sol2 `neurogenic.v1` API on a non-audio thread.
 - `instrument`: bounded native instrument contract and subtractive synth.
 - `dsp`: allocation-free processor contract, gain stage and stereo delay.
@@ -65,14 +66,13 @@ voice, with the lowest index breaking ties. Retriggering therefore never resets
 an unrelated voice unless the configured pool is exhausted. The stolen-voice
 counter exposes that overload condition.
 
-The live MIDI callback validates note-on messages and pushes them to a 256-item
-SPSC inbox; it does not call mappings, the engine, Lua, logging, or filesystem
-code. A dedicated `ControlDispatcher` thread drains that inbox, invokes note
-and action mappings, and drains accepted events before shutdown. Shutdown first
-closes the MIDI producer, then drains and joins the dispatcher. Mapping setup
-belongs to the control thread before dispatch starts. That dispatcher is the
-sole producer for the audio trigger queue; the audio callback is its sole
-consumer. The callback never executes Lua or MIDI code.
+The live MIDI callback copies one- to three-byte messages into a 256-item SPSC
+inbox; it does not call mappings, devices, Lua, logging, or filesystem code. A
+dedicated `ControlDispatcher` drains mappings and passes raw packets through a
+second bounded queue. The audio callback is the sole producer for scheduled
+output, thru and panic messages; a non-real-time dispatcher is the sole
+libremidi output caller. This preserves SPSC ownership while supporting notes,
+CC, program, bend, clock and transport. See [MIDI](MIDI.md).
 
 Editable timelines own strings and vectors on the control side. `compile_timeline`
 validates stable identifiers and converts note durations into explicit on/off

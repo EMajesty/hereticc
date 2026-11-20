@@ -3,6 +3,7 @@
 #include "neurogenic/audio/sample_manager.hpp"
 #include "neurogenic/dsp/processor.hpp"
 #include "neurogenic/instrument/subtractive_synth.hpp"
+#include "neurogenic/midi/routing.hpp"
 #include "neurogenic/performance/monitor.hpp"
 #include "neurogenic/project/project.hpp"
 #include "neurogenic/timeline/playback.hpp"
@@ -138,6 +139,35 @@ void effect_case(bool enabled) {
         checksum += left[0] != 0;
     }
     result(enabled ? "effect_enabled" : "effect_bypassed", 48000, 256,
+           std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
+                                                                begin)
+                   .count() /
+               iterations);
+}
+void midi_case() {
+    neurogenic::MidiOutputScheduler output;
+    neurogenic::MidiClockGenerator clock(48000, 487805);
+    neurogenic::MidiRouter router;
+    std::string error;
+    const std::array<neurogenic::MidiRoute, 4> routes{{
+        {1, 1, 1, 0, 1}, {2, 1, 2, 0, 2}, {3, 1, 3, 0, 3},
+        {4, 1, 4, 0, 4}}};
+    if (!router.configure(routes, error))
+        throw std::runtime_error(error);
+    const std::array<neurogenic::MidiPortId, 4> ports{1, 2, 3, 4};
+    clock.start(output, ports);
+    std::uint64_t frame{};
+    const auto begin = Clock::now();
+    for (std::size_t i = 0; i < iterations; ++i) {
+        for (std::uint8_t note = 0; note < 16; ++note)
+            (void)router.route(
+                {1, {0x90, static_cast<std::uint8_t>(48 + note), 100}, 3},
+                output);
+        clock.process(256, frame, output, ports);
+        frame += 256;
+        checksum += output.dispatch([](const auto &) { return true; });
+    }
+    result("midi_four_ports_dense_clock", 48000, 256,
            std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
                                                                 begin)
                    .count() /
@@ -864,6 +894,7 @@ int main(int argc, char **argv) {
     synth_case(16, false);
     effect_case(false);
     effect_case(true);
+    midi_case();
     mixed_case();
     dense_case();
     expressive_case("probability_conditions", 1,

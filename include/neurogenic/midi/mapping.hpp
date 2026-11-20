@@ -10,6 +10,8 @@ namespace neurogenic {
 struct MidiMessage {
     std::uint8_t status{}, data1{}, data2{};
     std::uint64_t timestamp_ns{};
+    std::uint32_t port{1};
+    std::uint8_t size{3};
 };
 
 // One MIDI transport producer enqueues messages; one control thread dispatches
@@ -19,6 +21,7 @@ class MidiMapper {
     using Action = std::function<void()>;
     using NoteHandler = std::function<void(std::uint8_t, float)>;
     using NoteEventHandler = std::function<void(std::uint8_t, float, bool)>;
+    using RawHandler = std::function<void(const MidiMessage &)>;
     void map_button(std::uint8_t channel, std::uint8_t note, std::string id,
                     Action action);
     void set_note_handler(NoteHandler handler) {
@@ -26,6 +29,9 @@ class MidiMapper {
     }
     void set_note_event_handler(NoteEventHandler handler) {
         note_event_handler_ = std::move(handler);
+    }
+    void set_raw_handler(RawHandler handler) {
+        raw_handler_ = std::move(handler);
     }
     bool receive(const MidiMessage &) noexcept;
     bool dispatch_one();
@@ -44,6 +50,7 @@ class MidiMapper {
     std::unordered_map<std::uint16_t, Entry> buttons_;
     NoteHandler note_handler_;
     NoteEventHandler note_event_handler_;
+    RawHandler raw_handler_;
     std::atomic<std::uint64_t> dropped_{}, sequence_{};
 };
 } // namespace neurogenic

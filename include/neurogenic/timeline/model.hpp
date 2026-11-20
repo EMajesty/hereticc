@@ -23,15 +23,22 @@ constexpr std::uint32_t stable_id(std::string_view value) noexcept {
 inline constexpr std::string_view sample_instrument_id = "sample.main";
 inline constexpr std::string_view subtractive_instrument_id =
     "synth.subtractive.v1";
+inline constexpr std::string_view external_midi_instrument_id =
+    "midi.external.v1";
 inline constexpr auto sample_instrument_key = stable_id(sample_instrument_id),
                       subtractive_instrument_key =
-                          stable_id(subtractive_instrument_id);
+                          stable_id(subtractive_instrument_id),
+                      external_midi_instrument_key =
+                          stable_id(external_midi_instrument_id);
 
 enum class MusicalEventType : std::uint8_t {
     note,
     note_on,
     note_off,
-    parameter
+    parameter,
+    control_change,
+    program_change,
+    pitch_bend
 };
 enum class TriggerCondition : std::uint8_t {
     always,
@@ -71,6 +78,8 @@ struct Track {
     MusicalPattern pattern;
     std::string instrument_id{sample_instrument_id};
     InstrumentInstanceId instrument_instance_id{default_synth_instance_id};
+    std::uint32_t midi_output_port{1};
+    std::uint8_t midi_channel{};
 };
 struct TransportMetadata {
     std::uint32_t microseconds_per_quarter{500000};

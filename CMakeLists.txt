@@ -24,7 +24,7 @@ find_package(Threads REQUIRED)
 add_library(neurogenic_engine
   src/application/control.cpp src/application/controller.cpp
   src/audio/engine.cpp src/audio/mixer.cpp src/audio/recording.cpp src/audio/sample.cpp src/audio/sample_manager.cpp src/audio/slicing.cpp src/core/command.cpp src/core/control_dispatcher.cpp
-  src/dsp/modulation.cpp src/dsp/purest_gain.cpp src/dsp/processor.cpp src/dsp/parameter_destination.cpp src/dsp/time_stretch.cpp src/instrument/subtractive_synth.cpp src/midi/mapping.cpp src/project/project.cpp
+  src/dsp/modulation.cpp src/dsp/purest_gain.cpp src/dsp/processor.cpp src/dsp/parameter_destination.cpp src/dsp/time_stretch.cpp src/instrument/subtractive_synth.cpp src/midi/mapping.cpp src/midi/routing.cpp src/project/project.cpp
   src/performance/monitor.cpp
   src/sequencer/scheduler.cpp src/sequencer/pattern_adapter.cpp src/scripting/runtime.cpp src/timeline/edit.cpp src/timeline/io.cpp src/timeline/playback.cpp)
 target_include_directories(neurogenic_engine PUBLIC include)
@@ -51,7 +51,7 @@ if(NEUROGENIC_FETCH_DEPENDENCIES)
   target_link_libraries(neurogenic_engine PRIVATE neurogenic_miniaudio sol2::sol2 lua_static)
 endif()
 
-add_library(neurogenic_live src/audio/device.cpp src/midi/input.cpp)
+add_library(neurogenic_live src/audio/device.cpp src/midi/input.cpp src/midi/output.cpp)
 target_include_directories(neurogenic_live PUBLIC include)
 target_link_libraries(neurogenic_live PUBLIC neurogenic_engine)
 if(NEUROGENIC_FETCH_DEPENDENCIES)

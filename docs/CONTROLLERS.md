@@ -241,3 +241,11 @@ carries `instance_id`; adapters never infer global scope for a local target.
 Destination categories include synth, sample, mixer/aux/master and external
 FX. Numeric identities select tracks, channel slots or loop slots; adapters do
 not manipulate a routing graph or republish mixer configurations.
+
+# MIDI routing actions
+
+Adapters can select clock ownership and outputs, create/delete explicit
+channel-filter/remap routes, and invoke panic through stable `midi.*.v1`
+actions. Controller mappings and musical routing remain separate, so using a
+keyboard for both roles does not imply MIDI thru. MIDI learn remains registered
+as unavailable rather than simulated.

@@ -8,9 +8,6 @@ void MidiMapper::map_button(std::uint8_t channel, std::uint8_t note,
 }
 
 bool MidiMapper::receive(const MidiMessage &message) noexcept {
-    const auto type = message.status & 0xF0;
-    if (type != 0x90 && type != 0x80)
-        return false;
     if (!inbox_.push(message)) {
         dropped_.fetch_add(1, std::memory_order_relaxed);
         return false;
@@ -24,7 +21,12 @@ bool MidiMapper::dispatch_one() {
     MidiMessage message;
     if (!inbox_.pop(message))
         return false;
-    const bool note_on = (message.status & 0xF0) == 0x90 && message.data2 != 0;
+    if (raw_handler_)
+        raw_handler_(message);
+    const auto type = message.status & 0xF0;
+    if (type != 0x90 && type != 0x80)
+        return true;
+    const bool note_on = type == 0x90 && message.data2 != 0;
     if (note_event_handler_)
         note_event_handler_(message.data1, message.data2 / 127.0F, note_on);
     if (note_on && note_handler_)

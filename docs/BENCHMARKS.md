@@ -179,3 +179,12 @@ effective-value application; configuration preparation remains excluded. A
 16.0/18.1/16.2 µs for 16 routes, 32 routes and 16 tempo-synchronized routes,
 with approximately 38.8 MiB process RSS. These short offline averages are not
 worst-case, Pi 5/N150 or physical-audio results.
+
+Task 031 adds `midi_four_ports_dense_clock`: four explicit routes forward 16
+note messages per iteration while four-port 24-PPQN clock generation runs and
+the outbound queue is drained. It measures control/scheduling and queue
+dispatch overhead only; libremidi, kernel scheduling, USB/DIN transmission and
+physical jitter are excluded.
+On the 2026-11-20 Ryzen 7 7800X3D Debug host, a 100-iteration run averaged
+approximately 0.95 microseconds per 256-frame iteration (about 0.05% of one
+5.33 ms buffer deadline). This is an offline average, not a wire-latency claim.

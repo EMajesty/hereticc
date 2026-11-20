@@ -1,5 +1,11 @@
 # Project persistence
 
+`midi.ngm` stores the selected clock source, logical input/output selectors,
+clock output ports, route filters/remapping, and output-latency metadata.
+Logical selectors are retained when devices are missing; loading never binds an
+unrelated physical port automatically. Track MIDI destinations remain in the
+timeline data.
+
 NEUROGENIC project format version 1 is a directory, independent of SDL, Lua,
 and controller layouts:
 

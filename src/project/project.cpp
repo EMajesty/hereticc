@@ -271,6 +271,78 @@ ModulationConfiguration load_modulation(const std::filesystem::path &path) {
         throw std::runtime_error("invalid modulation configuration");
     return result;
 }
+std::string serialize_midi(const MidiProjectConfiguration &configuration) {
+    std::ostringstream out;
+    out << "NEUROGENIC_MIDI 1\nclock "
+        << static_cast<unsigned>(configuration.clock_source) << ' '
+        << configuration.clock_output_count;
+    for (std::size_t i = 0; i < configuration.clock_output_count; ++i)
+        out << ' ' << configuration.clock_outputs[i];
+    out << "\nroutes " << configuration.route_count << '\n';
+    for (std::size_t i = 0; i < configuration.route_count; ++i) {
+        const auto &route = configuration.routes[i];
+        out << route.id << ' ' << route.input_port << ' ' << route.output_port
+            << ' ' << int(route.input_channel) << ' '
+            << int(route.output_channel) << ' ' << route.notes << ' '
+            << route.control_change << ' ' << route.program_change << ' '
+            << route.pitch_bend << ' ' << route.clock << ' ' << route.transport
+            << ' ' << route.enabled << '\n';
+    }
+    for (std::size_t i = 0; i < maximum_midi_ports; ++i)
+        out << "port " << i + 1 << ' ' << configuration.output_latency_frames[i]
+            << ' ' << std::quoted(configuration.input_selectors[i].data())
+            << ' ' << std::quoted(configuration.output_selectors[i].data())
+            << '\n';
+    return out.str();
+}
+MidiProjectConfiguration load_midi(const std::filesystem::path &path) {
+    bounded(path);
+    std::ifstream input(path);
+    std::string magic, label;
+    unsigned version{}, source{};
+    MidiProjectConfiguration result;
+    if (!(input >> magic >> version) || magic != "NEUROGENIC_MIDI" ||
+        version != 1 ||
+        !(input >> label >> source >> result.clock_output_count) ||
+        label != "clock" || source > 1 ||
+        result.clock_output_count > maximum_midi_ports)
+        throw std::runtime_error("unsupported or malformed MIDI metadata");
+    result.clock_source = static_cast<MidiClockSource>(source);
+    for (std::size_t i = 0; i < result.clock_output_count; ++i)
+        if (!(input >> result.clock_outputs[i]) || !result.clock_outputs[i])
+            throw std::runtime_error("malformed MIDI clock output");
+    if (!(input >> label >> result.route_count) || label != "routes" ||
+        result.route_count > maximum_midi_routes)
+        throw std::runtime_error("malformed MIDI route count");
+    for (std::size_t i = 0; i < result.route_count; ++i) {
+        auto &route = result.routes[i];
+        int input_channel{}, output_channel{};
+        if (!(input >> route.id >> route.input_port >> route.output_port >>
+              input_channel >> output_channel >> route.notes >>
+              route.control_change >> route.program_change >>
+              route.pitch_bend >> route.clock >> route.transport >>
+              route.enabled))
+            throw std::runtime_error("malformed MIDI route");
+        route.input_channel = static_cast<std::int8_t>(input_channel);
+        route.output_channel = static_cast<std::int8_t>(output_channel);
+    }
+    std::string error;
+    if (!validate_midi_routes({result.routes.data(), result.route_count},
+                              error))
+        throw std::runtime_error("invalid MIDI routes: " + error);
+    for (std::size_t i = 0; i < maximum_midi_ports; ++i) {
+        std::size_t port{};
+        std::string in, out;
+        if (!(input >> label >> port >> result.output_latency_frames[i] >>
+              std::quoted(in) >> std::quoted(out)) ||
+            label != "port" || port != i + 1 || in.size() >= 64 ||
+            out.size() >= 64)
+            throw std::runtime_error("malformed MIDI port assignment");
+        std::copy(in.begin(), in.end(), result.input_selectors[i].begin());
+        std::copy(out.begin(), out.end(), result.output_selectors[i].begin());
+    }
+    return result;
+}
 } // namespace
 
 void save_project(const Project &project,
@@ -351,6 +423,7 @@ void save_project(const Project &project,
         checked_write(temporary / "scenes.ngr", scenes.str());
         checked_write(temporary / "modulation.ngm",
                       serialize_modulation(project.modulation));
+        checked_write(temporary / "midi.ngm", serialize_midi(project.midi));
         std::filesystem::rename(temporary, committed);
         std::ostringstream manifest;
         manifest << "NEUROGENIC_PROJECT " << Project::format_version << '\n'
@@ -436,6 +509,8 @@ Project load_project(const std::filesystem::path &directory,
     }
     if (std::filesystem::exists(files / "modulation.ngm"))
         result.modulation = load_modulation(files / "modulation.ngm");
+    if (std::filesystem::exists(files / "midi.ngm"))
+        result.midi = load_midi(files / "midi.ngm");
     for (auto &[slot, path] : result.samples.sample_paths) {
         path = resolve_reference(directory, path);
         if (!std::filesystem::exists(path))

@@ -192,6 +192,9 @@ struct ApplicationState {
     ModulationConfiguration modulation;
     ModulationSnapshot modulation_runtime;
     ModulationRouteId selected_modulation_route{};
+    MidiProjectConfiguration midi;
+    std::uint64_t midi_dropped{}, midi_sent{};
+    ExternalClockState external_midi_clock;
 };
 struct ApplicationCommand {
     std::string action_id;
@@ -224,6 +227,12 @@ class ApplicationService {
     [[nodiscard]] std::uint64_t rejected_commands() const noexcept;
     [[nodiscard]] SliceService &slices() noexcept { return slices_; }
     [[nodiscard]] RecordingService &recording() noexcept { return recording_; }
+    [[nodiscard]] MidiOutputScheduler &midi_output() noexcept {
+        return midi_output_;
+    }
+    [[nodiscard]] bool receive_midi(const MidiPacket &packet) noexcept {
+        return engine_.receive_midi(packet);
+    }
 
   private:
     CommandResult execute_locked(const ApplicationCommand &, std::uint64_t);
@@ -238,6 +247,8 @@ class ApplicationService {
     std::uint64_t recording_fixed_bars_{};
     mutable MixerConfiguration mixer_configuration_;
     ModulationConfiguration modulation_configuration_;
+    MidiOutputScheduler midi_output_;
+    MidiRouter midi_router_;
     ModulationRouteId next_modulation_route_id_{1};
     std::map<InstrumentInstanceId, std::map<std::string, double>>
         synth_instance_parameters_;

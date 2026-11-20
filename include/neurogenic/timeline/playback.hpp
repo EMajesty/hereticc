@@ -33,6 +33,8 @@ struct PlaybackTrack {
     EventId decision_event{};
     std::uint64_t decision_occurrence{};
     bool decision_fired{};
+    std::uint32_t midi_output_port{1};
+    std::uint8_t midi_channel{};
 };
 struct PlaybackPlan {
     TransportMetadata transport{};
@@ -56,6 +58,8 @@ struct TimelineScheduledEvent {
     float value{};
     std::uint32_t instrument{};
     InstrumentInstanceId instrument_instance{};
+    std::uint32_t midi_output_port{1};
+    std::uint8_t midi_channel{};
 };
 class TimelineScheduler {
   public:

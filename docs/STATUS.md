@@ -268,3 +268,12 @@ track gain/pan/aux sends, aux/master gain and external-FX wet/send/return. An
 attack/release follower observes the preceding master pre-effects block. Global
 and track sample routes are supported; per-voice sample sources, sample filters
 and selectable follower taps remain explicit deferred work.
+
+Task 031 adds up to eight logical libremidi inputs and outputs, bounded
+nonblocking output dispatch, validated channel-filter/remap thru routes,
+24-PPQN rational clock generation, filtered external clock/transport reception,
+panic/stop cleanup, and external MIDI timeline tracks for notes, CC, program
+and pitch bend. Timeline/project formats persist routing and logical device
+selectors. Host tests use simulated ports; physical jitter, hotplug/reconnect,
+continuous external phase slaving, Song Position Pointer seeking, MIDI learn,
+and the full GUI routing editor remain unverified or deferred.

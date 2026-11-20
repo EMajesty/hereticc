@@ -19,8 +19,8 @@ AudioEngine::AudioEngine(std::uint32_t rate, std::size_t voice_capacity,
           std::make_unique<SampleVersion[]>(sample_version_capacity)),
       sample_version_capacity_(sample_version_capacity),
       voices_(voice_capacity), legacy_events_(event_staging_capacity),
-      timeline_events_(event_staging_capacity), delay_(rate), modulation_(rate),
-      mixer_(rate) {
+      timeline_events_(event_staging_capacity), midi_clock_(rate), delay_(rate),
+      modulation_(rate), mixer_(rate) {
     if (rate == 0 || voice_capacity == 0 || event_staging_capacity == 0 ||
         sample_version_capacity == 0)
         throw std::invalid_argument(
@@ -415,6 +415,10 @@ void AudioEngine::restart() noexcept {
     if (!transport_commands_.push(TransportCommand::restart))
         dropped_transport_commands_.fetch_add(1, std::memory_order_relaxed);
 }
+void AudioEngine::midi_panic() noexcept {
+    if (!transport_commands_.push(TransportCommand::midi_panic))
+        dropped_transport_commands_.fetch_add(1, std::memory_order_relaxed);
+}
 bool AudioEngine::set_fill(bool active) noexcept {
     if (!transport_commands_.push(active ? TransportCommand::fill_on
                                          : TransportCommand::fill_off)) {
@@ -632,6 +636,9 @@ void AudioEngine::process(std::span<float> left,
     }
 
     Pattern pattern;
+    MidiClockOutputConfiguration midi_clock_configuration;
+    while (midi_clock_configurations_.pop(midi_clock_configuration))
+        midi_clock_configuration_ = midi_clock_configuration;
     ModulationConfiguration modulation_configuration;
     while (modulation_configurations_.pop(modulation_configuration)) {
         if (modulation_.configure(modulation_configuration)) {
@@ -683,6 +690,7 @@ void AudioEngine::process(std::span<float> left,
         scheduler_.set_tempo(timeline->transport.microseconds_per_quarter);
         project_tempo_bpm_ = static_cast<float>(
             60000000.0 / timeline->transport.microseconds_per_quarter);
+        midi_clock_.set_tempo(timeline->transport.microseconds_per_quarter);
         modulation_.set_tempo(project_tempo_bpm_);
         for (auto &synth : synths_)
             synth->set_tempo(project_tempo_bpm_);
@@ -693,19 +701,81 @@ void AudioEngine::process(std::span<float> left,
                 .state.store(PlanState::retired, std::memory_order_release);
         active_timeline_slot_ = timeline_slot;
     }
-    TransportCommand command;
-    while (transport_commands_.pop(command)) {
-        if (command == TransportCommand::play)
+    MidiRoutingConfiguration midi_routing;
+    while (midi_routing_configurations_.pop(midi_routing)) {
+        midi_router_.configure_realtime(
+            {midi_routing.routes.data(), midi_routing.route_count});
+        accept_external_clock_ = midi_routing.accept_external_clock;
+    }
+    MidiPacket midi_input;
+    while (midi_inputs_.pop(midi_input)) {
+        midi_clock_receiver_.receive(midi_input);
+        if (auto *output = midi_output_.load(std::memory_order_acquire))
+            (void)midi_router_.route(midi_input, *output);
+        if (accept_external_clock_ && midi_input.size &&
+            midi_input.bytes[0] == 0xFA) {
+            transport_frame_ = 0;
             transport_playing_ = true;
-        else if (command == TransportCommand::stop) {
+            stop_voices();
+            modulation_.restart();
+        } else if (accept_external_clock_ && midi_input.size &&
+                   midi_input.bytes[0] == 0xFB) {
+            transport_playing_ = true;
+        } else if (accept_external_clock_ && midi_input.size &&
+                   midi_input.bytes[0] == 0xFC) {
             transport_playing_ = false;
             stop_voices();
             modulation_.clear_automation();
+        }
+    }
+    const auto external_clock = midi_clock_receiver_.state();
+    external_clock_running_.store(external_clock.running,
+                                  std::memory_order_release);
+    external_clock_available_.store(external_clock.available,
+                                    std::memory_order_release);
+    external_clock_dropout_.store(external_clock.dropout,
+                                  std::memory_order_release);
+    external_clock_tempo_.store(external_clock.tempo_bpm,
+                                std::memory_order_release);
+    external_clock_pulses_.store(external_clock.pulses,
+                                 std::memory_order_release);
+    external_clock_last_timestamp_.store(external_clock.last_timestamp_ns,
+                                         std::memory_order_release);
+    TransportCommand command;
+    while (transport_commands_.pop(command)) {
+        if (command == TransportCommand::play) {
+            if (!transport_playing_ && midi_clock_configuration_.enabled)
+                if (auto *midi = midi_output_.load(std::memory_order_acquire))
+                    midi_clock_.continue_playback(
+                        *midi, {midi_clock_configuration_.ports.data(),
+                                midi_clock_configuration_.port_count});
+            transport_playing_ = true;
+        } else if (command == TransportCommand::stop) {
+            transport_playing_ = false;
+            stop_voices();
+            modulation_.clear_automation();
+            if (auto *midi = midi_output_.load(std::memory_order_acquire))
+                if (midi_clock_configuration_.enabled)
+                    midi_clock_.stop(
+                        *midi, {midi_clock_configuration_.ports.data(),
+                                midi_clock_configuration_.port_count});
+            if (auto *midi = midi_output_.load(std::memory_order_acquire))
+                midi->panic();
         } else if (command == TransportCommand::restart) {
             transport_frame_ = 0;
             transport_playing_ = true;
             stop_voices();
             modulation_.restart();
+            if (auto *midi = midi_output_.load(std::memory_order_acquire))
+                if (midi_clock_configuration_.enabled)
+                    midi_clock_.start(
+                        *midi, {midi_clock_configuration_.ports.data(),
+                                midi_clock_configuration_.port_count});
+            if (auto *midi = midi_output_.load(std::memory_order_acquire))
+                midi->panic();
+        } else if (command == TransportCommand::midi_panic) {
+            if (auto *output = midi_output_.load(std::memory_order_acquire))
+                output->panic();
         } else {
             const auto fill = command == TransportCommand::fill_on;
             timeline_scheduler_.set_fill(fill);
@@ -717,6 +787,12 @@ void AudioEngine::process(std::span<float> left,
     while (pending_trigger_count_ < pending_triggers_.size() &&
            triggers_.pop(incoming))
         pending_triggers_[pending_trigger_count_++] = incoming;
+    if (transport_playing_ && midi_clock_configuration_.enabled)
+        if (auto *midi = midi_output_.load(std::memory_order_acquire))
+            midi_clock_.process(
+                static_cast<std::uint32_t>(frames), callback_frame, *midi,
+                {midi_clock_configuration_.ports.data(),
+                 midi_clock_configuration_.port_count});
     for (std::size_t i = 1; i < pending_trigger_count_; ++i) {
         auto value = pending_triggers_[i];
         auto j = i;
@@ -873,6 +949,48 @@ void AudioEngine::process(std::span<float> left,
                 else if (event.type == MusicalEventType::note_off)
                     stop_timeline_voice(event.track, event.target_event_id,
                                         event.occurrence);
+            } else if (event.instrument == external_midi_instrument_key) {
+                if (auto *midi = midi_output_.load(std::memory_order_acquire)) {
+                    MidiPacket packet;
+                    packet.port = event.midi_output_port;
+                    packet.frame = callback_frame + frame;
+                    const auto channel = event.midi_channel & 0x0F;
+                    if (event.type == MusicalEventType::note_on ||
+                        event.type == MusicalEventType::note_off) {
+                        packet.bytes = {
+                            static_cast<std::uint8_t>(
+                                (event.type == MusicalEventType::note_on
+                                     ? 0x90
+                                     : 0x80) |
+                                channel),
+                            event.pitch,
+                            static_cast<std::uint8_t>(
+                                std::clamp(event.value, 0.0F, 1.0F) * 127.0F)};
+                        packet.size = 3;
+                    } else if (event.type == MusicalEventType::control_change) {
+                        packet.bytes = {
+                            static_cast<std::uint8_t>(0xB0 | channel),
+                            static_cast<std::uint8_t>(event.parameter_id),
+                            static_cast<std::uint8_t>(
+                                std::clamp(event.value, 0.0F, 1.0F) * 127.0F)};
+                        packet.size = 3;
+                    } else if (event.type == MusicalEventType::program_change) {
+                        packet.bytes = {
+                            static_cast<std::uint8_t>(0xC0 | channel),
+                            static_cast<std::uint8_t>(event.parameter_id), 0};
+                        packet.size = 2;
+                    } else if (event.type == MusicalEventType::pitch_bend) {
+                        const auto bend = static_cast<std::uint16_t>(std::clamp(
+                            8192.0F + event.value * 8191.0F, 0.0F, 16383.0F));
+                        packet.bytes = {
+                            static_cast<std::uint8_t>(0xE0 | channel),
+                            static_cast<std::uint8_t>(bend & 0x7F),
+                            static_cast<std::uint8_t>((bend >> 7) & 0x7F)};
+                        packet.size = 3;
+                    }
+                    if (packet.size)
+                        (void)midi->enqueue(packet);
+                }
             } else
                 missing_slot_triggers_.fetch_add(1, std::memory_order_relaxed);
         }

@@ -62,9 +62,15 @@ Timeline load_timeline(const std::filesystem::path &path) {
                 if (line >> std::quoted(track.instrument_id)) {
                 } else
                     line.clear();
-                if (version >= 3 &&
-                    !(line >> track.instrument_instance_id))
+                if (version >= 3 && !(line >> track.instrument_instance_id))
                     throw std::runtime_error("invalid instrument instance");
+                if (version >= 4) {
+                    unsigned channel{};
+                    if (!(line >> track.midi_output_port >> channel) ||
+                        channel > 15)
+                        throw std::runtime_error("invalid MIDI track routing");
+                    track.midi_channel = static_cast<std::uint8_t>(channel);
+                }
                 require_end(line);
                 timeline.tracks.push_back(std::move(track));
             } else if (kind == "note") {
@@ -118,6 +124,18 @@ Timeline load_timeline(const std::filesystem::path &path) {
                 if (line >> std::quoted(event.parameter_destination)) {
                 } else
                     line.clear();
+                require_end(line);
+                find_track(timeline, track).pattern.events.push_back(event);
+            } else if (kind == "cc" || kind == "program" || kind == "bend") {
+                TrackId track{};
+                MusicalEvent event;
+                event.type = kind == "cc" ? MusicalEventType::control_change
+                             : kind == "program"
+                                 ? MusicalEventType::program_change
+                                 : MusicalEventType::pitch_bend;
+                if (!(line >> track >> event.id >> event.tick >>
+                      event.parameter_id >> event.value))
+                    throw std::runtime_error("invalid external MIDI event");
                 require_end(line);
                 find_track(timeline, track).pattern.events.push_back(event);
             } else
@@ -178,7 +196,8 @@ void save_timeline(const Timeline &timeline,
         output << "track " << track.id << ' ' << track.pattern.length << ' '
                << (track.muted ? 1 : 0) << ' ' << std::quoted(track.name) << ' '
                << std::quoted(track.instrument_id) << ' '
-               << track.instrument_instance_id << '\n';
+               << track.instrument_instance_id << ' ' << track.midi_output_port
+               << ' ' << unsigned(track.midi_channel) << '\n';
         for (const auto &event : track.pattern.events) {
             if (event.type == MusicalEventType::note)
                 output << "note " << track.id << ' ' << event.id << ' '
@@ -198,13 +217,21 @@ void save_timeline(const Timeline &timeline,
                 if (event.type == MusicalEventType::note_off)
                     output << ' ' << event.target_event_id;
                 output << '\n';
-            } else {
+            } else if (event.type == MusicalEventType::parameter) {
                 output << "parameter " << track.id << ' ' << event.id << ' '
                        << event.tick << ' ' << event.parameter_id << ' '
                        << event.value;
                 if (!event.parameter_destination.empty())
                     output << ' ' << std::quoted(event.parameter_destination);
                 output << '\n';
+            } else {
+                const auto kind =
+                    event.type == MusicalEventType::control_change   ? "cc"
+                    : event.type == MusicalEventType::program_change ? "program"
+                                                                     : "bend";
+                output << kind << ' ' << track.id << ' ' << event.id << ' '
+                       << event.tick << ' ' << event.parameter_id << ' '
+                       << event.value << '\n';
             }
         }
     }

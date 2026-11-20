@@ -5,6 +5,7 @@
 #include "neurogenic/core/control_dispatcher.hpp"
 #include "neurogenic/midi/input.hpp"
 #include "neurogenic/midi/mapping.hpp"
+#include "neurogenic/midi/output.hpp"
 #include "neurogenic/project/project.hpp"
 #include "neurogenic/scripting/runtime.hpp"
 #include "neurogenic/timeline/edit.hpp"
@@ -42,6 +43,7 @@ void usage() {
            "  --input-channels N  request 1..6 device input channels\n"
            "  --output-channels N request 1..6 device output channels\n"
            "  --midi NAME       select MIDI input by index or name\n"
+           "  --midi-out NAME   connect MIDI output by index or name (repeatable)\n"
            "  --script FILE     Lua action for MIDI note 36\n"
            "  --timeline FILE   load a NEUROGENIC_TIMELINE version 1 file\n"
            "  --project PATH    restore a versioned NEUROGENIC project\n"
@@ -103,8 +105,9 @@ std::uint32_t unsigned_number(std::string_view value, const char *option) {
 
 int main(int argc, char **argv) {
     try {
-        std::string wav, audio_name, input_name, midi_name,
+        std::string wav, audio_name, input_name,
             script = "examples/generate.lua", timeline_file, project_file;
+        std::vector<std::string> midi_inputs, midi_outputs;
         std::vector<std::pair<std::uint32_t, std::filesystem::path>> slot_files;
         std::vector<std::pair<std::uint8_t, std::uint32_t>> note_maps;
         bool list = false, headless = false, interactive = false, gui = false,
@@ -123,7 +126,9 @@ int main(int argc, char **argv) {
             else if (arg == "--output-channels" && i + 1 < argc)
                 output_channels = unsigned_number(argv[++i], "--output-channels");
             else if (arg == "--midi" && i + 1 < argc)
-                midi_name = argv[++i];
+                midi_inputs.emplace_back(argv[++i]);
+            else if (arg == "--midi-out" && i + 1 < argc)
+                midi_outputs.emplace_back(argv[++i]);
             else if (arg == "--script" && i + 1 < argc)
                 script = argv[++i];
             else if (arg == "--timeline" && i + 1 < argc)
@@ -181,6 +186,7 @@ int main(int argc, char **argv) {
         neurogenic::ControlDispatcher dispatcher(mapper);
         neurogenic::AudioDevice audio(engine, headless);
         neurogenic::MidiInput midi(mapper);
+        neurogenic::MidiOutput midi_output;
         if (list) {
             std::cout << "Audio backend: " << audio.backend()
                       << "\nAudio outputs:\n";
@@ -212,6 +218,13 @@ int main(int argc, char **argv) {
             index = 0;
             for (const auto &name : midi.inputs())
                 std::cout << "  [" << index++ << "] " << name << '\n';
+            if (index == 0)
+                std::cout << "  (none discovered)\n";
+            std::cout << "MIDI output backend: " << midi_output.backend()
+                      << "\nMIDI outputs:\n";
+            index = 0;
+            for (const auto &port : midi_output.outputs())
+                std::cout << "  [" << index++ << "] " << port.name << '\n';
             if (index == 0)
                 std::cout << "  (none discovered)\n";
             if (wav.empty() && slot_files.empty() && !interactive && !gui)
@@ -298,6 +311,12 @@ int main(int argc, char **argv) {
             std::move(editable_timeline));
         neurogenic::ApplicationService application(engine, timeline_service,
                                                    samples);
+        mapper.set_raw_handler([&](const neurogenic::MidiMessage &message) {
+            (void)application.receive_midi(
+                {message.port,
+                 {message.status, message.data1, message.data2}, message.size,
+                 message.timestamp_ns, 0});
+        });
         if (startup_project) {
             const auto restored = application.execute(
                 {"project.open.v1", {{"path", project_file}}});
@@ -356,11 +375,39 @@ int main(int argc, char **argv) {
             std::cerr << "audio unavailable: " << error << '\n';
             return 1;
         }
-        if (!midi.open(midi_name, error))
-            std::cerr << "MIDI unavailable (audio continues): " << error
-                      << '\n';
-        else
-            std::cout << "MIDI input active\n";
+        if (midi_inputs.empty())
+            midi_inputs.emplace_back();
+        for (std::size_t i = 0; i < midi_inputs.size() &&
+                                i < neurogenic::maximum_midi_ports;
+             ++i) {
+            if (!midi.connect(static_cast<neurogenic::MidiPortId>(i + 1),
+                              midi_inputs[i], error))
+                std::cerr << "MIDI input unavailable (audio continues): "
+                          << error << '\n';
+            else
+                std::cout << "MIDI input " << i + 1 << " active\n";
+        }
+        for (std::size_t i = 0; i < midi_outputs.size() &&
+                                i < neurogenic::maximum_midi_ports;
+             ++i) {
+            if (!midi_output.connect(
+                    static_cast<neurogenic::MidiPortId>(i + 1),
+                    midi_outputs[i], error))
+                std::cerr << "MIDI output unavailable: " << error << '\n';
+            else
+                std::cout << "MIDI output " << i + 1 << " active\n";
+        }
+        std::jthread midi_output_dispatcher([&](std::stop_token stop_token) {
+            while (!stop_token.stop_requested()) {
+                const auto sent = application.midi_output().dispatch(
+                    [&](const neurogenic::MidiPacket &packet) {
+                        std::string send_error;
+                        return midi_output.send(packet, send_error);
+                    });
+                if (sent == 0)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        });
         std::signal(SIGINT, stop);
         std::signal(SIGTERM, stop);
         std::cout << "Playing " << engine.sample_slot_count()
@@ -455,6 +502,8 @@ int main(int argc, char **argv) {
             while (running.load())
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
         audio.stop();
+        midi_output_dispatcher.request_stop();
+        midi_output_dispatcher.join();
         midi.close();
         dispatcher.stop();
         samples.shutdown();

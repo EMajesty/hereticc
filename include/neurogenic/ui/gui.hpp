@@ -16,7 +16,8 @@ enum class GuiView : std::uint8_t {
     recording,
     mixer,
     routing,
-    modulation
+    modulation,
+    midi
 };
 struct UiRect {
     float x{}, y{}, w{}, h{};

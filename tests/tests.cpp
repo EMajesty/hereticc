@@ -9,6 +9,7 @@
 #include "neurogenic/dsp/processor.hpp"
 #include "neurogenic/instrument/subtractive_synth.hpp"
 #include "neurogenic/midi/mapping.hpp"
+#include "neurogenic/midi/routing.hpp"
 #include "neurogenic/performance/monitor.hpp"
 #include "neurogenic/project/project.hpp"
 #include "neurogenic/scripting/runtime.hpp"
@@ -505,6 +506,187 @@ void test_modulation_engine() {
                              {"instance_id", std::int64_t{1}}}})
                   .accepted,
           "semantic per-voice modulation route creation");
+}
+
+void test_midi_routing_and_clock() {
+    using namespace neurogenic;
+    MidiOutputScheduler output;
+    MidiClockGenerator clock(48000, 500000);
+    const std::array<MidiPortId, 2> ports{1, 2};
+    clock.start(output, ports);
+    for (std::uint64_t frame = 0; frame < 480000; frame += 127)
+        clock.process(static_cast<std::uint32_t>(
+                          std::min<std::uint64_t>(127, 480000 - frame)),
+                      frame, output, ports);
+    std::vector<MidiPacket> sent;
+    output.dispatch([&](const MidiPacket &packet) {
+        sent.push_back(packet);
+        return true;
+    });
+    check(clock.pulses() == 480 && sent.size() == 962 &&
+              sent[0].bytes[0] == 0xFA && sent[1].bytes[0] == 0xFA,
+          "24 PPQN clock generation and Start ordering");
+    check(sent[2].frame < sent[4].frame, "MIDI clock timestamps ordered");
+
+    MidiClockGenerator fractional(48000, 487805); // approximately 123 BPM
+    fractional.start(output, std::span<const MidiPortId>(ports).first(1));
+    fractional.process(4'800'000, 0, output,
+                       std::span<const MidiPortId>(ports).first(1));
+    const auto expected = static_cast<std::uint64_t>(
+        std::floor(4'800'000.0 * 24'000'000.0 / (48000.0 * 487805.0)));
+    check(fractional.pulses() == expected, "fractional BPM clock has no drift");
+    const auto before_change = fractional.pulses();
+    fractional.set_tempo(600000);
+    fractional.process(48000, 4'800'000, output,
+                       std::span<const MidiPortId>(ports).first(1));
+    check(fractional.pulses() > before_change,
+          "tempo change preserved clock phase");
+    fractional.stop(output, std::span<const MidiPortId>(ports).first(1));
+    fractional.continue_playback(output,
+                                 std::span<const MidiPortId>(ports).first(1));
+    output.dispatch([](const MidiPacket &) { return true; });
+
+    MidiClockReceiver receiver;
+    receiver.receive({1, {0xFA, 0, 0}, 1, 0});
+    std::uint64_t timestamp{};
+    for (int pulse = 0; pulse < 48; ++pulse) {
+        timestamp += 20'833'333ULL +
+                     static_cast<std::int64_t>((pulse % 3) - 1) * 100'000;
+        receiver.receive({1, {0xF8, 0, 0}, 1, timestamp});
+    }
+    check(receiver.state().running && receiver.state().available &&
+              std::fabs(receiver.state().tempo_bpm - 120.0) < 1.0,
+          "external MIDI clock jitter filtering");
+    receiver.update(timestamp + 600'000'000ULL);
+    check(receiver.state().dropout, "external MIDI clock dropout detection");
+    receiver.receive({1, {0xF8, 0, 0}, 1, timestamp + 620'000'000ULL});
+    check(!receiver.state().dropout, "external MIDI clock recovery");
+    receiver.receive({1, {0xFC, 0, 0}, 1, timestamp + 630'000'000ULL});
+    check(!receiver.state().running, "external MIDI Stop");
+
+    MidiRouter router;
+    std::string error;
+    const std::array<MidiRoute, 2> routes{
+        {{1, 1, 2, 0, 5, true, true, true, true, false, false, true},
+         {2, 1, 3, -1, -1, false, false, false, false, true, true, true}}};
+    check(router.configure(routes, error), "MIDI route validation");
+    check(router.route({1, {0x90, 64, 100}, 3, 1000}, output),
+          "MIDI note thru");
+    check(router.route({1, {0xB0, 74, 80}, 3, 2000}, output), "MIDI CC thru");
+    check(router.route({1, {0xF8, 0, 0}, 1, 3000}, output),
+          "MIDI clock forwarding");
+    sent.clear();
+    output.dispatch([&](const MidiPacket &packet) {
+        sent.push_back(packet);
+        return true;
+    });
+    const auto remapped =
+        std::find_if(sent.begin(), sent.end(), [](const auto &packet) {
+            return packet.port == 2 && packet.bytes[0] == 0x95;
+        });
+    check(remapped != sent.end(), "MIDI channel remapping");
+    const std::array<MidiRoute, 1> loop{{{1, 1, 1, -1, -1}}};
+    check(!router.configure(loop, error) &&
+              error.find("loop") != std::string::npos,
+          "MIDI routing-loop rejection");
+
+    MidiOutputScheduler bounded;
+    for (std::size_t i = 0; i < 1100; ++i)
+        (void)bounded.enqueue({1, {0x90, 60, 100}, 3});
+    check(bounded.dropped() > 0 && bounded.queued() == 1024,
+          "MIDI output overflow is bounded and observable");
+    MidiOutputScheduler panic;
+    panic.panic(1);
+    check(panic.queued() == 32,
+          "MIDI panic queues All Notes and All Sound Off");
+
+    MidiMapper mapper;
+    std::vector<MidiMessage> raw;
+    mapper.set_raw_handler(
+        [&](const MidiMessage &message) { raw.push_back(message); });
+    check(mapper.receive({0xF8, 0, 0, 99, 2, 1}) && mapper.dispatch_one() &&
+              raw.size() == 1 && raw[0].port == 2,
+          "controller mapper preserves realtime messages and logical port");
+
+    Timeline external;
+    external.transport.microseconds_per_quarter = 500000;
+    Track midi_track;
+    midi_track.id = 44;
+    midi_track.instrument_id = std::string(external_midi_instrument_id);
+    midi_track.midi_output_port = 2;
+    midi_track.midi_channel = 9;
+    midi_track.pattern.length = ticks_per_quarter;
+    midi_track.pattern.events = {
+        {1, 0, MusicalEventType::note, 60, 0.5F, 240},
+        {2, 120, MusicalEventType::control_change, 60, 0, 0, 74, 0.75F},
+        {3, 240, MusicalEventType::program_change, 60, 0, 0, 12, 0},
+        {4, 360, MusicalEventType::pitch_bend, 60, 0, 0, 0, -0.5F}};
+    external.tracks.push_back(midi_track);
+    AudioEngine midi_audio(48000);
+    MidiOutputScheduler timeline_output;
+    midi_audio.set_midi_output_scheduler(&timeline_output);
+    check(midi_audio.queue_timeline(external, error), "external MIDI timeline");
+    midi_audio.restart();
+    std::array<float, 24001> silence_left{}, silence_right{};
+    midi_audio.process(silence_left, silence_right);
+    sent.clear();
+    timeline_output.dispatch([&](const MidiPacket &packet) {
+        sent.push_back(packet);
+        return true;
+    });
+    check(std::any_of(sent.begin(), sent.end(),
+                      [](const auto &packet) {
+                          return packet.port == 2 && packet.bytes[0] == 0x99 &&
+                                 packet.bytes[1] == 60;
+                      }) &&
+              std::any_of(sent.begin(), sent.end(),
+                          [](const auto &packet) {
+                              return packet.bytes[0] == 0xB9 &&
+                                     packet.bytes[1] == 74;
+                          }) &&
+              std::any_of(sent.begin(), sent.end(),
+                          [](const auto &packet) {
+                              return packet.bytes[0] == 0xC9 &&
+                                     packet.bytes[1] == 12;
+                          }) &&
+              std::any_of(
+                  sent.begin(), sent.end(),
+                  [](const auto &packet) { return packet.bytes[0] == 0xE9; }),
+          "timeline note/CC/program/bend MIDI scheduling");
+
+    MidiRoutingConfiguration engine_routing;
+    engine_routing.route_count = 1;
+    engine_routing.routes[0] =
+        {9, 1, 2, 0, 3, true, true, true, true, false, false, true};
+    engine_routing.accept_external_clock = true;
+    check(midi_audio.publish_midi_routing(engine_routing),
+          "publish realtime MIDI routing");
+    check(midi_audio.receive_midi({1, {0x90, 67, 100}, 3, 1'000}) &&
+              midi_audio.receive_midi({1, {0xFC, 0, 0}, 1, 2'000}),
+          "enqueue received MIDI");
+    std::array<float, 16> routed_left{}, routed_right{};
+    midi_audio.process(routed_left, routed_right);
+    sent.clear();
+    timeline_output.dispatch([&](const MidiPacket &packet) {
+        sent.push_back(packet);
+        return true;
+    });
+    check(std::any_of(sent.begin(), sent.end(), [](const auto &packet) {
+              return packet.port == 2 && packet.bytes[0] == 0x93 &&
+                     packet.bytes[1] == 67;
+          }) &&
+              !midi_audio.playing(),
+          "audio-owned MIDI thru and external Stop");
+
+    const auto midi_path =
+        std::filesystem::temp_directory_path() / "neurogenic-midi-timeline.ngt";
+    save_timeline(external, midi_path);
+    const auto restored = load_timeline(midi_path);
+    std::filesystem::remove(midi_path);
+    check(restored.tracks[0].midi_output_port == 2 &&
+              restored.tracks[0].midi_channel == 9 &&
+              restored.tracks[0].pattern.events.size() == 4,
+          "external MIDI timeline persistence");
 }
 
 void test_performance_monitoring() {
@@ -1969,6 +2151,11 @@ void test_unified_project_persistence() {
         20000,
         4321,
         -0.25F};
+    project.midi.clock_source = MidiClockSource::external;
+    project.midi.route_count = 1;
+    project.midi.routes[0] =
+        {51, 1, 2, 0, 4, true, true, false, false, false, false, true};
+    project.midi.output_selectors[1][0] = '2';
 
     ProjectIoMetrics save_metrics, load_metrics;
     save_project(project, root, &save_metrics);
@@ -1995,6 +2182,9 @@ void test_unified_project_persistence() {
               loaded.modulation.routes[0].id == 81 &&
               loaded.modulation.routes[0].destination.instance == 2 &&
               loaded.modulation.sources[0].tempo_sync &&
+              loaded.midi.clock_source == MidiClockSource::external &&
+              loaded.midi.route_count == 1 &&
+              loaded.midi.routes[0].output_channel == 4 &&
               std::fabs(loaded.modulation
                             .sources[static_cast<std::size_t>(
                                 ModulationSourceId::envelope_follower)]
@@ -4344,7 +4534,12 @@ void test_mixer_and_routing() {
     check(gui.input({GuiInput::Type::key_down, GuiKey::tab}, 1920, 1200) &&
               gui.view() == GuiView::modulation &&
               !gui.frame(1920, 1200).commands.empty() &&
-              gui.input({GuiInput::Type::key_down, GuiKey::tab}, 1024, 600),
+              gui.input({GuiInput::Type::key_down, GuiKey::tab}, 1024, 600) &&
+              gui.view() == GuiView::midi &&
+              gui.input({GuiInput::Type::key_down, GuiKey::enter}, 1024, 600) &&
+              application.snapshot().midi.clock_source ==
+                  MidiClockSource::external &&
+              !gui.frame(1024, 600).commands.empty(),
           "responsive modulation GUI navigation");
 }
 
@@ -4531,6 +4726,7 @@ void test_lua_and_offline() {
 int main() {
     try {
         test_performance_monitoring();
+        test_midi_routing_and_clock();
         test_modulation_engine();
         test_native_synthesis_and_dsp();
         test_queue_and_scheduler();

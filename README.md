@@ -145,7 +145,7 @@ cmake --build --preset dev
 ctest --preset dev
 ./build/dev/neurogenic --list-devices
 ./build/dev/neurogenic --audio "DEVICE NAME" --midi "PORT NAME" \
-  --script examples/generate.lua path/to/sample.wav
+  --midi-out "OUTPUT NAME" --script examples/generate.lua path/to/sample.wav
 ./build/dev/neurogenic --slot 0=kick.wav --slot 1=snare.wav \
   --slot 2=hihat.wav --map 52=2
 ./build/dev/neurogenic --timeline examples/multitrack.ngt \
@@ -159,6 +159,12 @@ the numeric index or a case-sensitive name substring printed by `--list-devices`
 which queues a randomized pattern for the next bar. Other note-on messages
 trigger the sample. Ctrl-C stops playback. If MIDI is absent, audio continues;
 an audio initialization failure exits with a diagnostic.
+
+MIDI inputs and outputs are independently enumerable and repeatable. Logical
+ports follow command-line order. External MIDI timeline tracks support notes,
+CC, program change and pitch bend; internal 24-PPQN clock, received transport,
+explicit thru routes, panic and project persistence use bounded queues. See
+[MIDI routing and clock](docs/MIDI.md) for exact timing and hardware limits.
 
 The positional WAV form remains a compatibility mode: it installs slot 0 and
 maps every note to it. Multi-sample mode uses repeatable `--slot ID=FILE`

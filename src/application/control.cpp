@@ -266,6 +266,22 @@ ActionRegistry::ActionRegistry() {
         "project.relink-sample.v1", "Relink missing sample", "Project",
         {{"missing", ValueType::text}, {"replacement", ValueType::text}}));
     add(action("project.query.v1", "Query project status", "Project"));
+    add(action("midi.clock-source-set.v1", "Set MIDI clock source", "MIDI",
+               {{"source", ValueType::text}}));
+    add(action("midi.clock-output-set.v1", "Set MIDI clock output", "MIDI",
+               {{"port", ValueType::integer}, {"enabled", ValueType::boolean}}));
+    add(action("midi.route-set.v1", "Create or update MIDI route", "MIDI",
+               {{"id", ValueType::integer}, {"input_port", ValueType::integer},
+                {"output_port", ValueType::integer},
+                {"input_channel", ValueType::integer},
+                {"output_channel", ValueType::integer},
+                {"notes", ValueType::boolean}, {"cc", ValueType::boolean},
+                {"clock", ValueType::boolean}, {"transport", ValueType::boolean}}));
+    add(action("midi.route-delete.v1", "Delete MIDI route", "MIDI",
+               {{"id", ValueType::integer}}));
+    add(action("midi.panic.v1", "MIDI panic", "MIDI"));
+    add(action("midi.learn.v1", "MIDI learn", "MIDI", {}, false,
+               "MIDI learn capture is not implemented"));
     add(action("recording.source-select.v1", "Select recording source",
                "Recording",
                {{"source", ValueType::text},
@@ -807,8 +823,13 @@ ApplicationService::ApplicationService(AudioEngine &engine,
     if (!engine_.publish_modulation(modulation_configuration_))
         throw std::runtime_error("cannot publish initial modulation state");
     engine_.set_recording_service(&recording_);
+    engine_.set_midi_output_scheduler(&midi_output_);
+    MidiRoutingConfiguration initial_midi;
+    if (!engine_.publish_midi_routing(initial_midi))
+        throw std::runtime_error("cannot publish initial MIDI routing");
 }
 ApplicationService::~ApplicationService() {
+    engine_.set_midi_output_scheduler(nullptr);
     engine_.set_recording_service(nullptr);
 }
 bool ApplicationService::submit(ApplicationCommand command) noexcept {
@@ -1154,6 +1175,88 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 state_.project_dirty = true;
             changed_locked();
         }
+        return {error.empty(), sequence, snapshot().revision, std::move(error)};
+    }
+    if (command.action_id.rfind("midi.", 0) == 0) {
+        auto next = project_.midi;
+        if (command.action_id == "midi.panic.v1") {
+            engine_.midi_panic();
+        } else if (command.action_id == "midi.clock-source-set.v1") {
+            const auto &source = *argument<std::string>(command, "source");
+            if (source == "internal") next.clock_source = MidiClockSource::internal;
+            else if (source == "external") next.clock_source = MidiClockSource::external;
+            else error = "MIDI clock source must be internal or external";
+        } else if (command.action_id == "midi.clock-output-set.v1") {
+            const auto port = *argument<std::int64_t>(command, "port");
+            const auto enabled = *argument<bool>(command, "enabled");
+            if (port < 1 || port > static_cast<std::int64_t>(maximum_midi_ports))
+                error = "MIDI output port is out of range";
+            else {
+                auto begin = next.clock_outputs.begin();
+                auto end = begin + static_cast<std::ptrdiff_t>(next.clock_output_count);
+                auto found = std::find(begin, end, static_cast<MidiPortId>(port));
+                if (enabled && found == end && next.clock_output_count < maximum_midi_ports)
+                    next.clock_outputs[next.clock_output_count++] = static_cast<MidiPortId>(port);
+                else if (!enabled && found != end) {
+                    std::move(found + 1, end, found); --next.clock_output_count;
+                }
+            }
+        } else if (command.action_id == "midi.route-delete.v1") {
+            const auto id = *argument<std::int64_t>(command, "id");
+            auto begin = next.routes.begin();
+            auto end = begin + static_cast<std::ptrdiff_t>(next.route_count);
+            const auto found = std::find_if(begin, end, [&](const auto &route) {
+                return route.id == static_cast<std::uint32_t>(id);
+            });
+            if (found == end) error = "MIDI route was not found";
+            else { std::move(found + 1, end, found); --next.route_count; }
+        } else if (command.action_id == "midi.route-set.v1") {
+            MidiRoute route;
+            route.id = static_cast<std::uint32_t>(*argument<std::int64_t>(command, "id"));
+            route.input_port = static_cast<MidiPortId>(*argument<std::int64_t>(command, "input_port"));
+            route.output_port = static_cast<MidiPortId>(*argument<std::int64_t>(command, "output_port"));
+            route.input_channel = static_cast<std::int8_t>(*argument<std::int64_t>(command, "input_channel"));
+            route.output_channel = static_cast<std::int8_t>(*argument<std::int64_t>(command, "output_channel"));
+            route.notes = *argument<bool>(command, "notes");
+            route.control_change = *argument<bool>(command, "cc");
+            route.clock = *argument<bool>(command, "clock");
+            route.transport = *argument<bool>(command, "transport");
+            auto found = std::find_if(next.routes.begin(),
+                                      next.routes.begin() + static_cast<std::ptrdiff_t>(next.route_count),
+                                      [&](const auto &candidate) { return candidate.id == route.id; });
+            if (found != next.routes.begin() + static_cast<std::ptrdiff_t>(next.route_count))
+                *found = route;
+            else if (next.route_count == maximum_midi_routes)
+                error = "MIDI route capacity is exhausted";
+            else next.routes[next.route_count++] = route;
+        } else if (command.action_id == "midi.learn.v1") {
+            error = "MIDI learn capture is not implemented";
+        }
+        if (error.empty()) {
+            if (!midi_router_.configure({next.routes.data(), next.route_count}, error)) {
+            } else {
+                MidiClockOutputConfiguration clock;
+                clock.enabled = next.clock_source == MidiClockSource::internal && next.clock_output_count;
+                clock.port_count = next.clock_output_count;
+                std::copy_n(next.clock_outputs.begin(), clock.port_count, clock.ports.begin());
+                if (!engine_.publish_midi_clock_output(clock))
+                    error = "MIDI clock publication queue is full";
+                MidiRoutingConfiguration routing;
+                routing.route_count = next.route_count;
+                routing.accept_external_clock =
+                    next.clock_source == MidiClockSource::external;
+                std::copy_n(next.routes.begin(), routing.route_count,
+                            routing.routes.begin());
+                if (error.empty() && !engine_.publish_midi_routing(routing))
+                    error = "MIDI routing publication queue is full";
+            }
+        }
+        if (error.empty()) {
+            project_.midi = next;
+            state_.midi = next;
+            state_.project_dirty = true;
+        }
+        changed_locked();
         return {error.empty(), sequence, snapshot().revision, std::move(error)};
     }
     if (command.action_id.rfind("mixer.", 0) == 0) {
@@ -1539,6 +1642,7 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 saving.routing_scenes = project_.routing_scenes;
                 saving.active_routing_scene = project_.active_routing_scene;
                 saving.modulation = modulation_configuration_;
+                saving.midi = project_.midi;
                 for (const auto &slot : samples_.states())
                     if (slot.has_sample && slot.source_path.empty()) {
                         const auto recording = recording_.status();
@@ -1778,6 +1882,35 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 {
                     std::lock_guard lock(mutex_);
                     project_ = std::move(loaded);
+                    std::string midi_error;
+                    if (!midi_router_.configure(
+                            {project_.midi.routes.data(),
+                             project_.midi.route_count},
+                            midi_error))
+                        state_.project_error = std::move(midi_error);
+                    MidiClockOutputConfiguration midi_clock;
+                    midi_clock.enabled =
+                        project_.midi.clock_source == MidiClockSource::internal &&
+                        project_.midi.clock_output_count != 0;
+                    midi_clock.port_count = project_.midi.clock_output_count;
+                    std::copy_n(project_.midi.clock_outputs.begin(),
+                                midi_clock.port_count, midi_clock.ports.begin());
+                    if (!engine_.publish_midi_clock_output(midi_clock) &&
+                        state_.project_error.empty())
+                        state_.project_error =
+                            "MIDI clock publication queue is full";
+                    MidiRoutingConfiguration midi_routing;
+                    midi_routing.route_count = project_.midi.route_count;
+                    midi_routing.accept_external_clock =
+                        project_.midi.clock_source == MidiClockSource::external;
+                    std::copy_n(project_.midi.routes.begin(),
+                                midi_routing.route_count,
+                                midi_routing.routes.begin());
+                    if (!engine_.publish_midi_routing(midi_routing) &&
+                        state_.project_error.empty())
+                        state_.project_error =
+                            "MIDI routing publication queue is full";
+                    state_.midi = project_.midi;
                     state_.project_name = project_.name;
                     state_.project_path = path;
                     state_.project_dirty = false;
@@ -3536,6 +3669,19 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
     return {error.empty(), sequence, snapshot().revision, std::move(error)};
 }
 void ApplicationService::synchronize_locked() const {
+    state_.midi = project_.midi;
+    state_.midi_dropped = midi_output_.dropped();
+    state_.midi_sent = midi_output_.sent();
+    state_.external_midi_clock = engine_.external_clock_state();
+    if (state_.external_midi_clock.available &&
+        state_.external_midi_clock.last_timestamp_ns) {
+        const auto now = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+        state_.external_midi_clock.dropout =
+            now > state_.external_midi_clock.last_timestamp_ns + 500'000'000ULL;
+    }
     auto recording = recording_.status();
     if (recording.state != RecordingState::armed &&
         recording.state != RecordingState::recording &&

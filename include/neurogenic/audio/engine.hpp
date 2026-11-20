@@ -7,6 +7,7 @@
 #include "neurogenic/dsp/purest_gain.hpp"
 #include "neurogenic/dsp/time_stretch.hpp"
 #include "neurogenic/instrument/subtractive_synth.hpp"
+#include "neurogenic/midi/routing.hpp"
 #include "neurogenic/performance/monitor.hpp"
 #include "neurogenic/sequencer/scheduler.hpp"
 #include "neurogenic/timeline/playback.hpp"
@@ -119,6 +120,7 @@ class AudioEngine {
     void play() noexcept;
     void stop() noexcept;
     void restart() noexcept;
+    void midi_panic() noexcept;
     [[nodiscard]] bool set_fill(bool active) noexcept;
     void process(std::span<float> left, std::span<float> right) noexcept;
     void process_duplex(std::span<float> left, std::span<float> right,
@@ -130,6 +132,31 @@ class AudioEngine {
                     std::uint16_t input_channels = 0) noexcept;
     void set_recording_service(RecordingService *service) noexcept {
         recording_.store(service, std::memory_order_release);
+    }
+    void set_midi_output_scheduler(MidiOutputScheduler *scheduler) noexcept {
+        midi_output_.store(scheduler, std::memory_order_release);
+    }
+    [[nodiscard]] bool publish_midi_clock_output(
+        const MidiClockOutputConfiguration &configuration) noexcept {
+        return midi_clock_configurations_.push(configuration);
+    }
+    [[nodiscard]] bool publish_midi_routing(
+        const MidiRoutingConfiguration &configuration) noexcept {
+        return midi_routing_configurations_.push(configuration);
+    }
+    [[nodiscard]] bool receive_midi(const MidiPacket &packet) noexcept {
+        return midi_inputs_.push(packet);
+    }
+    [[nodiscard]] ExternalClockState external_clock_state() const noexcept {
+        ExternalClockState state;
+        state.running = external_clock_running_.load(std::memory_order_acquire);
+        state.available = external_clock_available_.load(std::memory_order_acquire);
+        state.dropout = external_clock_dropout_.load(std::memory_order_acquire);
+        state.tempo_bpm = external_clock_tempo_.load(std::memory_order_acquire);
+        state.pulses = external_clock_pulses_.load(std::memory_order_acquire);
+        state.last_timestamp_ns =
+            external_clock_last_timestamp_.load(std::memory_order_acquire);
+        return state;
     }
     void capture_external_input(std::span<const float> interleaved,
                                 std::uint16_t channels) noexcept;
@@ -352,6 +379,7 @@ class AudioEngine {
         play,
         stop,
         restart,
+        midi_panic,
         fill_on,
         fill_off
     };
@@ -384,6 +412,9 @@ class AudioEngine {
     SpscQueue<std::uint8_t, 4> timelines_;
     std::array<PlanSlot, timeline_plan_slot_count> timeline_plans_{};
     SpscQueue<TransportCommand, 16> transport_commands_;
+    SpscQueue<MidiClockOutputConfiguration, 5> midi_clock_configurations_;
+    SpscQueue<MidiRoutingConfiguration, 5> midi_routing_configurations_;
+    SpscQueue<MidiPacket, 257> midi_inputs_;
     SpscQueue<SliceMapCommand, 65> slice_map_commands_;
     std::atomic<std::uint64_t> dropped_triggers_{}, dropped_patterns_{},
         dropped_timelines_{}, dropped_timeline_events_{},
@@ -417,6 +448,17 @@ class AudioEngine {
     std::atomic<std::uint32_t> buffer_frames_{};
     std::atomic<std::uint64_t> instrument_nanoseconds_{}, effect_nanoseconds_{};
     std::atomic<RecordingService *> recording_{};
+    std::atomic<MidiOutputScheduler *> midi_output_{};
+    MidiClockGenerator midi_clock_;
+    MidiClockReceiver midi_clock_receiver_;
+    MidiRouter midi_router_;
+    MidiClockOutputConfiguration midi_clock_configuration_{};
+    bool accept_external_clock_{};
+    std::atomic<bool> external_clock_running_{}, external_clock_available_{},
+        external_clock_dropout_{};
+    std::atomic<double> external_clock_tempo_{};
+    std::atomic<std::uint64_t> external_clock_pulses_{};
+    std::atomic<std::uint64_t> external_clock_last_timestamp_{};
     std::atomic<std::uint64_t> callback_frame_{};
     std::array<std::unique_ptr<SubtractiveSynth>, maximum_instrument_instances>
         synths_{};

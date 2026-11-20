@@ -1,0 +1,226 @@
+#include "neurogenic/midi/routing.hpp"
+#include <algorithm>
+#include <cmath>
+
+namespace neurogenic {
+namespace {
+bool accepts(const MidiRoute &route, std::uint8_t status) noexcept {
+    const auto type = status & 0xF0U;
+    if (status == 0xF8)
+        return route.clock;
+    if (status >= 0xF9)
+        return route.transport;
+    if (type == 0x80 || type == 0x90)
+        return route.notes;
+    if (type == 0xB0)
+        return route.control_change;
+    if (type == 0xC0)
+        return route.program_change;
+    if (type == 0xE0)
+        return route.pitch_bend;
+    return false;
+}
+} // namespace
+bool validate_midi_routes(std::span<const MidiRoute> routes,
+                          std::string &error) noexcept {
+    if (routes.size() > maximum_midi_routes) {
+        error = "MIDI route capacity exceeded";
+        return false;
+    }
+    for (std::size_t i = 0; i < routes.size(); ++i) {
+        const auto &route = routes[i];
+        if (!route.id || !route.input_port ||
+            route.input_port > maximum_midi_ports || !route.output_port ||
+            route.output_port > maximum_midi_ports ||
+            route.input_channel < -1 || route.input_channel > 15 ||
+            route.output_channel < -1 || route.output_channel > 15) {
+            error = "invalid MIDI route";
+            return false;
+        }
+        if (route.input_port == route.output_port &&
+            (route.input_channel < 0 || route.output_channel < 0 ||
+             route.input_channel == route.output_channel)) {
+            error = "MIDI routing loop rejected";
+            return false;
+        }
+        for (std::size_t j = 0; j < i; ++j)
+            if (routes[j].id == route.id) {
+                error = "duplicate MIDI route ID";
+                return false;
+            }
+    }
+    error.clear();
+    return true;
+}
+bool MidiOutputScheduler::enqueue(const MidiPacket &packet) noexcept {
+    if (!packet.port || !packet.size || packet.size > packet.bytes.size() ||
+        !queue_.push(packet)) {
+        dropped_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    queued_.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+std::size_t MidiOutputScheduler::dispatch(Sender sender) {
+    MidiPacket packet;
+    std::size_t count{};
+    while (queue_.pop(packet)) {
+        queued_.fetch_sub(1, std::memory_order_relaxed);
+        if (sender(packet)) {
+            sent_.fetch_add(1, std::memory_order_relaxed);
+            ++count;
+        } else
+            dropped_.fetch_add(1, std::memory_order_relaxed);
+    }
+    return count;
+}
+void MidiOutputScheduler::panic(MidiPortId port) noexcept {
+    const auto first = port ? port : 1U,
+               last = port ? port : static_cast<MidiPortId>(maximum_midi_ports);
+    for (auto output = first; output <= last; ++output)
+        for (std::uint8_t channel = 0; channel < 16; ++channel) {
+            (void)enqueue({output,
+                           {static_cast<std::uint8_t>(0xB0U | channel), 123, 0},
+                           3});
+            (void)enqueue({output,
+                           {static_cast<std::uint8_t>(0xB0U | channel), 120, 0},
+                           3});
+        }
+}
+bool MidiRouter::configure(std::span<const MidiRoute> routes,
+                           std::string &error) noexcept {
+    if (!validate_midi_routes(routes, error))
+        return false;
+    std::copy(routes.begin(), routes.end(), routes_.begin());
+    route_count_ = routes.size();
+    return true;
+}
+void MidiRouter::configure_realtime(std::span<const MidiRoute> routes) noexcept {
+    const auto count = std::min(routes.size(), routes_.size());
+    std::copy_n(routes.begin(), count, routes_.begin());
+    route_count_ = count;
+}
+bool MidiRouter::route(const MidiPacket &input,
+                       MidiOutputScheduler &output) noexcept {
+    bool forwarded{};
+    for (std::size_t i = 0; i < route_count_; ++i) {
+        const auto &route = routes_[i];
+        const auto channel_message = input.bytes[0] < 0xF0;
+        const auto channel = input.bytes[0] & 0x0F;
+        if (!route.enabled || route.input_port != input.port ||
+            !accepts(route, input.bytes[0]) ||
+            (channel_message && route.input_channel >= 0 &&
+             channel != route.input_channel))
+            continue;
+        auto packet = input;
+        packet.port = route.output_port;
+        if (channel_message && route.output_channel >= 0)
+            packet.bytes[0] = static_cast<std::uint8_t>(
+                (packet.bytes[0] & 0xF0U) | route.output_channel);
+        forwarded |= output.enqueue(packet);
+    }
+    if (!forwarded)
+        dropped_.fetch_add(1, std::memory_order_relaxed);
+    return forwarded;
+}
+MidiClockGenerator::MidiClockGenerator(std::uint32_t rate,
+                                       std::uint32_t tempo) noexcept
+    : sample_rate_(std::max(1U, rate)) {
+    set_tempo(tempo);
+}
+void MidiClockGenerator::set_tempo(std::uint32_t tempo) noexcept {
+    tempo = std::clamp(tempo, 10000U, 60000000U);
+    const auto old = denominator_;
+    microseconds_per_quarter_ = tempo;
+    denominator_ = static_cast<std::uint64_t>(sample_rate_) * tempo;
+    if (old)
+        phase_ = static_cast<std::uint64_t>(
+            (static_cast<long double>(phase_) * denominator_) / old);
+}
+void MidiClockGenerator::transport(std::uint8_t status,
+                                   MidiOutputScheduler &out,
+                                   std::span<const MidiPortId> ports) noexcept {
+    for (const auto port : ports)
+        (void)out.enqueue({port, {status, 0, 0}, 1});
+}
+void MidiClockGenerator::start(MidiOutputScheduler &out,
+                               std::span<const MidiPortId> ports) noexcept {
+    phase_ = pulses_ = 0;
+    running_ = true;
+    transport(0xFA, out, ports);
+}
+void MidiClockGenerator::stop(MidiOutputScheduler &out,
+                              std::span<const MidiPortId> ports) noexcept {
+    running_ = false;
+    transport(0xFC, out, ports);
+}
+void MidiClockGenerator::continue_playback(
+    MidiOutputScheduler &out, std::span<const MidiPortId> ports) noexcept {
+    running_ = true;
+    transport(0xFB, out, ports);
+}
+void MidiClockGenerator::process(std::uint32_t frames, std::uint64_t absolute,
+                                 MidiOutputScheduler &out,
+                                 std::span<const MidiPortId> ports) noexcept {
+    if (!running_)
+        return;
+    constexpr std::uint64_t pulse_numerator = 24'000'000ULL;
+    for (std::uint32_t frame = 0; frame < frames; ++frame) {
+        phase_ += pulse_numerator;
+        while (phase_ >= denominator_) {
+            phase_ -= denominator_;
+            ++pulses_;
+            for (const auto port : ports)
+                (void)out.enqueue({port, {0xF8, 0, 0}, 1, 0, absolute + frame});
+        }
+    }
+}
+void MidiClockReceiver::receive(const MidiPacket &packet) noexcept {
+    const auto status = packet.bytes[0];
+    if (status == 0xFA) {
+        state_.running = true;
+        state_.pulses = 0;
+        state_.dropout = false;
+    } else if (status == 0xFB) {
+        state_.running = true;
+        state_.dropout = false;
+    } else if (status == 0xFC)
+        state_.running = false;
+    else if (status == 0xF8) {
+        if (state_.last_timestamp_ns &&
+            packet.timestamp_ns > state_.last_timestamp_ns) {
+            const auto interval =
+                packet.timestamp_ns - state_.last_timestamp_ns;
+            if (interval >= 1'000'000 && interval <= 1'000'000'000) {
+                intervals_[interval_cursor_++ % intervals_.size()] = interval;
+                interval_count_ =
+                    std::min(interval_count_ + 1, intervals_.size());
+                auto sorted = intervals_;
+                for (std::size_t i = 1; i < interval_count_; ++i) {
+                    const auto value = sorted[i];
+                    auto position = i;
+                    while (position && sorted[position - 1] > value) {
+                        sorted[position] = sorted[position - 1];
+                        --position;
+                    }
+                    sorted[position] = value;
+                }
+                const auto median = sorted[interval_count_ / 2];
+                const auto estimate = 60'000'000'000.0 / (median * 24.0);
+                state_.tempo_bpm = state_.available
+                                       ? state_.tempo_bpm * 0.8 + estimate * 0.2
+                                       : estimate;
+                state_.available = true;
+                state_.dropout = false;
+            }
+        }
+        state_.last_timestamp_ns = packet.timestamp_ns;
+        ++state_.pulses;
+    }
+}
+void MidiClockReceiver::update(std::uint64_t now) noexcept {
+    if (state_.available && state_.last_timestamp_ns &&
+        now > state_.last_timestamp_ns + 500'000'000ULL)
+        state_.dropout = true;
+}
+} // namespace neurogenic

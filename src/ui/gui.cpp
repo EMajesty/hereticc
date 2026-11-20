@@ -175,8 +175,8 @@ GuiLayout GuiModel::layout(int width, int height) const {
                             ? r(logical_width - margin - inspector_width,
                                 content_y, inspector_width, content_height)
                             : UiRect{};
-    const float tab_width = (logical_width - 32) / 10;
-    for (int i = 0; i < 10; ++i)
+    const float tab_width = (logical_width - 32) / 11;
+    for (int i = 0; i < 11; ++i)
         result.tabs.push_back(r(16 + i * tab_width, 72, tab_width - 8, 38));
     result.page_previous = r(28, content_y + 12, 64, 42);
     result.page_next = r(100, content_y + 12, 64, 42);
@@ -276,7 +276,7 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
              std::to_string(perf.engine.maximum_voices));
     const char *names[]{"SEQUENCER", "SAMPLES", "PARAMETERS", "X/Y",
                         "PERF",      "DISPLAY", "RECORD",     "MIXER",
-                        "ROUTING",   "MOD"};
+                        "ROUTING",   "MOD",     "MIDI"};
     for (std::size_t i = 0; i < l.tabs.size(); ++i) {
         rect(l.tabs[i], i == static_cast<std::size_t>(view_) ? UiColor::selected
                                                              : UiColor::panel);
@@ -758,9 +758,35 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
         if (state.modulation.route_count == 0)
             text(l.rows[0], UiColor::muted,
                  "No routes. Use semantic route actions or a controller.");
+    } else if (view_ == GuiView::midi) {
+        text({l.content.x + 12 * l.scale, l.content.y + 8 * l.scale,
+              l.content.w - 24 * l.scale, 28 * l.scale},
+             UiColor::accent, "MIDI ROUTING / CLOCK");
+        const auto &clock = state.external_midi_clock;
+        const std::array<std::string, 5> rows{
+            "CLOCK SOURCE  " +
+                std::string(state.midi.clock_source == MidiClockSource::internal
+                                ? "INTERNAL"
+                                : "EXTERNAL"),
+            "EXTERNAL  " + std::string(clock.running ? "RUNNING" : "STOPPED") +
+                "  " + (clock.available ? std::to_string(clock.tempo_bpm)
+                                             : std::string("NO CLOCK")) +
+                (clock.dropout ? "  DROPOUT" : ""),
+            "CLOCK OUTPUTS  " + std::to_string(state.midi.clock_output_count),
+            "ROUTES  " + std::to_string(state.midi.route_count),
+            "SENT " + std::to_string(state.midi_sent) + "  DROPPED " +
+                std::to_string(state.midi_dropped)};
+        for (std::size_t i = 0; i < rows.size(); ++i) {
+            rect(l.rows[i], i == 0 ? UiColor::selected : UiColor::background);
+            text(l.rows[i], i == 1 && clock.dropout ? UiColor::error
+                                                    : UiColor::text,
+                 rows[i]);
+        }
+        text(l.rows[6], UiColor::muted,
+             "Enter: toggle clock source   Shift+Enter: MIDI panic");
     }
     if (view_ == GuiView::mixer || view_ == GuiView::routing ||
-        view_ == GuiView::modulation ||
+        view_ == GuiView::modulation || view_ == GuiView::midi ||
         !l.inspector_visible)
         return;
     text({l.parameters.x + 12, l.parameters.y + 12, l.parameters.w - 24,
@@ -1003,12 +1029,23 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
         }
         if (input.key == GuiKey::tab) {
             view_ =
-                static_cast<GuiView>((static_cast<unsigned>(view_) + 1) % 10);
+                static_cast<GuiView>((static_cast<unsigned>(view_) + 1) % 11);
             frame_.state_revision = std::numeric_limits<std::uint64_t>::max();
             return true;
         }
         if (input.key == GuiKey::enter) {
-            if (view_ == GuiView::routing) {
+            if (view_ == GuiView::midi) {
+                if (shift_)
+                    submit(command("midi.panic.v1"));
+                else
+                    submit(command(
+                        "midi.clock-source-set.v1",
+                        {{"source",
+                          std::string(state.midi.clock_source ==
+                                              MidiClockSource::internal
+                                          ? "external"
+                                          : "internal")}}));
+            } else if (view_ == GuiView::routing) {
                 const auto index = state.selected_external_fx_loop;
                 const auto &loop = state.mixer.configuration.external_fx[index];
                 const auto source =
@@ -1307,6 +1344,17 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
                 submit(command("recording.cancel.v1"));
                 return true;
             }
+        }
+        if (view_ == GuiView::midi && !l.rows.empty() &&
+            l.rows[0].contains(input.x, input.y)) {
+            submit(command(
+                "midi.clock-source-set.v1",
+                {{"source",
+                  std::string(state.midi.clock_source ==
+                                      MidiClockSource::internal
+                                  ? "external"
+                                  : "internal")}}));
+            return true;
         }
         if (view_ == GuiView::mixer)
             for (std::size_t i = 0;

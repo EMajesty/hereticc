@@ -1,5 +1,6 @@
 #include "neurogenic/timeline/playback.hpp"
 #include "neurogenic/dsp/parameter_destination.hpp"
+#include "neurogenic/midi/routing.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -15,8 +16,12 @@ __extension__ using WideInteger = __int128;
 int type_order(MusicalEventType type) noexcept {
     return type == MusicalEventType::note_off    ? 0
            : type == MusicalEventType::parameter ? 1
-           : type == MusicalEventType::note_on   ? 2
-                                                 : 3;
+           : type == MusicalEventType::control_change ||
+                   type == MusicalEventType::program_change ||
+                   type == MusicalEventType::pitch_bend
+               ? 1
+           : type == MusicalEventType::note_on ? 2
+                                               : 3;
 }
 bool scheduled_before(const TimelineScheduledEvent &a,
                       const TimelineScheduledEvent &b) noexcept {
@@ -31,9 +36,18 @@ bool scheduled_before(const TimelineScheduledEvent &a,
     return a.occurrence < b.occurrence;
 }
 bool valid_event(const MusicalEvent &event) noexcept {
-    return event.id != 0 && event.tick >= 0 && event.pitch <= 127 &&
-           std::isfinite(event.velocity) && event.velocity >= 0 &&
-           event.velocity <= 1 && std::isfinite(event.value) &&
+    const auto midi_value_valid =
+        event.type == MusicalEventType::control_change
+            ? event.parameter_id <= 127 && event.value >= 0 && event.value <= 1
+        : event.type == MusicalEventType::program_change
+            ? event.parameter_id <= 127
+        : event.type == MusicalEventType::pitch_bend
+            ? event.value >= -1 && event.value <= 1
+            : true;
+    return midi_value_valid && event.id != 0 && event.tick >= 0 &&
+           event.pitch <= 127 && std::isfinite(event.velocity) &&
+           event.velocity >= 0 && event.velocity <= 1 &&
+           std::isfinite(event.value) &&
            std::isfinite(event.trigger_probability) &&
            event.trigger_probability >= 0 && event.trigger_probability <= 1 &&
            event.condition_n > 0 && event.condition_m > 0 &&
@@ -240,7 +254,8 @@ bool compile_timeline(const Timeline &timeline, PlaybackPlan &output,
                       return a.id < b.id;
                   });
         if (track.instrument_id != sample_instrument_id &&
-            track.instrument_id != subtractive_instrument_id) {
+            track.instrument_id != subtractive_instrument_id &&
+            track.instrument_id != external_midi_instrument_id) {
             error = "unavailable instrument target: " + track.instrument_id;
             return false;
         }
@@ -250,10 +265,18 @@ bool compile_timeline(const Timeline &timeline, PlaybackPlan &output,
             error = "synth instrument instance is out of range";
             return false;
         }
+        if (track.instrument_id == external_midi_instrument_id &&
+            (track.midi_output_port == 0 ||
+             track.midi_output_port > maximum_midi_ports ||
+             track.midi_channel > 15)) {
+            error = "external MIDI track routing is out of range";
+            return false;
+        }
         plan.tracks.push_back({track.id, track.pattern.length, begin,
                                plan.events.size() - begin, 0, 0, track.muted,
                                stable_id(track.instrument_id),
-                               track.instrument_instance_id, false, 0, 0, false});
+                               track.instrument_instance_id, false, 0, 0, false,
+                               track.midi_output_port, track.midi_channel});
     }
     output = std::move(plan);
     error.clear();
@@ -434,7 +457,9 @@ TimelineScheduler::schedule(std::uint64_t start, std::uint32_t frames,
                                    event.parameter_target,
                                    event.value,
                                    track.instrument,
-                                   track.instrument_instance};
+                                   track.instrument_instance,
+                                   track.midi_output_port,
+                                   track.midi_channel};
         }
         std::pop_heap(plan_->scheduler_heap.begin(),
                       plan_->scheduler_heap.end(), after);

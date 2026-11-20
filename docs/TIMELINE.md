@@ -47,7 +47,7 @@ exists; there is no pitch-based fallback.
 
 ## Version 1 interchange
 
-`NEUROGENIC_TIMELINE 1` is a narrow text interchange format, not the final
+`NEUROGENIC_TIMELINE` is a narrow versioned text interchange format, not the final
 project format. Parsing and validation happen before playback. Blank lines and
 lines beginning with `#` are ignored. Records are:
 
