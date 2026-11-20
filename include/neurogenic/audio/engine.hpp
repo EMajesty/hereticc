@@ -118,6 +118,17 @@ class AudioEngine {
     }
     bool queue_pattern(const Pattern &pattern) noexcept;
     bool queue_timeline(const Timeline &, std::string &error);
+    bool queue_timeline_at(const Timeline &, std::uint64_t activation_frame,
+                           VoiceTransitionPolicy, std::string &error);
+    [[nodiscard]] std::uint64_t last_timeline_activation_frame() const noexcept {
+        return last_timeline_activation_frame_.load(std::memory_order_acquire);
+    }
+    [[nodiscard]] std::uint64_t last_timeline_lateness_frames() const noexcept {
+        return last_timeline_lateness_frames_.load(std::memory_order_acquire);
+    }
+    [[nodiscard]] std::uint64_t song_end_count() const noexcept {
+        return song_end_count_.load(std::memory_order_acquire);
+    }
     void play() noexcept;
     void stop() noexcept;
     void restart() noexcept;
@@ -390,6 +401,11 @@ class AudioEngine {
         std::atomic<PlanState> state{PlanState::free};
         std::unique_ptr<PlaybackPlan> plan;
     };
+    struct TimelinePublication {
+        std::uint8_t slot{};
+        std::uint64_t activation_frame{};
+        VoiceTransitionPolicy voice_policy{VoiceTransitionPolicy::preserve};
+    };
     enum class TransportCommand : std::uint8_t {
         play,
         stop,
@@ -412,6 +428,9 @@ class AudioEngine {
                       bool timeline_owned = false) noexcept;
     void release_voice(Voice &, bool immediate = false) noexcept;
     void stop_voices(bool timeline_only = false) noexcept;
+    void activate_timeline(const TimelinePublication &, std::uint64_t) noexcept;
+    void cleanup_timeline_voices(VoiceTransitionPolicy,
+                                 std::uint64_t) noexcept;
     void reclaim_retired_plans() noexcept;
     void reclaim_sample_versions_unlocked() noexcept;
     std::uint32_t rate_;
@@ -424,7 +443,7 @@ class AudioEngine {
     SpscQueue<ModulationConfiguration, 5> modulation_configurations_;
     SpscQueue<Pattern, 9> patterns_;
     static constexpr std::size_t timeline_plan_slot_count = 4;
-    SpscQueue<std::uint8_t, 4> timelines_;
+    SpscQueue<TimelinePublication, 4> timelines_;
     std::array<PlanSlot, timeline_plan_slot_count> timeline_plans_{};
     SpscQueue<TransportCommand, 16> transport_commands_;
     SpscQueue<std::uint64_t, 16> transport_seeks_;
@@ -438,6 +457,8 @@ class AudioEngine {
         reclaimed_timeline_plans_{}, published_frame_{}, next_order_{},
         stolen_voices_{}, missing_slot_triggers_{}, dropped_sample_updates_{},
         reclaimed_sample_versions_{};
+    std::atomic<std::uint64_t> last_timeline_activation_frame_{},
+        last_timeline_lateness_frames_{}, song_end_count_{};
     std::atomic<std::uint64_t> applied_sample_update_sequence_{};
     std::atomic<std::uint64_t> dropped_dsp_commands_{};
     std::uint64_t next_sample_update_sequence_{};
@@ -451,6 +472,9 @@ class AudioEngine {
     std::vector<ScheduledEvent> legacy_events_;
     std::vector<TimelineScheduledEvent> timeline_events_;
     int active_timeline_slot_{-1};
+    TimelinePublication pending_timeline_{};
+    bool has_pending_timeline_{};
+    std::uint64_t active_timeline_end_frame_{};
     std::array<Trigger, 64> pending_triggers_{};
     std::size_t pending_trigger_count_{};
     std::uint64_t next_voice_age_{};
@@ -468,6 +492,8 @@ class AudioEngine {
     MidiClockGenerator midi_clock_;
     MidiClockFollower midi_clock_follower_;
     MidiRouter midi_router_;
+    std::array<std::array<std::array<bool, 128>, 16>, maximum_midi_ports>
+        timeline_midi_notes_{};
     MidiClockOutputConfiguration midi_clock_configuration_{};
     bool accept_external_clock_{};
     bool external_clock_lost_{};

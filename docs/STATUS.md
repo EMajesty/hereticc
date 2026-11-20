@@ -1,9 +1,13 @@
 # Implementation status
 
-Task 044 adds stable reusable multi-track patterns, transformed/repeating clips,
-live and song modes, quantized queued launches, loop regions, transactional
-history, discovery state, and timeline-v5 persistence. Same-track overlap,
-automatic chain advancement, and sample-exact boundary plan swaps are deferred.
+Task 045 adds repeatable/one-shot pattern chains, deterministic follow actions,
+precompiled exact-frame launch activation, timeline-owned voice/MIDI cleanup,
+song-end modes, launch diagnostics, semantic discovery, timeline-v6/project-v3
+persistence, tests and a dense-chain benchmark. Return-to-live stops exactly at
+song end and publishes the selected live plan on the next control update.
+
+Task 044 added stable reusable multi-track patterns, transformed/repeating
+clips, live/song modes, loop regions and transactional history.
 
 Task 043 adds eight stable stereo group buses, exclusive track/group routing,
 acyclic group-to-group topology, serial group FX, gain/pan/mute/solo, aux sends,

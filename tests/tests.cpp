@@ -84,6 +84,15 @@ void test_pattern_clip_arrangement() {
     check(edit.duplicate_pattern(10, 11, "Chorus", error),
           "duplicate arrangement pattern");
     check(edit.rename_pattern(11, "Chorus A", error), "rename pattern");
+    check(edit.set_follow_action(
+              10, {FollowActionType::specific, 2, 1.0F, 11}, error),
+          "set pattern follow action");
+    check(edit.set_pattern_chain(90, {{10, 2}, {11, 1}}, false, error) &&
+              edit.set_chain_running(true, 0, error) &&
+              edit.set_voice_transition(VoiceTransitionPolicy::release_outgoing,
+                                        error) &&
+              edit.set_song_end_behavior(SongEndBehavior::stop, 0, error),
+          "configure pattern chain");
     check(edit.set_song_range(0, ticks_per_quarter * 8, error),
           "set song range");
     check(edit.create_clip({20, 10, 0, ticks_per_quarter * 4, true, 12, 0.5F,
@@ -163,7 +172,11 @@ void test_pattern_clip_arrangement() {
     check(restored.arrangement.patterns.size() == 2 &&
               restored.arrangement.clips.size() == 2 &&
               restored.arrangement.pattern_chain ==
-                  std::vector<PatternId>({10, 11}),
+                  std::vector<PatternId>({10, 11}) &&
+              restored.arrangement.pattern_chain_id == 90 &&
+              restored.arrangement.chain_entries.size() == 2 &&
+              restored.arrangement.patterns[0].follow.type ==
+                  FollowActionType::specific,
           "arrangement persistence round trip");
     const auto project_path = std::filesystem::temp_directory_path() /
                               "neurogenic-arrangement-project";
@@ -180,6 +193,8 @@ void test_pattern_clip_arrangement() {
     ActionRegistry actions;
     check(actions.find("pattern.create.v1") &&
               actions.find("pattern.launch.v1") &&
+              actions.find("pattern.chain-play.v1") &&
+              actions.find("pattern.follow-set.v1") &&
               actions.find("arrangement.clip-create.v1") &&
               actions.find("arrangement.loop-set.v1"),
           "arrangement semantic action discovery");
@@ -216,6 +231,79 @@ void test_pattern_clip_arrangement() {
                  {"length", std::int64_t{3840}}}})
                .accepted,
           "negative stable pattern ID rejection");
+
+    Timeline chain = service.snapshot().timeline;
+    chain.arrangement.playback_mode = TimelinePlaybackMode::live_pattern;
+    chain.arrangement.active_pattern = 10;
+    PlaybackPlan chain_plan_a, chain_plan_b;
+    check(compile_timeline(chain, chain_plan_a, error) &&
+              compile_timeline(chain, chain_plan_b, error) &&
+              chain_plan_a.events.size() == chain_plan_b.events.size() &&
+              chain_plan_a.events.front().id ==
+                  chain_plan_b.events.front().id &&
+              chain_plan_a.playback_length == ticks_per_quarter * 12 &&
+              chain_plan_a.song_end_behavior == SongEndBehavior::stop,
+          "deterministic repeated chain compilation");
+    auto looping_chain = chain;
+    looping_chain.arrangement.chain_loop = true;
+    PlaybackPlan looping_chain_plan;
+    check(compile_timeline(looping_chain, looping_chain_plan, error) &&
+              looping_chain_plan.song_end_behavior == SongEndBehavior::loop,
+          "looping chain playback policy");
+    auto random_chain = chain;
+    random_chain.arrangement.patterns[0].follow =
+        {FollowActionType::random_eligible, 2, 1.0F, 0};
+    PlaybackPlan random_a, random_b;
+    check(compile_timeline(random_chain, random_a, error) &&
+              compile_timeline(random_chain, random_b, error) &&
+              random_a.events.size() == random_b.events.size() &&
+              random_a.playback_length == random_b.playback_length &&
+              random_a.events.front().pitch == random_b.events.front().pitch,
+          "seeded random follow action");
+    auto over_capacity = chain;
+    over_capacity.arrangement.chain_entries.resize(4097, {10, 1});
+    check(!validate_arrangement(over_capacity, error) &&
+              error.find("capacity") != std::string::npos,
+          "pattern chain capacity rejection");
+
+    AudioEngine precise(48'000);
+    Timeline empty_a, empty_b;
+    empty_a.tracks.push_back({1, "A", false, {960, {}}});
+    empty_b.tracks.push_back({1, "B", false, {960, {}}});
+    check(precise.queue_timeline(empty_a, error), "initial launch plan");
+    std::array<float, 64> precise_left{}, precise_right{};
+    precise.process({precise_left.data(), 1}, {precise_right.data(), 1});
+    const auto launch_frame = precise.frame_position() + 37;
+    check(precise.queue_timeline_at(empty_b, launch_frame,
+                                    VoiceTransitionPolicy::preserve, error),
+          "queue exact launch plan");
+    precise.process({precise_left.data(), 16}, {precise_right.data(), 16});
+    check(precise.last_timeline_activation_frame() != launch_frame,
+          "quantized launch activated early");
+    precise.process({precise_left.data(), 32}, {precise_right.data(), 32});
+    check(precise.last_timeline_activation_frame() == launch_frame &&
+              precise.last_timeline_lateness_frames() == 0,
+          "variable callback launch boundary");
+
+    Timeline ending;
+    PatternDefinition ending_pattern;
+    ending_pattern.id = 1;
+    ending_pattern.name = "Ending";
+    ending_pattern.length = 1;
+    ending_pattern.tracks.push_back({1, {1, {}}});
+    ending.tracks.push_back({1, "End", false, {1, {}}});
+    ending.arrangement.patterns.push_back(ending_pattern);
+    ending.arrangement.clips.push_back({1, 1, 0, 1, false, 0, 1, true});
+    ending.arrangement.song_end = 1;
+    ending.arrangement.playback_mode = TimelinePlaybackMode::song;
+    ending.arrangement.song_end_behavior = SongEndBehavior::stop;
+    AudioEngine song_end_engine(48'000);
+    check(song_end_engine.queue_timeline(ending, error), error.c_str());
+    song_end_engine.process({precise_left.data(), 64},
+                            {precise_right.data(), 64});
+    check(!song_end_engine.playing() && song_end_engine.frame_position() == 25 &&
+              song_end_engine.song_end_count() == 1,
+          "deterministic song end boundary");
 }
 
 void test_hardware_diagnostics() {

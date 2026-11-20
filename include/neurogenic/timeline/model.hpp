@@ -10,6 +10,7 @@ using EventId = std::uint64_t;
 using TrackId = std::uint64_t;
 using PatternId = std::uint64_t;
 using ClipId = std::uint64_t;
+using PatternChainId = std::uint64_t;
 using InstrumentInstanceId = std::uint32_t;
 inline constexpr InstrumentInstanceId default_synth_instance_id = 1;
 inline constexpr std::size_t maximum_instrument_instances = 16;
@@ -96,6 +97,30 @@ enum class LaunchQuantization : std::uint8_t {
     two_bars,
     pattern_end
 };
+enum class FollowActionType : std::uint8_t {
+    continue_current,
+    next,
+    previous,
+    specific,
+    random_eligible,
+    stop
+};
+enum class VoiceTransitionPolicy : std::uint8_t {
+    preserve,
+    release_outgoing,
+    stop_outgoing
+};
+enum class SongEndBehavior : std::uint8_t {
+    loop,
+    stop,
+    return_to_live
+};
+struct PatternFollowAction {
+    FollowActionType type{FollowActionType::next};
+    std::uint16_t after_repetitions{1};
+    float probability{1.0F};
+    PatternId target{};
+};
 struct PatternTrack {
     TrackId track{};
     MusicalPattern pattern;
@@ -107,6 +132,11 @@ struct PatternDefinition {
     std::uint16_t time_signature_numerator{4};
     std::uint16_t time_signature_denominator{4};
     std::vector<PatternTrack> tracks;
+    PatternFollowAction follow;
+};
+struct PatternChainEntry {
+    PatternId pattern{};
+    std::uint16_t repeats{1};
 };
 struct ArrangementClip {
     ClipId id{};
@@ -126,6 +156,12 @@ struct SongArrangement {
     LaunchQuantization launch_quantization{LaunchQuantization::bar};
     std::vector<PatternId> pattern_chain;
     std::size_t pattern_chain_position{};
+    PatternChainId pattern_chain_id{1};
+    std::vector<PatternChainEntry> chain_entries;
+    bool chain_loop{}, chain_running{};
+    VoiceTransitionPolicy voice_transition{VoiceTransitionPolicy::preserve};
+    SongEndBehavior song_end_behavior{SongEndBehavior::loop};
+    PatternId return_live_pattern{};
     MusicalTick song_start{}, song_end{};
     bool loop_enabled{};
     MusicalTick loop_start{}, loop_end{};

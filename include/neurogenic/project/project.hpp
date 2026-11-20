@@ -11,7 +11,7 @@
 
 namespace neurogenic {
 struct Project {
-    static constexpr unsigned format_version = 2;
+    static constexpr unsigned format_version = 3;
     std::string name{"Untitled"};
     Timeline timeline;
     SliceProject samples;

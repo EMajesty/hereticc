@@ -49,6 +49,13 @@ occurrence. Overlapping same-pitch instances therefore remain independent.
 Voice stealing makes a later note-off a no-op if its exact owner no longer
 exists; there is no pitch-based fallback.
 
+Queued pattern publication uses an absolute frame computed from this same
+rational mapping. A boundary inside a variable-sized callback divides its
+scheduling range: outgoing events are end-exclusive at the boundary and the
+incoming plan begins there. At equal positions the established deterministic
+event order still applies. See [ARRANGEMENT.md](ARRANGEMENT.md) for chain,
+follow-action, voice-transition, and song-end semantics.
+
 ## Version 1 interchange
 
 `NEUROGENIC_TIMELINE` is a narrow versioned text interchange format, not the final

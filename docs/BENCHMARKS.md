@@ -4,6 +4,15 @@ Arrangement scenarios compile and schedule 16 patterns/64 clips and 64
 patterns/256 clips. `preparation_ns` contains control-side materialization and
 compilation; buffer processing reports scheduler cost separately.
 
+Task 045 adds `pattern_chain_64_entries`, including per-entry repetitions and
+prepared loop traversal. It measures chain materialization separately from
+steady-state scheduler buffers. Exact launch latency is also regression-tested
+across variable callback partitions; physical audio/MIDI latency remains a
+hardware measurement. On the development Ryzen 7 7800X3D Debug build (GCC
+15.3, 48 kHz, 256 frames, 50 iterations), the chain prepared in 0.062 ms and
+steady-state sparse scheduling averaged 10 ns/buffer with 14.0 MB process RSS.
+This is not a Pi 5 or N150 measurement.
+
 Debug GCC 15.3 measurements on the development Ryzen 7 7800X3D (48 kHz,
 256-frame buffers, 50 iterations) were 0.466 ms preparation / 19 ns scheduler
 work per sparse buffer for 16/64, and 5.90 ms / 19 ns for 64/256. Resident

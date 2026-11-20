@@ -399,6 +399,17 @@ void SubtractiveSynth::reset() noexcept {
     age_ = 0;
     modulation_frame_ = 0;
 }
+void SubtractiveSynth::release_timeline_voices(bool immediate) noexcept {
+    for (auto &voice : voices_)
+        if (voice.owner.track != 0) {
+            if (immediate)
+                voice.stage = EnvelopeStage::idle;
+            else {
+                voice.stage = EnvelopeStage::release;
+                voice.modulation_stage = EnvelopeStage::release;
+            }
+        }
+}
 void SubtractiveSynth::set_sample_rate(std::uint32_t rate) noexcept {
     rate_ = std::max(1U, rate);
     reset();

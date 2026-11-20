@@ -186,6 +186,33 @@ ActionRegistry::ActionRegistry() {
                {{"enabled", ValueType::boolean},
                 {"start", ValueType::integer},
                 {"end", ValueType::integer}}));
+    add(action("pattern.chain-entry-set.v1", "Set pattern chain entry",
+               "Arrangement",
+               {{"index", ValueType::integer},
+                {"pattern", ValueType::integer},
+                {"repeats", ValueType::integer}}));
+    add(action("pattern.chain-play.v1", "Start pattern chain", "Arrangement",
+               {{"entry", ValueType::integer, false},
+                {"loop", ValueType::boolean, false}}));
+    add(action("pattern.chain-stop.v1", "Stop pattern chain", "Arrangement"));
+    add(action("pattern.chain-reset.v1", "Reset pattern chain", "Arrangement"));
+    add(action("pattern.follow-set.v1", "Set pattern follow action",
+               "Arrangement",
+               {{"pattern", ValueType::integer},
+                {"action", ValueType::text},
+                {"repetitions", ValueType::integer},
+                {"probability", ValueType::real, false},
+                {"target", ValueType::integer, false}}));
+    add(action("pattern.launch-quantization.v1", "Set launch quantization",
+               "Arrangement", {{"quantization", ValueType::text}}));
+    add(action("pattern.voice-transition.v1", "Set voice transition policy",
+               "Arrangement", {{"policy", ValueType::text}}));
+    add(action("arrangement.song-end.v1", "Set song-end behavior",
+               "Arrangement",
+               {{"behavior", ValueType::text},
+                {"pattern", ValueType::integer, false}}));
+    add(action("arrangement.return.v1", "Return to arrangement",
+               "Arrangement"));
     add(action("step.select.v1", "Select step", "Sequencer",
                {{"step", ValueType::integer}}));
     add(action("step.toggle.v1", "Toggle step", "Sequencer",
@@ -3210,13 +3237,23 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                    command.action_id == "pattern.rename.v1" ||
                    command.action_id == "pattern.delete.v1" ||
                    command.action_id == "pattern.launch.v1" ||
+                   command.action_id == "pattern.chain-entry-set.v1" ||
+                   command.action_id == "pattern.chain-play.v1" ||
+                   command.action_id == "pattern.chain-stop.v1" ||
+                   command.action_id == "pattern.chain-reset.v1" ||
+                   command.action_id == "pattern.follow-set.v1" ||
+                   command.action_id == "pattern.launch-quantization.v1" ||
+                   command.action_id == "pattern.voice-transition.v1" ||
                    command.action_id == "arrangement.mode-set.v1" ||
+                   command.action_id == "arrangement.song-end.v1" ||
+                   command.action_id == "arrangement.return.v1" ||
                    command.action_id == "arrangement.clip-create.v1" ||
                    command.action_id == "arrangement.clip-update.v1" ||
                    command.action_id == "arrangement.clip-delete.v1" ||
                    command.action_id == "arrangement.range-set.v1" ||
                    command.action_id == "arrangement.loop-set.v1") {
             auto transaction = timeline_.edit();
+            TimelineService::Publish scheduled_publisher;
             if (command.action_id == "pattern.create.v1") {
                 const auto requested = argument<std::int64_t>(command, "id");
                 if (requested && *requested <= 0)
@@ -3271,8 +3308,29 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     queued_launch_tick_ = launch_boundary(
                         state_.transport_tick, arrangement.launch_quantization,
                         found->length, transaction.timeline().transport);
-                    if (*queued_launch_tick_ == state_.transport_tick)
-                        transaction.launch_pattern(id, false, error);
+                    const auto frame =
+                        (static_cast<long double>(*queued_launch_tick_) *
+                         engine_.sample_rate() *
+                         transaction.timeline()
+                             .transport.microseconds_per_quarter) /
+                        (static_cast<long double>(ticks_per_quarter) *
+                         1'000'000.0L);
+                    queued_launch_frame_ = static_cast<std::uint64_t>(
+                        std::llround(frame));
+                    const auto policy = arrangement.voice_transition;
+                    scheduled_publisher =
+                        [this, id, policy,
+                         activation = *queued_launch_frame_](
+                            const Timeline &queued_timeline,
+                            std::string &publish_error) {
+                            auto audible = queued_timeline;
+                            audible.arrangement.active_pattern = id;
+                            audible.arrangement.queued_pattern = 0;
+                            audible.arrangement.playback_mode =
+                                TimelinePlaybackMode::live_pattern;
+                            return engine_.queue_timeline_at(
+                                audible, activation, policy, publish_error);
+                        };
                 }
             } else if (command.action_id == "arrangement.mode-set.v1") {
                 const auto &mode = *argument<std::string>(command, "mode");
@@ -3287,6 +3345,134 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                                                   error);
                 else
                     error = "unknown arrangement playback mode";
+            } else if (command.action_id == "pattern.chain-entry-set.v1") {
+                const auto index = *argument<std::int64_t>(command, "index");
+                const auto pattern = *argument<std::int64_t>(command, "pattern");
+                const auto repeats = *argument<std::int64_t>(command, "repeats");
+                auto entries = transaction.timeline().arrangement.chain_entries;
+                if (index < 0 || static_cast<std::size_t>(index) > entries.size() ||
+                    pattern <= 0 || repeats <= 0 || repeats > 65535)
+                    error = "invalid pattern chain entry";
+                else {
+                    const PatternChainEntry entry{
+                        static_cast<PatternId>(pattern),
+                        static_cast<std::uint16_t>(repeats)};
+                    if (static_cast<std::size_t>(index) == entries.size())
+                        entries.push_back(entry);
+                    else
+                        entries[static_cast<std::size_t>(index)] = entry;
+                    transaction.set_pattern_chain(
+                        transaction.timeline().arrangement.pattern_chain_id,
+                        std::move(entries),
+                        transaction.timeline().arrangement.chain_loop, error);
+                }
+            } else if (command.action_id == "pattern.chain-play.v1") {
+                const auto entry = argument<std::int64_t>(command, "entry");
+                const auto loop = argument<bool>(command, "loop");
+                if (loop) {
+                    auto entries = transaction.timeline().arrangement.chain_entries;
+                    transaction.set_pattern_chain(
+                        transaction.timeline().arrangement.pattern_chain_id,
+                        std::move(entries), *loop, error);
+                }
+                if (error.empty())
+                    transaction.set_chain_running(
+                        true, entry ? static_cast<std::size_t>(*entry) : 0,
+                        error);
+            } else if (command.action_id == "pattern.chain-stop.v1") {
+                transaction.set_chain_running(
+                    false,
+                    transaction.timeline().arrangement.pattern_chain_position,
+                    error);
+            } else if (command.action_id == "pattern.chain-reset.v1") {
+                transaction.set_chain_running(false, 0, error);
+            } else if (command.action_id == "pattern.follow-set.v1") {
+                PatternFollowAction follow;
+                const auto &action = *argument<std::string>(command, "action");
+                if (action == "continue")
+                    follow.type = FollowActionType::continue_current;
+                else if (action == "next")
+                    follow.type = FollowActionType::next;
+                else if (action == "previous")
+                    follow.type = FollowActionType::previous;
+                else if (action == "specific")
+                    follow.type = FollowActionType::specific;
+                else if (action == "random")
+                    follow.type = FollowActionType::random_eligible;
+                else if (action == "stop")
+                    follow.type = FollowActionType::stop;
+                else
+                    error = "unknown pattern follow action";
+                const auto repetitions =
+                    *argument<std::int64_t>(command, "repetitions");
+                const auto probability = argument<double>(command, "probability");
+                const auto target = argument<std::int64_t>(command, "target");
+                if (repetitions <= 0 || repetitions > 65535)
+                    error = "follow repetitions must be 1..65535";
+                else {
+                    follow.after_repetitions =
+                        static_cast<std::uint16_t>(repetitions);
+                    follow.probability = probability
+                                             ? static_cast<float>(*probability)
+                                             : 1.0F;
+                    follow.target = target ? static_cast<PatternId>(*target) : 0;
+                }
+                if (error.empty())
+                    transaction.set_follow_action(
+                        static_cast<PatternId>(
+                            *argument<std::int64_t>(command, "pattern")),
+                        follow, error);
+            } else if (command.action_id ==
+                       "pattern.launch-quantization.v1") {
+                const auto &value =
+                    *argument<std::string>(command, "quantization");
+                if (value == "immediate")
+                    transaction.set_launch_quantization(
+                        LaunchQuantization::immediate, error);
+                else if (value == "quarter")
+                    transaction.set_launch_quantization(
+                        LaunchQuantization::quarter, error);
+                else if (value == "bar")
+                    transaction.set_launch_quantization(LaunchQuantization::bar,
+                                                        error);
+                else if (value == "two-bars")
+                    transaction.set_launch_quantization(
+                        LaunchQuantization::two_bars, error);
+                else if (value == "pattern-end")
+                    transaction.set_launch_quantization(
+                        LaunchQuantization::pattern_end, error);
+                else
+                    error = "unknown launch quantization";
+            } else if (command.action_id == "pattern.voice-transition.v1") {
+                const auto &value = *argument<std::string>(command, "policy");
+                if (value == "preserve")
+                    transaction.set_voice_transition(
+                        VoiceTransitionPolicy::preserve, error);
+                else if (value == "release")
+                    transaction.set_voice_transition(
+                        VoiceTransitionPolicy::release_outgoing, error);
+                else if (value == "stop")
+                    transaction.set_voice_transition(
+                        VoiceTransitionPolicy::stop_outgoing, error);
+                else
+                    error = "unknown voice transition policy";
+            } else if (command.action_id == "arrangement.song-end.v1") {
+                const auto &value = *argument<std::string>(command, "behavior");
+                const auto pattern = argument<std::int64_t>(command, "pattern");
+                auto behavior = SongEndBehavior::loop;
+                if (value == "stop")
+                    behavior = SongEndBehavior::stop;
+                else if (value == "return-live")
+                    behavior = SongEndBehavior::return_to_live;
+                else if (value != "loop")
+                    error = "unknown song-end behavior";
+                if (error.empty())
+                    transaction.set_song_end_behavior(
+                        behavior,
+                        pattern ? static_cast<PatternId>(*pattern) : 0, error);
+            } else if (command.action_id == "arrangement.return.v1") {
+                transaction.set_playback_mode(TimelinePlaybackMode::song,
+                                              error);
             } else if (command.action_id == "arrangement.clip-create.v1") {
                 ArrangementClip clip;
                 const auto requested = argument<std::int64_t>(command, "id");
@@ -3356,10 +3542,17 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     *argument<std::int64_t>(command, "start"),
                     *argument<std::int64_t>(command, "end"), error);
             }
-            if (error.empty() &&
-                timeline_.commit(std::move(transaction),
-                                 TimelineCommitPolicy::next_audio_callback,
-                                 error)) {
+            const auto committed =
+                error.empty() &&
+                (scheduled_publisher
+                     ? timeline_.commit_with(
+                           std::move(transaction),
+                           TimelineCommitPolicy::next_audio_callback,
+                           std::move(scheduled_publisher), error)
+                     : timeline_.commit(
+                           std::move(transaction),
+                           TimelineCommitPolicy::next_audio_callback, error));
+            if (committed) {
                 state_.project_dirty = true;
                 changed_locked();
             }
@@ -5183,29 +5376,48 @@ void ApplicationService::synchronize_locked() const {
     const auto playing = engine_.playing();
     const auto frame = engine_.frame_position();
     auto timeline = timeline_.snapshot();
-    if (queued_launch_tick_) {
-        const auto tick = static_cast<MusicalTick>(
-            (static_cast<long double>(frame) * ticks_per_quarter *
-             1'000'000.0L) /
-            (static_cast<long double>(engine_.sample_rate()) *
-             timeline.timeline.transport.microseconds_per_quarter));
-        if (tick >= *queued_launch_tick_) {
+    const auto song_end_count = engine_.song_end_count();
+    if (song_end_count != observed_song_end_count_) {
+        observed_song_end_count_ = song_end_count;
+        const auto &arrangement = timeline.timeline.arrangement;
+        if (arrangement.song_end_behavior == SongEndBehavior::return_to_live &&
+            arrangement.return_live_pattern) {
+            auto transaction = timeline_.edit();
+            std::string return_error;
+            if (transaction.launch_pattern(arrangement.return_live_pattern,
+                                           false, return_error) &&
+                timeline_.commit(
+                    std::move(transaction),
+                    TimelineCommitPolicy::next_audio_callback,
+                    return_error)) {
+                timeline = timeline_.snapshot();
+                state_.project_dirty = true;
+            } else
+                state_.arrangement_error = return_error.empty()
+                                               ? "return-to-live failed"
+                                               : std::move(return_error);
+        }
+    }
+    if (queued_launch_frame_ &&
+        engine_.last_timeline_activation_frame() >= *queued_launch_frame_) {
             auto transaction = timeline_.edit();
             std::string activation_error;
             const auto id = transaction.timeline().arrangement.queued_pattern;
             if (id && transaction.launch_pattern(id, false, activation_error) &&
-                timeline_.commit(
+                timeline_.commit_with(
                     std::move(transaction),
                     TimelineCommitPolicy::next_audio_callback,
+                    [](const Timeline &, std::string &) { return true; },
                     activation_error)) {
                 queued_launch_tick_.reset();
+                queued_launch_frame_.reset();
                 timeline = timeline_.snapshot();
                 state_.project_dirty = true;
             } else if (!activation_error.empty()) {
                 state_.arrangement_error = std::move(activation_error);
                 queued_launch_tick_.reset();
+                queued_launch_frame_.reset();
             }
-        }
     }
     const auto history = timeline_.history_status();
     auto slots = samples_.states();
@@ -5454,23 +5666,47 @@ void ApplicationService::synchronize_locked() const {
     state_.playback_mode = arrangement.playback_mode;
     state_.active_pattern = arrangement.active_pattern;
     state_.queued_pattern = arrangement.queued_pattern;
+    state_.next_pattern = arrangement.queued_pattern;
+    if (!state_.next_pattern && arrangement.chain_running &&
+        !arrangement.chain_entries.empty()) {
+        auto next = arrangement.pattern_chain_position + 1;
+        if (next >= arrangement.chain_entries.size())
+            next = arrangement.chain_loop ? 0 : arrangement.chain_entries.size();
+        if (next < arrangement.chain_entries.size())
+            state_.next_pattern = arrangement.chain_entries[next].pattern;
+    }
     state_.launch_quantization = arrangement.launch_quantization;
     state_.song_start = arrangement.song_start;
     state_.song_end = arrangement.song_end;
     state_.arrangement_loop_enabled = arrangement.loop_enabled;
     state_.arrangement_loop_start = arrangement.loop_start;
     state_.arrangement_loop_end = arrangement.loop_end;
+    state_.next_launch_frame = queued_launch_frame_.value_or(0);
+    state_.last_launch_frame = engine_.last_timeline_activation_frame();
+    state_.launch_lateness_frames = engine_.last_timeline_lateness_frames();
     state_.patterns.clear();
     state_.patterns.reserve(arrangement.patterns.size());
     for (const auto &pattern : arrangement.patterns)
         state_.patterns.push_back(
-            {pattern.id, pattern.name, pattern.length, pattern.tracks.size()});
+            {pattern.id, pattern.name, pattern.length, pattern.tracks.size(),
+             pattern.follow});
     state_.clips.clear();
     state_.clips.reserve(arrangement.clips.size());
     for (const auto &clip : arrangement.clips)
         state_.clips.push_back({clip.id, clip.pattern, clip.start, clip.duration,
                                 clip.loop, clip.enabled, clip.transpose,
                                 clip.velocity_scale});
+    state_.pattern_chain_id = arrangement.pattern_chain_id;
+    state_.pattern_chain_position = arrangement.pattern_chain_position;
+    state_.pattern_chain_loop = arrangement.chain_loop;
+    state_.pattern_chain_running = arrangement.chain_running;
+    state_.voice_transition = arrangement.voice_transition;
+    state_.song_end_behavior = arrangement.song_end_behavior;
+    state_.pattern_chain_entries.clear();
+    state_.pattern_chain_entries.reserve(arrangement.chain_entries.size());
+    for (const auto &entry : arrangement.chain_entries)
+        state_.pattern_chain_entries.push_back(
+            {entry.pattern, entry.repeats});
     if (state_.selected_track == 0 && !timeline.timeline.tracks.empty())
         state_.selected_track = timeline.timeline.tracks.front().id;
     state_.tracks.clear();

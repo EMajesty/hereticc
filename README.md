@@ -3,7 +3,9 @@
 </p>
 
 NEUROGENIC supports reusable multi-track patterns, quantized live launching,
-and linear clip arrangements through one authoritative timeline. See
+and linear clip arrangements through one authoritative timeline. Live patterns
+support repeat chains, deterministic follow actions, exact quantized launches,
+and explicit outgoing-voice policies. See
 [Patterns, clips, and arrangements](docs/ARRANGEMENT.md).
 
 check out

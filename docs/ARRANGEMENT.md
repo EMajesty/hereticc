@@ -29,14 +29,28 @@ the existing 65,536-event timeline budget.
 clips into the selected song or loop range before publication.
 
 Pattern launches can be immediate or queued to quarter-note, bar, two-bar, or
-current-pattern boundaries. The application observes the authoritative
-transport tick and commits the queued transition on the control thread at the
-first observed boundary. It becomes audible on the next audio callback. This
-is bounded by one control-state refresh plus one callback; the callback never
-compiles or allocates. Transport phase and already-active voices are retained.
+current-pattern-end boundaries. The control thread compiles the replacement
+plan in advance and publishes its absolute transport-frame boundary. If the
+boundary falls inside a callback, the callback schedules the old and new plans
+on opposite sides of that frame. It never activates early, compiles, or
+allocates. Fractional tempo conversion uses the same absolute rational timing
+as timeline scheduling; external-clock launches use the follower's musical
+frame domain. Diagnostics expose the requested frame, actual activation frame,
+and bounded lateness (normally zero; a late control submission activates at the
+next callback start).
 
-Pattern chains and their position are persisted and validated. Automatic chain
-advancement is deferred.
+Chains contain stable pattern IDs and per-entry repeat counts. They can loop or
+run once, start at a selected entry, stop, reset, and be replaced transactionally
+while playing. Follow actions run after the configured repetitions: continue,
+next, previous, a specific pattern, seeded-random eligible pattern, or stop.
+Probability is evaluated from the project generation seed and chain position,
+so recompiling the same snapshot gives the same result. The bounded compiler
+materializes one chain traversal; looped chains repeat that prepared traversal.
+
+Transition policy is explicit: `preserve` leaves outgoing owned voices active,
+`release` sends note-off/releases, and `stop` terminates them immediately.
+Cleanup targets timeline-owned sample/synth voices and tracked external-MIDI
+notes only; live pad notes are not killed.
 
 ## Compilation and precedence
 
@@ -57,19 +71,20 @@ Clips on disjoint tracks may overlap.
 
 ## Editing, persistence, and migration
 
-Pattern and clip edits commit complete validated snapshots and participate in
+Pattern, chain, follow-action, and clip edits commit complete validated snapshots and participate in
 undo/redo, revision conflict detection, publication failure handling, and safe
-playback-plan reclamation. Timeline format version 5 stores definitions,
-per-track content, clips, launch settings, chains, and song/loop ranges.
-Versions 1–4 load with an empty arrangement in `legacy` mode, preserving sound
-without duplicating events.
+playback-plan reclamation. Timeline format version 6 stores definitions,
+per-track content, clips, launch settings, chain entries, follow actions, voice
+policy, and song-end behavior. Version 5 loads its legacy pattern-ID chain with
+the prior defaults; versions 1–4 load in `legacy` mode without changing sound.
 
 ## Limitations
 
-- Song playback loops the compiled song/loop range; stop-at-song-end is not yet
-  available.
-- Automatic chain advancement and follow actions are deferred.
+- Song end can loop, stop exactly at the prepared end frame, or stop and return
+  the application to a configured live pattern. Return-to-live plan publication
+  occurs on the control thread after the exact callback stop.
 - Seeking uses the bounded `arrangement.seek.v1` transport command and shares
   the existing transport frame and MIDI SPP timing domain.
 - Audio-file clips, warping, and same-track clip overlap are unsupported.
-- Queued activation is control-refresh bounded, not a sample-exact plan swap.
+- Runtime chain edits take effect after a newly validated plan is published;
+  they do not rewrite the already-active plan in place.

@@ -396,7 +396,7 @@ bool TimelineTransaction::create_pattern(PatternId id, std::string name,
     }
     patterns.push_back({id, std::move(name), length,
                         timeline_.transport.time_signature_numerator,
-                        timeline_.transport.time_signature_denominator, {}});
+                        timeline_.transport.time_signature_denominator, {}, {}});
     error.clear();
     return true;
 }
@@ -574,6 +574,86 @@ bool TimelineTransaction::set_loop_region(bool enabled, MusicalTick start,
     error.clear();
     return true;
 }
+bool TimelineTransaction::set_pattern_chain(
+    PatternChainId id, std::vector<PatternChainEntry> entries, bool loop,
+    std::string &error) {
+    if (!id || entries.empty() || entries.size() > 4096) {
+        error = "pattern chain ID and entries are required";
+        return false;
+    }
+    const auto previous = timeline_.arrangement;
+    timeline_.arrangement.pattern_chain_id = id;
+    timeline_.arrangement.chain_entries = std::move(entries);
+    timeline_.arrangement.chain_loop = loop;
+    timeline_.arrangement.pattern_chain_position = 0;
+    if (!validate_arrangement(timeline_, error)) {
+        timeline_.arrangement = previous;
+        return false;
+    }
+    return true;
+}
+bool TimelineTransaction::set_chain_running(bool running,
+                                            std::size_t start_entry,
+                                            std::string &error) {
+    auto &a = timeline_.arrangement;
+    if (running && (a.chain_entries.empty() ||
+                    start_entry >= a.chain_entries.size())) {
+        error = "pattern chain start entry is invalid";
+        return false;
+    }
+    a.chain_running = running;
+    a.pattern_chain_position = running ? start_entry : 0;
+    if (running) {
+        a.playback_mode = TimelinePlaybackMode::live_pattern;
+        a.active_pattern = a.chain_entries[start_entry].pattern;
+    }
+    error.clear();
+    return true;
+}
+bool TimelineTransaction::set_follow_action(PatternId id,
+                                            PatternFollowAction action,
+                                            std::string &error) {
+    const auto found = std::find_if(timeline_.arrangement.patterns.begin(),
+                                    timeline_.arrangement.patterns.end(),
+                                    [=](const auto &p) { return p.id == id; });
+    if (found == timeline_.arrangement.patterns.end()) {
+        error = "pattern does not exist";
+        return false;
+    }
+    const auto previous = found->follow;
+    found->follow = action;
+    if (!validate_arrangement(timeline_, error)) {
+        found->follow = previous;
+        return false;
+    }
+    return true;
+}
+bool TimelineTransaction::set_launch_quantization(LaunchQuantization value,
+                                                  std::string &error) {
+    timeline_.arrangement.launch_quantization = value;
+    error.clear();
+    return true;
+}
+bool TimelineTransaction::set_voice_transition(VoiceTransitionPolicy value,
+                                               std::string &error) {
+    timeline_.arrangement.voice_transition = value;
+    error.clear();
+    return true;
+}
+bool TimelineTransaction::set_song_end_behavior(SongEndBehavior behavior,
+                                                PatternId return_pattern,
+                                                std::string &error) {
+    const auto previous_behavior = timeline_.arrangement.song_end_behavior;
+    const auto previous_pattern = timeline_.arrangement.return_live_pattern;
+    timeline_.arrangement.song_end_behavior = behavior;
+    timeline_.arrangement.return_live_pattern = return_pattern;
+    if (!validate_arrangement(timeline_, error)) {
+        timeline_.arrangement.song_end_behavior = previous_behavior;
+        timeline_.arrangement.return_live_pattern = previous_pattern;
+        return false;
+    }
+    return true;
+}
 PatternId TimelineTransaction::next_pattern_id() const noexcept {
     PatternId next = 1;
     for (const auto &pattern : timeline_.arrangement.patterns)
@@ -672,6 +752,11 @@ void TimelineService::push_bounded(std::vector<HistoryEntry> &history,
 }
 bool TimelineService::commit(TimelineTransaction transaction,
                              TimelineCommitPolicy policy, std::string &error) {
+    return commit_with(std::move(transaction), policy, publish_, error);
+}
+bool TimelineService::commit_with(TimelineTransaction transaction,
+                                  TimelineCommitPolicy policy,
+                                  Publish publisher, std::string &error) {
     if (policy != TimelineCommitPolicy::next_audio_callback) {
         error = "unsupported timeline commit policy";
         return false;
@@ -689,7 +774,7 @@ bool TimelineService::commit(TimelineTransaction transaction,
         }
         previous = {current_, generation_seed_};
     }
-    if (!publish_(transaction.timeline_, error))
+    if (!publisher || !publisher(transaction.timeline_, error))
         return false;
     {
         std::lock_guard state_lock(mutex_);

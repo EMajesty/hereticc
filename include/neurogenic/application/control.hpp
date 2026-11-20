@@ -137,6 +137,7 @@ struct PatternState {
     std::string name;
     MusicalTick length{};
     std::size_t track_count{};
+    PatternFollowAction follow;
 };
 struct ClipState {
     ClipId id{};
@@ -145,6 +146,10 @@ struct ClipState {
     bool loop{}, enabled{};
     int transpose{};
     float velocity_scale{1.0F};
+};
+struct PatternChainEntryState {
+    PatternId pattern{};
+    std::uint16_t repeats{};
 };
 struct ApplicationState {
     std::uint64_t revision{};
@@ -170,14 +175,22 @@ struct ApplicationState {
     std::vector<WaveformPeak> waveform_peaks;
     std::uint64_t selected_pattern{};
     TimelinePlaybackMode playback_mode{TimelinePlaybackMode::legacy};
-    PatternId active_pattern{}, queued_pattern{};
+    PatternId active_pattern{}, queued_pattern{}, next_pattern{};
     LaunchQuantization launch_quantization{LaunchQuantization::bar};
     MusicalTick song_start{}, song_end{}, arrangement_loop_start{},
         arrangement_loop_end{};
     bool arrangement_loop_enabled{};
     std::vector<PatternState> patterns;
     std::vector<ClipState> clips;
+    PatternChainId pattern_chain_id{};
+    std::vector<PatternChainEntryState> pattern_chain_entries;
+    std::size_t pattern_chain_position{};
+    bool pattern_chain_loop{}, pattern_chain_running{};
+    VoiceTransitionPolicy voice_transition{VoiceTransitionPolicy::preserve};
+    SongEndBehavior song_end_behavior{SongEndBehavior::loop};
     std::string arrangement_error;
+    std::uint64_t next_launch_frame{}, last_launch_frame{},
+        launch_lateness_frames{};
     std::int64_t selected_step{};
     std::uint64_t step_page{};
     StepResolution step_resolution{StepResolution::sixteenth};
@@ -296,6 +309,8 @@ class ApplicationService {
     std::optional<TimelineTransaction> edit_group_;
     mutable std::optional<EventId> selected_event_id_;
     mutable std::optional<MusicalTick> queued_launch_tick_;
+    mutable std::optional<std::uint64_t> queued_launch_frame_;
+    mutable std::uint64_t observed_song_end_count_{};
     bool fill_momentary_{};
     Project project_;
     mutable SystemMonitor system_monitor_;

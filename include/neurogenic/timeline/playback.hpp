@@ -43,6 +43,10 @@ struct PlaybackPlan {
     std::vector<PlaybackEvent> events;
     std::vector<std::size_t> scheduler_heap;
     std::uint64_t generation_seed{};
+    TimelinePlaybackMode playback_mode{TimelinePlaybackMode::legacy};
+    MusicalTick playback_length{};
+    SongEndBehavior song_end_behavior{SongEndBehavior::loop};
+    PatternId return_live_pattern{};
 };
 bool compile_timeline(const Timeline &, PlaybackPlan &, std::string &error);
 

@@ -23,6 +23,14 @@ EventId placed_id(ClipId clip, EventId source, std::uint64_t repetition) {
              (value >> 2U);
     return value == 0 ? 1 : value;
 }
+std::uint64_t random_word(std::uint64_t seed, PatternId pattern,
+                          std::uint64_t step) noexcept {
+    auto value = seed ^ (pattern * 0x9e3779b97f4a7c15ULL) ^
+                 (step * 0xbf58476d1ce4e5b9ULL);
+    value = (value ^ (value >> 30U)) * 0xbf58476d1ce4e5b9ULL;
+    value = (value ^ (value >> 27U)) * 0x94d049bb133111ebULL;
+    return value ^ (value >> 31U);
+}
 } // namespace
 
 bool validate_arrangement(const Timeline &timeline, std::string &error,
@@ -82,6 +90,29 @@ bool validate_arrangement(const Timeline &timeline, std::string &error,
     if (!a.pattern_chain.empty() &&
         a.pattern_chain_position >= a.pattern_chain.size()) {
         error = "pattern chain position is out of range";
+        return false;
+    }
+    if (a.chain_entries.size() > 4096) {
+        error = "pattern chain capacity exceeded";
+        return false;
+    }
+    for (const auto &entry : a.chain_entries)
+        if (!pattern(a, entry.pattern) || entry.repeats == 0) {
+            error = "pattern chain entry is invalid";
+            return false;
+        }
+    for (const auto &definition : a.patterns) {
+        const auto &follow = definition.follow;
+        if (!follow.after_repetitions || !std::isfinite(follow.probability) ||
+            follow.probability < 0 || follow.probability > 1 ||
+            (follow.type == FollowActionType::specific &&
+             !pattern(a, follow.target))) {
+            error = "pattern follow action is invalid";
+            return false;
+        }
+    }
+    if (a.return_live_pattern && !pattern(a, a.return_live_pattern)) {
+        error = "song return pattern does not exist";
         return false;
     }
     for (const auto &clip : a.clips) {
@@ -171,6 +202,85 @@ bool materialize_arrangement(const Timeline &source, Timeline &result,
     for (auto &t : result.tracks)
         t.pattern.events.clear();
     if (a.playback_mode == TimelinePlaybackMode::live_pattern) {
+        if (a.chain_running && !a.chain_entries.empty()) {
+            Timeline chained = source;
+            auto &arrangement = chained.arrangement;
+            arrangement.playback_mode = TimelinePlaybackMode::song;
+            arrangement.clips.clear();
+            arrangement.song_start = 0;
+            MusicalTick cursor{};
+            ClipId clip_id = 1;
+            auto entry_index = std::min(a.pattern_chain_position,
+                                        a.chain_entries.size() - 1);
+            std::set<std::size_t> visited;
+            for (std::size_t step = 0; step < a.chain_entries.size(); ++step) {
+                if (!visited.insert(entry_index).second)
+                    break;
+                const auto &entry = a.chain_entries[entry_index];
+                const auto *definition = pattern(a, entry.pattern);
+                const auto repeats = std::max<std::uint16_t>(
+                    entry.repeats, definition->follow.after_repetitions);
+                for (std::uint16_t repeat = 0; repeat < repeats; ++repeat) {
+                    arrangement.clips.push_back(
+                        {clip_id++, definition->id, cursor, definition->length,
+                         false, 0, 1, true});
+                    cursor += definition->length;
+                }
+                auto next = entry_index + 1;
+                const auto random = random_word(source.generation_seed,
+                                                definition->id, step);
+                const auto fires =
+                    static_cast<double>(random >> 11U) /
+                        static_cast<double>(1ULL << 53U) <
+                    definition->follow.probability;
+                if (fires) {
+                    if (definition->follow.type == FollowActionType::stop)
+                        break;
+                    switch (definition->follow.type) {
+                    case FollowActionType::previous:
+                        next = entry_index == 0 ? a.chain_entries.size() - 1
+                                                : entry_index - 1;
+                        break;
+                    case FollowActionType::specific: {
+                        const auto found = std::find_if(
+                            a.chain_entries.begin(), a.chain_entries.end(),
+                            [&](const auto &candidate) {
+                                return candidate.pattern ==
+                                       definition->follow.target;
+                            });
+                        if (found != a.chain_entries.end())
+                            next = static_cast<std::size_t>(
+                                found - a.chain_entries.begin());
+                        break;
+                    }
+                    case FollowActionType::random_eligible:
+                        next = static_cast<std::size_t>(
+                            random % a.chain_entries.size());
+                        break;
+                    case FollowActionType::continue_current:
+                        next = entry_index;
+                        break;
+                    case FollowActionType::next:
+                    case FollowActionType::stop:
+                        break;
+                    }
+                }
+                if (next >= a.chain_entries.size()) {
+                    if (!a.chain_loop)
+                        break;
+                    next = 0;
+                }
+                entry_index = next;
+            }
+            arrangement.song_end = cursor;
+            arrangement.loop_enabled = false;
+            arrangement.chain_running = false;
+            if (cursor <= 0) {
+                error = "pattern chain produced no playable content";
+                return false;
+            }
+            return materialize_arrangement(chained, result, error);
+        }
         const auto *selected = pattern(a, a.active_pattern);
         if (!selected) {
             error = "live mode has no active pattern";

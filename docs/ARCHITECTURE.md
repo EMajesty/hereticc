@@ -6,6 +6,13 @@ live pattern or song into a temporary legacy-shaped timeline before
 `compile_timeline` creates the immutable playback plan. The callback receives
 only that prepared plan and retains the deterministic scheduler.
 
+Pattern chains and follow actions are likewise materialized control-side into
+a bounded prepared plan. Scheduled publication carries an absolute activation
+frame and voice policy through a bounded SPSC queue. The callback may split one
+buffer at that frame, atomically exchange plan slots, and reclaim neither plan
+nor voice resources. Song-end frames are prepared with the plan and stop the
+transport without polling.
+
 Sample voices contain preallocated `SampleVoiceModulationState`. Persisted
 definitions are immutable shared configuration, while phase, envelopes and
 random state live in the bounded voice pool. Note events allocate and lock

@@ -1374,6 +1374,55 @@ void arrangement_case(std::size_t pattern_count, std::size_t clip_count) {
            preparation);
 }
 
+void pattern_chain_case(std::size_t entry_count) {
+    neurogenic::Timeline source;
+    source.tracks.push_back({1, "Chain", false, {960, {}}});
+    for (std::size_t index = 0; index < 16; ++index) {
+        neurogenic::PatternDefinition pattern;
+        pattern.id = index + 1;
+        pattern.name = "Chain " + std::to_string(index + 1);
+        pattern.length = 960;
+        pattern.tracks.push_back(
+            {1, {960, {{index + 1, 0,
+                        neurogenic::MusicalEventType::note,
+                        static_cast<std::uint8_t>(36 + index), 0.7F, 120}}}});
+        source.arrangement.patterns.push_back(std::move(pattern));
+    }
+    source.arrangement.playback_mode =
+        neurogenic::TimelinePlaybackMode::live_pattern;
+    source.arrangement.active_pattern = 1;
+    source.arrangement.chain_running = true;
+    source.arrangement.chain_loop = true;
+    for (std::size_t index = 0; index < entry_count; ++index)
+        source.arrangement.chain_entries.push_back(
+            {index % 16 + 1, static_cast<std::uint16_t>(index % 4 + 1)});
+    neurogenic::PlaybackPlan plan;
+    std::string error;
+    const auto prepare = Clock::now();
+    if (!neurogenic::compile_timeline(source, plan, error))
+        throw std::runtime_error(error);
+    const auto preparation =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
+                                                             prepare)
+            .count();
+    neurogenic::TimelineScheduler scheduler(48'000);
+    scheduler.set_plan(&plan, 0);
+    std::array<neurogenic::TimelineScheduledEvent, 256> events{};
+    std::uint64_t frame{};
+    const auto begin = Clock::now();
+    for (std::size_t i = 0; i < iterations; ++i) {
+        checksum += scheduler.schedule(frame, 256, events);
+        frame += 256;
+    }
+    result("pattern_chain_" + std::to_string(entry_count) + "_entries",
+           48'000, 256,
+           std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
+                                                                begin)
+                   .count() /
+               iterations,
+           preparation);
+}
+
 int main(int argc, char **argv) {
     for (int argument = 1; argument < argc; ++argument) {
         const std::string_view option{argv[argument]};
@@ -1418,6 +1467,7 @@ int main(int argc, char **argv) {
     publication_case();
     arrangement_case(16, 64);
     arrangement_case(64, 256);
+    pattern_chain_case(64);
     automation_case("parameter_locks_sparse", 4);
     automation_case("parameter_locks_dense", 256);
     automation_case("mixed_sample_synth_automation", 64, true);

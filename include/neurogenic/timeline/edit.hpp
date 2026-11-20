@@ -99,6 +99,15 @@ class TimelineTransaction {
                         std::string &error);
     bool set_loop_region(bool enabled, MusicalTick start, MusicalTick end,
                          std::string &error);
+    bool set_pattern_chain(PatternChainId, std::vector<PatternChainEntry>,
+                           bool loop, std::string &error);
+    bool set_chain_running(bool running, std::size_t start_entry,
+                           std::string &error);
+    bool set_follow_action(PatternId, PatternFollowAction, std::string &error);
+    bool set_launch_quantization(LaunchQuantization, std::string &error);
+    bool set_voice_transition(VoiceTransitionPolicy, std::string &error);
+    bool set_song_end_behavior(SongEndBehavior, PatternId return_pattern,
+                               std::string &error);
     [[nodiscard]] PatternId next_pattern_id() const noexcept;
     [[nodiscard]] ClipId next_clip_id() const noexcept;
     [[nodiscard]] TrackId next_track_id() const noexcept;
@@ -122,6 +131,8 @@ class TimelineService {
     [[nodiscard]] TimelineTransaction edit() const;
     bool validate(const TimelineTransaction &, std::string &error) const;
     bool commit(TimelineTransaction, TimelineCommitPolicy, std::string &error);
+    bool commit_with(TimelineTransaction, TimelineCommitPolicy, Publish,
+                     std::string &error);
     bool undo(TimelineCommitPolicy, std::string &error);
     bool redo(TimelineCommitPolicy, std::string &error);
     [[nodiscard]] TimelineHistoryStatus history_status() const;

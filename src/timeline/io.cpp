@@ -101,6 +101,26 @@ Timeline load_timeline(const std::filesystem::path &path) {
                 a.launch_quantization =
                     static_cast<LaunchQuantization>(quantization);
                 a.loop_enabled = loop != 0;
+                if (version >= 6) {
+                    unsigned chain_loop{}, chain_running{}, voice_policy{},
+                        song_end{};
+                    if (!(line >> a.pattern_chain_id >> chain_loop >>
+                          chain_running >> voice_policy >> song_end >>
+                          a.return_live_pattern) ||
+                        chain_loop > 1 || chain_running > 1 ||
+                        voice_policy > static_cast<unsigned>(
+                                           VoiceTransitionPolicy::stop_outgoing) ||
+                        song_end > static_cast<unsigned>(
+                                       SongEndBehavior::return_to_live))
+                        throw std::runtime_error(
+                            "invalid arrangement transition settings");
+                    a.chain_loop = chain_loop != 0;
+                    a.chain_running = chain_running != 0;
+                    a.voice_transition =
+                        static_cast<VoiceTransitionPolicy>(voice_policy);
+                    a.song_end_behavior =
+                        static_cast<SongEndBehavior>(song_end);
+                }
                 require_end(line);
             } else if (kind == "pattern") {
                 PatternDefinition pattern;
@@ -109,6 +129,15 @@ Timeline load_timeline(const std::filesystem::path &path) {
                       pattern.time_signature_denominator >>
                       std::quoted(pattern.name)))
                     throw std::runtime_error("invalid pattern");
+                if (version >= 6) {
+                    unsigned follow{};
+                    if (!(line >> follow >> pattern.follow.after_repetitions >>
+                          pattern.follow.probability >> pattern.follow.target) ||
+                        follow > static_cast<unsigned>(FollowActionType::stop))
+                        throw std::runtime_error("invalid pattern follow action");
+                    pattern.follow.type =
+                        static_cast<FollowActionType>(follow);
+                }
                 require_end(line);
                 timeline.arrangement.patterns.push_back(std::move(pattern));
             } else if (kind == "pattern_track") {
@@ -161,6 +190,12 @@ Timeline load_timeline(const std::filesystem::path &path) {
                     throw std::runtime_error("invalid pattern chain");
                 while (line >> id)
                     timeline.arrangement.pattern_chain.push_back(id);
+            } else if (kind == "chain_entry") {
+                PatternChainEntry entry;
+                if (!(line >> entry.pattern >> entry.repeats))
+                    throw std::runtime_error("invalid pattern chain entry");
+                require_end(line);
+                timeline.arrangement.chain_entries.push_back(entry);
             } else if (kind == "note") {
                 TrackId track{};
                 unsigned pitch{};
@@ -285,11 +320,19 @@ void save_timeline(const Timeline &timeline,
            << a.active_pattern << ' ' << a.queued_pattern << ' '
            << static_cast<unsigned>(a.launch_quantization) << ' ' << a.song_start
            << ' ' << a.song_end << ' ' << (a.loop_enabled ? 1 : 0) << ' '
-           << a.loop_start << ' ' << a.loop_end << '\n';
+           << a.loop_start << ' ' << a.loop_end;
+    output << ' ' << a.pattern_chain_id << ' ' << (a.chain_loop ? 1 : 0)
+           << ' ' << (a.chain_running ? 1 : 0) << ' '
+           << static_cast<unsigned>(a.voice_transition) << ' '
+           << static_cast<unsigned>(a.song_end_behavior) << ' '
+           << a.return_live_pattern << '\n';
     output << "pattern_chain " << a.pattern_chain_position;
     for (const auto id : a.pattern_chain)
         output << ' ' << id;
     output << '\n';
+    for (const auto &entry : a.chain_entries)
+        output << "chain_entry " << entry.pattern << ' ' << entry.repeats
+               << '\n';
     for (const auto &track : timeline.tracks) {
         output << "track " << track.id << ' ' << track.pattern.length << ' '
                << (track.muted ? 1 : 0) << ' ' << std::quoted(track.name) << ' '
@@ -337,7 +380,11 @@ void save_timeline(const Timeline &timeline,
         output << "pattern " << pattern.id << ' ' << pattern.length << ' '
                << pattern.time_signature_numerator << ' '
                << pattern.time_signature_denominator << ' '
-               << std::quoted(pattern.name) << '\n';
+               << std::quoted(pattern.name) << ' '
+               << static_cast<unsigned>(pattern.follow.type) << ' '
+               << pattern.follow.after_repetitions << ' '
+               << pattern.follow.probability << ' ' << pattern.follow.target
+               << '\n';
         for (const auto &track : pattern.tracks) {
             output << "pattern_track " << pattern.id << ' ' << track.track << ' '
                    << track.pattern.length << '\n';

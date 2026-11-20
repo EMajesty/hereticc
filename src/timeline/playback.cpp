@@ -113,7 +113,31 @@ bool compile_timeline(const Timeline &timeline, PlaybackPlan &output,
         Timeline materialized;
         if (!materialize_arrangement(timeline, materialized, error))
             return false;
-        return compile_timeline(materialized, output, error);
+        if (!compile_timeline(materialized, output, error))
+            return false;
+        output.playback_mode = timeline.arrangement.playback_mode;
+        output.song_end_behavior = timeline.arrangement.song_end_behavior;
+        output.return_live_pattern = timeline.arrangement.return_live_pattern;
+        if (timeline.arrangement.playback_mode ==
+                TimelinePlaybackMode::live_pattern &&
+            timeline.arrangement.chain_running &&
+            !timeline.arrangement.chain_entries.empty()) {
+            output.playback_length = materialized.tracks.empty()
+                                         ? 0
+                                         : materialized.tracks.front()
+                                               .pattern.length;
+            output.song_end_behavior = timeline.arrangement.chain_loop
+                                           ? SongEndBehavior::loop
+                                           : SongEndBehavior::stop;
+        }
+        if (timeline.arrangement.playback_mode == TimelinePlaybackMode::song)
+            output.playback_length =
+                timeline.arrangement.loop_enabled
+                    ? timeline.arrangement.loop_end -
+                          timeline.arrangement.loop_start
+                    : timeline.arrangement.song_end -
+                          timeline.arrangement.song_start;
+        return true;
     }
     if (timeline.transport.microseconds_per_quarter == 0 ||
         timeline.transport.time_signature_numerator == 0 ||
@@ -124,6 +148,14 @@ bool compile_timeline(const Timeline &timeline, PlaybackPlan &output,
     PlaybackPlan plan;
     plan.transport = timeline.transport;
     plan.generation_seed = timeline.generation_seed;
+    plan.playback_mode = timeline.arrangement.playback_mode;
+    plan.song_end_behavior = timeline.arrangement.song_end_behavior;
+    plan.return_live_pattern = timeline.arrangement.return_live_pattern;
+    if (timeline.arrangement.playback_mode == TimelinePlaybackMode::song)
+        plan.playback_length =
+            timeline.arrangement.loop_enabled
+                ? timeline.arrangement.loop_end - timeline.arrangement.loop_start
+                : timeline.arrangement.song_end - timeline.arrangement.song_start;
     plan.tracks.reserve(timeline.tracks.size());
     std::size_t compiled_events{};
     for (const auto &track : timeline.tracks)

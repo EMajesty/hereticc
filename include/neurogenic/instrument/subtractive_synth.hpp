@@ -32,6 +32,7 @@ class SubtractiveSynth final : public Instrument {
     bool set_parameter(std::uint32_t, float) noexcept override;
     void process(std::span<float>, std::span<float>) noexcept override;
     void reset() noexcept override;
+    void release_timeline_voices(bool immediate) noexcept;
     void set_sample_rate(std::uint32_t) noexcept override;
     InstrumentState state() const noexcept override;
     [[nodiscard]] bool active() const noexcept;

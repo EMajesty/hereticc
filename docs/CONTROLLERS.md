@@ -1,6 +1,10 @@
 # Application control and controller API
 
-Pattern and arrangement actions are semantic and layout-independent:
+Pattern and arrangement actions are semantic and layout-independent. Task 045
+adds `pattern.chain-entry-set/chain-play/chain-stop/chain-reset/follow-set.v1`,
+`pattern.launch-quantization.v1`, `arrangement.voice-transition/song-end/return.v1`
+and copied discovery/diagnostics for current, queued, and next transitions.
+These complement:
 `pattern.create/duplicate/rename/delete/launch.v1` and
 `arrangement.mode-set/clip-create/clip-delete/loop-set.v1`. Their stable IDs
 and copied application-state collections allow launchers or song navigators

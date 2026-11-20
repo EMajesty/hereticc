@@ -373,6 +373,14 @@ bool AudioEngine::queue_pattern(const Pattern &pattern) noexcept {
 }
 
 bool AudioEngine::queue_timeline(const Timeline &timeline, std::string &error) {
+    return queue_timeline_at(timeline, 0, VoiceTransitionPolicy::stop_outgoing,
+                             error);
+}
+
+bool AudioEngine::queue_timeline_at(const Timeline &timeline,
+                                    std::uint64_t activation_frame,
+                                    VoiceTransitionPolicy voice_policy,
+                                    std::string &error) {
     reclaim_retired_plans();
     std::size_t slot = timeline_plans_.size();
     for (std::size_t i = 0; i < timeline_plans_.size(); ++i)
@@ -392,7 +400,8 @@ bool AudioEngine::queue_timeline(const Timeline &timeline, std::string &error) {
     timeline_plans_[slot].plan = std::move(plan);
     timeline_plans_[slot].state.store(PlanState::queued,
                                       std::memory_order_release);
-    if (!timelines_.push(static_cast<std::uint8_t>(slot))) {
+    if (!timelines_.push({static_cast<std::uint8_t>(slot), activation_frame,
+                          voice_policy})) {
         timeline_plans_[slot].state.store(PlanState::free,
                                           std::memory_order_release);
         timeline_plans_[slot].plan.reset();
@@ -411,6 +420,77 @@ void AudioEngine::reclaim_retired_plans() noexcept {
             slot.state.store(PlanState::free, std::memory_order_release);
             reclaimed_timeline_plans_.fetch_add(1, std::memory_order_relaxed);
         }
+}
+
+void AudioEngine::cleanup_timeline_voices(VoiceTransitionPolicy policy,
+                                          std::uint64_t actual_frame) noexcept {
+    if (policy != VoiceTransitionPolicy::preserve) {
+        const auto immediate = policy == VoiceTransitionPolicy::stop_outgoing;
+        for (auto &voice : voices_)
+            if (voice.active && voice.timeline_owned)
+                release_voice(voice, immediate);
+        for (auto &synth : synths_)
+            synth->release_timeline_voices(immediate);
+    }
+    // A replaced plan cannot later schedule its outstanding MIDI note-offs.
+    // Clean those exact timeline-owned notes under every transition policy;
+    // preserve applies to in-process audio voices, never to remote stuck notes.
+    if (auto *midi = midi_output_.load(std::memory_order_acquire))
+        for (std::size_t port = 0; port < timeline_midi_notes_.size(); ++port)
+            for (std::size_t channel = 0;
+                 channel < timeline_midi_notes_[port].size(); ++channel)
+                for (std::size_t note = 0;
+                     note < timeline_midi_notes_[port][channel].size(); ++note)
+                    if (timeline_midi_notes_[port][channel][note]) {
+                        MidiPacket packet;
+                        packet.port = static_cast<MidiPortId>(port + 1);
+                        packet.frame = actual_frame;
+                        packet.bytes = {
+                            static_cast<std::uint8_t>(0x80U | channel),
+                            static_cast<std::uint8_t>(note), 0};
+                        packet.size = 3;
+                        (void)midi->enqueue(packet);
+                        timeline_midi_notes_[port][channel][note] = false;
+                    }
+}
+
+void AudioEngine::activate_timeline(const TimelinePublication &publication,
+                                    std::uint64_t actual_frame) noexcept {
+    cleanup_timeline_voices(publication.voice_policy, actual_frame);
+    auto &next = timeline_plans_[publication.slot];
+    auto *timeline = next.plan.get();
+    timeline_scheduler_.set_plan(timeline, actual_frame);
+    scheduler_.set_tempo(timeline->transport.microseconds_per_quarter);
+    project_tempo_bpm_ = static_cast<float>(
+        60000000.0 / timeline->transport.microseconds_per_quarter);
+    midi_clock_.set_tempo(timeline->transport.microseconds_per_quarter);
+    active_timeline_tempo_us_ = timeline->transport.microseconds_per_quarter;
+    modulation_.set_tempo(project_tempo_bpm_);
+    for (auto &synth : synths_)
+        synth->set_tempo(project_tempo_bpm_);
+    modulation_.clear_automation();
+    next.state.store(PlanState::active, std::memory_order_release);
+    if (active_timeline_slot_ >= 0)
+        timeline_plans_[static_cast<std::size_t>(active_timeline_slot_)]
+            .state.store(PlanState::retired, std::memory_order_release);
+    active_timeline_slot_ = publication.slot;
+    active_timeline_end_frame_ = 0;
+    if (timeline->playback_length > 0 &&
+        timeline->song_end_behavior != SongEndBehavior::loop) {
+        const auto duration = timeline_scheduler_.frame_at_tick(
+            timeline->playback_length);
+        active_timeline_end_frame_ =
+            duration > std::numeric_limits<std::uint64_t>::max() - actual_frame
+                ? std::numeric_limits<std::uint64_t>::max()
+                : actual_frame + duration;
+    }
+    last_timeline_activation_frame_.store(actual_frame,
+                                          std::memory_order_release);
+    last_timeline_lateness_frames_.store(
+        actual_frame > publication.activation_frame
+            ? actual_frame - publication.activation_frame
+            : 0,
+        std::memory_order_release);
 }
 void AudioEngine::play() noexcept {
     if (!transport_commands_.push(TransportCommand::play))
@@ -603,7 +683,10 @@ void AudioEngine::stop_voices(bool timeline_only) noexcept {
         if (!timeline_only || voice.timeline_owned)
             voice.active = false;
     for (auto &synth : synths_)
-        synth->reset();
+        if (timeline_only)
+            synth->release_timeline_voices(true);
+        else
+            synth->reset();
     synth_active_.fill(false);
 }
 
@@ -702,27 +785,20 @@ void AudioEngine::process(std::span<float> left,
     }
     while (patterns_.pop(pattern))
         scheduler_.request_pattern(pattern);
-    std::uint8_t timeline_slot{};
-    while (timelines_.pop(timeline_slot)) {
-        stop_voices(true);
-        auto &next = timeline_plans_[timeline_slot];
-        auto *timeline = next.plan.get();
-        timeline_scheduler_.set_plan(timeline, transport_frame_);
-        scheduler_.set_tempo(timeline->transport.microseconds_per_quarter);
-        project_tempo_bpm_ = static_cast<float>(
-            60000000.0 / timeline->transport.microseconds_per_quarter);
-        midi_clock_.set_tempo(timeline->transport.microseconds_per_quarter);
-        active_timeline_tempo_us_ =
-            timeline->transport.microseconds_per_quarter;
-        modulation_.set_tempo(project_tempo_bpm_);
-        for (auto &synth : synths_)
-            synth->set_tempo(project_tempo_bpm_);
-        modulation_.clear_automation();
-        next.state.store(PlanState::active, std::memory_order_release);
-        if (active_timeline_slot_ >= 0)
-            timeline_plans_[static_cast<std::size_t>(active_timeline_slot_)]
-                .state.store(PlanState::retired, std::memory_order_release);
-        active_timeline_slot_ = timeline_slot;
+    TimelinePublication publication;
+    while (timelines_.pop(publication)) {
+        if (has_pending_timeline_)
+            timeline_plans_[pending_timeline_.slot].state.store(
+                PlanState::retired, std::memory_order_release);
+        pending_timeline_ = publication;
+        has_pending_timeline_ = true;
+    }
+    if (has_pending_timeline_ &&
+        (pending_timeline_.activation_frame == 0 ||
+         (!accept_external_clock_ &&
+          pending_timeline_.activation_frame <= transport_frame_))) {
+        activate_timeline(pending_timeline_, transport_frame_);
+        has_pending_timeline_ = false;
     }
     MidiRoutingConfiguration midi_routing;
     while (midi_routing_configurations_.pop(midi_routing)) {
@@ -906,16 +982,58 @@ void AudioEngine::process(std::span<float> left,
                                   static_cast<std::uint32_t>(frames),
                                   legacy_events_)
             : 0;
-    const auto timeline_count =
-        transport_playing_
-            ? accept_external_clock_
-                  ? timeline_scheduler_.schedule_range(
-                        external_start_frame, external_end_frame,
-                        static_cast<std::uint32_t>(frames), timeline_events_)
-                  : timeline_scheduler_.schedule(
-                        transport_frame_, static_cast<std::uint32_t>(frames),
-                        timeline_events_)
-            : 0;
+    std::size_t timeline_count{};
+    std::uint32_t timeline_stop_offset = static_cast<std::uint32_t>(frames);
+    bool timeline_stops_this_buffer{};
+    if (transport_playing_) {
+        const auto range_start = accept_external_clock_ ? external_start_frame
+                                                        : transport_frame_;
+        if (has_pending_timeline_ &&
+            pending_timeline_.activation_frame <= range_start) {
+            activate_timeline(pending_timeline_, range_start);
+            has_pending_timeline_ = false;
+        }
+        const auto raw_range_end = accept_external_clock_
+                                       ? external_end_frame
+                                       : transport_frame_ + frames;
+        const auto range_end =
+            active_timeline_end_frame_ > range_start &&
+                    active_timeline_end_frame_ < raw_range_end
+                ? active_timeline_end_frame_
+                : raw_range_end;
+        timeline_stops_this_buffer = active_timeline_end_frame_ != 0 &&
+                                     active_timeline_end_frame_ <= raw_range_end;
+        if (timeline_stops_this_buffer && raw_range_end > range_start)
+            timeline_stop_offset = static_cast<std::uint32_t>(
+                (static_cast<long double>(range_end - range_start) * frames) /
+                static_cast<long double>(raw_range_end - range_start));
+        const auto output_frames = timeline_stops_this_buffer
+                                       ? timeline_stop_offset
+                                       : static_cast<std::uint32_t>(frames);
+        if (has_pending_timeline_ &&
+            pending_timeline_.activation_frame > range_start &&
+            pending_timeline_.activation_frame < range_end) {
+            const auto boundary = pending_timeline_.activation_frame;
+            const auto first_frames = static_cast<std::uint32_t>(
+                (static_cast<long double>(boundary - range_start) *
+                 output_frames) /
+                static_cast<long double>(range_end - range_start));
+            timeline_count = timeline_scheduler_.schedule_range(
+                range_start, boundary, first_frames, timeline_events_);
+            activate_timeline(pending_timeline_, boundary);
+            has_pending_timeline_ = false;
+            auto remainder = std::span(timeline_events_).subspan(timeline_count);
+            const auto second = timeline_scheduler_.schedule_range(
+                boundary, range_end,
+                output_frames - first_frames, remainder);
+            for (std::size_t i = 0; i < second; ++i)
+                remainder[i].frame += first_frames;
+            timeline_count += second;
+        } else
+            timeline_count = timeline_scheduler_.schedule_range(
+                range_start, range_end, output_frames,
+                timeline_events_);
+    }
     dropped_timeline_events_.store(timeline_scheduler_.dropped_events(),
                                    std::memory_order_release);
     dropped_legacy_events_.store(scheduler_.dropped_events(),
@@ -932,6 +1050,18 @@ void AudioEngine::process(std::span<float> left,
         mixer_tracks[i] = mixer_.active_track_id(i);
 
     for (std::size_t frame = 0; frame < frames; ++frame) {
+        if (timeline_stops_this_buffer && frame == timeline_stop_offset) {
+            cleanup_timeline_voices(VoiceTransitionPolicy::release_outgoing,
+                                    active_timeline_end_frame_);
+            transport_playing_ = false;
+            song_end_count_.fetch_add(1, std::memory_order_relaxed);
+            if (auto *midi = midi_output_.load(std::memory_order_acquire))
+                if (midi_clock_configuration_.enabled)
+                    midi_clock_.stop(
+                        *midi,
+                        {midi_clock_configuration_.ports.data(),
+                         midi_clock_configuration_.port_count});
+        }
         modulation_.process_frame([&](ParameterDestination destination,
                                       float value) noexcept {
             if (destination.target == ParameterTarget::subtractive_synth) {
@@ -1077,6 +1207,11 @@ void AudioEngine::process(std::span<float> left,
                             static_cast<std::uint8_t>(
                                 std::clamp(event.value, 0.0F, 1.0F) * 127.0F)};
                         packet.size = 3;
+                        if (event.midi_output_port > 0 &&
+                            event.midi_output_port <= maximum_midi_ports)
+                            timeline_midi_notes_[event.midi_output_port - 1]
+                                                [channel][event.pitch] =
+                                event.type == MusicalEventType::note_on;
                     } else if (event.type == MusicalEventType::control_change) {
                         packet.bytes = {
                             static_cast<std::uint8_t>(0xB0 | channel),
@@ -1236,7 +1371,22 @@ void AudioEngine::process(std::span<float> left,
                 sample_versions_[version].state.store(
                     SampleVersionState::retired, std::memory_order_release);
         }
-    if (transport_playing_ && accept_external_clock_) {
+    if (timeline_stops_this_buffer) {
+        if (transport_playing_) {
+            cleanup_timeline_voices(VoiceTransitionPolicy::release_outgoing,
+                                    active_timeline_end_frame_);
+            transport_playing_ = false;
+            song_end_count_.fetch_add(1, std::memory_order_relaxed);
+            if (auto *midi = midi_output_.load(std::memory_order_acquire))
+                if (midi_clock_configuration_.enabled)
+                    midi_clock_.stop(
+                        *midi,
+                        {midi_clock_configuration_.ports.data(),
+                         midi_clock_configuration_.port_count});
+        }
+        transport_frame_ = active_timeline_end_frame_;
+        active_timeline_end_frame_ = 0;
+    } else if (transport_playing_ && accept_external_clock_) {
         transport_frame_ = external_end_frame;
     } else if (transport_playing_) {
         if (frames >
