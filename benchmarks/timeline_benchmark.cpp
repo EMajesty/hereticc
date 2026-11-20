@@ -897,7 +897,8 @@ void modulation_case(std::string name, std::size_t route_count,
                iterations);
 }
 void modulation_graph_case(std::string name, std::size_t instance_count,
-                           std::size_t connection_count, bool deep_chain) {
+                           std::size_t connection_count, bool deep_chain,
+                           bool mixed = false) {
     neurogenic::ModulationConfiguration configuration;
     configuration.update_interval = 32;
     configuration.modulator_count = std::min(
@@ -905,7 +906,16 @@ void modulation_graph_case(std::string name, std::size_t instance_count,
     for (std::size_t i = 0; i < configuration.modulator_count; ++i) {
         auto &instance = configuration.modulators[i];
         instance.id = static_cast<neurogenic::ModulatorInstanceId>(i + 1);
-        instance.type = neurogenic::ModulatorType::lfo;
+        constexpr std::array mixed_types{
+            neurogenic::ModulatorType::lfo,
+            neurogenic::ModulatorType::step_sequencer,
+            neurogenic::ModulatorType::euclidean,
+            neurogenic::ModulatorType::clocked_random,
+            neurogenic::ModulatorType::function_generator,
+            neurogenic::ModulatorType::logistic,
+            neurogenic::ModulatorType::envelope_follower};
+        instance.type = mixed ? mixed_types[i % mixed_types.size()]
+                              : neurogenic::ModulatorType::lfo;
         instance.owner_kind = i & 1 ? neurogenic::ModulatorOwnerKind::track
                                     : neurogenic::ModulatorOwnerKind::master;
         instance.owner_id = i & 1 ? i % 16 + 1 : 0;
@@ -1281,6 +1291,9 @@ int main(int argc, char **argv) {
     modulation_graph_case("modulation_graph_32_64", 32, 64, false);
     modulation_graph_case("modulation_graph_64_128", 64, 128, false);
     modulation_graph_case("modulation_graph_deep_64", 64, 63, true);
+    modulation_graph_case("native_modulators_mixed_16", 16, 32, false, true);
+    modulation_graph_case("native_modulators_mixed_32", 32, 64, false, true);
+    modulation_graph_case("native_modulators_mixed_64", 64, 128, false, true);
     synth_instance_case(4, false);
     synth_instance_case(8, false);
     synth_instance_case(16, false);

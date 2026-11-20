@@ -32,6 +32,7 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -364,7 +365,7 @@ void test_modulation_engine() {
     check(follower_attack > follower_release && follower_release > -1.0F,
           "envelope follower attack and release smoothing");
 
-    check(modulator_type_registry().size() == 7 &&
+    check(modulator_type_registry().size() == 21 &&
               find_modulator_type(ModulatorType::lfo)->parameters.size() >= 2,
           "modulator type discovery metadata");
     ModulationConfiguration dynamic;
@@ -539,6 +540,198 @@ void test_modulation_engine() {
     process(1);
     check(engine.snapshot().modulator_values[0] > ignored_tap,
           "envelope follower stable tap selection");
+
+    const auto run_frames = [](ModulationEngine &target, std::size_t frames) {
+        for (std::size_t frame = 0; frame < frames; ++frame)
+            target.process_frame([](auto, auto) {});
+    };
+    ModulationConfiguration step_config;
+    step_config.update_interval = 1;
+    step_config.modulator_count = 1;
+    step_config.modulators[0].id = 1001;
+    step_config.modulators[0].type = ModulatorType::step_sequencer;
+    step_config.modulators[0].owner_kind = ModulatorOwnerKind::master;
+    auto &step_settings = step_config.modulators[0].settings;
+    step_settings.step_count = 4;
+    step_settings.step_duration_beats = 0.1F;
+    step_settings.step_values[0] = -1;
+    step_settings.step_values[1] = -0.25F;
+    step_settings.step_values[2] = 0.5F;
+    step_settings.step_values[3] = 1;
+    ModulationEngine step_engine(100);
+    step_engine.set_tempo(60);
+    check(step_engine.configure(step_config), "step modulator configuration");
+    run_frames(step_engine, 1);
+    near(step_engine.snapshot().modulator_values[0], -1,
+         "step modulator initial value");
+    run_frames(step_engine, 10);
+    near(step_engine.snapshot().modulator_values[0], -0.25F,
+         "step modulator tempo timing");
+    step_config.modulators[0].settings.order = 1;
+    check(step_engine.configure(step_config), "reverse step configuration");
+    run_frames(step_engine, 11);
+    near(step_engine.snapshot().modulator_values[0], 1,
+         "step modulator reverse order");
+    step_config.modulators[0].settings.order = 2;
+    check(step_engine.configure(step_config), "ping-pong step configuration");
+    for (const auto expected : {-0.25F, 0.5F, 1.0F, 0.5F}) {
+        run_frames(step_engine, 11);
+        near(step_engine.snapshot().modulator_values[0], expected,
+             "step modulator ping-pong order");
+    }
+    step_config.modulators[0].settings.order = 3;
+    step_config.modulators[0].settings.seed = 77;
+    ModulationEngine random_step_a(100), random_step_b(100);
+    random_step_a.set_tempo(60);
+    random_step_b.set_tempo(60);
+    check(random_step_a.configure(step_config) &&
+              random_step_b.configure(step_config),
+          "random-order step configurations");
+    run_frames(random_step_a, 55);
+    run_frames(random_step_b, 55);
+    near(random_step_a.snapshot().modulator_values[0],
+         random_step_b.snapshot().modulator_values[0],
+         "step modulator deterministic random order");
+
+    ModulationConfiguration euclidean_config;
+    euclidean_config.update_interval = 1;
+    euclidean_config.modulator_count = 1;
+    euclidean_config.modulators[0].id = 1002;
+    euclidean_config.modulators[0].type = ModulatorType::euclidean;
+    euclidean_config.modulators[0].owner_kind = ModulatorOwnerKind::master;
+    euclidean_config.modulators[0].settings.step_count = 8;
+    euclidean_config.modulators[0].settings.pulses = 3;
+    euclidean_config.modulators[0].settings.step_duration_beats = 0.1F;
+    euclidean_config.modulators[0].settings.gate_length = 0.5F;
+    ModulationEngine euclidean_engine(10);
+    euclidean_engine.set_tempo(60);
+    check(euclidean_engine.configure(euclidean_config),
+          "Euclidean modulator configuration");
+    std::size_t euclidean_hits{};
+    for (std::size_t step = 0; step < 8; ++step) {
+        run_frames(euclidean_engine, 1);
+        euclidean_hits +=
+            euclidean_engine.snapshot().modulator_outputs[0][0] > 0.5F;
+    }
+    check(euclidean_hits == 3, "Euclidean pulse distribution");
+
+    ModulationConfiguration random_config;
+    random_config.update_interval = 1;
+    random_config.modulator_count = 1;
+    random_config.modulators[0].id = 1003;
+    random_config.modulators[0].type = ModulatorType::clocked_random;
+    random_config.modulators[0].owner_kind = ModulatorOwnerKind::master;
+    random_config.modulators[0].settings.seed = 0x12345678U;
+    random_config.modulators[0].settings.step_duration_beats = 0.1F;
+    random_config.modulators[0].settings.quantization = 5;
+    random_config.modulators[0].settings.correlation = 0.5F;
+    ModulationEngine random_a(10), random_b(10);
+    random_a.set_tempo(60);
+    random_b.set_tempo(60);
+    check(random_a.configure(random_config) && random_b.configure(random_config),
+          "clocked random configurations");
+    for (std::size_t step = 0; step < 12; ++step) {
+        run_frames(random_a, 1);
+        run_frames(random_b, 1);
+        near(random_a.snapshot().modulator_values[0],
+             random_b.snapshot().modulator_values[0],
+             "clocked random deterministic seed");
+        const auto quantized =
+            (random_a.snapshot().modulator_values[0] + 1.0F) * 2.0F;
+        check(std::fabs(quantized - std::round(quantized)) < 0.0001F,
+              "clocked random quantization");
+    }
+
+    ModulationConfiguration function_config;
+    function_config.update_interval = 1;
+    function_config.modulator_count = 1;
+    function_config.modulators[0].id = 1004;
+    function_config.modulators[0].type = ModulatorType::function_generator;
+    function_config.modulators[0].owner_kind = ModulatorOwnerKind::master;
+    function_config.modulators[0].settings.rise_seconds = 0.02F;
+    function_config.modulators[0].settings.fall_seconds = 0.02F;
+    function_config.modulators[0].settings.looping = true;
+    function_config.modulators[0].settings.unipolar = true;
+    ModulationEngine function_engine(100);
+    check(function_engine.configure(function_config),
+          "function generator configuration");
+    function_engine.note_on(0, 1);
+    bool saw_eoc{};
+    for (std::size_t frame = 0; frame < 10; ++frame) {
+        run_frames(function_engine, 1);
+        saw_eoc |= function_engine.snapshot().modulator_outputs[0][1] > 0.5F;
+    }
+    check(saw_eoc && function_engine.snapshot().modulator_values[0] >= 0,
+          "looping function generator and EOC output");
+
+    ModulationConfiguration math_config;
+    math_config.update_interval = 1;
+    math_config.modulator_count = 4;
+    for (std::size_t i = 0; i < 2; ++i) {
+        math_config.modulators[i].id = static_cast<ModulatorInstanceId>(1101 + i);
+        math_config.modulators[i].type = ModulatorType::step_sequencer;
+        math_config.modulators[i].owner_kind = ModulatorOwnerKind::master;
+        math_config.modulators[i].settings.step_count = 1;
+        math_config.modulators[i].settings.pulses = 1;
+        math_config.modulators[i].settings.step_duration_beats = 1;
+    }
+    math_config.modulators[0].settings.step_values[0] = 0.25F;
+    math_config.modulators[1].settings.step_values[0] = -0.5F;
+    math_config.modulators[2].id = 1103;
+    math_config.modulators[2].type = ModulatorType::sum;
+    math_config.modulators[2].owner_kind = ModulatorOwnerKind::master;
+    math_config.modulators[3].id = 1104;
+    math_config.modulators[3].type = ModulatorType::rectify;
+    math_config.modulators[3].owner_kind = ModulatorOwnerKind::master;
+    math_config.route_count = 3;
+    for (std::size_t i = 0; i < 2; ++i) {
+        auto &route = math_config.routes[i];
+        route.id = static_cast<ModulationRouteId>(1201 + i);
+        route.source_instance = static_cast<ModulatorInstanceId>(1101 + i);
+        route.destination_kind = ModulationDestinationKind::modulator_input;
+        route.destination_modulator = 1103;
+        route.destination_input = static_cast<std::uint32_t>(i + 1);
+        route.depth = 1;
+        route.minimum = -1;
+        route.maximum = 1;
+    }
+    math_config.routes[2] = math_config.routes[0];
+    math_config.routes[2].id = 1203;
+    math_config.routes[2].source_output = 2;
+    math_config.routes[2].destination_modulator = 1104;
+    math_config.routes[2].destination_input = 1;
+    ModulationEngine math_engine(100);
+    check(math_engine.configure(math_config), "multi-input math configuration");
+    run_frames(math_engine, 2);
+    near(math_engine.snapshot().modulator_values[2], -0.25F,
+         "multi-input sum processor");
+    bool routed_secondary_output{};
+    for (std::size_t frame = 0; frame < 100; ++frame) {
+        run_frames(math_engine, 1);
+        routed_secondary_output |=
+            math_engine.snapshot().modulator_values[3] > 0.5F;
+    }
+    check(routed_secondary_output, "secondary output port graph routing");
+
+    ModulationConfiguration chaos_config;
+    chaos_config.update_interval = 1;
+    chaos_config.modulator_count = 1;
+    chaos_config.modulators[0].id = 1301;
+    chaos_config.modulators[0].type = ModulatorType::logistic;
+    chaos_config.modulators[0].owner_kind = ModulatorOwnerKind::master;
+    chaos_config.modulators[0].settings.rate_hz = 50;
+    chaos_config.modulators[0].settings.chaos = 4;
+    ModulationEngine chaos_a(1000), chaos_b(1000);
+    check(chaos_a.configure(chaos_config) && chaos_b.configure(chaos_config),
+          "logistic generator configurations");
+    run_frames(chaos_a, 1000);
+    for (const auto partition : {13, 29, 7, 401, 550})
+        run_frames(chaos_b, partition);
+    const auto chaos_value = chaos_a.snapshot().modulator_values[0];
+    check(std::isfinite(chaos_value) && chaos_value >= -1 && chaos_value <= 1,
+          "chaos numerical stability");
+    near(chaos_value, chaos_b.snapshot().modulator_values[0],
+         "expanded modulator callback partition independence");
 
     Mixer numeric_mixer(1000);
     MixerConfiguration numeric_config;
@@ -774,6 +967,31 @@ void test_modulation_engine() {
               .accepted &&
               application.snapshot().modulation_graph.valid,
           "semantic modulator graph connection");
+    audio.process(left, right);
+    check(application
+                  .execute({"modulator.create.v1",
+                            {{"type", std::int64_t{static_cast<std::int64_t>(
+                                          ModulatorType::step_sequencer)}},
+                             {"owner", std::int64_t{static_cast<std::int64_t>(
+                                           ModulatorOwnerKind::master)}},
+                             {"owner_id", std::int64_t{0}}}})
+                  .accepted &&
+              application
+                  .execute({"modulator.parameter-set.v1",
+                            {{"id", std::int64_t{3}},
+                             {"parameter", std::string("steps")},
+                             {"value", 4.0}}})
+                  .accepted &&
+              application
+                  .execute({"modulator.step-set.v1",
+                            {{"id", std::int64_t{3}},
+                             {"step", std::int64_t{2}},
+                             {"value", 0.75}}})
+                  .accepted &&
+              application.snapshot()
+                      .modulation.modulators[2].settings.step_values[2] ==
+                  0.75F,
+          "semantic step modulator editing");
     audio.process(left, right);
     auto created = application.execute(
         {"modulation.route-create.v1",
@@ -2383,70 +2601,70 @@ void test_realtime_time_stretch() {
 void test_sample_slots() {
     using namespace neurogenic;
     std::array<float, 8> left{}, right{};
-    AudioEngine engine(48000, 8);
-    engine.set_sample_slot(SampleSlotId{0}, constant_sample(8, 0.25F));
-    engine.set_sample_slot(SampleSlotId{1}, constant_sample(8, 0.5F));
-    check(engine.sample_slot_count() == 2 &&
-              engine.has_sample_slot(SampleSlotId{1}),
+    auto engine = std::make_unique<AudioEngine>(48000, 8);
+    engine->set_sample_slot(SampleSlotId{0}, constant_sample(8, 0.25F));
+    engine->set_sample_slot(SampleSlotId{1}, constant_sample(8, 0.5F));
+    check(engine->sample_slot_count() == 2 &&
+              engine->has_sample_slot(SampleSlotId{1}),
           "sample slot installation");
-    engine.trigger(36, 1);
-    engine.trigger(37, 1);
-    engine.process(left, right);
+    engine->trigger(36, 1);
+    engine->trigger(37, 1);
+    engine->process(left, right);
     near(left[0], 0.6F, "different notes did not select different samples");
 
-    AudioEngine same(48000, 4);
-    same.set_sample_slot(SampleSlotId{0}, constant_sample(4, 0.25F));
-    same.trigger(36, 1);
-    same.trigger(36, 1);
-    same.process(left, right);
+    auto same = std::make_unique<AudioEngine>(48000, 4);
+    same->set_sample_slot(SampleSlotId{0}, constant_sample(4, 0.25F));
+    same->trigger(36, 1);
+    same->trigger(36, 1);
+    same->process(left, right);
     near(left[0], 0.4F, "same-slot polyphony");
 
-    AudioEngine missing;
-    missing.set_sample_slot(SampleSlotId{0}, constant_sample(4));
-    missing.trigger(37, 1);
-    missing.trigger(52, 1);
-    missing.process(left, right);
+    auto missing = std::make_unique<AudioEngine>();
+    missing->set_sample_slot(SampleSlotId{0}, constant_sample(4));
+    missing->trigger(37, 1);
+    missing->trigger(52, 1);
+    missing->process(left, right);
     near(left[0], 0, "missing slots produced audio");
-    check(missing.missing_slot_triggers() == 2, "missing slot counter");
-    check(!missing.map_note_to_slot(52, SampleSlotId{999}),
+    check(missing->missing_slot_triggers() == 2, "missing slot counter");
+    check(!missing->map_note_to_slot(52, SampleSlotId{999}),
           "invalid slot mapping accepted");
 
-    AudioEngine arbitrary;
-    arbitrary.set_sample_slot(SampleSlotId{1000}, constant_sample(4, 0.75F));
-    check(arbitrary.map_note_to_slot(52, SampleSlotId{1000}),
+    auto arbitrary = std::make_unique<AudioEngine>();
+    arbitrary->set_sample_slot(SampleSlotId{1000}, constant_sample(4, 0.75F));
+    check(arbitrary->map_note_to_slot(52, SampleSlotId{1000}),
           "arbitrary slot mapping rejected");
-    arbitrary.trigger(52, 1);
-    arbitrary.process(left, right);
+    arbitrary->trigger(52, 1);
+    arbitrary->process(left, right);
     near(left[0], 0.6F, "arbitrary slot did not play");
 
-    AudioEngine stealing(48000, 2);
-    stealing.set_sample_slot(SampleSlotId{0}, constant_sample(8, 0.25F));
-    stealing.set_sample_slot(SampleSlotId{1}, constant_sample(8, 0.5F));
-    stealing.set_sample_slot(SampleSlotId{2}, constant_sample(8, 1.0F));
-    stealing.trigger(36, 1);
-    stealing.trigger(37, 1);
-    stealing.trigger(38, 1);
-    stealing.process(left, right);
+    auto stealing = std::make_unique<AudioEngine>(48000, 2);
+    stealing->set_sample_slot(SampleSlotId{0}, constant_sample(8, 0.25F));
+    stealing->set_sample_slot(SampleSlotId{1}, constant_sample(8, 0.5F));
+    stealing->set_sample_slot(SampleSlotId{2}, constant_sample(8, 1.0F));
+    stealing->trigger(36, 1);
+    stealing->trigger(37, 1);
+    stealing->trigger(38, 1);
+    stealing->process(left, right);
     near(left[0], 1.2F, "voice stealing across samples");
-    check(stealing.stolen_voices() == 1, "cross-sample steal counter");
+    check(stealing->stolen_voices() == 1, "cross-sample steal counter");
 
-    AudioEngine sequenced;
-    sequenced.set_sample_slot(SampleSlotId{1}, constant_sample(8, 0.5F));
+    auto sequenced = std::make_unique<AudioEngine>();
+    sequenced->set_sample_slot(SampleSlotId{1}, constant_sample(8, 0.5F));
     Pattern pattern;
     pattern.steps[0] = {true, 37, 1};
     pattern.revision = 1;
-    check(sequenced.queue_pattern(pattern), "sequencer slot pattern queue");
-    sequenced.process(left, right);
+    check(sequenced->queue_pattern(pattern), "sequencer slot pattern queue");
+    sequenced->process(left, right);
     near(left[0], 0.4F, "sequencer note did not select slot");
 
-    AudioEngine midi_engine;
-    midi_engine.set_sample_slot(SampleSlotId{1}, constant_sample(8, 0.5F));
+    auto midi_engine = std::make_unique<AudioEngine>();
+    midi_engine->set_sample_slot(SampleSlotId{1}, constant_sample(8, 0.5F));
     MidiMapper mapper;
     mapper.set_note_handler(
-        [&](auto note, auto velocity) { midi_engine.trigger(note, velocity); });
+        [&](auto note, auto velocity) { midi_engine->trigger(note, velocity); });
     check(mapper.receive({0x90, 37, 127, 0}), "slot MIDI enqueue");
     check(mapper.dispatch_pending() == 1, "slot MIDI dispatch");
-    midi_engine.process(left, right);
+    midi_engine->process(left, right);
     near(left[0], 0.4F, "MIDI note did not select slot");
 
     bool invalid_sample = false;
@@ -2785,6 +3003,29 @@ void test_unified_project_persistence() {
     project.modulation.routes[1].minimum = -1;
     project.modulation.routes[1].maximum = 1;
     project.modulation.routes[1].depth = 0.2F;
+    project.modulation.modulator_count = 4;
+    project.modulation.modulators[2].id = 9003;
+    project.modulation.modulators[2].type = ModulatorType::step_sequencer;
+    project.modulation.modulators[2].owner_kind = ModulatorOwnerKind::master;
+    project.modulation.modulators[2].settings.step_count = 3;
+    project.modulation.modulators[2].settings.pulses = 2;
+    project.modulation.modulators[2].settings.step_values[0] = -0.75F;
+    project.modulation.modulators[2].settings.step_values[1] = 0.25F;
+    project.modulation.modulators[2].settings.step_values[2] = 1.0F;
+    project.modulation.modulators[3].id = 9004;
+    project.modulation.modulators[3].type = ModulatorType::rectify;
+    project.modulation.modulators[3].owner_kind = ModulatorOwnerKind::master;
+    project.modulation.route_count = 3;
+    project.modulation.routes[2].id = 83;
+    project.modulation.routes[2].source_instance = 9003;
+    project.modulation.routes[2].source_output = 2;
+    project.modulation.routes[2].destination_kind =
+        ModulationDestinationKind::modulator_input;
+    project.modulation.routes[2].destination_modulator = 9004;
+    project.modulation.routes[2].destination_input = 1;
+    project.modulation.routes[2].minimum = -1;
+    project.modulation.routes[2].maximum = 1;
+    project.modulation.routes[2].depth = 1;
     project.midi.clock_source = MidiClockSource::external;
     project.midi.forward_external_clock = true;
     project.midi.route_count = 1;
@@ -2818,11 +3059,11 @@ void test_unified_project_persistence() {
               loaded.mixer.effects.instances[0].type ==
                   EffectProcessorType::low_pass_filter &&
               loaded.mixer.effects.master.instances[0] == 700 &&
-              loaded.modulation.route_count == 2 &&
+              loaded.modulation.route_count == 3 &&
               loaded.modulation.routes[0].id == 81 &&
               loaded.modulation.routes[0].destination.instance == 2 &&
               loaded.modulation.routes[0].source_instance == 9001 &&
-              loaded.modulation.modulator_count == 2 &&
+              loaded.modulation.modulator_count == 4 &&
               loaded.modulation.modulators[0].id == 9001 &&
               std::string(loaded.modulation.modulators[0].display_name.data()) ==
                   "Project LFO" &&
@@ -2830,6 +3071,14 @@ void test_unified_project_persistence() {
               loaded.modulation.routes[1].destination_kind ==
                   ModulationDestinationKind::modulator_parameter &&
               loaded.modulation.routes[1].destination_modulator == 9002 &&
+              loaded.modulation.modulators[2].type ==
+                  ModulatorType::step_sequencer &&
+              loaded.modulation.modulators[2].settings.step_count == 3 &&
+              loaded.modulation.modulators[2].settings.step_values[1] == 0.25F &&
+              loaded.modulation.routes[2].source_output == 2 &&
+              loaded.modulation.routes[2].destination_kind ==
+                  ModulationDestinationKind::modulator_input &&
+              loaded.modulation.routes[2].destination_input == 1 &&
               loaded.modulation.sources[0].tempo_sync &&
               loaded.midi.clock_source == MidiClockSource::external &&
               loaded.midi.forward_external_clock &&
@@ -2847,12 +3096,12 @@ void test_unified_project_persistence() {
           "unified project round trip");
 
     auto missing_owner = project;
-    missing_owner.modulation.modulator_count = 3;
-    missing_owner.modulation.modulators[2].id = 9003;
-    missing_owner.modulation.modulators[2].type = ModulatorType::lfo;
-    missing_owner.modulation.modulators[2].owner_kind =
+    missing_owner.modulation.modulator_count = 5;
+    missing_owner.modulation.modulators[4].id = 9999;
+    missing_owner.modulation.modulators[4].type = ModulatorType::lfo;
+    missing_owner.modulation.modulators[4].owner_kind =
         ModulatorOwnerKind::track;
-    missing_owner.modulation.modulators[2].owner_id = 999999;
+    missing_owner.modulation.modulators[4].owner_id = 999999;
     bool rejected_missing_owner{};
     try {
         save_project(missing_owner, root / "missing-owner");

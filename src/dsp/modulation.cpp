@@ -40,12 +40,85 @@ constexpr std::array follower_parameters{
     ModulatorParameterDescriptor{"threshold", "Threshold", "", 0, 1, 0,
                                  false,
                                  ModulatorParameterId::follower_threshold}};
+constexpr std::array step_parameters{
+    ModulatorParameterDescriptor{"steps", "Steps", "", 1, 16, 8, true,
+                                 ModulatorParameterId::step_count, false},
+    ModulatorParameterDescriptor{"order", "Order", "", 0, 3, 0, true,
+                                 ModulatorParameterId::order, false},
+    ModulatorParameterDescriptor{"duration", "Step duration", "beats", 0.03125F,
+                                 16, 0.25F, false,
+                                 ModulatorParameterId::step_duration},
+    ModulatorParameterDescriptor{"swing", "Swing", "%", 0, 0.75F, 0, false,
+                                 ModulatorParameterId::swing}};
+constexpr std::array euclidean_parameters{
+    ModulatorParameterDescriptor{"steps", "Steps", "", 1, 16, 8, true,
+                                 ModulatorParameterId::step_count, false},
+    ModulatorParameterDescriptor{"pulses", "Pulses", "", 0, 16, 4, true,
+                                 ModulatorParameterId::pulses, false},
+    ModulatorParameterDescriptor{"rotation", "Rotation", "", 0, 15, 0, true,
+                                 ModulatorParameterId::rotation, false},
+    ModulatorParameterDescriptor{"duration", "Step duration", "beats", 0.03125F,
+                                 16, 0.25F, false,
+                                 ModulatorParameterId::step_duration},
+    ModulatorParameterDescriptor{"gate", "Gate length", "%", 0.01F, 1, 0.5F,
+                                 false, ModulatorParameterId::gate_length}};
+constexpr std::array random_parameters{
+    ModulatorParameterDescriptor{"distribution", "Distribution", "", 0, 2, 0,
+                                 true, ModulatorParameterId::distribution,
+                                 false},
+    ModulatorParameterDescriptor{"duration", "Clock duration", "beats", 0.03125F,
+                                 16, 0.25F, false,
+                                 ModulatorParameterId::step_duration},
+    ModulatorParameterDescriptor{"correlation", "Correlation", "%", 0, 1, 0,
+                                 false, ModulatorParameterId::correlation},
+    ModulatorParameterDescriptor{"quantization", "Quantization", "steps", 0,
+                                 32, 0, false,
+                                 ModulatorParameterId::quantization},
+    ModulatorParameterDescriptor{"slew", "Slew", "s", 0, 10, 0, false,
+                                 ModulatorParameterId::slew}};
+constexpr std::array function_parameters{
+    ModulatorParameterDescriptor{"rise", "Rise", "s", 0.001F, 60, 0.1F, false,
+                                 ModulatorParameterId::rise},
+    ModulatorParameterDescriptor{"fall", "Fall", "s", 0.001F, 60, 0.1F, false,
+                                 ModulatorParameterId::fall},
+    ModulatorParameterDescriptor{"curve", "Curve", "", -1, 1, 0, false,
+                                 ModulatorParameterId::curve}};
+constexpr std::array scale_parameters{
+    ModulatorParameterDescriptor{"scale", "Scale", "x", -4, 4, 1, false,
+                                 ModulatorParameterId::scale},
+    ModulatorParameterDescriptor{"offset", "Offset", "", -1, 1, 0, false,
+                                 ModulatorParameterId::offset}};
+constexpr std::array slew_parameters{
+    ModulatorParameterDescriptor{"slew", "Lag", "s", 0, 10, 0.1F, false,
+                                 ModulatorParameterId::slew}};
+constexpr std::array quantize_parameters{
+    ModulatorParameterDescriptor{"quantization", "Levels", "", 1, 32, 8,
+                                 false, ModulatorParameterId::quantization}};
+constexpr std::array chaos_parameters{
+    ModulatorParameterDescriptor{"chaos", "Chaos", "", 3.5F, 4, 3.8F, false,
+                                 ModulatorParameterId::chaos},
+    ModulatorParameterDescriptor{"rate", "Rate", "Hz", 0.01F, 100, 4, false,
+                                 ModulatorParameterId::rate}};
 constexpr std::array<ModulatorParameterDescriptor, 0> no_parameters{};
 constexpr std::array<ModulatorPortDescriptor, 0> no_inputs{};
+constexpr std::array input_one{
+    ModulatorPortDescriptor{1, "input", "Input", ModulationPolarity::bipolar}};
+constexpr std::array input_two{
+    ModulatorPortDescriptor{1, "a", "A", ModulationPolarity::bipolar},
+    ModulatorPortDescriptor{2, "b", "B", ModulationPolarity::bipolar}};
 constexpr std::array output_bipolar{
     ModulatorPortDescriptor{1, "value", "Value", ModulationPolarity::bipolar}};
 constexpr std::array output_unipolar{
     ModulatorPortDescriptor{1, "value", "Value", ModulationPolarity::unipolar}};
+constexpr std::array output_value_trigger{
+    ModulatorPortDescriptor{1, "value", "Value", ModulationPolarity::bipolar},
+    ModulatorPortDescriptor{2, "trigger", "Trigger", ModulationPolarity::unipolar}};
+constexpr std::array output_gate_accent{
+    ModulatorPortDescriptor{1, "gate", "Gate", ModulationPolarity::unipolar},
+    ModulatorPortDescriptor{2, "accent", "Accent", ModulationPolarity::unipolar}};
+constexpr std::array output_function{
+    ModulatorPortDescriptor{1, "value", "Value", ModulationPolarity::bipolar},
+    ModulatorPortDescriptor{2, "eoc", "End of cycle", ModulationPolarity::unipolar}};
 constexpr auto all_owners = owner_bit(ModulatorOwnerKind::track) |
                             owner_bit(ModulatorOwnerKind::auxiliary) |
                             owner_bit(ModulatorOwnerKind::master) |
@@ -80,7 +153,65 @@ const std::array registry{
     ModulatorTypeDescriptor{"native.midi-cc.v1", "MIDI CC", "Control",
                             ModulatorType::midi_cc, no_parameters, no_inputs,
                             output_bipolar, all_owners, false, false,
-                            ModulatorUpdateRate::control, 16}};
+                            ModulatorUpdateRate::control, 16},
+    ModulatorTypeDescriptor{"native.step.v1", "Step modulator", "Sequencers",
+                            ModulatorType::step_sequencer, step_parameters,
+                            no_inputs, output_value_trigger, all_owners, true,
+                            true, ModulatorUpdateRate::control, 192},
+    ModulatorTypeDescriptor{"native.euclidean.v1", "Euclidean", "Sequencers",
+                            ModulatorType::euclidean, euclidean_parameters,
+                            no_inputs, output_gate_accent, all_owners, true, true,
+                            ModulatorUpdateRate::control, 48},
+    ModulatorTypeDescriptor{"native.clocked-random.v1", "Clocked random",
+                            "Random", ModulatorType::clocked_random,
+                            random_parameters, no_inputs, output_value_trigger,
+                            all_owners, true, true, ModulatorUpdateRate::control,
+                            48},
+    ModulatorTypeDescriptor{"native.function.v1", "Function generator",
+                            "Envelopes", ModulatorType::function_generator,
+                            function_parameters, input_one, output_function,
+                            all_owners, true, true, ModulatorUpdateRate::control,
+                            48},
+    ModulatorTypeDescriptor{"native.scale-offset.v1", "Scale / offset", "Math",
+                            ModulatorType::scale_offset, scale_parameters,
+                            input_one, output_bipolar, all_owners, false, false,
+                            ModulatorUpdateRate::control, 24},
+    ModulatorTypeDescriptor{"native.invert.v1", "Invert", "Math",
+                            ModulatorType::invert, no_parameters, input_one,
+                            output_bipolar, all_owners, false, false,
+                            ModulatorUpdateRate::control, 16},
+    ModulatorTypeDescriptor{"native.rectify.v1", "Rectify", "Math",
+                            ModulatorType::rectify, no_parameters, input_one,
+                            output_unipolar, all_owners, false, false,
+                            ModulatorUpdateRate::control, 16},
+    ModulatorTypeDescriptor{"native.slew.v1", "Slew / lag", "Math",
+                            ModulatorType::slew, slew_parameters, input_one,
+                            output_bipolar, all_owners, false, false,
+                            ModulatorUpdateRate::control, 24},
+    ModulatorTypeDescriptor{"native.quantize.v1", "Quantize", "Math",
+                            ModulatorType::quantize, quantize_parameters,
+                            input_one, output_bipolar, all_owners, false, false,
+                            ModulatorUpdateRate::control, 16},
+    ModulatorTypeDescriptor{"native.minimum.v1", "Minimum", "Math",
+                            ModulatorType::minimum, no_parameters, input_two,
+                            output_bipolar, all_owners, false, false,
+                            ModulatorUpdateRate::control, 16},
+    ModulatorTypeDescriptor{"native.maximum.v1", "Maximum", "Math",
+                            ModulatorType::maximum, no_parameters, input_two,
+                            output_bipolar, all_owners, false, false,
+                            ModulatorUpdateRate::control, 16},
+    ModulatorTypeDescriptor{"native.sum.v1", "Sum", "Math",
+                            ModulatorType::sum, no_parameters, input_two,
+                            output_bipolar, all_owners, false, false,
+                            ModulatorUpdateRate::control, 16},
+    ModulatorTypeDescriptor{"native.multiply.v1", "Multiply", "Math",
+                            ModulatorType::multiply, no_parameters, input_two,
+                            output_bipolar, all_owners, false, false,
+                            ModulatorUpdateRate::control, 16},
+    ModulatorTypeDescriptor{"native.logistic.v1", "Logistic chaos", "Experimental",
+                            ModulatorType::logistic, chaos_parameters, no_inputs,
+                            output_bipolar, all_owners, true, true,
+                            ModulatorUpdateRate::control, 32}};
 } // namespace
 
 std::span<const ModulatorTypeDescriptor> modulator_type_registry() noexcept {
@@ -139,8 +270,7 @@ bool validate_modulation_graph(const ModulationConfiguration &configuration,
                 "cross-owner connection requires an explicitly shared source";
             return false;
         }
-        if (route.destination_kind ==
-            ModulationDestinationKind::modulator_parameter) {
+        if (route.destination_kind != ModulationDestinationKind::parameter) {
             const auto destination = find_instance(route.destination_modulator);
             if (destination == configuration.modulators.begin() +
                                    configuration.modulator_count) {
@@ -149,21 +279,31 @@ bool validate_modulation_graph(const ModulationConfiguration &configuration,
                 return false;
             }
             const auto *destination_type = find_modulator_type(destination->type);
-            const auto parameter =
-                destination_type
-                    ? std::find_if(destination_type->parameters.begin(),
-                                   destination_type->parameters.end(),
-                                   [&](const auto &candidate) {
-                                       return candidate.numeric_id ==
-                                                  route.destination_modulator_parameter &&
-                                              candidate.modulatable &&
-                                              !candidate.discrete;
-                                   })
-                    : std::span<const ModulatorParameterDescriptor>::iterator{};
-            if (!destination_type ||
-                parameter == destination_type->parameters.end()) {
+            if (!destination_type) {
+                diagnostics.message = "connection targets an unavailable modulator";
+                return false;
+            }
+            if (route.destination_kind ==
+                ModulationDestinationKind::modulator_parameter) {
+                const auto parameter = std::find_if(
+                    destination_type->parameters.begin(),
+                    destination_type->parameters.end(), [&](const auto &candidate) {
+                        return candidate.numeric_id ==
+                                   route.destination_modulator_parameter &&
+                               candidate.modulatable && !candidate.discrete;
+                    });
+                if (parameter == destination_type->parameters.end()) {
+                    diagnostics.message =
+                        "connection targets an unavailable modulator parameter";
+                    return false;
+                }
+            } else if (std::none_of(
+                           destination_type->inputs.begin(),
+                           destination_type->inputs.end(), [&](const auto &input) {
+                               return input.id == route.destination_input;
+                           })) {
                 diagnostics.message =
-                    "connection targets an unavailable modulator parameter";
+                    "connection targets an unavailable modulator input";
                 return false;
             }
             const auto cross_owner =
@@ -217,8 +357,7 @@ bool validate_modulation_graph(const ModulationConfiguration &configuration,
              route_index < configuration.route_count; ++route_index) {
             const auto &route = configuration.routes[route_index];
             if (!route.enabled ||
-                route.destination_kind !=
-                    ModulationDestinationKind::modulator_parameter ||
+                route.destination_kind == ModulationDestinationKind::parameter ||
                 route.source_instance != configuration.modulators[selected].id)
                 continue;
             const auto destination = find_instance(route.destination_modulator);
@@ -288,7 +427,36 @@ bool ModulationEngine::configure(
                source.follower_gain >= 0 && source.follower_gain <= 100 &&
                std::isfinite(source.follower_threshold) &&
                source.follower_threshold >= 0 &&
-               source.follower_threshold <= 1;
+               source.follower_threshold <= 1 && source.step_count >= 1 &&
+               source.step_count <= source.step_values.size() &&
+               source.pulses <= source.step_count &&
+               source.rotation < source.step_count && source.order <= 3 &&
+               source.distribution <= 2 &&
+               std::isfinite(source.step_duration_beats) &&
+               source.step_duration_beats >= 0.03125F &&
+               source.step_duration_beats <= 16 &&
+               std::isfinite(source.swing) && source.swing >= 0 &&
+               source.swing <= 0.75F && std::isfinite(source.gate_length) &&
+               source.gate_length >= 0.01F && source.gate_length <= 1 &&
+               std::isfinite(source.correlation) && source.correlation >= 0 &&
+               source.correlation <= 1 && std::isfinite(source.quantization) &&
+               source.quantization >= 0 && source.quantization <= 32 &&
+               std::isfinite(source.slew_seconds) && source.slew_seconds >= 0 &&
+               source.slew_seconds <= 10 && std::isfinite(source.rise_seconds) &&
+               source.rise_seconds >= 0.001F && source.rise_seconds <= 60 &&
+               std::isfinite(source.fall_seconds) &&
+               source.fall_seconds >= 0.001F && source.fall_seconds <= 60 &&
+               std::isfinite(source.curve) && source.curve >= -1 &&
+               source.curve <= 1 && std::isfinite(source.scale) &&
+               source.scale >= -4 && source.scale <= 4 &&
+               std::isfinite(source.offset) && source.offset >= -1 &&
+               source.offset <= 1 && std::isfinite(source.chaos) &&
+               source.chaos >= 3.5F && source.chaos <= 4 &&
+               std::all_of(source.step_values.begin(), source.step_values.end(),
+                           [](float value) {
+                               return std::isfinite(value) && value >= -1 &&
+                                      value <= 1;
+                           });
     };
     for (std::size_t i = 0; i < configuration.modulator_count; ++i) {
         const auto &instance = configuration.modulators[i];
@@ -339,8 +507,7 @@ bool ModulationEngine::configure(
                     return instance.id == route.source_instance;
                 });
             if (source == configuration.modulators.begin() +
-                              configuration.modulator_count ||
-                route.source_output != 1)
+                              configuration.modulator_count)
                 return false;
             const auto expected_scope =
                 source->owner_kind == ModulatorOwnerKind::track
@@ -353,8 +520,7 @@ bool ModulationEngine::configure(
                  route.track_id != source->owner_id))
                 return false;
         }
-        if (route.destination_kind ==
-            ModulationDestinationKind::modulator_parameter)
+        if (route.destination_kind != ModulationDestinationKind::parameter)
             continue;
         const auto target = route.destination.target;
         const auto instance = route.destination.instance;
@@ -549,13 +715,13 @@ void ModulationEngine::note_on(std::uint64_t track_id,
                             definition.owner_id == track_id);
         if (!definition.enabled || !owned)
             continue;
-        if (definition.type == ModulatorType::adsr) {
+        if (definition.type == ModulatorType::adsr ||
+            definition.type == ModulatorType::function_generator) {
             modulator_states_[instance].gate = true;
             modulator_states_[instance].envelope_stage =
                 SourceState::EnvelopeStage::attack;
         }
-        if (definition.type == ModulatorType::lfo &&
-            definition.settings.retrigger)
+        if (definition.settings.retrigger)
             modulator_states_[instance].phase = 0;
     }
 }
@@ -572,7 +738,8 @@ void ModulationEngine::note_off(std::uint64_t track_id) noexcept {
     for (std::size_t instance = 0; instance < configuration_.modulator_count;
          ++instance) {
         const auto &definition = configuration_.modulators[instance];
-        if (definition.type == ModulatorType::adsr &&
+        if ((definition.type == ModulatorType::adsr ||
+             definition.type == ModulatorType::function_generator) &&
             (definition.owner_kind == ModulatorOwnerKind::master ||
              ((definition.owner_kind == ModulatorOwnerKind::track ||
                definition.owner_kind == ModulatorOwnerKind::voice_definition) &&
@@ -595,6 +762,8 @@ void ModulationEngine::restart() noexcept {
     for (std::size_t instance = 0; instance < configuration_.modulator_count;
          ++instance) {
         modulator_states_[instance].phase = 0;
+        modulator_states_[instance].step = 0;
+        modulator_states_[instance].direction = 1;
         modulator_states_[instance].gate = false;
         if (configuration_.modulators[instance].settings.retrigger)
             modulator_states_[instance].value = 0;
@@ -828,6 +997,20 @@ ModulationEngine::effective_settings(std::size_t index) const noexcept {
         case ModulatorParameterId::follower_threshold:
             base = settings.follower_threshold;
             break;
+        case ModulatorParameterId::step_duration:
+            base = settings.step_duration_beats;
+            break;
+        case ModulatorParameterId::swing: base = settings.swing; break;
+        case ModulatorParameterId::gate_length: base = settings.gate_length; break;
+        case ModulatorParameterId::correlation: base = settings.correlation; break;
+        case ModulatorParameterId::quantization: base = settings.quantization; break;
+        case ModulatorParameterId::slew: base = settings.slew_seconds; break;
+        case ModulatorParameterId::rise: base = settings.rise_seconds; break;
+        case ModulatorParameterId::fall: base = settings.fall_seconds; break;
+        case ModulatorParameterId::curve: base = settings.curve; break;
+        case ModulatorParameterId::scale: base = settings.scale; break;
+        case ModulatorParameterId::offset: base = settings.offset; break;
+        case ModulatorParameterId::chaos: base = settings.chaos; break;
         default: continue;
         }
         for (const auto &automation : modulator_automation_)
@@ -856,9 +1039,9 @@ ModulationEngine::effective_settings(std::size_t index) const noexcept {
             if (source == configuration_.modulators.begin() +
                               configuration_.modulator_count)
                 continue;
-            const auto value = modulator_states_[static_cast<std::size_t>(
-                source - configuration_.modulators.begin())]
-                                   .value;
+            const auto value = modulator_output(
+                static_cast<std::size_t>(source - configuration_.modulators.begin()),
+                route.source_output);
             normalized += (route.polarity == ModulationPolarity::bipolar
                                ? value
                                : (value + 1.0F) * 0.5F) *
@@ -892,6 +1075,28 @@ ModulationEngine::effective_settings(std::size_t index) const noexcept {
         case ModulatorParameterId::follower_threshold:
             settings.follower_threshold = effective;
             break;
+        case ModulatorParameterId::step_duration:
+            settings.step_duration_beats = effective;
+            break;
+        case ModulatorParameterId::swing: settings.swing = effective; break;
+        case ModulatorParameterId::gate_length:
+            settings.gate_length = effective;
+            break;
+        case ModulatorParameterId::correlation:
+            settings.correlation = effective;
+            break;
+        case ModulatorParameterId::quantization:
+            settings.quantization = effective;
+            break;
+        case ModulatorParameterId::slew:
+            settings.slew_seconds = effective;
+            break;
+        case ModulatorParameterId::rise: settings.rise_seconds = effective; break;
+        case ModulatorParameterId::fall: settings.fall_seconds = effective; break;
+        case ModulatorParameterId::curve: settings.curve = effective; break;
+        case ModulatorParameterId::scale: settings.scale = effective; break;
+        case ModulatorParameterId::offset: settings.offset = effective; break;
+        case ModulatorParameterId::chaos: settings.chaos = effective; break;
         default: break;
         }
     }
@@ -904,8 +1109,36 @@ void ModulationEngine::update_modulators(std::uint32_t elapsed) noexcept {
         const auto index = evaluation_order_[order];
         const auto &instance = configuration_.modulators[index];
         auto &state = modulator_states_[index];
+        state.inputs.fill(0);
+        for (std::size_t route_index = 0;
+             route_index < configuration_.route_count; ++route_index) {
+            const auto &route = configuration_.routes[route_index];
+            if (!route.enabled || route.destination_kind !=
+                                      ModulationDestinationKind::modulator_input ||
+                route.destination_modulator != instance.id ||
+                route.destination_input == 0 || route.destination_input > 3)
+                continue;
+            const auto source = std::find_if(
+                configuration_.modulators.begin(),
+                configuration_.modulators.begin() + configuration_.modulator_count,
+                [&](const auto &candidate) {
+                    return candidate.id == route.source_instance;
+                });
+            if (source == configuration_.modulators.begin() +
+                              configuration_.modulator_count)
+                continue;
+            const auto source_index = static_cast<std::size_t>(
+                source - configuration_.modulators.begin());
+            auto value = modulator_output(source_index, route.source_output);
+            if (route.polarity == ModulationPolarity::unipolar)
+                value = (value + 1.0F) * 0.5F;
+            state.inputs[route.destination_input - 1] = std::clamp(
+                state.inputs[route.destination_input - 1] + value * route.depth,
+                -1.0F, 1.0F);
+        }
         if (!instance.enabled) {
             state.value = 0;
+            state.outputs.fill(0);
             continue;
         }
         const auto settings = effective_settings(index);
@@ -914,6 +1147,8 @@ void ModulationEngine::update_modulators(std::uint32_t elapsed) noexcept {
                 ? tempo_bpm_ /
                       (60.0F * std::max(0.03125F, settings.beats_per_cycle))
                 : std::max(0.0F, settings.rate_hz);
+        state.outputs[1] = 0;
+        state.outputs[2] = 0;
         if (instance.type == ModulatorType::lfo) {
             const auto previous = state.phase;
             state.phase = std::fmod(state.phase + seconds * rate, 1.0);
@@ -1009,8 +1244,176 @@ void ModulationEngine::update_modulators(std::uint32_t elapsed) noexcept {
                 }
                 break;
             }
+        } else if (instance.type == ModulatorType::step_sequencer) {
+            const auto swing = (state.step & 1U) ? settings.swing : -settings.swing;
+            const auto duration = std::max(
+                1.0e-6, static_cast<double>(settings.step_duration_beats) *
+                            60.0 / tempo_bpm_ * (1.0 + swing));
+            const auto previous = state.phase;
+            state.phase += seconds / duration;
+            bool advanced{};
+            while (state.phase >= 1.0 - 1.0e-7) {
+                state.phase = std::max(0.0, state.phase - 1.0);
+                advanced = true;
+                if (settings.order == 1)
+                    state.step = (state.step + settings.step_count - 1) %
+                                 settings.step_count;
+                else if (settings.order == 2) {
+                    if (settings.step_count <= 1)
+                        state.step = 0;
+                    else if (state.direction &&
+                             state.step + 1 >= settings.step_count)
+                        state.direction = 0;
+                    else if (!state.direction && state.step == 0)
+                        state.direction = 1;
+                    if (settings.step_count > 1)
+                        state.step = state.direction ? state.step + 1
+                                                     : state.step - 1;
+                } else if (settings.order == 3) {
+                    const auto random_value = instance_random(index);
+                    state.step = std::min<std::uint32_t>(
+                        settings.step_count - 1,
+                        static_cast<std::uint32_t>((random_value + 1.0F) * 0.5F *
+                                                   settings.step_count));
+                } else
+                    state.step = (state.step + 1) % settings.step_count;
+            }
+            (void)previous;
+            state.value = settings.step_values[state.step];
+            if (settings.unipolar)
+                state.value = (state.value + 1.0F) * 0.5F;
+            state.outputs[1] = advanced ? 1.0F : 0.0F;
+        } else if (instance.type == ModulatorType::euclidean) {
+            const auto duration = std::max(
+                1.0e-6, static_cast<double>(settings.step_duration_beats) *
+                            60.0 / tempo_bpm_);
+            state.phase += seconds / duration;
+            while (state.phase >= 1.0 - 1.0e-7) {
+                state.phase = std::max(0.0, state.phase - 1.0);
+                state.step = (state.step + 1) % settings.step_count;
+            }
+            const auto rotated =
+                (state.step + settings.rotation) % settings.step_count;
+            const auto hit = settings.pulses != 0 &&
+                             (rotated * settings.pulses) % settings.step_count <
+                                 settings.pulses;
+            const auto gate = hit && state.phase < settings.gate_length;
+            state.value = gate ? 1.0F : 0.0F;
+            state.outputs[1] = hit && (rotated % 4 == 0) ? 1.0F : 0.0F;
+        } else if (instance.type == ModulatorType::clocked_random) {
+            const auto duration = std::max(
+                1.0e-6, static_cast<double>(settings.step_duration_beats) *
+                            60.0 / tempo_bpm_);
+            state.phase += seconds / duration;
+            if (state.phase >= 1.0 - 1.0e-7) {
+                state.phase = std::max(0.0, state.phase - 1.0);
+                auto next = instance_random(index);
+                if (settings.distribution == 1)
+                    next = (next + instance_random(index)) * 0.5F;
+                else if (settings.distribution == 2)
+                    next = std::copysign(std::sqrt(std::fabs(next)), next);
+                next = state.value * settings.correlation +
+                       next * (1.0F - settings.correlation);
+                if (settings.quantization >= 2) {
+                    const auto levels = std::round(settings.quantization);
+                    next = std::round((next + 1.0F) * 0.5F * (levels - 1)) /
+                               (levels - 1) * 2.0F -
+                           1.0F;
+                }
+                state.target = std::clamp(next, -1.0F, 1.0F);
+                state.outputs[1] = 1.0F;
+            }
+            const auto coefficient =
+                settings.slew_seconds <= 0
+                    ? 1.0F
+                    : 1.0F - std::exp(-static_cast<float>(seconds) /
+                                      settings.slew_seconds);
+            state.value += (state.target - state.value) * coefficient;
+        } else if (instance.type == ModulatorType::function_generator) {
+            const auto triggered = state.gate || state.inputs[0] > 0;
+            if (triggered && !state.trigger_latched &&
+                state.envelope_stage ==
+                                 SourceState::EnvelopeStage::idle)
+                state.envelope_stage = SourceState::EnvelopeStage::attack;
+            state.trigger_latched = triggered;
+            const auto shape = [&](float value) {
+                const auto power = std::exp2(settings.curve * 2.0F);
+                return std::pow(std::clamp(value, 0.0F, 1.0F), power);
+            };
+            if (state.envelope_stage == SourceState::EnvelopeStage::attack) {
+                state.phase += seconds / settings.rise_seconds;
+                if (state.phase >= 1.0) {
+                    state.phase = 1.0;
+                    state.envelope_stage = SourceState::EnvelopeStage::release;
+                }
+                state.value = shape(static_cast<float>(state.phase));
+            } else if (state.envelope_stage ==
+                       SourceState::EnvelopeStage::release) {
+                state.phase -= seconds / settings.fall_seconds;
+                if (state.phase <= 0.0) {
+                    state.phase = 0;
+                    state.outputs[1] = 1.0F;
+                    state.envelope_stage = settings.looping
+                                               ? SourceState::EnvelopeStage::attack
+                                               : SourceState::EnvelopeStage::idle;
+                }
+                state.value = shape(static_cast<float>(state.phase));
+            } else
+                state.value = 0;
+            if (!settings.unipolar)
+                state.value = state.value * 2.0F - 1.0F;
+        } else if (instance.type == ModulatorType::scale_offset)
+            state.value = std::clamp(state.inputs[0] * settings.scale +
+                                         settings.offset,
+                                     -1.0F, 1.0F);
+        else if (instance.type == ModulatorType::invert)
+            state.value = -state.inputs[0];
+        else if (instance.type == ModulatorType::rectify)
+            state.value = std::fabs(state.inputs[0]);
+        else if (instance.type == ModulatorType::slew) {
+            const auto coefficient = settings.slew_seconds <= 0
+                                         ? 1.0F
+                                         : 1.0F - std::exp(
+                                                        -static_cast<float>(seconds) /
+                                                        settings.slew_seconds);
+            state.value += (state.inputs[0] - state.value) * coefficient;
+        } else if (instance.type == ModulatorType::quantize) {
+            const auto levels = std::max(2.0F, std::round(settings.quantization));
+            state.value = std::round((state.inputs[0] + 1.0F) * 0.5F *
+                                     (levels - 1)) /
+                              (levels - 1) * 2.0F -
+                          1.0F;
+        } else if (instance.type == ModulatorType::minimum)
+            state.value = std::min(state.inputs[0], state.inputs[1]);
+        else if (instance.type == ModulatorType::maximum)
+            state.value = std::max(state.inputs[0], state.inputs[1]);
+        else if (instance.type == ModulatorType::sum)
+            state.value = std::clamp(state.inputs[0] + state.inputs[1], -1.0F,
+                                     1.0F);
+        else if (instance.type == ModulatorType::multiply)
+            state.value = state.inputs[0] * state.inputs[1];
+        else if (instance.type == ModulatorType::logistic) {
+            const auto previous = state.phase;
+            state.phase = std::fmod(state.phase + seconds * rate, 1.0);
+            if (state.phase < previous) {
+                auto x = std::clamp((state.value + 1.0F) * 0.5F, 0.001F,
+                                    0.999F);
+                x = settings.chaos * x * (1.0F - x);
+                state.value = std::isfinite(x) ? x * 2.0F - 1.0F : 0.0F;
+            }
         }
+        state.value = std::isfinite(state.value)
+                          ? std::clamp(state.value, -1.0F, 1.0F)
+                          : 0.0F;
+        state.outputs[0] = state.value;
     }
+}
+
+float ModulationEngine::modulator_output(std::size_t instance,
+                                         std::uint32_t output) const noexcept {
+    if (instance >= configuration_.modulator_count || output == 0 || output > 3)
+        return 0;
+    return modulator_states_[instance].outputs[output - 1];
 }
 
 ModulationSnapshot ModulationEngine::snapshot() const noexcept {
@@ -1025,9 +1428,14 @@ ModulationSnapshot ModulationEngine::snapshot() const noexcept {
         result.route_source_values[route] =
             published_route_sources_[route].load(std::memory_order_relaxed);
     result.modulator_count = configuration_.modulator_count;
-    for (std::size_t instance = 0; instance < result.modulator_count; ++instance)
+    for (std::size_t instance = 0; instance < result.modulator_count; ++instance) {
         result.modulator_values[instance] =
             published_modulators_[instance].load(std::memory_order_relaxed);
+        for (std::size_t output = 0; output < 3; ++output)
+            result.modulator_outputs[instance][output] =
+                published_modulator_outputs_[instance][output].load(
+                    std::memory_order_relaxed);
+    }
     result.generation = published_generation_.load(std::memory_order_acquire);
     return result;
 }

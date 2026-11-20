@@ -282,7 +282,7 @@ bool validate_modulation_owners(const ModulationConfiguration &configuration,
 }
 std::string serialize_modulation(const ModulationConfiguration &configuration) {
     std::ostringstream out;
-    out << "NEUROGENIC_MODULATION 5\n"
+    out << "NEUROGENIC_MODULATION 6\n"
         << std::setprecision(9) << "interval " << configuration.update_interval
         << '\n';
     for (std::size_t i = 0; i < configuration.source_count; ++i) {
@@ -315,7 +315,21 @@ std::string serialize_modulation(const ModulationConfiguration &configuration) {
             << source.follower_release_seconds << ' ' << source.follower_gain
             << ' ' << source.follower_threshold << ' ' << instance.shared
             << ' ' << static_cast<unsigned>(source.follower_tap) << ' '
-            << source.follower_tap_id << '\n';
+            << source.follower_tap_id << ' '
+            << static_cast<unsigned>(source.step_count) << ' '
+            << static_cast<unsigned>(source.pulses) << ' '
+            << static_cast<unsigned>(source.rotation) << ' '
+            << static_cast<unsigned>(source.order) << ' '
+            << static_cast<unsigned>(source.distribution) << ' '
+            << source.step_duration_beats << ' ' << source.swing << ' '
+            << source.gate_length << ' ' << source.correlation << ' '
+            << source.quantization << ' ' << source.slew_seconds << ' '
+            << source.rise_seconds << ' ' << source.fall_seconds << ' '
+            << source.curve << ' ' << source.scale << ' ' << source.offset << ' '
+            << source.chaos << ' ' << source.unipolar << ' ' << source.looping;
+        for (const auto value : source.step_values)
+            out << ' ' << value;
+        out << '\n';
     }
     out << "routes " << configuration.route_count << '\n';
     for (std::size_t i = 0; i < configuration.route_count; ++i) {
@@ -331,6 +345,7 @@ std::string serialize_modulation(const ModulationConfiguration &configuration) {
             << ' ' << static_cast<unsigned>(route.destination_kind) << ' '
             << route.destination_modulator << ' '
             << static_cast<unsigned>(route.destination_modulator_parameter)
+            << ' ' << route.destination_input
             << ' ' << route.destination_owner_explicit << ' '
             << static_cast<unsigned>(route.destination_owner_kind) << ' '
             << route.destination_owner_id
@@ -345,7 +360,7 @@ ModulationConfiguration load_modulation(const std::filesystem::path &path) {
     unsigned version{};
     ModulationConfiguration result;
     if (!(input >> magic >> version) || magic != "NEUROGENIC_MODULATION" ||
-        (version == 0 || version > 5) ||
+        (version == 0 || version > 6) ||
         !(input >> label >> result.update_interval) || label != "interval")
         throw std::runtime_error(
             "unsupported or malformed modulation metadata");
@@ -392,7 +407,9 @@ ModulationConfiguration load_modulation(const std::filesystem::path &path) {
                   source.follower_threshold) ||
                 label != "modulator" ||
                 type < static_cast<unsigned>(ModulatorType::lfo) ||
-                type > static_cast<unsigned>(ModulatorType::midi_cc) ||
+                type > static_cast<unsigned>(
+                           version >= 6 ? ModulatorType::logistic
+                                        : ModulatorType::midi_cc) ||
                 owner < static_cast<unsigned>(ModulatorOwnerKind::track) ||
                 owner >
                     static_cast<unsigned>(ModulatorOwnerKind::voice_definition) ||
@@ -409,6 +426,30 @@ ModulationConfiguration load_modulation(const std::filesystem::path &path) {
                     tap > static_cast<unsigned>(FollowerTapKind::physical_input))
                     throw std::runtime_error("malformed modulator graph metadata");
                 source.follower_tap = static_cast<FollowerTapKind>(tap);
+            }
+            if (version >= 6) {
+                unsigned steps{}, pulses{}, rotation{}, order{}, distribution{};
+                if (!(input >> steps >> pulses >> rotation >> order >>
+                      distribution >>
+                      source.step_duration_beats >> source.swing >>
+                      source.gate_length >> source.correlation >>
+                      source.quantization >> source.slew_seconds >>
+                      source.rise_seconds >> source.fall_seconds >> source.curve >>
+                      source.scale >> source.offset >> source.chaos >>
+                      source.unipolar >> source.looping) ||
+                    steps == 0 || steps > source.step_values.size() ||
+                    pulses > steps || rotation >= steps || order > 3 ||
+                    distribution > 2)
+                    throw std::runtime_error("malformed native modulator settings");
+                source.step_count = static_cast<std::uint8_t>(steps);
+                source.pulses = static_cast<std::uint8_t>(pulses);
+                source.rotation = static_cast<std::uint8_t>(rotation);
+                source.order = static_cast<std::uint8_t>(order);
+                source.distribution = static_cast<std::uint8_t>(distribution);
+                for (auto &value : source.step_values)
+                    if (!(input >> value))
+                        throw std::runtime_error(
+                            "malformed step modulator values");
             }
         }
     }
@@ -437,11 +478,13 @@ ModulationConfiguration load_modulation(const std::filesystem::path &path) {
             throw std::runtime_error("malformed modulator route source");
         if (version >= 5) {
             unsigned kind{}, parameter{}, owner{};
-            if (!(input >> kind >> route.destination_modulator >> parameter >>
+            if (!(input >> kind >> route.destination_modulator >> parameter) ||
+                (version >= 6 && !(input >> route.destination_input)) ||
+                !(input >>
                   route.destination_owner_explicit >> owner >>
                   route.destination_owner_id) ||
                 kind > static_cast<unsigned>(
-                           ModulationDestinationKind::modulator_parameter) ||
+                           ModulationDestinationKind::modulator_input) ||
                 owner > static_cast<unsigned>(ModulatorOwnerKind::voice_definition))
                 throw std::runtime_error("malformed modulation graph connection");
             route.destination_kind =

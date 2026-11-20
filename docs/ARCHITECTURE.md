@@ -9,6 +9,11 @@ Cross-owner and modulator-parameter connections compile control-side into a
 stable-ID topological order. Audio-derived inputs use previous-block mixer
 observations. See [Modulation graph](MODULATION_GRAPH.md).
 
+Native modulation processors use descriptor-defined fixed input/output ports.
+Step tables and runtime state are bounded inside prepared instances; utility
+processors and generators therefore share graph ordering, publication and
+ownership rules without callback allocation or dynamic dispatch.
+
 Native processing uses a bounded effect-rack snapshot within mixer publication.
 Track, aux and master chains own stable instance IDs; preallocated runtime state
 never enters application snapshots. See [FX_CHAINS.md](FX_CHAINS.md).

@@ -8,9 +8,10 @@ the callback receives fixed arrays and a prepared evaluation order.
 
 Connections have stable IDs and reference a stable source instance and numeric
 output port. A destination is either a normal numeric DSP parameter or a stable
-modulator instance plus descriptor-approved parameter. Depth, polarity and
-enabled state belong to the connection. Array positions, names and UI order are
-never identities.
+modulator instance plus descriptor-approved parameter or input port. Depth,
+polarity and enabled state belong to the connection. Array positions, names and
+UI order are never identities. Multi-input utilities sum contributions per
+input and clamp them to the normalized control range before evaluation.
 
 Modulator destinations include continuous rate, synchronized beat length,
 ADSR attack/decay/sustain/release, and follower attack/release/gain/threshold.
@@ -42,7 +43,9 @@ composed before the receiver advances. Normal destinations retain:
 `effective = clamp(base-or-automation + sum(modulation contributions))`
 
 Stored bases are never overwritten. Sources may fan out and destinations may
-sum many sources. Disabled edges do not affect ordering. Limits remain 64
+sum many sources. Named secondary outputs such as trigger, accent and EOC are
+independently routable by stable numeric port ID. Disabled edges do not affect
+ordering. Limits remain 64
 instances and 128 connections, with no callback allocation, locking, logging
 or topology construction.
 

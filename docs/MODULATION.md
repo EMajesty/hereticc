@@ -7,6 +7,12 @@ track, aux bus or master. The fixed bank remains a compatibility adapter. See
 Cross-owner and modulator-parameter connections form a deterministic DAG; see
 [Modulation graph](MODULATION_GRAPH.md).
 
+The native library includes tempo-synchronized step and Euclidean generators,
+clocked weighted/correlated random, a looping function generator, bounded math
+utilities and logistic-map evolving modulation. All run at the same bounded
+control rate and publish discoverable named ports; there is no parallel
+sequencer or modulation engine.
+
 Native effects use `fx.INSTANCE.PARAMETER` destinations. Only descriptor-approved
 numeric values are modulatable; topology and resources are rejected. Base values
 remain separate from effective automation/modulation values.

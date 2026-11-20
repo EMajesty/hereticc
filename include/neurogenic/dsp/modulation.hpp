@@ -33,7 +33,9 @@ enum class ModulationPolarity : std::uint8_t { bipolar, unipolar };
 enum class ModulationScope : std::uint8_t { global, track, voice };
 enum class ModulatorType : std::uint8_t {
     lfo = 1, adsr, sample_hold, smooth_random, envelope_follower, xy_manual,
-    midi_cc
+    midi_cc, step_sequencer, euclidean, clocked_random, function_generator,
+    scale_offset, invert, rectify, slew, quantize, minimum, maximum, sum,
+    multiply, logistic
 };
 enum class ModulatorOwnerKind : std::uint8_t {
     track = 1, auxiliary, master, group, voice_definition
@@ -41,7 +43,8 @@ enum class ModulatorOwnerKind : std::uint8_t {
 enum class ModulatorUpdateRate : std::uint8_t { control, per_voice_control };
 enum class ModulationDestinationKind : std::uint8_t {
     parameter,
-    modulator_parameter
+    modulator_parameter,
+    modulator_input
 };
 enum class ModulatorParameterId : std::uint32_t {
     rate = 1,
@@ -51,7 +54,24 @@ enum class ModulatorParameterId : std::uint32_t {
     sustain,
     release,
     follower_gain,
-    follower_threshold
+    follower_threshold,
+    step_duration,
+    swing,
+    pulses,
+    rotation,
+    gate_length,
+    step_count,
+    order,
+    distribution,
+    correlation,
+    quantization,
+    slew,
+    rise,
+    fall,
+    curve,
+    scale,
+    offset,
+    chaos
 };
 enum class FollowerTapKind : std::uint8_t {
     master,
@@ -80,6 +100,7 @@ struct ModulatorTypeDescriptor {
     bool triggerable{}, retriggerable{};
     ModulatorUpdateRate update_rate{ModulatorUpdateRate::control};
     std::uint32_t estimated_state_bytes{};
+    std::uint32_t version{1};
 };
 [[nodiscard]] std::span<const ModulatorTypeDescriptor>
 modulator_type_registry() noexcept;
@@ -87,6 +108,7 @@ modulator_type_registry() noexcept;
 find_modulator_type(ModulatorType) noexcept;
 
 struct ModulationSourceSettings {
+    static constexpr std::size_t maximum_steps = 16;
     LfoWaveform waveform{LfoWaveform::sine};
     float rate_hz{1.0F};
     bool tempo_sync{};
@@ -100,6 +122,13 @@ struct ModulationSourceSettings {
         follower_gain{1.0F}, follower_threshold{};
     FollowerTapKind follower_tap{FollowerTapKind::master};
     std::uint64_t follower_tap_id{};
+    std::array<float, maximum_steps> step_values{};
+    std::uint8_t step_count{8}, pulses{4}, rotation{}, order{}, distribution{};
+    float step_duration_beats{0.25F}, swing{}, gate_length{0.5F};
+    float correlation{}, quantization{}, slew_seconds{};
+    float rise_seconds{0.1F}, fall_seconds{0.1F}, curve{};
+    float scale{1.0F}, offset{}, chaos{3.8F};
+    bool unipolar{}, looping{};
 };
 struct ModulationRoute {
     ModulationRouteId id{};
@@ -117,6 +146,7 @@ struct ModulationRoute {
         ModulationDestinationKind::parameter};
     ModulatorInstanceId destination_modulator{};
     ModulatorParameterId destination_modulator_parameter{};
+    std::uint32_t destination_input{};
     bool destination_owner_explicit{};
     ModulatorOwnerKind destination_owner_kind{ModulatorOwnerKind::master};
     std::uint64_t destination_owner_id{};
@@ -172,6 +202,9 @@ struct ModulationSnapshot {
         route_source_values{};
     std::array<float, ModulationConfiguration::maximum_modulators>
         modulator_values{};
+    std::array<std::array<float, 3>,
+               ModulationConfiguration::maximum_modulators>
+        modulator_outputs{};
     std::size_t modulator_count{};
     std::uint64_t generation{};
 };
@@ -227,10 +260,13 @@ class ModulationEngine {
     struct ModulatorState {
         double phase{};
         float value{}, held{}, target{};
+        std::array<float, 3> outputs{};
+        std::array<float, 3> inputs{};
         std::uint32_t random{1};
+        std::uint32_t step{}, direction{1};
         SourceState::EnvelopeStage envelope_stage{
             SourceState::EnvelopeStage::idle};
-        bool gate{};
+        bool gate{}, trigger_latched{};
     };
     struct ModulatorAutomationValue {
         ModulatorInstanceId instance{};
@@ -245,14 +281,14 @@ class ModulationEngine {
     float waveform(std::size_t, std::size_t, double, bool) noexcept;
     float random(std::size_t, std::size_t) noexcept;
     float instance_random(std::size_t) noexcept;
+    [[nodiscard]] float modulator_output(std::size_t, std::uint32_t) const noexcept;
     [[nodiscard]] std::size_t track_slot(std::uint64_t) const noexcept;
     template <class Apply> void apply_routes(Apply &&apply) noexcept {
         for (std::size_t route_index = 0;
              route_index < configuration_.route_count; ++route_index) {
             const auto &route = configuration_.routes[route_index];
             if (!route.enabled || route.scope == ModulationScope::voice ||
-                route.destination_kind ==
-                    ModulationDestinationKind::modulator_parameter)
+                route.destination_kind != ModulationDestinationKind::parameter)
                 continue;
             bool already_processed{};
             for (std::size_t previous = 0; previous < route_index; ++previous)
@@ -308,9 +344,10 @@ class ModulationEngine {
                     if (found == configuration_.modulators.begin() +
                                      configuration_.modulator_count)
                         continue;
-                    source = modulator_states_[static_cast<std::size_t>(
-                        found - configuration_.modulators.begin())]
-                                 .value;
+                    source = modulator_output(
+                        static_cast<std::size_t>(
+                            found - configuration_.modulators.begin()),
+                        candidate.source_output);
                 } else {
                     const auto source_index =
                         static_cast<std::size_t>(candidate.source);
@@ -352,9 +389,14 @@ class ModulationEngine {
             published_sources_[source].store(source_states_[0][source].value,
                                              std::memory_order_relaxed);
         for (std::size_t instance = 0;
-             instance < configuration_.modulator_count; ++instance)
+             instance < configuration_.modulator_count; ++instance) {
             published_modulators_[instance].store(
                 modulator_states_[instance].value, std::memory_order_relaxed);
+            for (std::size_t output = 0; output < 3; ++output)
+                published_modulator_outputs_[instance][output].store(
+                    modulator_states_[instance].outputs[output],
+                    std::memory_order_relaxed);
+        }
         published_generation_.fetch_add(1, std::memory_order_release);
     }
     ModulationConfiguration configuration_;
@@ -379,6 +421,9 @@ class ModulationEngine {
         published_sources_{};
     std::array<std::atomic<float>, ModulationConfiguration::maximum_modulators>
         published_modulators_{};
+    std::array<std::array<std::atomic<float>, 3>,
+               ModulationConfiguration::maximum_modulators>
+        published_modulator_outputs_{};
     std::array<std::atomic<float>, ModulationConfiguration::maximum_routes>
         published_effective_{};
     std::array<std::atomic<float>, ModulationConfiguration::maximum_routes>

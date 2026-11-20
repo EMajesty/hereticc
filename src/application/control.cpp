@@ -507,6 +507,10 @@ ActionRegistry::ActionRegistry() {
                {{"id", ValueType::integer},
                 {"parameter", ValueType::text},
                 {"value", ValueType::real}}));
+    add(action("modulator.step-set.v1", "Set modulator step", "Modulation",
+               {{"id", ValueType::integer},
+                {"step", ValueType::integer},
+                {"value", ValueType::real}}));
     add(action("modulator.query-types.v1", "Query modulator types",
                "Modulation"));
     add(action("modulator.query-instances.v1", "Query modulators",
@@ -526,6 +530,7 @@ ActionRegistry::ActionRegistry() {
                {{"source_id", ValueType::integer},
                 {"destination_id", ValueType::integer},
                 {"parameter", ValueType::integer},
+                {"input", ValueType::integer, false},
                 {"depth", ValueType::real}}));
     add(action("modulation.connection-delete.v1", "Delete graph connection",
                "Modulation", {{"connection_id", ValueType::integer}}));
@@ -3920,8 +3925,20 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     route.id = next_modulation_route_id_++;
                     route.source_instance = source_id;
                     route.source_output = 1;
-                    route.destination_kind =
-                        ModulationDestinationKind::modulator_parameter;
+                    if (const auto *input =
+                            argument<std::int64_t>(command, "input")) {
+                        if (*input <= 0 ||
+                            *input > std::numeric_limits<std::uint32_t>::max())
+                            error = "invalid destination input port";
+                        else {
+                            route.destination_kind =
+                                ModulationDestinationKind::modulator_input;
+                            route.destination_input =
+                                static_cast<std::uint32_t>(*input);
+                        }
+                    } else
+                        route.destination_kind =
+                            ModulationDestinationKind::modulator_parameter;
                     route.destination_modulator = destination_id;
                     route.destination_modulator_parameter = parameter;
                     route.depth = static_cast<float>(depth);
@@ -4014,7 +4031,7 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 const auto owner_value = *argument<std::int64_t>(command, "owner");
                 const auto owner_id = *argument<std::int64_t>(command, "owner_id");
                 if (type_value < static_cast<std::int64_t>(ModulatorType::lfo) ||
-                    type_value > static_cast<std::int64_t>(ModulatorType::midi_cc) ||
+                    type_value > static_cast<std::int64_t>(ModulatorType::logistic) ||
                     owner_value < static_cast<std::int64_t>(ModulatorOwnerKind::track) ||
                     owner_value > static_cast<std::int64_t>(ModulatorOwnerKind::group) ||
                     owner_id < 0)
@@ -4158,22 +4175,71 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 } else if (command.action_id == "modulator.parameter-set.v1") {
                     const auto &name = *argument<std::string>(command, "parameter");
                     const auto value = *argument<double>(command, "value");
+                    const auto *type = find_modulator_type(found->type);
+                    const auto descriptor = type ? std::find_if(
+                        type->parameters.begin(), type->parameters.end(),
+                        [&](const auto &candidate) { return candidate.id == name; })
+                                                 : std::span<const ModulatorParameterDescriptor>::iterator{};
                     if (!std::isfinite(value))
                         error = "modulator parameter must be finite";
-                    else if (name == "rate" && value >= 0 && value <= 100)
-                        found->settings.rate_hz = static_cast<float>(value);
-                    else if (name == "beats" && value >= 0.03125 && value <= 64)
-                        found->settings.beats_per_cycle = static_cast<float>(value);
-                    else if (name == "attack" && value >= 0 && value <= 60)
-                        found->settings.attack_seconds = static_cast<float>(value);
-                    else if (name == "decay" && value >= 0 && value <= 60)
-                        found->settings.decay_seconds = static_cast<float>(value);
-                    else if (name == "sustain" && value >= 0 && value <= 1)
-                        found->settings.sustain = static_cast<float>(value);
-                    else if (name == "release" && value >= 0 && value <= 60)
-                        found->settings.release_seconds = static_cast<float>(value);
-                    else
+                    else if (!type || descriptor == type->parameters.end() ||
+                             value < descriptor->minimum ||
+                             value > descriptor->maximum)
                         error = "unknown modulator parameter or value out of range";
+                    else {
+                        auto &settings = found->settings;
+                        const auto numeric = static_cast<float>(value);
+                        switch (descriptor->numeric_id) {
+                        case ModulatorParameterId::rate: settings.rate_hz = numeric; break;
+                        case ModulatorParameterId::beats: settings.beats_per_cycle = numeric; break;
+                        case ModulatorParameterId::attack:
+                            if (found->type == ModulatorType::envelope_follower)
+                                settings.follower_attack_seconds = numeric;
+                            else settings.attack_seconds = numeric;
+                            break;
+                        case ModulatorParameterId::decay: settings.decay_seconds = numeric; break;
+                        case ModulatorParameterId::sustain: settings.sustain = numeric; break;
+                        case ModulatorParameterId::release:
+                            if (found->type == ModulatorType::envelope_follower)
+                                settings.follower_release_seconds = numeric;
+                            else settings.release_seconds = numeric;
+                            break;
+                        case ModulatorParameterId::follower_gain: settings.follower_gain = numeric; break;
+                        case ModulatorParameterId::follower_threshold: settings.follower_threshold = numeric; break;
+                        case ModulatorParameterId::step_duration: settings.step_duration_beats = numeric; break;
+                        case ModulatorParameterId::swing: settings.swing = numeric; break;
+                        case ModulatorParameterId::gate_length: settings.gate_length = numeric; break;
+                        case ModulatorParameterId::step_count:
+                            settings.step_count = static_cast<std::uint8_t>(value);
+                            settings.pulses = std::min(settings.pulses, settings.step_count);
+                            settings.rotation %= settings.step_count;
+                            break;
+                        case ModulatorParameterId::pulses: settings.pulses = static_cast<std::uint8_t>(value); break;
+                        case ModulatorParameterId::rotation: settings.rotation = static_cast<std::uint8_t>(value); break;
+                        case ModulatorParameterId::order: settings.order = static_cast<std::uint8_t>(value); break;
+                        case ModulatorParameterId::distribution: settings.distribution = static_cast<std::uint8_t>(value); break;
+                        case ModulatorParameterId::correlation: settings.correlation = numeric; break;
+                        case ModulatorParameterId::quantization: settings.quantization = numeric; break;
+                        case ModulatorParameterId::slew: settings.slew_seconds = numeric; break;
+                        case ModulatorParameterId::rise: settings.rise_seconds = numeric; break;
+                        case ModulatorParameterId::fall: settings.fall_seconds = numeric; break;
+                        case ModulatorParameterId::curve: settings.curve = numeric; break;
+                        case ModulatorParameterId::scale: settings.scale = numeric; break;
+                        case ModulatorParameterId::offset: settings.offset = numeric; break;
+                        case ModulatorParameterId::chaos: settings.chaos = numeric; break;
+                        default: error = "parameter is not editable"; break;
+                        }
+                    }
+                } else if (command.action_id == "modulator.step-set.v1") {
+                    const auto step = *argument<std::int64_t>(command, "step");
+                    const auto value = *argument<double>(command, "value");
+                    if (found->type != ModulatorType::step_sequencer || step < 0 ||
+                        step >= found->settings.step_count ||
+                        !std::isfinite(value) || value < -1 || value > 1)
+                        error = "invalid step modulator value";
+                    else
+                        found->settings.step_values[static_cast<std::size_t>(step)] =
+                            static_cast<float>(value);
                 }
             }
             if (error.empty()) {

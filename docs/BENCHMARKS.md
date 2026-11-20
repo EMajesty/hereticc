@@ -1,5 +1,15 @@
 # Performance monitoring and benchmarks
 
+Task 041 adds mixed native-generator workloads using LFO, step, Euclidean,
+clocked random, function, logistic and follower instances with dense normal
+destinations. On the 2026-11-20 x86-64 Debug host (Ryzen 7 7800X3D, GCC 15.3,
+48 kHz, 256 frames, 200 iterations), 16/32, 32/64 and 64/128
+instance/connection cases averaged 35.2, 87.4 and 269.4 microseconds per
+buffer. Control-side preparation took 6.4, 9.7 and 21.3 microseconds;
+resident process memory was about 77.0 MB. The 64-node deep graph averaged
+121.0 microseconds. These are offline host regressions, not Pi 5 or N150
+measurements.
+
 Task 040 adds 16/32, 32/64 and 64/128 instance/connection graph workloads plus
 a 64-node deep acyclic chain. On the 2026-11-20 x86-64 Debug host (Ryzen 7
 7800X3D, GCC 15.3, 48 kHz, 256 frames, 200 iterations), callback averages were

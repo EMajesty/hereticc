@@ -1,10 +1,13 @@
 # Project persistence
 
-Modulation metadata version 5 persists stable instances and owners plus graph
+Modulation metadata version 6 persists stable instances and owners plus graph
 destination kinds, explicit owner and sharing metadata, and follower tap
-identities. Version-4 projects retain their implicit local routes and sound;
-older fixed-bank files migrate during load. Transient phase, envelope, voice
-state and prepared graph order are never project data. See
+identities. It adds native type settings, bounded step values, named source
+output and destination input IDs. Version-5 projects load unchanged;
+version-4 projects retain their implicit local routes and sound, and older
+fixed-bank files migrate during load. Unknown future types are rejected rather
+than substituted. Transient phase, envelope, voice state and prepared graph
+order are never project data. See
 [modulator instances](MODULATOR_INSTANCES.md).
 
 Mixer metadata version 3 persists native FX instances and serial track, aux and

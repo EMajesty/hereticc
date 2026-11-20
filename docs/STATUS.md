@@ -1,5 +1,11 @@
 # Implementation status
 
+Task 041 expands the native registry to 21 types: step, Euclidean, clocked
+weighted random, looping function, nine math/signal utilities and logistic
+chaos join the existing sources. Stable multi-input/multi-output ports,
+descriptor-driven editing, version-6 persistence and bounded mixed workloads
+use the Task 040 graph unchanged.
+
 Task 040 adds a stable-ID directed acyclic modulation graph with intentional
 cross-owner sharing, modulator-parameter edges, cycle diagnostics,
 deterministic topological evaluation, previous-block mixer follower taps,
