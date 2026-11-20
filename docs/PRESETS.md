@@ -98,7 +98,8 @@ become `applied` and the project become dirty.
 The activation pool has four slots. Queue/capacity failure happens before
 active state changes. Old sample versions retire only after their voices finish.
 The default policy preserves active voices; replacement may request release.
-Cancellation is supported before publication, not after callback queuing.
+Cancellation is supported while prepared or queued; once the callback has
+activated the snapshot it cannot be rolled back as a real-time operation.
 Undo/Redo does not yet capture application as one history entry.
 
 ## Relinking and self-contained export
