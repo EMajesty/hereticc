@@ -4,6 +4,11 @@ Sample-instrument presets reuse slice sidecars and immutable sample references.
 They store paths and playback metadata, never PCM; missing assets stay
 inspectable for relinking. See [PRESETS.md](PRESETS.md).
 
+Preset samples are decoded and sample-rate prepared before publication. Their
+immutable versions and pad mappings activate at one callback boundary; old
+voices keep the prior version until retirement. Exact and prefix relinking
+validate WAV data and never substitute by filename.
+
 ## Polyphonic modulation
 
 Sample and slice voices instantiate track-owned voice definitions. Note-on

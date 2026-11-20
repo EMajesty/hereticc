@@ -424,6 +424,27 @@ ActionRegistry::ActionRegistry() {
         "project.relink-sample.v1", "Relink missing sample", "Project",
         {{"missing", ValueType::text}, {"replacement", ValueType::text}}));
     add(action("project.query.v1", "Query project status", "Project"));
+    add(action("preset.validate.v1", "Validate preset", "Presets",
+               {{"library", ValueType::text}, {"preset_id", ValueType::text},
+                {"mode", ValueType::text},
+                {"track_id", ValueType::integer, false}}));
+    add(action("preset.prepare.v1", "Prepare preset application", "Presets",
+               {{"library", ValueType::text}, {"preset_id", ValueType::text},
+                {"mode", ValueType::text},
+                {"track_id", ValueType::integer, false},
+                {"release_voices", ValueType::boolean, false}}));
+    add(action("preset.apply.v1", "Activate prepared preset", "Presets"));
+    add(action("preset.cancel.v1", "Cancel prepared preset", "Presets"));
+    add(action("preset.query.v1", "Query preset application", "Presets"));
+    add(action("preset.relink-asset.v1", "Relink preset asset", "Presets",
+               {{"missing", ValueType::text},
+                {"replacement", ValueType::text}}));
+    add(action("preset.relink-prefix.v1", "Relink preset directory", "Presets",
+               {{"missing_prefix", ValueType::text},
+                {"replacement_prefix", ValueType::text}}));
+    add(action("preset.export-portable.v1", "Export portable preset", "Presets",
+               {{"library", ValueType::text}, {"preset_id", ValueType::text},
+                {"destination", ValueType::text}}));
     add(action("midi.clock-source-set.v1", "Set MIDI clock source", "MIDI",
                {{"source", ValueType::text}}));
     add(action(
@@ -2733,6 +2754,473 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
         }
         changed_locked();
         return {error.empty(), sequence, snapshot().revision, std::move(error)};
+    }
+    if (command.action_id.rfind("preset.", 0) == 0) {
+        const auto prepare_plan = [&](SoundPreset preset,
+                                      PresetImportMode mode, TrackId target,
+                                      bool release_voices,
+                                      PendingPresetApplication &pending,
+                                      std::string &prepare_error) {
+            const auto timeline = timeline_.snapshot().timeline;
+            const auto track = std::find_if(
+                timeline.tracks.begin(), timeline.tracks.end(),
+                [&](const auto &candidate) { return candidate.id == target; });
+            if (track == timeline.tracks.end()) {
+                prepare_error = "preset target track does not exist";
+                return false;
+            }
+            std::size_t mixer_track = mixer_configuration_.track_count;
+            for (std::size_t i = 0; i < mixer_configuration_.track_count; ++i)
+                if (mixer_configuration_.tracks[i].track == target) {
+                    mixer_track = i;
+                    break;
+                }
+            if (mixer_track == mixer_configuration_.track_count) {
+                prepare_error = "preset target has no mixer channel";
+                return false;
+            }
+            if (mode == PresetImportMode::insert_fx_chain && !preset.effects) {
+                prepare_error = "preset has no effect chain to insert";
+                return false;
+            }
+            if (mode == PresetImportMode::merge_modulation &&
+                preset.modulation.modulator_count == 0 &&
+                preset.modulation.route_count == 0) {
+                prepare_error = "preset has no modulation to merge";
+                return false;
+            }
+            for (std::size_t i = 0; i < preset.modulation.modulator_count; ++i) {
+                auto &instance = preset.modulation.modulators[i];
+                if (instance.owner_kind == ModulatorOwnerKind::track ||
+                    instance.owner_kind ==
+                        ModulatorOwnerKind::voice_definition)
+                    instance.owner_id = target;
+            }
+            for (std::size_t i = 0; i < preset.modulation.route_count; ++i) {
+                auto &route = preset.modulation.routes[i];
+                if (route.scope == ModulationScope::track ||
+                    route.scope == ModulationScope::voice)
+                    route.track_id = target;
+                if (route.destination_owner_explicit &&
+                    (route.destination_owner_kind ==
+                         ModulatorOwnerKind::track ||
+                     route.destination_owner_kind ==
+                         ModulatorOwnerKind::voice_definition))
+                    route.destination_owner_id = target;
+                if (route.destination.target ==
+                    ParameterTarget::subtractive_synth)
+                    route.destination.instance = track->instrument_instance_id;
+                if (route.destination_kind !=
+                    ModulationDestinationKind::parameter)
+                    continue;
+                bool compatible{};
+                if (route.destination.target ==
+                    ParameterTarget::native_effect) {
+                    if (preset.effects)
+                        for (const auto &effect : preset.effects->instances)
+                            if (effect.id == route.destination.instance)
+                                for (const auto &descriptor :
+                                     effect_parameter_descriptors(effect.type))
+                                    compatible |=
+                                        descriptor.id ==
+                                            route.destination.parameter &&
+                                        descriptor.modulatable;
+                } else
+                    for (const auto &descriptor : parameters_.parameters()) {
+                        const auto destination =
+                            resolve_parameter_destination(descriptor.id);
+                        compatible |= destination && descriptor.modulatable &&
+                                      destination->target ==
+                                          route.destination.target &&
+                                      destination->parameter ==
+                                          route.destination.parameter;
+                    }
+                if (!compatible) {
+                    prepare_error =
+                        "preset modulation destination is unavailable";
+                    return false;
+                }
+            }
+            auto base_effects = mixer_configuration_.effects;
+            auto base_modulation = modulation_configuration_;
+            if (mode == PresetImportMode::replace_sound) {
+                std::array<EffectInstanceId, maximum_effects_per_chain>
+                    replaced_effects{};
+                const auto replaced_count =
+                    base_effects.tracks[mixer_track].count;
+                std::copy_n(base_effects.tracks[mixer_track].instances.begin(),
+                            replaced_count, replaced_effects.begin());
+                const auto used_outside_target = [&](EffectInstanceId id) {
+                    const auto contains = [&](const auto &chain) {
+                        return std::find(chain.instances.begin(),
+                                         chain.instances.begin() + chain.count,
+                                         id) !=
+                               chain.instances.begin() + chain.count;
+                    };
+                    for (std::size_t i = 0; i < base_effects.tracks.size(); ++i)
+                        if (i != mixer_track &&
+                            contains(base_effects.tracks[i]))
+                            return true;
+                    for (const auto &chain : base_effects.aux)
+                        if (contains(chain)) return true;
+                    for (const auto &chain : base_effects.groups)
+                        if (contains(chain)) return true;
+                    return contains(base_effects.master);
+                };
+                std::size_t write{};
+                for (std::size_t i = 0; i < base_effects.instance_count; ++i) {
+                    const auto id = base_effects.instances[i].id;
+                    const auto replaced =
+                        std::find(replaced_effects.begin(),
+                                  replaced_effects.begin() + replaced_count,
+                                  id) != replaced_effects.begin() + replaced_count;
+                    if (!replaced || used_outside_target(id))
+                        base_effects.instances[write++] =
+                            base_effects.instances[i];
+                }
+                base_effects.instance_count = write;
+                base_effects.tracks[mixer_track] = {};
+
+                std::array<ModulatorInstanceId,
+                           ModulationConfiguration::maximum_modulators>
+                    removed{};
+                std::size_t removed_count{};
+                write = 0;
+                for (std::size_t i = 0;
+                     i < base_modulation.modulator_count; ++i) {
+                    const auto &instance = base_modulation.modulators[i];
+                    const auto local =
+                        (instance.owner_kind == ModulatorOwnerKind::track ||
+                         instance.owner_kind ==
+                             ModulatorOwnerKind::voice_definition) &&
+                        instance.owner_id == target;
+                    if (local)
+                        removed[removed_count++] = instance.id;
+                    else
+                        base_modulation.modulators[write++] = instance;
+                }
+                base_modulation.modulator_count = write;
+                write = 0;
+                for (std::size_t i = 0; i < base_modulation.route_count; ++i) {
+                    const auto &route = base_modulation.routes[i];
+                    const auto removed_id = [&](ModulatorInstanceId id) {
+                        return id &&
+                               std::find(removed.begin(),
+                                         removed.begin() + removed_count, id) !=
+                                   removed.begin() + removed_count;
+                    };
+                    const auto local = removed_id(route.source_instance) ||
+                                       removed_id(route.destination_modulator) ||
+                                       ((route.scope == ModulationScope::track ||
+                                         route.scope == ModulationScope::voice) &&
+                                        route.track_id == target);
+                    if (!local)
+                        base_modulation.routes[write++] = route;
+                }
+                base_modulation.route_count = write;
+            }
+            PresetImportResult imported;
+            if (!prepare_preset_import(preset, base_effects,
+                                       base_modulation, imported,
+                                       prepare_error))
+                return false;
+            auto next_mixer = mixer_configuration_;
+            auto next_modulation = modulation_configuration_;
+            if (mode != PresetImportMode::preview) {
+                if (mode != PresetImportMode::merge_modulation &&
+                    preset.effects) {
+                    next_mixer.effects = imported.effects;
+                    if (mode == PresetImportMode::insert_fx_chain) {
+                        auto &chain = next_mixer.effects.tracks[mixer_track];
+                        if (chain.count + imported.chain.count >
+                            chain.instances.size()) {
+                            prepare_error = "target effect chain capacity is exhausted";
+                            return false;
+                        }
+                        for (std::size_t i = 0; i < imported.chain.count; ++i)
+                            chain.instances[chain.count++] =
+                                imported.chain.instances[i];
+                    } else
+                        next_mixer.effects.tracks[mixer_track] = imported.chain;
+                }
+                if (mode != PresetImportMode::insert_fx_chain)
+                    next_modulation = imported.modulation;
+                if (mode == PresetImportMode::replace_sound) {
+                    next_mixer.tracks[mixer_track].gain = preset.track_gain;
+                    next_mixer.tracks[mixer_track].pan = preset.track_pan;
+                }
+            }
+            next_mixer.revision = mixer_configuration_.revision + 1;
+            PendingPresetApplication built;
+            built.preset = preset;
+            built.mode = mode;
+            built.target_track = target;
+            built.target_instrument = track->instrument_instance_id;
+            built.activation.mixer = next_mixer;
+            built.activation.modulation = next_modulation;
+            built.activation.release_existing_voices = release_voices;
+            for (const auto &[id, value] : preset.synth_parameters) {
+                const auto descriptor = parameters_.get(id);
+                const auto destination = resolve_parameter_destination(id);
+                if (!descriptor || !destination ||
+                    destination->target !=
+                        ParameterTarget::subtractive_synth ||
+                    value < number(descriptor->minimum) ||
+                    value > number(descriptor->maximum) ||
+                    built.activation.synth_parameter_count ==
+                        built.activation.synth_parameters.size()) {
+                    prepare_error = "incompatible synth preset parameter: " + id;
+                    return false;
+                }
+                built.activation.synth_parameters
+                    [built.activation.synth_parameter_count++] = {
+                        track->instrument_instance_id,
+                        static_cast<SynthParameter>(destination->parameter),
+                        static_cast<float>(value)};
+                built.synth_parameters[id] = value;
+            }
+            if (preset.samples) {
+                if (preset.samples->sample_paths.size() >
+                    built.activation.samples.size()) {
+                    prepare_error = "preset sample capacity exceeded";
+                    return false;
+                }
+                for (const auto &[slot, path] : preset.samples->sample_paths) {
+                    try {
+                        auto sample = std::make_shared<const Sample>(
+                            load_wav(path, engine_.sample_rate()));
+                        const auto index = built.activation.sample_count++;
+                        built.activation.samples[index] =
+                            {SampleSlotId{slot}, sample};
+                        built.sample_paths[index] = path;
+                    } catch (const std::exception &exception) {
+                        prepare_error = "cannot prepare sample " + path.string() +
+                                        ": " + exception.what();
+                        return false;
+                    }
+                }
+                built.activation.replace_pad_mappings = true;
+                for (std::size_t pad = 0; pad < 16; ++pad) {
+                    auto &mapping = built.activation.pads[pad];
+                    mapping.playback = preset.samples->pad_settings[pad];
+                    if (!preset.samples->pads[pad]) continue;
+                    const auto found = std::find_if(
+                        preset.samples->slices.begin(),
+                        preset.samples->slices.end(), [&](const auto &slice) {
+                            return slice.id == *preset.samples->pads[pad];
+                        });
+                    if (found == preset.samples->slices.end()) {
+                        prepare_error = "pad references a missing preset slice";
+                        return false;
+                    }
+                    const auto sample = std::find_if(
+                        built.activation.samples.begin(),
+                        built.activation.samples.begin() +
+                            built.activation.sample_count,
+                        [&](const auto &candidate) {
+                            return candidate.slot == found->slot;
+                        });
+                    if (sample == built.activation.samples.begin() +
+                                      built.activation.sample_count ||
+                        found->start_frame >= found->end_frame ||
+                        found->end_frame > sample->sample->frames()) {
+                        prepare_error = "preset slice is outside its sample";
+                        return false;
+                    }
+                    mapping.slot = found->slot;
+                    mapping.start_frame = found->start_frame;
+                    mapping.end_frame = found->end_frame;
+                    mapping.gain = found->gain;
+                    mapping.assigned = true;
+                }
+            }
+            pending = std::move(built);
+            prepare_error.clear();
+            return true;
+        };
+        try {
+            if (command.action_id == "preset.query.v1")
+                return {true, sequence, before.revision, {}};
+            if (command.action_id == "preset.cancel.v1") {
+                std::lock_guard lock(mutex_);
+                if (pending_preset_ && pending_preset_->published) {
+                    if (!engine_.cancel_preset_activation(
+                            pending_preset_->activation_sequence))
+                        return {false, sequence, state_.revision,
+                                "preset activation is already active"};
+                    state_.preset_application.status = "cancelling";
+                    ++state_.preset_application.revision;
+                    changed_locked();
+                    return {true, sequence, state_.revision, {}};
+                }
+                pending_preset_.reset();
+                state_.preset_application.status = "cancelled";
+                state_.preset_application.progress = 0;
+                ++state_.preset_application.revision;
+                changed_locked();
+                return {true, sequence, state_.revision, {}};
+            }
+            if (command.action_id == "preset.export-portable.v1") {
+                PresetLibrary library(
+                    *argument<std::string>(command, "library"));
+                const auto result = library.export_self_contained(
+                    *argument<std::string>(command, "preset_id"),
+                    *argument<std::string>(command, "destination"));
+                if (!result.missing_assets.empty())
+                    return {false, sequence, before.revision,
+                            "portable export has unresolved assets"};
+                return {true, sequence, before.revision, {}};
+            }
+            if (command.action_id == "preset.relink-asset.v1" ||
+                command.action_id == "preset.relink-prefix.v1") {
+                std::lock_guard lock(mutex_);
+                if (!pending_preset_ || pending_preset_->published)
+                    return {false, sequence, state_.revision,
+                            "no editable prepared preset"};
+                PresetValidation relinked;
+                if (command.action_id == "preset.relink-asset.v1") {
+                    const std::vector<PresetAssetRelink> mappings{{
+                        std::filesystem::path(*argument<std::string>(
+                            command, "missing")),
+                        std::filesystem::path(*argument<std::string>(
+                            command, "replacement"))}};
+                    relinked = relink_preset_assets(
+                        pending_preset_->preset, mappings, {},
+                        engine_.sample_rate());
+                } else {
+                    const std::vector<PresetDirectoryRelink> mappings{{
+                        std::filesystem::path(*argument<std::string>(
+                            command, "missing_prefix")),
+                        std::filesystem::path(*argument<std::string>(
+                            command, "replacement_prefix"))}};
+                    relinked = relink_preset_assets(
+                        pending_preset_->preset, {}, mappings,
+                        engine_.sample_rate());
+                }
+                if (relinked.valid) {
+                    PendingPresetApplication rebuilt;
+                    if (!prepare_plan(pending_preset_->preset,
+                                      pending_preset_->mode,
+                                      pending_preset_->target_track, false,
+                                      rebuilt, error)) {
+                        relinked.valid = false;
+                        relinked.errors.push_back(error);
+                    } else
+                        *pending_preset_ = std::move(rebuilt);
+                }
+                state_.preset_application.missing_assets.clear();
+                for (const auto &path : relinked.missing_assets)
+                    state_.preset_application.missing_assets.emplace_back(path);
+                state_.preset_application.error =
+                    relinked.errors.empty() ? "" : relinked.errors.front();
+                state_.preset_application.status =
+                    relinked.valid ? "assets-resolved" : "awaiting-assets";
+                state_.preset_application.progress = relinked.valid ? 0.35F : 0.2F;
+                ++state_.preset_application.revision;
+                changed_locked();
+                return {relinked.valid, sequence, state_.revision,
+                        state_.preset_application.error};
+            }
+            if (command.action_id == "preset.apply.v1") {
+                std::lock_guard lock(mutex_);
+                if (!pending_preset_ || pending_preset_->published)
+                    return {false, sequence, state_.revision,
+                            "no prepared preset application"};
+                auto &pending = *pending_preset_;
+                if (pending.mode == PresetImportMode::preview)
+                    return {false, sequence, state_.revision,
+                            "preview mode cannot be activated"};
+                if (pending.activation.mixer.revision == 0) {
+                    PendingPresetApplication rebuilt;
+                    if (!prepare_plan(pending.preset, pending.mode,
+                                      pending.target_track, false, rebuilt,
+                                      error))
+                        return {false, sequence, state_.revision, error};
+                    pending = std::move(rebuilt);
+                }
+                if (!engine_.publish_preset_activation(
+                        pending.activation, pending.activation_sequence,
+                        pending.sample_publications, error)) {
+                    state_.preset_application.status = "failed";
+                    state_.preset_application.error = error;
+                    ++state_.preset_application.revision;
+                    changed_locked();
+                    return {false, sequence, state_.revision, error};
+                }
+                pending.published = true;
+                state_.preset_application.status = "activating";
+                state_.preset_application.progress = 0.8F;
+                state_.preset_application.activation_sequence =
+                    pending.activation_sequence;
+                ++state_.preset_application.revision;
+                changed_locked();
+                return {true, sequence, state_.revision, {}};
+            }
+            const auto library_path =
+                *argument<std::string>(command, "library");
+            const auto preset_id =
+                *argument<std::string>(command, "preset_id");
+            const auto mode = parse_preset_import_mode(
+                *argument<std::string>(command, "mode"));
+            if (!mode)
+                return {false, sequence, before.revision,
+                        "unknown preset application mode"};
+            auto target = before.selected_track;
+            if (const auto specified = argument<std::int64_t>(command, "track_id"))
+                target = static_cast<TrackId>(*specified);
+            const auto release_argument =
+                argument<bool>(command, "release_voices");
+            const auto release = release_argument && *release_argument;
+            PresetLibrary library(library_path);
+            auto preset = library.load(preset_id, false);
+            const auto asset_validation = validate_preset(preset, true);
+            PendingPresetApplication prepared;
+            if (!asset_validation.missing_assets.empty()) {
+                prepared.preset = std::move(preset);
+                prepared.mode = *mode;
+                prepared.target_track = target;
+                if (command.action_id == "preset.validate.v1")
+                    return {false, sequence, before.revision,
+                            "preset has unresolved sample assets"};
+                std::lock_guard lock(mutex_);
+                pending_preset_ = std::move(prepared);
+                state_.preset_application = {};
+                state_.preset_application.status = "awaiting-assets";
+                state_.preset_application.preset_id = preset_id;
+                state_.preset_application.mode = preset_import_mode_name(*mode);
+                state_.preset_application.target_track = target;
+                for (const auto &path : asset_validation.missing_assets)
+                    state_.preset_application.missing_assets.emplace_back(path);
+                state_.preset_application.progress = 0.2F;
+                ++state_.preset_application.revision;
+                changed_locked();
+                return {true, sequence, state_.revision, {}};
+            }
+            if (!prepare_plan(std::move(preset), *mode, target, release,
+                              prepared, error))
+                return {false, sequence, before.revision, error};
+            if (command.action_id == "preset.validate.v1")
+                return {true, sequence, before.revision, {}};
+            std::lock_guard lock(mutex_);
+            pending_preset_ = std::move(prepared);
+            state_.preset_application = {};
+            state_.preset_application.status = "prepared";
+            state_.preset_application.preset_id = preset_id;
+            state_.preset_application.mode = preset_import_mode_name(*mode);
+            state_.preset_application.target_track = target;
+            state_.preset_application.progress = 0.6F;
+            ++state_.preset_application.revision;
+            changed_locked();
+            return {true, sequence, state_.revision, {}};
+        } catch (const std::exception &exception) {
+            std::lock_guard lock(mutex_);
+            state_.preset_application.status = "failed";
+            state_.preset_application.error = exception.what();
+            ++state_.preset_application.revision;
+            changed_locked();
+            return {false, sequence, state_.revision,
+                    state_.preset_application.error};
+        }
     }
     if (command.action_id.rfind("project.", 0) == 0) {
         try {
@@ -5950,6 +6438,41 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
     return {error.empty(), sequence, snapshot().revision, std::move(error)};
 }
 void ApplicationService::synchronize_locked() const {
+    if (pending_preset_ && pending_preset_->published &&
+        engine_.preset_activation_cancelled(
+            pending_preset_->activation_sequence)) {
+        state_.preset_application.status = "cancelled";
+        state_.preset_application.progress = 0;
+        ++state_.preset_application.revision;
+        engine_.reclaim_preset_activations();
+        pending_preset_.reset();
+    }
+    if (pending_preset_ && pending_preset_->published &&
+        engine_.preset_activation_applied(
+            pending_preset_->activation_sequence)) {
+        auto &pending = *pending_preset_;
+        for (std::size_t i = 0; i < pending.activation.sample_count; ++i)
+            samples_.adopt_preset_activation(
+                pending.activation.samples[i].slot,
+                pending.activation.samples[i].sample, pending.sample_paths[i],
+                pending.sample_publications[i]);
+        std::string adoption_error;
+        if (pending.preset.samples &&
+            !slices_.adopt_activated_project(*pending.preset.samples,
+                                             adoption_error))
+            state_.preset_application.error = adoption_error;
+        mixer_configuration_ = pending.activation.mixer;
+        modulation_configuration_ = pending.activation.modulation;
+        for (const auto &[id, value] : pending.synth_parameters)
+            synth_instance_parameters_[pending.target_instrument][id] = value;
+        state_.project_dirty = true;
+        state_.preset_application.status = "applied";
+        state_.preset_application.progress = 1;
+        ++state_.preset_application.revision;
+        (void)engine_.finalize_preset_activation(
+            pending.activation_sequence);
+        pending_preset_.reset();
+    }
     state_.midi = project_.midi;
     state_.midi_dropped =
         midi_output_.dropped() + engine_.dropped_midi_inputs();

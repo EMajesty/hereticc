@@ -40,6 +40,37 @@ struct SamplePlaybackSettings {
     friend bool operator==(const SamplePlaybackSettings &,
                            const SamplePlaybackSettings &) = default;
 };
+inline constexpr std::size_t maximum_preset_samples = 16;
+inline constexpr std::size_t maximum_preset_synth_parameters = 64;
+struct PresetSampleActivation {
+    SampleSlotId slot{invalid_sample_slot};
+    std::shared_ptr<const Sample> sample;
+};
+struct PresetSynthParameterActivation {
+    InstrumentInstanceId instance{default_synth_instance_id};
+    SynthParameter parameter{SynthParameter::gain};
+    float value{};
+};
+struct PresetPadActivation {
+    SampleSlotId slot{invalid_sample_slot};
+    std::uint64_t start_frame{}, end_frame{};
+    float gain{1.0F};
+    SamplePlaybackSettings playback;
+    bool assigned{};
+};
+struct PresetActivationRequest {
+    MixerConfiguration mixer;
+    ModulationConfiguration modulation;
+    std::array<PresetSampleActivation, maximum_preset_samples> samples{};
+    std::size_t sample_count{};
+    std::array<PresetSynthParameterActivation,
+               maximum_preset_synth_parameters>
+        synth_parameters{};
+    std::size_t synth_parameter_count{};
+    std::array<PresetPadActivation, 16> pads{};
+    bool replace_pad_mappings{};
+    bool release_existing_voices{};
+};
 class AudioEngine {
   public:
     struct TimelineActivationEvent {
@@ -125,6 +156,26 @@ class AudioEngine {
                                      std::string &error) noexcept {
         return mixer_.publish(configuration, error);
     }
+    [[nodiscard]] bool publish_preset_activation(
+        const PresetActivationRequest &, std::uint64_t &sequence,
+        std::array<std::uint64_t, maximum_preset_samples> &sample_publications,
+        std::string &error) noexcept;
+    [[nodiscard]] bool preset_activation_applied(
+        std::uint64_t sequence) const noexcept {
+        return sequence != 0 &&
+               applied_preset_activation_.load(std::memory_order_acquire) >=
+                   sequence;
+    }
+    [[nodiscard]] bool cancel_preset_activation(std::uint64_t) noexcept;
+    [[nodiscard]] bool preset_activation_cancelled(
+        std::uint64_t sequence) const noexcept {
+        return sequence != 0 &&
+               cancelled_preset_activation_.load(std::memory_order_acquire) >=
+                   sequence;
+    }
+    void reclaim_preset_activations() noexcept;
+    [[nodiscard]] bool finalize_preset_activation(
+        std::uint64_t sequence) noexcept;
     [[nodiscard]] MixerState mixer_state() const noexcept {
         return mixer_.state();
     }
@@ -395,6 +446,27 @@ class AudioEngine {
         std::size_t version{};
         std::uint64_t sequence{};
     };
+    enum class PresetActivationState : std::uint8_t {
+        free,
+        queued,
+        cancelled,
+        applied
+    };
+    struct PreparedPresetActivation {
+        std::atomic<PresetActivationState> state{PresetActivationState::free};
+        std::uint64_t sequence{};
+        MixerConfiguration mixer;
+        ModulationConfiguration modulation;
+        std::array<std::size_t, maximum_preset_samples> sample_versions{};
+        std::array<std::uint64_t, maximum_preset_samples> sample_publications{};
+        std::size_t sample_count{};
+        std::array<PresetSynthParameterActivation,
+                   maximum_preset_synth_parameters>
+            synth_parameters{};
+        std::size_t synth_parameter_count{};
+        std::array<PresetPadActivation, 16> pads{};
+        bool replace_pad_mappings{}, release_existing_voices{};
+    };
     class SampleUpdateQueue {
       public:
         explicit SampleUpdateQueue(std::size_t capacity)
@@ -459,6 +531,7 @@ class AudioEngine {
     void cleanup_timeline_voices(VoiceTransitionPolicy, std::uint64_t) noexcept;
     void reclaim_retired_plans() noexcept;
     void reclaim_sample_versions_unlocked() noexcept;
+    void activate_preset(std::size_t) noexcept;
     std::uint32_t rate_;
     Scheduler scheduler_;
     TimelineScheduler timeline_scheduler_;
@@ -502,6 +575,13 @@ class AudioEngine {
     std::uint64_t next_sample_update_sequence_{};
     std::mutex sample_update_producer_mutex_;
     SampleUpdateQueue sample_updates_;
+    static constexpr std::size_t preset_activation_capacity = 4;
+    SpscQueue<std::uint8_t, preset_activation_capacity + 1>
+        preset_activations_;
+    std::unique_ptr<PreparedPresetActivation[]> preset_activation_slots_;
+    std::atomic<std::uint64_t> applied_preset_activation_{};
+    std::atomic<std::uint64_t> cancelled_preset_activation_{};
+    std::uint64_t next_preset_activation_{};
     std::unique_ptr<SampleVersion[]> sample_versions_;
     std::size_t sample_version_capacity_{};
     std::array<SampleSlotId, 128> note_slots_{};

@@ -1,5 +1,12 @@
 # Performance monitoring and benchmarks
 
+The preset regression reports `application_prepare_us`,
+`activation_callback_us`, `package_export_us`, and `package_bytes` separately.
+Preparation covers parsing, WAV preparation, validation, and ID remapping;
+activation covers only the bounded callback operation. Package export is
+filesystem work and never part of callback timing. Developer-machine results
+are not Pi 5 or N150 performance claims.
+
 Task 049 adds light (4 tracks), medium (16), heavy (32), and stress (32
 tracks/128 routes) integration tiers. A 2026-11-20 Ryzen 7 7800X3D Debug run
 measured average/worst callback times of 0.054/0.147, 0.177/0.332, 1.161/1.878

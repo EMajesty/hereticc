@@ -1,5 +1,6 @@
 #include "neurogenic/project/preset.hpp"
 #include "neurogenic/project/project.hpp"
+#include "neurogenic/audio/sample.hpp"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -41,6 +42,27 @@ std::string generation_name() {
     return "generation-" + std::to_string(
                std::chrono::steady_clock::now().time_since_epoch().count()) +
            "-" + std::to_string(sequence.fetch_add(1));
+}
+std::uint64_t stable_path_hash(std::string_view value) noexcept {
+    std::uint64_t hash = 1469598103934665603ULL;
+    for (const unsigned char byte : value) {
+        hash ^= byte;
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+bool below_prefix(const std::filesystem::path &path,
+                  const std::filesystem::path &prefix,
+                  std::filesystem::path &suffix) {
+    const auto normalized_path = path.lexically_normal();
+    const auto normalized_prefix = prefix.lexically_normal();
+    auto p = normalized_path.begin();
+    for (auto base = normalized_prefix.begin(); base != normalized_prefix.end();
+         ++base, ++p)
+        if (p == normalized_path.end() || *p != *base) return false;
+    suffix.clear();
+    for (; p != normalized_path.end(); ++p) suffix /= *p;
+    return true;
 }
 void strings(std::ostringstream &out, std::string_view label,
              const std::vector<std::string> &values) {
@@ -168,6 +190,24 @@ std::optional<PresetType> parse_preset_type(std::string_view value) {
     if (value == "sample") return PresetType::sample_instrument;
     if (value == "fx-chain") return PresetType::fx_chain;
     if (value == "track-sound") return PresetType::track_sound;
+    return std::nullopt;
+}
+const char *preset_import_mode_name(PresetImportMode mode) noexcept {
+    switch (mode) {
+    case PresetImportMode::replace_sound: return "replace";
+    case PresetImportMode::insert_fx_chain: return "insert-fx";
+    case PresetImportMode::merge_modulation: return "merge-modulation";
+    case PresetImportMode::preview: return "preview";
+    }
+    return "unknown";
+}
+std::optional<PresetImportMode> parse_preset_import_mode(
+    std::string_view value) noexcept {
+    if (value == "replace") return PresetImportMode::replace_sound;
+    if (value == "insert-fx") return PresetImportMode::insert_fx_chain;
+    if (value == "merge-modulation")
+        return PresetImportMode::merge_modulation;
+    if (value == "preview") return PresetImportMode::preview;
     return std::nullopt;
 }
 
@@ -334,6 +374,57 @@ bool prepare_preset_import(const SoundPreset &preset,
     return true;
 }
 
+PresetValidation relink_preset_assets(
+    SoundPreset &preset, const std::vector<PresetAssetRelink> &exact,
+    const std::vector<PresetDirectoryRelink> &directories,
+    std::uint32_t target_sample_rate) {
+    PresetValidation result;
+    if (!preset.samples) {
+        result.valid = true;
+        return result;
+    }
+    auto replacement = preset.samples->sample_paths;
+    for (auto &[slot, path] : replacement) {
+        (void)slot;
+        std::optional<std::filesystem::path> candidate;
+        for (const auto &mapping : exact)
+            if (path.lexically_normal() == mapping.missing.lexically_normal()) {
+                candidate = mapping.replacement;
+                break;
+            }
+        if (!candidate)
+            for (const auto &mapping : directories) {
+                std::filesystem::path suffix;
+                if (below_prefix(path, mapping.missing_prefix, suffix)) {
+                    candidate = mapping.replacement_prefix / suffix;
+                    break;
+                }
+            }
+        if (candidate) {
+            const auto normalized = candidate->lexically_normal();
+            if (!normalized.is_absolute() && !normalized.empty() &&
+                *normalized.begin() == "..") {
+                result.errors.push_back("unsafe relink target: " +
+                                        normalized.string());
+                continue;
+            }
+            try {
+                (void)load_wav(normalized, target_sample_rate);
+                path = normalized;
+            } catch (const std::exception &exception) {
+                result.errors.push_back("invalid replacement " +
+                                        normalized.string() + ": " +
+                                        exception.what());
+            }
+        }
+        if (!std::filesystem::exists(path))
+            result.missing_assets.push_back(path.string());
+    }
+    preset.samples->sample_paths = std::move(replacement);
+    result.valid = result.errors.empty() && result.missing_assets.empty();
+    return result;
+}
+
 std::filesystem::path PresetLibrary::preset_path(std::string_view id) const {
     if (!safe_id(id)) throw std::invalid_argument("unsafe preset ID");
     return root_ / std::string(id);
@@ -462,6 +553,72 @@ void PresetLibrary::export_package(
         throw std::runtime_error("preset export destination already exists");
     std::filesystem::copy(preset_path(id), destination,
                           std::filesystem::copy_options::recursive);
+}
+PortablePresetExportResult PresetLibrary::export_self_contained(
+    std::string_view id, const std::filesystem::path &destination) const {
+    if (std::filesystem::exists(destination))
+        throw std::runtime_error("preset export destination already exists");
+    auto value = load(id, false);
+    PortablePresetExportResult result;
+    if (value.samples)
+        for (const auto &[slot, path] : value.samples->sample_paths) {
+            (void)slot;
+            if (!std::filesystem::exists(path))
+                result.missing_assets.push_back(path.string());
+            else
+                try {
+                    (void)load_wav(path);
+                } catch (const std::exception &exception) {
+                    throw std::runtime_error("invalid preset asset " +
+                                             path.string() + ": " +
+                                             exception.what());
+                }
+        }
+    if (!result.missing_assets.empty()) return result;
+    const auto temporary_root = destination.parent_path() /
+                                (destination.filename().string() + "-tmp-" +
+                                 generation_name());
+    const auto staged_package = temporary_root / value.metadata.id;
+    try {
+        if (value.samples) {
+            std::map<std::filesystem::path, std::filesystem::path> copied;
+            for (auto &[slot, path] : value.samples->sample_paths) {
+                (void)slot;
+                const auto canonical = std::filesystem::weakly_canonical(path);
+                auto found = copied.find(canonical);
+                if (found == copied.end()) {
+                    std::ostringstream name;
+                    name << std::hex << std::setw(16) << std::setfill('0')
+                         << stable_path_hash(canonical.string()) << '-'
+                         << canonical.filename().string();
+                    const auto relative = std::filesystem::path("assets") /
+                                          name.str();
+                    std::filesystem::create_directories(staged_package /
+                                                        "assets");
+                    std::filesystem::copy_file(
+                        canonical, staged_package / relative,
+                        std::filesystem::copy_options::overwrite_existing);
+                    ++result.copied_assets;
+                    found = copied.emplace(canonical, relative).first;
+                }
+                path = found->second;
+            }
+        }
+        PresetLibrary staging(temporary_root);
+        staging.save(value);
+        (void)staging.load(value.metadata.id, true);
+        std::filesystem::rename(staged_package, destination);
+        std::filesystem::remove(temporary_root);
+        for (const auto &entry :
+             std::filesystem::recursive_directory_iterator(destination))
+            if (entry.is_regular_file())
+                result.package_bytes += entry.file_size();
+    } catch (...) {
+        std::error_code ignored;
+        std::filesystem::remove_all(temporary_root, ignored);
+        throw;
+    }
+    return result;
 }
 void PresetLibrary::import_package(const std::filesystem::path &source,
                                    std::string_view id) {

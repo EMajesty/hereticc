@@ -4,6 +4,10 @@
   sound presets with generation-based saves, asset diagnostics, fresh runtime
   ID remapping and deterministic rollback tests. A preset-browser GUI remains
   intentionally deferred.
+- Task 053 adds acknowledged callback-boundary activation across mixer/FX,
+  modulation, synth parameters, samples and pad mappings, plus explicit asset
+  relinking and collision-safe self-contained packages. Preset Undo/Redo is
+  deferred.
 
 Task 050 adds `neurogenic.application-discovery.v1`, a deterministic typed
 contract for capabilities, object types/instances, native FX and modulator

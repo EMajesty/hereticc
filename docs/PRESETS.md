@@ -77,5 +77,37 @@ browser is outside this subsystem.
 
 The library does not automatically bundle PCM, garbage-collect retained preset
 generations, translate third-party processor types, or provide cloud sharing.
-Atomic multi-subsystem engine publication remains the responsibility of the
-application transaction applying the prepared result.
+Coordinated activation covers preset-owned sound state, not unrelated timeline
+or project publications.
+
+## Transactional application
+
+`ApplicationService` exposes `preset.validate.v1`, `preset.prepare.v1`,
+`preset.apply.v1`, `preset.cancel.v1`, `preset.query.v1`, relinking actions and
+`preset.export-portable.v1`. Modes are `replace`, `insert-fx`,
+`merge-modulation`, and validation-only `preview`.
+
+Preparation resolves the target, rewrites track/instrument ownership, validates
+capacities and destinations, decodes/resamples samples, and constructs one
+bounded `PresetActivationRequest`. `apply` changes status only to `activating`.
+Mixer/FX, modulation, synth parameters, sample versions, and pad mappings
+become active together at the beginning of a later audio callback. Only after
+the control side observes the callback's sequence acknowledgement does status
+become `applied` and the project become dirty.
+
+The activation pool has four slots. Queue/capacity failure happens before
+active state changes. Old sample versions retire only after their voices finish.
+The default policy preserves active voices; replacement may request release.
+Cancellation is supported before publication, not after callback queuing.
+Undo/Redo does not yet capture application as one history entry.
+
+## Relinking and self-contained export
+
+Missing assets leave status at `awaiting-assets`. Exact-path and
+directory-prefix mappings explicitly validate replacement WAV data. No file is
+chosen automatically.
+
+Self-contained export is opt-in. It validates WAVs, copies each distinct source
+under `assets/`, prefixes duplicate basenames with a deterministic path hash,
+rewrites references relative to the package, validates the staged result, and
+renames it into place. It reports copied assets, bytes, and missing paths.

@@ -4,6 +4,11 @@ Projects restore complete sessions; presets are smaller reusable sound
 configurations. Applying a preset does not implicitly change project routing,
 group or master ownership. See [PRESETS.md](PRESETS.md).
 
+Acknowledged preset application marks the project dirty. Later saves include
+the activated sample/slice state, mixer/FX, modulation and synth bases. Pending
+jobs and callback activation records are transient. Preset application is not
+yet a single timeline Undo/Redo entry.
+
 Project format 5 uses timeline metadata version 7 to persist pattern
 collections, clips, song and loop
 ranges, stable-ID chain entries/repeats, follow actions, launch/voice policies,

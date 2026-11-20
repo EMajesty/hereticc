@@ -6,6 +6,11 @@ serializers, validates and remaps template IDs on the control thread, then
 hands bounded configurations to existing publication paths. See
 [PRESETS.md](PRESETS.md).
 
+Preset application uses a fixed, control-prepared activation pool. Records
+contain mixer/modulation/synth state and reserved sample-version indices. The
+callback performs bounded activation and acknowledgement without allocation,
+decoding, locks, logging, filesystem access, or sample destruction.
+
 The versioned [application discovery contract](APPLICATION_DISCOVERY.md)
 projects existing actions, parameters, objects and subsystem descriptors into a
 single copied control-side model. The

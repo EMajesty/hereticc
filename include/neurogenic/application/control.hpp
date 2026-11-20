@@ -4,6 +4,7 @@
 #include "neurogenic/audio/slicing.hpp"
 #include "neurogenic/performance/monitor.hpp"
 #include "neurogenic/project/project.hpp"
+#include "neurogenic/project/preset.hpp"
 #include "neurogenic/timeline/arrangement_recording.hpp"
 #include "neurogenic/timeline/edit.hpp"
 #include <array>
@@ -153,6 +154,14 @@ struct PatternChainEntryState {
     PatternId pattern{};
     std::uint16_t repeats{};
 };
+struct PresetApplicationState {
+    static constexpr std::uint32_t api_version = 1;
+    std::uint64_t revision{}, activation_sequence{};
+    std::string status{"idle"}, preset_id, mode, error;
+    TrackId target_track{};
+    float progress{};
+    std::vector<std::filesystem::path> missing_assets;
+};
 struct ApplicationState {
     std::uint64_t revision{};
     bool playing{};
@@ -222,6 +231,7 @@ struct ApplicationState {
     bool project_dirty{}, project_loading{}, project_saving{};
     std::string project_error;
     std::vector<std::filesystem::path> missing_assets;
+    PresetApplicationState preset_application;
     RecordingStatus recording;
     MixerState mixer;
     std::size_t selected_mixer_channel{};
@@ -295,6 +305,19 @@ class ApplicationService {
         const std::array<bool, maximum_midi_ports> &connections);
 
   private:
+    struct PendingPresetApplication {
+        SoundPreset preset;
+        PresetImportMode mode{PresetImportMode::preview};
+        TrackId target_track{};
+        InstrumentInstanceId target_instrument{};
+        PresetActivationRequest activation;
+        std::array<std::filesystem::path, maximum_preset_samples> sample_paths{};
+        std::array<std::uint64_t, maximum_preset_samples>
+            sample_publications{};
+        std::map<std::string, double> synth_parameters;
+        std::uint64_t activation_sequence{};
+        bool published{};
+    };
     CommandResult execute_locked(const ApplicationCommand &, std::uint64_t);
     bool publish_modulation_with_macros(const ModulationConfiguration &,
                                         std::string &);
@@ -310,13 +333,13 @@ class ApplicationService {
     RecordingConfiguration recording_configuration_;
     std::uint64_t recording_fixed_bars_{};
     mutable MixerConfiguration mixer_configuration_;
-    ModulationConfiguration modulation_configuration_;
+    mutable ModulationConfiguration modulation_configuration_;
     MidiOutputScheduler midi_output_;
     MidiRouter midi_router_;
     ModulationRouteId next_modulation_route_id_{1};
     ModulatorInstanceId next_modulator_instance_id_{1};
     std::uint64_t next_macro_morph_id_{1};
-    std::map<InstrumentInstanceId, std::map<std::string, double>>
+    mutable std::map<InstrumentInstanceId, std::map<std::string, double>>
         synth_instance_parameters_;
     ActionRegistry actions_;
     ParameterRegistry parameters_;
@@ -338,6 +361,7 @@ class ApplicationService {
     mutable std::optional<std::uint64_t> pending_record_frame_;
     MusicalTick automation_thinning_ticks_{ticks_per_quarter / 64};
     bool fill_momentary_{};
+    mutable std::optional<PendingPresetApplication> pending_preset_;
     Project project_;
     mutable SystemMonitor system_monitor_;
 };

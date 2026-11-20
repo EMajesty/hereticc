@@ -89,6 +89,7 @@ class SliceService {
     [[nodiscard]] SliceProject
         project_snapshot(std::map<std::uint32_t, std::filesystem::path>) const;
     bool restore_project(const SliceProject &, std::string &error);
+    bool adopt_activated_project(const SliceProject &, std::string &error);
 
   private:
     struct SlotState {

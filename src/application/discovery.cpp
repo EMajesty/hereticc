@@ -100,6 +100,7 @@ std::string action_target(std::string_view id) {
     if (id.rfind("recording.", 0) == 0) return "recording-session";
     if (id.rfind("midi.", 0) == 0) return "midi-port";
     if (id.rfind("project.", 0) == 0) return "project";
+    if (id.rfind("preset.", 0) == 0) return "preset";
     if (id.rfind("mixer.group", 0) == 0) return "mixer-group";
     if (id.rfind("mixer.aux", 0) == 0) return "aux-bus";
     if (id.rfind("mixer.", 0) == 0) return "master";
@@ -118,7 +119,7 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
         {"timeline-arrangement", 2, true, {}}, {"native-fx-chains", 1, true, {}},
         {"modulation-graph", 6, true, {}}, {"performance-macros", 2, true, {}},
         {"midi-routing", 2, true, {}}, {"audio-recording", 1, true, {}},
-        {"sound-presets", 1, true, {}},
+        {"sound-presets", 2, true, {}},
         {"high-frequency-telemetry", 1, true, {}},
         {"typed-parameter-bindings", 1, true, {}}};
     result.object_types = {
@@ -140,6 +141,8 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
         {"fx-processor-type", "Effect processor type", false, false, false},
         {"preset-type", "Preset type", false, false, false},
         {"preset", "Sound preset", true, true, true},
+        {"preset-application-mode", "Preset application mode", false, false,
+         false},
         {"modulation-connection", "Modulation connection", true, true, true},
         {"performance-macro", "Performance macro", true, true, true},
         {"scene", "Scene", true, true, true},
@@ -157,6 +160,15 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
         const auto id = std::string(preset_type_name(type));
         result.objects.push_back(
             {"preset-type", "preset-type:" + id, {}, id, true, false, {}});
+    }
+    for (const auto mode : {PresetImportMode::replace_sound,
+                            PresetImportMode::insert_fx_chain,
+                            PresetImportMode::merge_modulation,
+                            PresetImportMode::preview}) {
+        const auto id = std::string(preset_import_mode_name(mode));
+        result.objects.push_back({"preset-application-mode",
+                                  "preset-application-mode:" + id, {}, id,
+                                  true, false, {}});
     }
     for (const auto &type : modulator_type_registry()) {
         const auto parent = "modulator-type:" + std::string(type.id);
@@ -318,6 +330,8 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
         {"modulation.outputs", "project:current", "Current modulator outputs", DiscoveryValueKind::collection, DiscoveryUpdateRate::telemetry},
         {"macros.effective-values", "project:current", "Effective macro values", DiscoveryValueKind::collection, DiscoveryUpdateRate::telemetry},
         {"recording.status", "recording-session:main", "Recording state", DiscoveryValueKind::object, DiscoveryUpdateRate::state},
+        {"preset.application", "project:current", "Preset preparation and activation state", DiscoveryValueKind::object, DiscoveryUpdateRate::state},
+        {"preset.missing-assets", "project:current", "Unresolved preset dependencies", DiscoveryValueKind::collection, DiscoveryUpdateRate::state},
         {"arrangement.queued-pattern", "arrangement:main", "Queued launch", DiscoveryValueKind::object, DiscoveryUpdateRate::state},
         {"validation.errors", "project:current", "Validation diagnostics", DiscoveryValueKind::collection, DiscoveryUpdateRate::state}};
     result.limits = {{"command-queue", 0, ApplicationService::default_queue_capacity},
@@ -330,6 +344,8 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
                      {"performance-scenes", state.performance_macros.scenes.size(), state.performance_macros.scene_capacity}};
     if (!state.modulation_graph.valid && !state.modulation_graph.message.empty())
         result.validation_errors.push_back(state.modulation_graph.message);
+    if (!state.preset_application.error.empty())
+        result.validation_errors.push_back(state.preset_application.error);
     result.validation_errors.insert(result.validation_errors.end(),
                                     state.performance_macros.validation_errors.begin(),
                                     state.performance_macros.validation_errors.end());

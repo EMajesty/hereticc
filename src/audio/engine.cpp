@@ -16,6 +16,9 @@ AudioEngine::AudioEngine(std::uint32_t rate, std::size_t voice_capacity,
                          std::size_t sample_version_capacity)
     : rate_(rate), scheduler_(rate, 120.0), timeline_scheduler_(rate),
       sample_updates_(sample_version_capacity + 1),
+      preset_activation_slots_(
+          std::make_unique<PreparedPresetActivation[]>(
+              preset_activation_capacity)),
       sample_versions_(
           std::make_unique<SampleVersion[]>(sample_version_capacity)),
       sample_version_capacity_(sample_version_capacity),
@@ -354,6 +357,235 @@ bool AudioEngine::publish_modulation(
         return false;
     }
     return true;
+}
+void AudioEngine::reclaim_preset_activations() noexcept {
+    std::lock_guard lock(sample_update_producer_mutex_);
+    for (std::size_t i = 0; i < preset_activation_capacity; ++i) {
+        auto &slot = preset_activation_slots_[i];
+        if (slot.state.load(std::memory_order_acquire) ==
+            PresetActivationState::applied)
+            slot.state.store(PresetActivationState::free,
+                             std::memory_order_release);
+    }
+    reclaim_sample_versions_unlocked();
+}
+
+bool AudioEngine::publish_preset_activation(
+    const PresetActivationRequest &request, std::uint64_t &sequence,
+    std::array<std::uint64_t, maximum_preset_samples> &sample_publications,
+    std::string &error) noexcept {
+    sequence = 0;
+    sample_publications.fill(0);
+    if (request.sample_count > request.samples.size() ||
+        request.synth_parameter_count > request.synth_parameters.size()) {
+        error = "preset activation capacity exceeded";
+        return false;
+    }
+    auto mixer = request.mixer;
+    if (!mixer_.prepare(mixer, error)) return false;
+    auto modulation = request.modulation;
+    ModulationGraphDiagnostics diagnostics;
+    if (!prepare_modulation_graph(modulation, diagnostics)) {
+        error = diagnostics.message;
+        return false;
+    }
+    for (std::size_t i = 0; i < request.synth_parameter_count; ++i) {
+        const auto &parameter = request.synth_parameters[i];
+        if (parameter.instance == 0 || parameter.instance > synths_.size() ||
+            !std::isfinite(parameter.value) ||
+            parameter.parameter < SynthParameter::waveform ||
+            parameter.parameter > SynthParameter::pitch) {
+            error = "invalid preset synth parameter";
+            return false;
+        }
+    }
+    for (std::size_t i = 0; i < request.sample_count; ++i) {
+        const auto &sample = request.samples[i];
+        if (sample.slot == invalid_sample_slot || !sample.sample ||
+            sample.sample->sample_rate != rate_ ||
+            (sample.sample->channels != 1 && sample.sample->channels != 2) ||
+            sample.sample->interleaved.empty() ||
+            sample.sample->interleaved.size() % sample.sample->channels != 0) {
+            error = "invalid prepared preset sample";
+            return false;
+        }
+    }
+    std::lock_guard lock(sample_update_producer_mutex_);
+    reclaim_sample_versions_unlocked();
+    std::size_t activation = preset_activation_capacity;
+    for (std::size_t i = 0; i < preset_activation_capacity; ++i)
+        if (preset_activation_slots_[i].state.load(std::memory_order_acquire) ==
+            PresetActivationState::free) {
+            activation = i;
+            break;
+        }
+    if (activation == preset_activation_capacity) {
+        error = "preset activation queue is full";
+        return false;
+    }
+    std::array<std::size_t, maximum_preset_samples> versions{};
+    std::size_t reserved{};
+    for (std::size_t i = 0; i < sample_version_capacity_ &&
+                            reserved < request.sample_count;
+         ++i)
+        if (sample_versions_[i].state.load(std::memory_order_acquire) ==
+            SampleVersionState::free)
+            versions[reserved++] = i;
+    if (reserved != request.sample_count) {
+        error = "sample version capacity is exhausted";
+        return false;
+    }
+    if (next_preset_activation_ == std::numeric_limits<std::uint64_t>::max() ||
+        next_sample_update_sequence_ >
+            std::numeric_limits<std::uint64_t>::max() - request.sample_count) {
+        error = "preset activation sequence is exhausted";
+        return false;
+    }
+    auto &slot = preset_activation_slots_[activation];
+    slot.sequence = ++next_preset_activation_;
+    slot.mixer = mixer;
+    slot.modulation = modulation;
+    slot.sample_count = request.sample_count;
+    slot.synth_parameters = request.synth_parameters;
+    slot.synth_parameter_count = request.synth_parameter_count;
+    slot.pads = request.pads;
+    slot.replace_pad_mappings = request.replace_pad_mappings;
+    slot.release_existing_voices = request.release_existing_voices;
+    for (std::size_t i = 0; i < request.sample_count; ++i) {
+        const auto version = versions[i];
+        const auto publication = ++next_sample_update_sequence_;
+        slot.sample_versions[i] = version;
+        slot.sample_publications[i] = publication;
+        sample_publications[i] = publication;
+        sample_versions_[version].sample = request.samples[i].sample;
+        sample_versions_[version].id.store(request.samples[i].slot.value,
+                                           std::memory_order_release);
+        sample_versions_[version].publication.store(publication,
+                                                    std::memory_order_release);
+        sample_versions_[version].state.store(SampleVersionState::queued,
+                                              std::memory_order_release);
+    }
+    slot.state.store(PresetActivationState::queued, std::memory_order_release);
+    if (!preset_activations_.push(static_cast<std::uint8_t>(activation))) {
+        slot.state.store(PresetActivationState::free, std::memory_order_release);
+        for (std::size_t i = 0; i < request.sample_count; ++i) {
+            auto &version = sample_versions_[versions[i]];
+            version.sample.reset();
+            version.id.store(invalid_sample_slot.value,
+                             std::memory_order_release);
+            version.publication.store(0, std::memory_order_release);
+            version.state.store(SampleVersionState::free,
+                                std::memory_order_release);
+        }
+        error = "preset activation queue is full";
+        return false;
+    }
+    sequence = slot.sequence;
+    error.clear();
+    return true;
+}
+
+bool AudioEngine::finalize_preset_activation(
+    std::uint64_t sequence) noexcept {
+    if (!preset_activation_applied(sequence)) return false;
+    for (std::size_t i = 0; i < preset_activation_capacity; ++i) {
+        auto &slot = preset_activation_slots_[i];
+        if (slot.sequence == sequence &&
+            slot.state.load(std::memory_order_acquire) ==
+                PresetActivationState::applied) {
+            mixer_.set_control_configuration(slot.mixer);
+            reclaim_preset_activations();
+            return true;
+        }
+    }
+    return false;
+}
+
+bool AudioEngine::cancel_preset_activation(std::uint64_t sequence) noexcept {
+    if (!sequence) return false;
+    for (std::size_t i = 0; i < preset_activation_capacity; ++i) {
+        auto &slot = preset_activation_slots_[i];
+        if (slot.sequence != sequence) continue;
+        auto expected = PresetActivationState::queued;
+        return slot.state.compare_exchange_strong(
+            expected, PresetActivationState::cancelled,
+            std::memory_order_acq_rel, std::memory_order_acquire);
+    }
+    return false;
+}
+
+void AudioEngine::activate_preset(std::size_t index) noexcept {
+    if (index >= preset_activation_capacity) return;
+    auto &activation = preset_activation_slots_[index];
+    const auto state = activation.state.load(std::memory_order_acquire);
+    if (state == PresetActivationState::cancelled) {
+        for (std::size_t sample = 0; sample < activation.sample_count; ++sample)
+            sample_versions_[activation.sample_versions[sample]].state.store(
+                SampleVersionState::retired, std::memory_order_release);
+        cancelled_preset_activation_.store(activation.sequence,
+                                            std::memory_order_release);
+        activation.state.store(PresetActivationState::applied,
+                               std::memory_order_release);
+        return;
+    }
+    if (state != PresetActivationState::queued)
+        return;
+    if (activation.release_existing_voices) stop_voices(false);
+    for (std::size_t sample = 0; sample < activation.sample_count; ++sample) {
+        const auto version_index = activation.sample_versions[sample];
+        const auto id = sample_versions_[version_index].id.load(
+            std::memory_order_acquire);
+        for (std::size_t i = 0; i < sample_version_capacity_; ++i)
+            if (i != version_index &&
+                sample_versions_[i].id.load(std::memory_order_acquire) == id &&
+                sample_versions_[i].state.load(std::memory_order_acquire) ==
+                    SampleVersionState::active)
+                sample_versions_[i].state.store(SampleVersionState::retiring,
+                                                std::memory_order_release);
+        sample_versions_[version_index].state.store(SampleVersionState::active,
+                                                    std::memory_order_release);
+    }
+    mixer_.activate_prepared(activation.mixer);
+    (void)modulation_.configure(activation.modulation);
+    mixer_.clear_modulation();
+    for (std::size_t instance = 0; instance < synths_.size(); ++instance)
+        (void)synths_[instance]->configure_voice_modulation(
+            activation.modulation, static_cast<std::uint32_t>(instance + 1));
+    for (std::size_t i = 0; i < activation.synth_parameter_count; ++i) {
+        const auto &parameter = activation.synth_parameters[i];
+        (void)synths_[parameter.instance - 1]->set_parameter(
+            static_cast<std::uint32_t>(parameter.parameter), parameter.value);
+    }
+    if (activation.replace_pad_mappings)
+        for (std::size_t pad = 0; pad < activation.pads.size(); ++pad) {
+            const auto note = static_cast<std::uint8_t>(36 + pad);
+            const auto &source = activation.pads[pad];
+            if (!source.assigned) {
+                note_slices_[note].enabled = false;
+                note_slices_[note].playback = source.playback;
+                continue;
+            }
+            SliceTarget target;
+            target.slot = source.slot;
+            target.start_frame = source.start_frame;
+            target.end_frame = source.end_frame;
+            target.gain = source.gain;
+            target.playback = source.playback;
+            target.enabled = true;
+            const auto active = find_active_sample(source.slot);
+            if (active < sample_version_capacity_)
+                target.publication = sample_versions_[active].publication.load(
+                    std::memory_order_acquire);
+            note_slices_[note] = target;
+        }
+    if (activation.sample_count)
+        applied_sample_update_sequence_.store(
+            activation.sample_publications[activation.sample_count - 1],
+            std::memory_order_release);
+    applied_preset_activation_.store(activation.sequence,
+                                     std::memory_order_release);
+    activation.state.store(PresetActivationState::applied,
+                           std::memory_order_release);
 }
 bool AudioEngine::set_modulation_input(ModulationSourceId source,
                                        float value) noexcept {
@@ -766,7 +998,25 @@ void AudioEngine::process(std::span<float> left,
     const auto frames = std::min(left.size(), right.size());
     std::fill(left.begin(), left.end(), 0);
     std::fill(right.begin(), right.end(), 0);
-    mixer_.begin_block(frames);
+    mixer_.apply_pending_publications();
+    ModulationConfiguration modulation_configuration;
+    while (modulation_configurations_.pop(modulation_configuration)) {
+        if (modulation_.configure(modulation_configuration)) {
+            mixer_.clear_modulation();
+            for (std::size_t instance = 0; instance < synths_.size();
+                 ++instance)
+                (void)synths_[instance]->configure_voice_modulation(
+                    modulation_configuration,
+                    static_cast<std::uint32_t>(instance + 1));
+        }
+    }
+    std::uint8_t preset_activation{};
+    while (preset_activations_.pop(preset_activation))
+        activate_preset(preset_activation);
+    // Normal publications were drained before coordinated preset activation.
+    // Do not drain again here: a concurrently arriving mixer publication must
+    // wait for the next callback rather than splitting the activated snapshot.
+    mixer_.begin_prepared_block(frames);
     if (duplex_input_ && duplex_input_channels_) {
         const auto input_frames =
             std::min(frames, duplex_input_samples_ / duplex_input_channels_);
@@ -808,17 +1058,6 @@ void AudioEngine::process(std::span<float> left,
     MidiClockOutputConfiguration midi_clock_configuration;
     while (midi_clock_configurations_.pop(midi_clock_configuration))
         midi_clock_configuration_ = midi_clock_configuration;
-    ModulationConfiguration modulation_configuration;
-    while (modulation_configurations_.pop(modulation_configuration)) {
-        if (modulation_.configure(modulation_configuration)) {
-            mixer_.clear_modulation();
-            for (std::size_t instance = 0; instance < synths_.size();
-                 ++instance)
-                (void)synths_[instance]->configure_voice_modulation(
-                    modulation_configuration,
-                    static_cast<std::uint32_t>(instance + 1));
-        }
-    }
     DspCommand dsp;
     while (dsp_commands_.pop(dsp)) {
         if (dsp.target == DspCommand::Target::synth)

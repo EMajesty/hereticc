@@ -16,6 +16,12 @@ enum class PresetType : std::uint8_t {
     fx_chain,
     track_sound
 };
+enum class PresetImportMode : std::uint8_t {
+    replace_sound = 1,
+    insert_fx_chain,
+    merge_modulation,
+    preview
+};
 
 struct PresetMetadata {
     static constexpr unsigned schema_version = 1;
@@ -43,6 +49,17 @@ struct PresetValidation {
     bool valid{};
     std::vector<std::string> errors, missing_assets;
 };
+struct PresetAssetRelink {
+    std::filesystem::path missing, replacement;
+};
+struct PresetDirectoryRelink {
+    std::filesystem::path missing_prefix, replacement_prefix;
+};
+struct PortablePresetExportResult {
+    std::uintmax_t package_bytes{};
+    std::size_t copied_assets{};
+    std::vector<std::string> missing_assets;
+};
 
 struct PresetImportResult {
     EffectRackConfiguration effects;
@@ -61,6 +78,13 @@ struct PresetImportResult {
     const SoundPreset &, const EffectRackConfiguration &,
     const ModulationConfiguration &, PresetImportResult &,
     std::string &error);
+[[nodiscard]] PresetValidation relink_preset_assets(
+    SoundPreset &, const std::vector<PresetAssetRelink> &,
+    const std::vector<PresetDirectoryRelink> & = {},
+    std::uint32_t target_sample_rate = 0);
+[[nodiscard]] const char *preset_import_mode_name(PresetImportMode) noexcept;
+[[nodiscard]] std::optional<PresetImportMode>
+parse_preset_import_mode(std::string_view) noexcept;
 
 class PresetLibrary {
   public:
@@ -79,6 +103,8 @@ class PresetLibrary {
                    std::string new_name);
     void export_package(std::string_view id,
                         const std::filesystem::path &destination) const;
+    [[nodiscard]] PortablePresetExportResult export_self_contained(
+        std::string_view id, const std::filesystem::path &destination) const;
     void import_package(const std::filesystem::path &source,
                         std::string_view id);
 

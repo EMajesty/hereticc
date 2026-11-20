@@ -57,6 +57,10 @@ class SampleManager {
                          const std::filesystem::path &source_path);
     [[nodiscard]] bool set_source_path(SampleSlotId,
                                        const std::filesystem::path &);
+    void adopt_preset_activation(SampleSlotId,
+                                 std::shared_ptr<const Sample>,
+                                 const std::filesystem::path &source_path,
+                                 std::uint64_t publication);
     [[nodiscard]] SampleSlotStatus status(SampleSlotId) const;
     [[nodiscard]] std::vector<SampleSlotStatus> states() const;
     [[nodiscard]] std::shared_ptr<const Sample>

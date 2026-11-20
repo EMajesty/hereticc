@@ -110,6 +110,32 @@ bool SampleManager::set_source_path(SampleSlotId id,
     return true;
 }
 
+void SampleManager::adopt_preset_activation(
+    SampleSlotId id, std::shared_ptr<const Sample> sample,
+    const std::filesystem::path &source_path, std::uint64_t publication) {
+    if (!sample || !publication) return;
+    std::lock_guard lock(mutex_);
+    auto &record = states_[id.value];
+    record.active_sample = sample;
+    record.publications.clear();
+    record.status.id = id;
+    record.status.state = SampleSlotLoadState::loaded;
+    record.status.has_sample = true;
+    record.status.source_path = source_path;
+    record.status.pending_source_path.clear();
+    record.status.source_sample_rate = sample->sample_rate;
+    record.status.engine_sample_rate = sample->sample_rate;
+    record.status.channels = sample->channels;
+    record.status.frames = sample->frames();
+    record.status.duration_seconds =
+        static_cast<double>(sample->frames()) / sample->sample_rate;
+    record.status.progress = 1;
+    record.status.error.clear();
+    record.status.revision = ++next_revision_;
+    record.status.active_revision = record.status.revision;
+    record.status.active_publication = publication;
+}
+
 void SampleManager::refresh_locked(SlotRecord &record) const {
     while (
         !record.publications.empty() &&

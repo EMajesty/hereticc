@@ -4,6 +4,11 @@ Preset clients consume presentation-neutral metadata, dependency lists,
 validation diagnostics and typed `PresetLibrary` operations for synth, sample,
 FX-chain and track-sound entries. See [PRESETS.md](PRESETS.md).
 
+Capability `sound-presets` version 2 exposes application modes and semantic
+validation, preparation, activation, cancellation, relinking, and portable
+export actions. `preset.application` and `preset.missing-assets` are revisioned
+bindings. Preparation success is explicitly distinct from audio activation.
+
 NEUROGENIC exposes a presentation-neutral discovery document for native GUI,
 UI Studio, controllers, MIDI mapping, Lua and future remote clients. Discovery
 is a control-side view over `ApplicationService`, `ActionRegistry`, parameter

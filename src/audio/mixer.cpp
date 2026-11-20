@@ -436,11 +436,8 @@ void Mixer::capture_modulation_frame(std::size_t frame) noexcept {
 }
 bool Mixer::publish(const MixerConfiguration &value,
                     std::string &error) noexcept {
-    if (!validate_mixer_configuration(value, maximum_mixer_inputs,
-                                      maximum_mixer_outputs, error))
-        return false;
     auto prepared = value;
-    if (!prepare_group_order(prepared, error))
+    if (!prepare(prepared, error))
         return false;
     if (!publications_.push(prepared)) {
         rejected_.fetch_add(1, std::memory_order_relaxed);
@@ -454,12 +451,27 @@ bool Mixer::publish(const MixerConfiguration &value,
     error.clear();
     return true;
 }
-void Mixer::begin_block(std::size_t frames) noexcept {
+bool Mixer::prepare(MixerConfiguration &value, std::string &error) const noexcept {
+    if (!validate_mixer_configuration(value, maximum_mixer_inputs,
+                                      maximum_mixer_outputs, error) ||
+        !prepare_group_order(value, error))
+        return false;
+    error.clear();
+    return true;
+}
+void Mixer::set_control_configuration(
+    const MixerConfiguration &value) noexcept {
+    std::lock_guard lock(control_mutex_);
+    control_ = value;
+}
+void Mixer::apply_pending_publications() noexcept {
     MixerConfiguration pending;
-    const auto previous_revision = active_.revision;
-    while (publications_.pop(pending))
-        active_ = pending;
-    if (active_.revision != previous_revision) {
+    while (publications_.pop(pending)) activate_prepared(pending);
+}
+void Mixer::activate_prepared(const MixerConfiguration &value) noexcept {
+    const auto changed = active_.revision != value.revision;
+    active_ = value;
+    if (changed) {
         effect_rack_->activate(active_.effects);
         external_delay_cursor_.fill(0);
         external_delay_valid_.fill(0);
@@ -470,6 +482,12 @@ void Mixer::begin_block(std::size_t frames) noexcept {
         }
     }
     revision_.store(active_.revision, std::memory_order_release);
+}
+void Mixer::begin_block(std::size_t frames) noexcept {
+    apply_pending_publications();
+    begin_prepared_block(frames);
+}
+void Mixer::begin_prepared_block(std::size_t frames) noexcept {
     frames_ = std::min(frames, maximum_mixer_block);
     for (std::size_t channel = 0; channel < active_.track_count; ++channel) {
         std::fill_n(modulation_lanes_->track_gain[channel].begin(), frames_,

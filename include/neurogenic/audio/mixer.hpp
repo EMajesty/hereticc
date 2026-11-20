@@ -122,10 +122,16 @@ class Mixer {
     explicit Mixer(std::uint32_t sample_rate = 48000);
     [[nodiscard]] bool publish(const MixerConfiguration &,
                                std::string &error) noexcept;
+    [[nodiscard]] bool prepare(MixerConfiguration &,
+                               std::string &error) const noexcept;
+    void set_control_configuration(const MixerConfiguration &) noexcept;
+    void apply_pending_publications() noexcept;
+    void activate_prepared(const MixerConfiguration &) noexcept;
     void clear_modulation() noexcept;
     [[nodiscard]] bool set_modulation(ParameterDestination, float) noexcept;
     void capture_modulation_frame(std::size_t frame) noexcept;
     void begin_block(std::size_t frames) noexcept;
+    void begin_prepared_block(std::size_t frames) noexcept;
     [[nodiscard]] bool add_track(TrackId, std::size_t frame, float left,
                                  float right) noexcept;
     void add_input(std::uint8_t physical_channel, std::size_t frame,

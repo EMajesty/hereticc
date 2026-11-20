@@ -666,6 +666,60 @@ bool SliceService::restore_project(const SliceProject &project,
     return true;
 }
 
+bool SliceService::adopt_activated_project(const SliceProject &project,
+                                           std::string &error) {
+    std::lock_guard lock(mutex_);
+    std::map<std::uint32_t, SlotState> restored;
+    SliceId next = 1;
+    for (auto slice : project.slices) {
+        next = std::max(next, slice.id + 1);
+        const auto status = samples_.status(slice.slot);
+        if (!status.has_sample || !status.active_publication) continue;
+        if (slice.start_frame >= slice.end_frame ||
+            slice.end_frame > status.frames) {
+            error = "preset slice is outside its activated sample";
+            return false;
+        }
+        slice.sample_revision = status.active_revision;
+        slice.sample_publication = status.active_publication;
+        auto &slot = restored[slice.slot.value];
+        slot.revision = 1;
+        slot.sample_revision = status.active_revision;
+        slot.sample_publication = status.active_publication;
+        slot.frames = status.frames;
+        slot.rate = status.engine_sample_rate;
+        slot.channels = status.channels;
+        slot.slices.push_back(std::move(slice));
+    }
+    std::array<std::optional<SliceId>, 16> pads{};
+    for (std::size_t pad = 0; pad < pads.size(); ++pad) {
+        if (!valid_playback_settings(project.pad_settings[pad])) {
+            error = "preset contains invalid pad playback settings";
+            return false;
+        }
+        if (project.pads[pad])
+            for (const auto &[id, slot] : restored) {
+                (void)id;
+                if (std::any_of(slot.slices.begin(), slot.slices.end(),
+                                [&](const auto &slice) {
+                                    return slice.id == *project.pads[pad];
+                                })) {
+                    pads[pad] = project.pads[pad];
+                    break;
+                }
+            }
+    }
+    for (auto &[id, slot] : restored)
+        if (const auto sample = samples_.active_sample(SampleSlotId{id}))
+            slot.waveform = build_waveform_peaks(*sample);
+    slots_ = std::move(restored);
+    pads_ = pads;
+    pad_settings_ = project.pad_settings;
+    next_id_ = next;
+    error.clear();
+    return true;
+}
+
 void save_slice_project(const SliceProject &project,
                         const std::filesystem::path &path) {
     std::ofstream out(path);
