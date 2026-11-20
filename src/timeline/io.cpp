@@ -93,8 +93,8 @@ Timeline load_timeline(const std::filesystem::path &path) {
                       quantization >> a.song_start >> a.song_end >> loop >>
                       a.loop_start >> a.loop_end) ||
                     mode > static_cast<unsigned>(TimelinePlaybackMode::song) ||
-                    quantization >
-                        static_cast<unsigned>(LaunchQuantization::pattern_end) ||
+                    quantization > static_cast<unsigned>(
+                                       LaunchQuantization::pattern_end) ||
                     loop > 1)
                     throw std::runtime_error("invalid arrangement");
                 a.playback_mode = static_cast<TimelinePlaybackMode>(mode);
@@ -108,8 +108,9 @@ Timeline load_timeline(const std::filesystem::path &path) {
                           chain_running >> voice_policy >> song_end >>
                           a.return_live_pattern) ||
                         chain_loop > 1 || chain_running > 1 ||
-                        voice_policy > static_cast<unsigned>(
-                                           VoiceTransitionPolicy::stop_outgoing) ||
+                        voice_policy >
+                            static_cast<unsigned>(
+                                VoiceTransitionPolicy::stop_outgoing) ||
                         song_end > static_cast<unsigned>(
                                        SongEndBehavior::return_to_live))
                         throw std::runtime_error(
@@ -132,11 +133,12 @@ Timeline load_timeline(const std::filesystem::path &path) {
                 if (version >= 6) {
                     unsigned follow{};
                     if (!(line >> follow >> pattern.follow.after_repetitions >>
-                          pattern.follow.probability >> pattern.follow.target) ||
+                          pattern.follow.probability >>
+                          pattern.follow.target) ||
                         follow > static_cast<unsigned>(FollowActionType::stop))
-                        throw std::runtime_error("invalid pattern follow action");
-                    pattern.follow.type =
-                        static_cast<FollowActionType>(follow);
+                        throw std::runtime_error(
+                            "invalid pattern follow action");
+                    pattern.follow.type = static_cast<FollowActionType>(follow);
                 }
                 require_end(line);
                 timeline.arrangement.patterns.push_back(std::move(pattern));
@@ -146,26 +148,31 @@ Timeline load_timeline(const std::filesystem::path &path) {
                 if (!(line >> pattern >> track.track >> track.pattern.length))
                     throw std::runtime_error("invalid pattern track");
                 require_end(line);
-                find_pattern(timeline, pattern).tracks.push_back(std::move(track));
+                find_pattern(timeline, pattern)
+                    .tracks.push_back(std::move(track));
             } else if (kind == "pattern_event") {
                 PatternId pattern{};
                 TrackId track{};
                 MusicalEvent event;
                 unsigned type{}, pitch{}, condition{}, ratchets{};
-                if (!(line >> pattern >> track >> event.id >> event.tick >> type >>
-                      pitch >> event.velocity >> event.duration >>
-                      event.parameter_id >> event.value >> event.target_event_id >>
+                if (!(line >> pattern >> track >> event.id >> event.tick >>
+                      type >> pitch >> event.velocity >> event.duration >>
+                      event.parameter_id >> event.value >>
+                      event.target_event_id >>
                       std::quoted(event.parameter_destination) >>
-                      event.trigger_probability >> condition >> event.condition_n >>
-                      event.condition_m >> ratchets) ||
-                    type > static_cast<unsigned>(MusicalEventType::pitch_bend) ||
+                      event.trigger_probability >> condition >>
+                      event.condition_n >> event.condition_m >> ratchets) ||
+                    type >
+                        static_cast<unsigned>(MusicalEventType::pitch_bend) ||
                     pitch > 127 ||
-                    condition > static_cast<unsigned>(TriggerCondition::fill_inactive) ||
+                    condition > static_cast<unsigned>(
+                                    TriggerCondition::fill_inactive) ||
                     ratchets > 255)
                     throw std::runtime_error("invalid pattern event");
                 event.type = static_cast<MusicalEventType>(type);
                 event.pitch = static_cast<std::uint8_t>(pitch);
-                event.trigger_condition = static_cast<TriggerCondition>(condition);
+                event.trigger_condition =
+                    static_cast<TriggerCondition>(condition);
                 event.ratchet_count = static_cast<std::uint8_t>(ratchets);
                 require_end(line);
                 find_pattern_track(timeline, pattern, track)
@@ -175,8 +182,9 @@ Timeline load_timeline(const std::filesystem::path &path) {
                 unsigned loop{}, enabled{};
                 int transpose{};
                 if (!(line >> clip.id >> clip.pattern >> clip.start >>
-                      clip.duration >> loop >> transpose >> clip.velocity_scale >>
-                      enabled) || loop > 1 || enabled > 1 || transpose < -128 ||
+                      clip.duration >> loop >> transpose >>
+                      clip.velocity_scale >> enabled) ||
+                    loop > 1 || enabled > 1 || transpose < -128 ||
                     transpose > 127)
                     throw std::runtime_error("invalid clip");
                 clip.loop = loop != 0;
@@ -196,6 +204,15 @@ Timeline load_timeline(const std::filesystem::path &path) {
                     throw std::runtime_error("invalid pattern chain entry");
                 require_end(line);
                 timeline.arrangement.chain_entries.push_back(entry);
+            } else if (kind == "arrangement_automation") {
+                MusicalEvent event;
+                if (version < 7 ||
+                    !(line >> event.id >> event.tick >> event.value >>
+                      std::quoted(event.parameter_destination)))
+                    throw std::runtime_error("invalid arrangement automation");
+                event.type = MusicalEventType::parameter;
+                require_end(line);
+                timeline.arrangement.automation.push_back(std::move(event));
             } else if (kind == "note") {
                 TrackId track{};
                 unsigned pitch{};
@@ -318,11 +335,12 @@ void save_timeline(const Timeline &timeline,
     const auto &a = timeline.arrangement;
     output << "arrangement " << static_cast<unsigned>(a.playback_mode) << ' '
            << a.active_pattern << ' ' << a.queued_pattern << ' '
-           << static_cast<unsigned>(a.launch_quantization) << ' ' << a.song_start
-           << ' ' << a.song_end << ' ' << (a.loop_enabled ? 1 : 0) << ' '
-           << a.loop_start << ' ' << a.loop_end;
-    output << ' ' << a.pattern_chain_id << ' ' << (a.chain_loop ? 1 : 0)
-           << ' ' << (a.chain_running ? 1 : 0) << ' '
+           << static_cast<unsigned>(a.launch_quantization) << ' '
+           << a.song_start << ' ' << a.song_end << ' '
+           << (a.loop_enabled ? 1 : 0) << ' ' << a.loop_start << ' '
+           << a.loop_end;
+    output << ' ' << a.pattern_chain_id << ' ' << (a.chain_loop ? 1 : 0) << ' '
+           << (a.chain_running ? 1 : 0) << ' '
            << static_cast<unsigned>(a.voice_transition) << ' '
            << static_cast<unsigned>(a.song_end_behavior) << ' '
            << a.return_live_pattern << '\n';
@@ -333,6 +351,10 @@ void save_timeline(const Timeline &timeline,
     for (const auto &entry : a.chain_entries)
         output << "chain_entry " << entry.pattern << ' ' << entry.repeats
                << '\n';
+    for (const auto &event : a.automation)
+        output << "arrangement_automation " << event.id << ' ' << event.tick
+               << ' ' << event.value << ' '
+               << std::quoted(event.parameter_destination) << '\n';
     for (const auto &track : timeline.tracks) {
         output << "track " << track.id << ' ' << track.pattern.length << ' '
                << (track.muted ? 1 : 0) << ' ' << std::quoted(track.name) << ' '
@@ -386,8 +408,8 @@ void save_timeline(const Timeline &timeline,
                << pattern.follow.probability << ' ' << pattern.follow.target
                << '\n';
         for (const auto &track : pattern.tracks) {
-            output << "pattern_track " << pattern.id << ' ' << track.track << ' '
-                   << track.pattern.length << '\n';
+            output << "pattern_track " << pattern.id << ' ' << track.track
+                   << ' ' << track.pattern.length << '\n';
             for (const auto &event : track.pattern.events)
                 output << "pattern_event " << pattern.id << ' ' << track.track
                        << ' ' << event.id << ' ' << event.tick << ' '

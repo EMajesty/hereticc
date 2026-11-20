@@ -1,5 +1,11 @@
 # Implementation status
 
+Task 046 adds bounded live arrangement capture with callback-acknowledged launch
+timing, pattern/chain/follow clip construction, replace/overdub, count-in,
+instance-aware discrete automation thinning, one-transaction undo/redo,
+overflow/conflict diagnostics, timeline-v7/project-v4 persistence and a
+deterministic recording benchmark. See `ARRANGEMENT_RECORDING.md`.
+
 Task 045 adds repeatable/one-shot pattern chains, deterministic follow actions,
 precompiled exact-frame launch activation, timeline-owned voice/MIDI cleanup,
 song-end modes, launch diagnostics, semantic discovery, timeline-v6/project-v3

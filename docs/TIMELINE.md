@@ -1,6 +1,10 @@
 # Musical timeline
 
 The timeline also owns stable-ID reusable patterns and clip arrangements.
+Absolute song-position parameter events captured during performance live in
+`SongArrangement::automation`; they use the same stable event identity,
+destination validation, scheduler ordering and DSP delivery as parameter locks.
+See `ARRANGEMENT_RECORDING.md`.
 Legacy `Track::pattern` data remains authoritative in legacy mode, so old files
 and Lua scripts retain their behavior. See [ARRANGEMENT.md](ARRANGEMENT.md).
 

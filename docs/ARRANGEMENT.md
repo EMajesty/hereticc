@@ -71,12 +71,17 @@ Clips on disjoint tracks may overlap.
 
 ## Editing, persistence, and migration
 
-Pattern, chain, follow-action, and clip edits commit complete validated snapshots and participate in
+Pattern, chain, follow-action, clip, and live-recording edits commit complete validated snapshots and participate in
 undo/redo, revision conflict detection, publication failure handling, and safe
-playback-plan reclamation. Timeline format version 6 stores definitions,
+playback-plan reclamation. Timeline format version 7 stores definitions,
 per-track content, clips, launch settings, chain entries, follow actions, voice
-policy, and song-end behavior. Version 5 loads its legacy pattern-ID chain with
+policy, song-end behavior, and recorded song automation. Version 6 loads with
+an empty automation lane. Version 5 loads its legacy pattern-ID chain with
 the prior defaults; versions 1–4 load in `legacy` mode without changing sound.
+
+Live recording captures callback-acknowledged pattern activations,
+deterministic chain/follow transitions, and eligible semantic parameter changes
+as clips and song automation. See `ARRANGEMENT_RECORDING.md`.
 
 ## Limitations
 

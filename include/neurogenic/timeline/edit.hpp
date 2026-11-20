@@ -65,8 +65,7 @@ class TimelineTransaction {
         TrackId, std::string, std::string &error,
         InstrumentInstanceId instance = default_synth_instance_id);
     bool set_track_midi_destination(TrackId, std::uint32_t port,
-                                    std::uint8_t channel,
-                                    std::string &error);
+                                    std::uint8_t channel, std::string &error);
     bool add_note(TrackId, EventId, MusicalTick, std::uint8_t, float,
                   MusicalTick, std::string &error);
     bool modify_note(TrackId, EventId, MusicalTick, std::uint8_t, float,
@@ -93,10 +92,12 @@ class TimelineTransaction {
     bool create_clip(ArrangementClip, std::string &error);
     bool update_clip(ArrangementClip, std::string &error);
     bool delete_clip(ClipId, std::string &error);
+    bool update_arrangement_automation(EventId, MusicalTick, float,
+                                       std::string &error);
+    bool delete_arrangement_automation(EventId, std::string &error);
     bool set_playback_mode(TimelinePlaybackMode, std::string &error);
     bool launch_pattern(PatternId, bool queue, std::string &error);
-    bool set_song_range(MusicalTick start, MusicalTick end,
-                        std::string &error);
+    bool set_song_range(MusicalTick start, MusicalTick end, std::string &error);
     bool set_loop_region(bool enabled, MusicalTick start, MusicalTick end,
                          std::string &error);
     bool set_pattern_chain(PatternChainId, std::vector<PatternChainEntry>,

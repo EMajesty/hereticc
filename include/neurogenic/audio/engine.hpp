@@ -41,6 +41,9 @@ struct SamplePlaybackSettings {
 };
 class AudioEngine {
   public:
+    struct TimelineActivationEvent {
+        std::uint64_t frame{};
+    };
     static constexpr std::size_t default_voice_capacity = 32;
     static constexpr std::size_t default_note_bank_size = 16;
     static constexpr std::size_t default_sample_version_capacity = 64;
@@ -120,8 +123,19 @@ class AudioEngine {
     bool queue_timeline(const Timeline &, std::string &error);
     bool queue_timeline_at(const Timeline &, std::uint64_t activation_frame,
                            VoiceTransitionPolicy, std::string &error);
-    [[nodiscard]] std::uint64_t last_timeline_activation_frame() const noexcept {
+    [[nodiscard]] std::uint64_t
+    last_timeline_activation_frame() const noexcept {
         return last_timeline_activation_frame_.load(std::memory_order_acquire);
+    }
+    [[nodiscard]] std::uint64_t timeline_activation_count() const noexcept {
+        return timeline_activation_count_.load(std::memory_order_acquire);
+    }
+    [[nodiscard]] bool
+    pop_timeline_activation(TimelineActivationEvent &event) noexcept {
+        return timeline_activations_.pop(event);
+    }
+    [[nodiscard]] std::uint64_t dropped_timeline_activations() const noexcept {
+        return dropped_timeline_activations_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t last_timeline_lateness_frames() const noexcept {
         return last_timeline_lateness_frames_.load(std::memory_order_acquire);
@@ -169,7 +183,8 @@ class AudioEngine {
     [[nodiscard]] ExternalClockState external_clock_state() const noexcept {
         ExternalClockState state;
         state.running = external_clock_running_.load(std::memory_order_acquire);
-        state.available = external_clock_available_.load(std::memory_order_acquire);
+        state.available =
+            external_clock_available_.load(std::memory_order_acquire);
         state.dropout = external_clock_dropout_.load(std::memory_order_acquire);
         state.tempo_bpm = external_clock_tempo_.load(std::memory_order_acquire);
         state.pulses = external_clock_pulses_.load(std::memory_order_acquire);
@@ -429,8 +444,7 @@ class AudioEngine {
     void release_voice(Voice &, bool immediate = false) noexcept;
     void stop_voices(bool timeline_only = false) noexcept;
     void activate_timeline(const TimelinePublication &, std::uint64_t) noexcept;
-    void cleanup_timeline_voices(VoiceTransitionPolicy,
-                                 std::uint64_t) noexcept;
+    void cleanup_timeline_voices(VoiceTransitionPolicy, std::uint64_t) noexcept;
     void reclaim_retired_plans() noexcept;
     void reclaim_sample_versions_unlocked() noexcept;
     std::uint32_t rate_;
@@ -444,6 +458,7 @@ class AudioEngine {
     SpscQueue<Pattern, 9> patterns_;
     static constexpr std::size_t timeline_plan_slot_count = 4;
     SpscQueue<TimelinePublication, 4> timelines_;
+    SpscQueue<TimelineActivationEvent, 64> timeline_activations_;
     std::array<PlanSlot, timeline_plan_slot_count> timeline_plans_{};
     SpscQueue<TransportCommand, 16> transport_commands_;
     SpscQueue<std::uint64_t, 16> transport_seeks_;
@@ -459,6 +474,8 @@ class AudioEngine {
         reclaimed_sample_versions_{};
     std::atomic<std::uint64_t> last_timeline_activation_frame_{},
         last_timeline_lateness_frames_{}, song_end_count_{};
+    std::atomic<std::uint64_t> timeline_activation_count_{};
+    std::atomic<std::uint64_t> dropped_timeline_activations_{};
     std::atomic<std::uint64_t> applied_sample_update_sequence_{};
     std::atomic<std::uint64_t> dropped_dsp_commands_{};
     std::uint64_t next_sample_update_sequence_{};

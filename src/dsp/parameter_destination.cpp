@@ -3,7 +3,26 @@
 #include "neurogenic/dsp/processor.hpp"
 #include "neurogenic/instrument/subtractive_synth.hpp"
 #include <charconv>
+#include <utility>
 namespace neurogenic {
+namespace {
+std::optional<std::pair<std::uint32_t, std::string_view>>
+scoped_parameter(std::string_view id, std::string_view prefix) noexcept {
+    if (!id.starts_with(prefix))
+        return std::nullopt;
+    id.remove_prefix(prefix.size());
+    const auto separator = id.find('.');
+    if (separator == std::string_view::npos)
+        return std::nullopt;
+    std::uint32_t instance{};
+    const auto text = id.substr(0, separator);
+    const auto parsed =
+        std::from_chars(text.data(), text.data() + text.size(), instance);
+    if (parsed.ec != std::errc{} || parsed.ptr != text.end() || !instance)
+        return std::nullopt;
+    return std::pair{instance, id.substr(separator + 1)};
+}
+} // namespace
 std::optional<ParameterDestination>
 resolve_parameter_destination(std::string_view id) noexcept {
     using S = SynthParameter;
@@ -27,6 +46,80 @@ resolve_parameter_destination(std::string_view id) noexcept {
                 parameter <= maximum_effect_parameters)
                 return {{ParameterTarget::native_effect, parameter, instance}};
         }
+        return std::nullopt;
+    }
+    if (const auto scoped = scoped_parameter(id, "synth.instance.")) {
+        const auto [instance, parameter] = *scoped;
+        if (parameter == "waveform")
+            return {{ParameterTarget::subtractive_synth,
+                     static_cast<std::uint32_t>(S::waveform), instance}};
+        if (parameter == "attack")
+            return {{ParameterTarget::subtractive_synth,
+                     static_cast<std::uint32_t>(S::attack), instance}};
+        if (parameter == "decay")
+            return {{ParameterTarget::subtractive_synth,
+                     static_cast<std::uint32_t>(S::decay), instance}};
+        if (parameter == "sustain")
+            return {{ParameterTarget::subtractive_synth,
+                     static_cast<std::uint32_t>(S::sustain), instance}};
+        if (parameter == "release")
+            return {{ParameterTarget::subtractive_synth,
+                     static_cast<std::uint32_t>(S::release), instance}};
+        if (parameter == "cutoff")
+            return {{ParameterTarget::subtractive_synth,
+                     static_cast<std::uint32_t>(S::cutoff), instance}};
+        if (parameter == "resonance")
+            return {{ParameterTarget::subtractive_synth,
+                     static_cast<std::uint32_t>(S::resonance), instance}};
+        if (parameter == "pulse-width")
+            return {{ParameterTarget::subtractive_synth,
+                     static_cast<std::uint32_t>(S::pulse_width), instance}};
+        if (parameter == "gain")
+            return {{ParameterTarget::subtractive_synth,
+                     static_cast<std::uint32_t>(S::gain), instance}};
+        if (parameter == "pitch")
+            return {{ParameterTarget::subtractive_synth,
+                     static_cast<std::uint32_t>(S::pitch), instance}};
+        return std::nullopt;
+    }
+    if (const auto scoped = scoped_parameter(id, "mixer.track.")) {
+        const auto [instance, parameter] = *scoped;
+        if (parameter == "gain")
+            return {{ParameterTarget::mixer_track, 1, instance}};
+        if (parameter == "pan")
+            return {{ParameterTarget::mixer_track, 2, instance}};
+        if (parameter == "aux-1")
+            return {{ParameterTarget::mixer_track, 3, instance}};
+        if (parameter == "aux-2")
+            return {{ParameterTarget::mixer_track, 4, instance}};
+        return std::nullopt;
+    }
+    if (const auto scoped = scoped_parameter(id, "mixer.group.")) {
+        const auto [instance, parameter] = *scoped;
+        if (parameter == "gain")
+            return {{ParameterTarget::mixer_group, 1, instance}};
+        if (parameter == "pan")
+            return {{ParameterTarget::mixer_group, 2, instance}};
+        if (parameter == "aux-1")
+            return {{ParameterTarget::mixer_group, 3, instance}};
+        if (parameter == "aux-2")
+            return {{ParameterTarget::mixer_group, 4, instance}};
+        return std::nullopt;
+    }
+    if (const auto scoped = scoped_parameter(id, "mixer.aux.")) {
+        const auto [instance, parameter] = *scoped;
+        if (parameter == "return")
+            return {{ParameterTarget::mixer_aux, 1, instance}};
+        return std::nullopt;
+    }
+    if (const auto scoped = scoped_parameter(id, "external-fx.")) {
+        const auto [instance, parameter] = *scoped;
+        if (parameter == "wet")
+            return {{ParameterTarget::external_fx, 1, instance}};
+        if (parameter == "send-gain")
+            return {{ParameterTarget::external_fx, 2, instance}};
+        if (parameter == "return-gain")
+            return {{ParameterTarget::external_fx, 3, instance}};
         return std::nullopt;
     }
     if (id == "synth.waveform")

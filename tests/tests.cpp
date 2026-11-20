@@ -18,8 +18,8 @@
 #include "neurogenic/project/project.hpp"
 #include "neurogenic/scripting/runtime.hpp"
 #include "neurogenic/sequencer/pattern_adapter.hpp"
-#include "neurogenic/timeline/edit.hpp"
 #include "neurogenic/timeline/arrangement.hpp"
+#include "neurogenic/timeline/edit.hpp"
 #include "neurogenic/timeline/io.hpp"
 #include "neurogenic/timeline/playback.hpp"
 #include "neurogenic/ui/gui.hpp"
@@ -54,11 +54,19 @@ void test_pattern_clip_arrangement() {
     using namespace neurogenic;
     Timeline base;
     base.generation_seed = 44;
-    base.tracks = {{1, "Drums", false, {ticks_per_quarter * 4, {}},
+    base.tracks = {{1,
+                    "Drums",
+                    false,
+                    {ticks_per_quarter * 4, {}},
                     std::string(sample_instrument_id)},
-                   {2, "MIDI", false, {ticks_per_quarter * 4, {}},
+                   {2,
+                    "MIDI",
+                    false,
+                    {ticks_per_quarter * 4, {}},
                     std::string(external_midi_instrument_id),
-                    default_synth_instance_id, 1, 1}};
+                    default_synth_instance_id,
+                    1,
+                    1}};
     std::vector<Timeline> published;
     TimelineService service(
         [&](const Timeline &timeline, std::string &) {
@@ -70,9 +78,9 @@ void test_pattern_clip_arrangement() {
     auto edit = service.edit();
     check(edit.create_pattern(10, "Verse", ticks_per_quarter * 4, error),
           "create arrangement pattern");
-    MusicalPattern drums{ticks_per_quarter * 2,
-                         {{100, 0, MusicalEventType::note, 36, 0.8F,
-                           ticks_per_quarter / 4}}};
+    MusicalPattern drums{
+        ticks_per_quarter * 2,
+        {{100, 0, MusicalEventType::note, 36, 0.8F, ticks_per_quarter / 4}}};
     drums.events[0].trigger_probability = 0.75F;
     drums.events[0].ratchet_count = 2;
     check(edit.set_pattern_track(10, 1, drums, error),
@@ -84,8 +92,8 @@ void test_pattern_clip_arrangement() {
     check(edit.duplicate_pattern(10, 11, "Chorus", error),
           "duplicate arrangement pattern");
     check(edit.rename_pattern(11, "Chorus A", error), "rename pattern");
-    check(edit.set_follow_action(
-              10, {FollowActionType::specific, 2, 1.0F, 11}, error),
+    check(edit.set_follow_action(10, {FollowActionType::specific, 2, 1.0F, 11},
+                                 error),
           "set pattern follow action");
     check(edit.set_pattern_chain(90, {{10, 2}, {11, 1}}, false, error) &&
               edit.set_chain_running(true, 0, error) &&
@@ -95,9 +103,8 @@ void test_pattern_clip_arrangement() {
           "configure pattern chain");
     check(edit.set_song_range(0, ticks_per_quarter * 8, error),
           "set song range");
-    check(edit.create_clip({20, 10, 0, ticks_per_quarter * 4, true, 12, 0.5F,
-                            true},
-                           error),
+    check(edit.create_clip(
+              {20, 10, 0, ticks_per_quarter * 4, true, 12, 0.5F, true}, error),
           "create transformed clip");
     check(edit.create_clip({21, 11, ticks_per_quarter * 4,
                             ticks_per_quarter * 4, false, 0, 1.0F, true},
@@ -106,22 +113,27 @@ void test_pattern_clip_arrangement() {
     edit.timeline().arrangement.pattern_chain = {10, 11};
     check(edit.set_playback_mode(TimelinePlaybackMode::song, error),
           "set song playback mode");
-    check(service.commit(edit, TimelineCommitPolicy::next_audio_callback, error),
-          "commit arrangement transaction");
+    check(
+        service.commit(edit, TimelineCommitPolicy::next_audio_callback, error),
+        "commit arrangement transaction");
 
     PlaybackPlan plan;
     check(compile_timeline(service.snapshot().timeline, plan, error),
           "compile song arrangement");
-    check(plan.tracks.size() == 2 && plan.tracks[0].length == ticks_per_quarter * 8,
+    check(plan.tracks.size() == 2 &&
+              plan.tracks[0].length == ticks_per_quarter * 8,
           "arrangement compiles into authoritative tracks");
-    check(std::any_of(plan.events.begin(), plan.events.end(), [](const auto &e) {
-              return e.pitch == 48 && std::fabs(e.value - 0.4F) < 0.0001F;
-          }),
+    check(std::any_of(plan.events.begin(), plan.events.end(),
+                      [](const auto &e) {
+                          return e.pitch == 48 &&
+                                 std::fabs(e.value - 0.4F) < 0.0001F;
+                      }),
           "clip transpose and velocity transformation");
-    check(std::any_of(plan.tracks.begin(), plan.tracks.end(), [](const auto &t) {
-              return t.instrument == external_midi_instrument_key &&
-                     t.midi_channel == 1;
-          }),
+    check(std::any_of(plan.tracks.begin(), plan.tracks.end(),
+                      [](const auto &t) {
+                          return t.instrument == external_midi_instrument_key &&
+                                 t.midi_channel == 1;
+                      }),
           "arrangement preserves external MIDI routing");
 
     TimelineScheduler whole(48'000), partitioned(48'000);
@@ -131,9 +143,10 @@ void test_pattern_clip_arrangement() {
     std::array<TimelineScheduledEvent, 128> a{}, b{};
     const auto whole_count = whole.schedule(0, 48'000, a);
     const auto first = partitioned.schedule(0, 24'000, b);
-    const auto second = partitioned.schedule(24'000, 24'000,
-                                             std::span(b).subspan(first));
-    check(whole_count == first + second, "arrangement callback partition count");
+    const auto second =
+        partitioned.schedule(24'000, 24'000, std::span(b).subspan(first));
+    check(whole_count == first + second,
+          "arrangement callback partition count");
 
     auto overlap = service.edit();
     check(!overlap.create_clip({22, 10, ticks_per_quarter,
@@ -143,8 +156,9 @@ void test_pattern_clip_arrangement() {
           "ambiguous clip overlap rejected");
     auto live = service.edit();
     check(live.launch_pattern(10, false, error), "activate live pattern");
-    check(service.commit(live, TimelineCommitPolicy::next_audio_callback, error),
-          "commit live pattern");
+    check(
+        service.commit(live, TimelineCommitPolicy::next_audio_callback, error),
+        "commit live pattern");
     check(service.snapshot().timeline.arrangement.playback_mode ==
               TimelinePlaybackMode::live_pattern,
           "live mode state");
@@ -206,16 +220,16 @@ void test_pattern_clip_arrangement() {
     SampleManager action_samples(action_engine);
     ApplicationService application(action_engine, action_timeline,
                                    action_samples);
-    check(application.execute(
-              {"pattern.create.v1",
-               {{"id", std::int64_t{77}},
-                {"name", std::string("Action pattern")},
-                {"length", std::int64_t{3840}}}})
+    check(application
+              .execute({"pattern.create.v1",
+                        {{"id", std::int64_t{77}},
+                         {"name", std::string("Action pattern")},
+                         {"length", std::int64_t{3840}}}})
               .accepted,
           "pattern creation semantic action");
-    check(application.execute(
-              {"pattern.launch.v1",
-               {{"id", std::int64_t{77}}, {"queued", false}}})
+    check(application
+              .execute({"pattern.launch.v1",
+                        {{"id", std::int64_t{77}}, {"queued", false}}})
               .accepted,
           "pattern launch semantic action");
     const auto application_state = application.snapshot();
@@ -224,11 +238,11 @@ void test_pattern_clip_arrangement() {
               application_state.playback_mode ==
                   TimelinePlaybackMode::live_pattern,
           "arrangement discovery snapshot");
-    check(!application.execute(
-               {"pattern.create.v1",
-                {{"id", std::int64_t{-1}},
-                 {"name", std::string("Bad")},
-                 {"length", std::int64_t{3840}}}})
+    check(!application
+               .execute({"pattern.create.v1",
+                         {{"id", std::int64_t{-1}},
+                          {"name", std::string("Bad")},
+                          {"length", std::int64_t{3840}}}})
                .accepted,
           "negative stable pattern ID rejection");
 
@@ -251,8 +265,8 @@ void test_pattern_clip_arrangement() {
               looping_chain_plan.song_end_behavior == SongEndBehavior::loop,
           "looping chain playback policy");
     auto random_chain = chain;
-    random_chain.arrangement.patterns[0].follow =
-        {FollowActionType::random_eligible, 2, 1.0F, 0};
+    random_chain.arrangement.patterns[0].follow = {
+        FollowActionType::random_eligible, 2, 1.0F, 0};
     PlaybackPlan random_a, random_b;
     check(compile_timeline(random_chain, random_a, error) &&
               compile_timeline(random_chain, random_b, error) &&
@@ -301,9 +315,186 @@ void test_pattern_clip_arrangement() {
     check(song_end_engine.queue_timeline(ending, error), error.c_str());
     song_end_engine.process({precise_left.data(), 64},
                             {precise_right.data(), 64});
-    check(!song_end_engine.playing() && song_end_engine.frame_position() == 25 &&
+    check(!song_end_engine.playing() &&
+              song_end_engine.frame_position() == 25 &&
               song_end_engine.song_end_count() == 1,
           "deterministic song end boundary");
+}
+
+void test_live_arrangement_recording() {
+    using namespace neurogenic;
+    Timeline timeline;
+    timeline.generation_seed = 99;
+    timeline.tracks.push_back({1,
+                               "Synth",
+                               false,
+                               {3840, {}},
+                               std::string(subtractive_instrument_id)});
+    for (PatternId id = 1; id <= 2; ++id) {
+        PatternDefinition pattern;
+        pattern.id = id;
+        pattern.name = "Pattern " + std::to_string(id);
+        pattern.length = 960;
+        pattern.tracks.push_back(
+            {1,
+             {960,
+              {{id, 0, MusicalEventType::note,
+                static_cast<std::uint8_t>(59 + id), 0.8F, 120}}}});
+        timeline.arrangement.patterns.push_back(std::move(pattern));
+    }
+    TimelineService service(
+        [](const Timeline &, std::string &) { return true; }, timeline);
+    ArrangementRecordingService recorder(16);
+    std::string error;
+    check(recorder.arm(true, error) &&
+              recorder.start(0, ArrangementRecordMode::replace, 0, true, error),
+          "arm live arrangement recording");
+    check(recorder.capture_pattern(1, 0) && recorder.capture_pattern(1, 480) &&
+              recorder.capture_pattern(2, 960),
+          "capture pattern transitions without fragmentation");
+    check(recorder.capture_automation("synth.cutoff", 1000, 100, 20) &&
+              recorder.capture_automation("synth.cutoff", 1200, 110, 20) &&
+              recorder.capture_automation("synth.cutoff", 1400, 200, 20),
+          "capture and thin automation");
+    check(recorder.stop(1920, error) && recorder.commit(service, error),
+          error.c_str());
+    auto recorded = service.snapshot().timeline;
+    check(recorded.arrangement.clips.size() == 2 &&
+              recorded.arrangement.clips[0].pattern == 1 &&
+              recorded.arrangement.clips[0].duration == 960 &&
+              recorded.arrangement.clips[1].pattern == 2 &&
+              recorded.arrangement.clips[1].duration == 960,
+          "recording clip boundary construction");
+    check(recorded.arrangement.automation.size() == 2 &&
+              recorded.arrangement.automation[0].value == 1200 &&
+              recorded.arrangement.automation[1].tick == 200,
+          "recorded automation thinning result");
+    PlaybackPlan plan;
+    check(compile_timeline(recorded, plan, error) &&
+              std::any_of(plan.events.begin(), plan.events.end(),
+                          [](const auto &e) {
+                              return e.type == MusicalEventType::parameter &&
+                                     e.value == 1400;
+                          }),
+          "recorded automation compiles through timeline");
+    check(service.undo(TimelineCommitPolicy::next_audio_callback, error) &&
+              service.snapshot().timeline.arrangement.clips.empty() &&
+              service.redo(TimelineCommitPolicy::next_audio_callback, error) &&
+              service.snapshot().timeline.arrangement.clips.size() == 2,
+          "recording pass undo and redo");
+
+    const auto path = std::filesystem::temp_directory_path() /
+                      "neurogenic-arrangement-recording.ngt";
+    save_timeline(service.snapshot().timeline, path);
+    const auto restored = load_timeline(path);
+    std::filesystem::remove(path);
+    check(restored.arrangement.clips.size() == 2 &&
+              restored.arrangement.automation.size() == 2,
+          "arrangement recording persistence");
+    const auto project_path = std::filesystem::temp_directory_path() /
+                              "neurogenic-live-recording-project";
+    std::filesystem::remove_all(project_path);
+    Project recording_project;
+    recording_project.timeline = restored;
+    save_project(recording_project, project_path);
+    const auto restored_project = load_project(project_path);
+    std::filesystem::remove_all(project_path);
+    check(restored_project.timeline.arrangement.automation.size() == 2,
+          "live arrangement project round trip");
+
+    ArrangementRecordingService count_in;
+    check(count_in.arm(true, error) &&
+              count_in.start(100, ArrangementRecordMode::replace, 200, false,
+                             error) &&
+              !count_in.capture_pattern(1, 299) &&
+              count_in.capture_pattern(1, 300),
+          "arrangement recording count-in boundary");
+    count_in.discard();
+
+    ArrangementRecordingService chain;
+    auto chain_timeline = timeline;
+    chain_timeline.arrangement.chain_entries = {{1, 2}, {2, 1}};
+    chain_timeline.arrangement.chain_running = true;
+    check(chain.arm(true, error) &&
+              chain.start(0, ArrangementRecordMode::replace, 0, false, error) &&
+              chain.capture_chain(chain_timeline, 0) &&
+              chain.patterns().size() == 2 && chain.patterns()[1].tick == 1920,
+          "automatic chain and follow transition capture");
+
+    ArrangementRecordingService bounded(1);
+    check(
+        bounded.arm(true, error) &&
+            bounded.start(0, ArrangementRecordMode::replace, 0, true, error) &&
+            bounded.capture_pattern(1, 0) &&
+            !bounded.capture_automation("synth.cutoff", 1000, 1, 0) &&
+            bounded.status().phase == ArrangementRecordPhase::overflow &&
+            !bounded.stop(2, error),
+        "arrangement capture overflow is explicit and uncommittable");
+
+    ActionRegistry actions;
+    check(actions.find("arrangement.record-arm.v1") &&
+              actions.find("arrangement.record-start.v1") &&
+              actions.find("arrangement.record-commit.v1") &&
+              actions.find("arrangement.automation-thinning.v1"),
+          "arrangement recording action discovery");
+    const auto track_destination =
+        resolve_parameter_destination("mixer.track.27.pan");
+    const auto synth_destination =
+        resolve_parameter_destination("synth.instance.9.cutoff");
+    check(track_destination && track_destination->instance == 27 &&
+              track_destination->target == ParameterTarget::mixer_track &&
+              synth_destination && synth_destination->instance == 9 &&
+              synth_destination->target == ParameterTarget::subtractive_synth,
+          "instance-aware automation destination resolution");
+
+    AudioEngine engine(48'000);
+    TimelineService application_timeline(
+        [&](const Timeline &value, std::string &publish_error) {
+            return engine.queue_timeline(value, publish_error);
+        },
+        timeline);
+    SampleManager samples(engine);
+    ApplicationService application(engine, application_timeline, samples);
+    check(application.execute({"arrangement.record-arm.v1", {{"armed", true}}})
+                  .accepted &&
+              application
+                  .execute({"arrangement.record-start.v1",
+                            {{"mode", std::string("replace")},
+                             {"automation", true}}})
+                  .accepted &&
+              application
+                  .execute({"pattern.launch.v1",
+                            {{"id", std::int64_t{1}}, {"queued", false}}})
+                  .accepted,
+          "application arrangement recording lifecycle");
+    std::array<float, 64> left{}, right{};
+    engine.process(left, right);
+    auto live_state = application.snapshot();
+    check(live_state.arrangement_recording.captured_patterns == 1 &&
+              live_state.captured_pattern_launches.front().pattern == 1 &&
+              live_state.captured_pattern_launches.front().tick == 0,
+          "application captures callback-acknowledged launch position");
+    check(application
+              .execute({"parameter.set-normalized.v1",
+                        {{"parameter_id", std::string("synth.cutoff")},
+                         {"value", 0.5}}})
+              .accepted,
+          "application automation capture command");
+    check(application.execute({"mixer.master-gain-set.v1", {{"value", 0.75}}})
+              .accepted,
+          "application mixer automation capture command");
+    engine.process(left, right);
+    check(
+        application.execute({"transport.stop.v1", {}}).accepted &&
+            application.execute({"arrangement.record-commit.v1", {}}).accepted,
+        "transport stop finalizes and application commits captured pass");
+    const auto application_recorded = application_timeline.snapshot().timeline;
+    check(application_recorded.arrangement.clips.size() == 1 &&
+              application_recorded.arrangement.automation.size() == 2 &&
+              application_recorded.arrangement.automation[1]
+                      .parameter_destination == "mixer.master.gain",
+          "application pass produced clips and automation");
+    samples.shutdown();
 }
 
 void test_hardware_diagnostics() {
@@ -644,17 +835,23 @@ void test_modulation_engine() {
     dynamic.route_count = 3;
     for (std::size_t i = 0; i < dynamic.route_count; ++i) {
         dynamic.routes[i] = {
-            static_cast<ModulationRouteId>(i + 1), ModulationSourceId::lfo_1,
+            static_cast<ModulationRouteId>(i + 1),
+            ModulationSourceId::lfo_1,
             {ParameterTarget::mixer_track,
              static_cast<std::uint32_t>(MixerTrackModulationParameter::pan),
              static_cast<std::uint32_t>(i + 1)},
-            -1, 1, 0, 0.5F, true, ModulationPolarity::bipolar,
+            -1,
+            1,
+            0,
+            0.5F,
+            true,
+            ModulationPolarity::bipolar,
             i < 2 ? ModulationScope::track : ModulationScope::global,
             i < 2 ? 10U : 0U};
-        dynamic.routes[i].source_instance =
-            dynamic.modulators[i].id;
+        dynamic.routes[i].source_instance = dynamic.modulators[i].id;
     }
-    check(engine.configure(dynamic), "dynamic modulator instance configuration");
+    check(engine.configure(dynamic),
+          "dynamic modulator instance configuration");
     process(17);
     const auto dynamic_snapshot = engine.snapshot();
     check(dynamic_snapshot.modulator_count == 3 &&
@@ -666,7 +863,8 @@ void test_modulation_engine() {
     check(!engine.configure(invalid_owner), "invalid modulator owner rejected");
     auto duplicate_id = dynamic;
     duplicate_id.modulators[1].id = duplicate_id.modulators[0].id;
-    check(!engine.configure(duplicate_id), "duplicate stable instance ID rejected");
+    check(!engine.configure(duplicate_id),
+          "duplicate stable instance ID rejected");
     ModulationEngine partition_a(1000), partition_b(1000);
     check(partition_a.configure(dynamic) && partition_b.configure(dynamic),
           "partition test configuration");
@@ -895,7 +1093,8 @@ void test_modulation_engine() {
     ModulationEngine random_a(10), random_b(10);
     random_a.set_tempo(60);
     random_b.set_tempo(60);
-    check(random_a.configure(random_config) && random_b.configure(random_config),
+    check(random_a.configure(random_config) &&
+              random_b.configure(random_config),
           "clocked random configurations");
     for (std::size_t step = 0; step < 12; ++step) {
         run_frames(random_a, 1);
@@ -935,7 +1134,8 @@ void test_modulation_engine() {
     math_config.update_interval = 1;
     math_config.modulator_count = 4;
     for (std::size_t i = 0; i < 2; ++i) {
-        math_config.modulators[i].id = static_cast<ModulatorInstanceId>(1101 + i);
+        math_config.modulators[i].id =
+            static_cast<ModulatorInstanceId>(1101 + i);
         math_config.modulators[i].type = ModulatorType::step_sequencer;
         math_config.modulators[i].owner_kind = ModulatorOwnerKind::master;
         math_config.modulators[i].settings.step_count = 1;
@@ -1217,30 +1417,33 @@ void test_modulation_engine() {
               application.snapshot().modulation.modulator_count == 1,
           "semantic modulator creation");
     check(application
-              .execute({"modulator.route-create.v1",
-                        {{"source_id", std::int64_t{1}},
-                         {"destination", std::string("effect.delay.mix")},
-                         {"depth", 0.2}}})
-              .accepted &&
+                  .execute({"modulator.route-create.v1",
+                            {{"source_id", std::int64_t{1}},
+                             {"destination", std::string("effect.delay.mix")},
+                             {"depth", 0.2}}})
+                  .accepted &&
               application.snapshot().modulation.routes[0].source_instance == 1,
           "semantic instance route creation");
-    check(application
-              .execute({"modulator.duplicate.v1", {{"id", std::int64_t{1}}}})
-              .accepted &&
-              application.snapshot().modulation.modulator_count == 2,
-          "semantic modulator duplication with stable identity");
+    check(
+        application
+                .execute({"modulator.duplicate.v1", {{"id", std::int64_t{1}}}})
+                .accepted &&
+            application.snapshot().modulation.modulator_count == 2,
+        "semantic modulator duplication with stable identity");
     std::array<float, 64> left{}, right{};
-    audio.process(left, right); // acknowledge bounded configuration publications
-    check(application
-              .execute({"modulation.connection-create.v1",
-                        {{"source_id", std::int64_t{1}},
-                         {"destination_id", std::int64_t{2}},
-                         {"parameter", std::int64_t{static_cast<std::int64_t>(
-                                           ModulatorParameterId::rate)}},
-                         {"depth", 0.25}}})
-              .accepted &&
-              application.snapshot().modulation_graph.valid,
-          "semantic modulator graph connection");
+    audio.process(left,
+                  right); // acknowledge bounded configuration publications
+    check(
+        application
+                .execute({"modulation.connection-create.v1",
+                          {{"source_id", std::int64_t{1}},
+                           {"destination_id", std::int64_t{2}},
+                           {"parameter", std::int64_t{static_cast<std::int64_t>(
+                                             ModulatorParameterId::rate)}},
+                           {"depth", 0.25}}})
+                .accepted &&
+            application.snapshot().modulation_graph.valid,
+        "semantic modulator graph connection");
     audio.process(left, right);
     check(application
                   .execute({"modulator.create.v1",
@@ -1263,17 +1466,18 @@ void test_modulation_engine() {
                              {"value", 0.75}}})
                   .accepted &&
               application.snapshot()
-                      .modulation.modulators[2].settings.step_values[2] ==
-                  0.75F,
+                      .modulation.modulators[2]
+                      .settings.step_values[2] == 0.75F,
           "semantic step modulator editing");
     audio.process(left, right);
     check(application
-                  .execute({"modulator.create.v1",
-                            {{"type", std::int64_t{static_cast<std::int64_t>(
-                                          ModulatorType::velocity)}},
-                             {"owner", std::int64_t{static_cast<std::int64_t>(
-                                           ModulatorOwnerKind::voice_definition)}},
-                             {"owner_id", std::int64_t{7}}}})
+                  .execute(
+                      {"modulator.create.v1",
+                       {{"type", std::int64_t{static_cast<std::int64_t>(
+                                     ModulatorType::velocity)}},
+                        {"owner", std::int64_t{static_cast<std::int64_t>(
+                                      ModulatorOwnerKind::voice_definition)}},
+                        {"owner_id", std::int64_t{7}}}})
                   .accepted &&
               application
                   .execute({"modulator.route-create.v1",
@@ -1806,13 +2010,12 @@ void test_polyphonic_sample_modulation() {
         route.id = static_cast<ModulationRouteId>(2101 + i);
         route.source_instance = configuration.modulators[i].id;
         route.source_output = 1;
-        route.destination = {
-            ParameterTarget::sample_voice,
-            static_cast<std::uint32_t>(
-                i == 0 ? SampleModulationParameter::gain
-                : i == 1 ? SampleModulationParameter::pitch
-                         : SampleModulationParameter::pan),
-            7};
+        route.destination = {ParameterTarget::sample_voice,
+                             static_cast<std::uint32_t>(
+                                 i == 0   ? SampleModulationParameter::gain
+                                 : i == 1 ? SampleModulationParameter::pitch
+                                          : SampleModulationParameter::pan),
+                             7};
         route.minimum = i == 0 ? 0.0F : (i == 1 ? -12.0F : -1.0F);
         route.maximum = i == 0 ? 1.0F : (i == 1 ? 12.0F : 1.0F);
         route.base_value = 0;
@@ -1828,15 +2031,16 @@ void test_polyphonic_sample_modulation() {
     reset_sample_voice_modulation(second, configuration, 7, 0.9F, 2);
     SampleVoiceModulationValues first_value, second_value;
     for (int frame = 0; frame < 5; ++frame) {
-        first_value = process_sample_voice_modulation(first, configuration,
-                                                      100, 120);
-        second_value = process_sample_voice_modulation(second, configuration,
-                                                       100, 120);
+        first_value =
+            process_sample_voice_modulation(first, configuration, 100, 120);
+        second_value =
+            process_sample_voice_modulation(second, configuration, 100, 120);
     }
-    check(first_value.gain > 0 && second_value.gain > 0 &&
-              first.instances[1].phase == second.instances[1].phase &&
-              first.instances[2].held != second.instances[2].held,
-          "overlapping sample voices own independent envelope and random state");
+    check(
+        first_value.gain > 0 && second_value.gain > 0 &&
+            first.instances[1].phase == second.instances[1].phase &&
+            first.instances[2].held != second.instances[2].held,
+        "overlapping sample voices own independent envelope and random state");
     for (int frame = 0; frame < 5; ++frame)
         (void)process_sample_voice_modulation(first, configuration, 100, 120);
     check(first.instances[1].phase != second.instances[1].phase,
@@ -1844,10 +2048,10 @@ void test_polyphonic_sample_modulation() {
     release_sample_voice_modulation(first);
     const auto second_before = second.instances[0].value;
     for (int frame = 0; frame < 5; ++frame) {
-        first_value = process_sample_voice_modulation(first, configuration,
-                                                      100, 120);
-        second_value = process_sample_voice_modulation(second, configuration,
-                                                       100, 120);
+        first_value =
+            process_sample_voice_modulation(first, configuration, 100, 120);
+        second_value =
+            process_sample_voice_modulation(second, configuration, 100, 120);
     }
     check(first.instances[0].value < second.instances[0].value &&
               second.instances[0].value >= second_before,
@@ -3093,8 +3297,9 @@ void test_sample_slots() {
     auto midi_engine = std::make_unique<AudioEngine>();
     midi_engine->set_sample_slot(SampleSlotId{1}, constant_sample(8, 0.5F));
     MidiMapper mapper;
-    mapper.set_note_handler(
-        [&](auto note, auto velocity) { midi_engine->trigger(note, velocity); });
+    mapper.set_note_handler([&](auto note, auto velocity) {
+        midi_engine->trigger(note, velocity);
+    });
     check(mapper.receive({0x90, 37, 127, 0}), "slot MIDI enqueue");
     check(mapper.dispatch_pending() == 1, "slot MIDI dispatch");
     midi_engine->process(left, right);
@@ -3493,62 +3698,61 @@ void test_unified_project_persistence() {
         partial << "partial";
     }
     auto loaded = load_project(root, &load_metrics);
-    check(loaded.name == project.name && loaded.timeline.tracks.size() == 1 &&
-              loaded.timeline.tracks[0].id == 77 &&
-              loaded.timeline.tracks[0].pattern.events[0].id == 91 &&
-              loaded.timeline.tracks[0].pattern.events[0].ratchet_count == 4 &&
-              loaded.samples.slices.size() == 1 &&
-              loaded.samples.slices[0].id == 501 &&
-              loaded.samples.pads[5] == 501 &&
-              loaded.samples.pad_settings[5].stretch_mode ==
-                  StretchMode::realtime &&
-              loaded.parameters.at("synth.cutoff") == 4321.0 &&
-              loaded.parameters.at("instance.2.synth.cutoff") == 2500.0 &&
-              loaded.mixer.effects.instance_count == 1 &&
-              loaded.mixer.effects.instances[0].id == 700 &&
-              loaded.mixer.effects.instances[0].type ==
-                  EffectProcessorType::low_pass_filter &&
-              loaded.mixer.effects.master.instances[0] == 700 &&
-              loaded.modulation.route_count == 4 &&
-              loaded.modulation.routes[0].id == 81 &&
-              loaded.modulation.routes[0].destination.instance == 2 &&
-              loaded.modulation.routes[0].source_instance == 9001 &&
-              loaded.modulation.modulator_count == 5 &&
-              loaded.modulation.modulators[0].id == 9001 &&
-              std::string(loaded.modulation.modulators[0].display_name.data()) ==
-                  "Project LFO" &&
-              loaded.modulation.modulators[0].shared &&
-              loaded.modulation.routes[1].destination_kind ==
-                  ModulationDestinationKind::modulator_parameter &&
-              loaded.modulation.routes[1].destination_modulator == 9002 &&
-              loaded.modulation.modulators[2].type ==
-                  ModulatorType::step_sequencer &&
-              loaded.modulation.modulators[2].settings.step_count == 3 &&
-              loaded.modulation.modulators[2].settings.step_values[1] == 0.25F &&
-              loaded.modulation.routes[2].source_output == 2 &&
-              loaded.modulation.routes[2].destination_kind ==
-                  ModulationDestinationKind::modulator_input &&
-              loaded.modulation.routes[2].destination_input == 1 &&
-              loaded.modulation.modulators[4].type ==
-                  ModulatorType::velocity &&
-              loaded.modulation.modulators[4].owner_kind ==
-                  ModulatorOwnerKind::voice_definition &&
-              loaded.modulation.routes[3].scope == ModulationScope::voice &&
-              loaded.modulation.sources[0].tempo_sync &&
-              loaded.midi.clock_source == MidiClockSource::external &&
-              loaded.midi.forward_external_clock &&
-              loaded.midi.route_count == 1 &&
-              loaded.midi.routes[0].output_channel == 4 &&
-              std::fabs(loaded.modulation
-                            .sources[static_cast<std::size_t>(
-                                ModulationSourceId::envelope_follower)]
-                            .follower_release_seconds -
-                        0.3F) < 0.0001F &&
-              loaded.timeline.tracks[0].instrument_instance_id == 2 &&
-              loaded.missing_assets.empty() &&
-              save_metrics.metadata_bytes > 0 &&
-              load_metrics.metadata_bytes > 0,
-          "unified project round trip");
+    check(
+        loaded.name == project.name && loaded.timeline.tracks.size() == 1 &&
+            loaded.timeline.tracks[0].id == 77 &&
+            loaded.timeline.tracks[0].pattern.events[0].id == 91 &&
+            loaded.timeline.tracks[0].pattern.events[0].ratchet_count == 4 &&
+            loaded.samples.slices.size() == 1 &&
+            loaded.samples.slices[0].id == 501 &&
+            loaded.samples.pads[5] == 501 &&
+            loaded.samples.pad_settings[5].stretch_mode ==
+                StretchMode::realtime &&
+            loaded.parameters.at("synth.cutoff") == 4321.0 &&
+            loaded.parameters.at("instance.2.synth.cutoff") == 2500.0 &&
+            loaded.mixer.effects.instance_count == 1 &&
+            loaded.mixer.effects.instances[0].id == 700 &&
+            loaded.mixer.effects.instances[0].type ==
+                EffectProcessorType::low_pass_filter &&
+            loaded.mixer.effects.master.instances[0] == 700 &&
+            loaded.modulation.route_count == 4 &&
+            loaded.modulation.routes[0].id == 81 &&
+            loaded.modulation.routes[0].destination.instance == 2 &&
+            loaded.modulation.routes[0].source_instance == 9001 &&
+            loaded.modulation.modulator_count == 5 &&
+            loaded.modulation.modulators[0].id == 9001 &&
+            std::string(loaded.modulation.modulators[0].display_name.data()) ==
+                "Project LFO" &&
+            loaded.modulation.modulators[0].shared &&
+            loaded.modulation.routes[1].destination_kind ==
+                ModulationDestinationKind::modulator_parameter &&
+            loaded.modulation.routes[1].destination_modulator == 9002 &&
+            loaded.modulation.modulators[2].type ==
+                ModulatorType::step_sequencer &&
+            loaded.modulation.modulators[2].settings.step_count == 3 &&
+            loaded.modulation.modulators[2].settings.step_values[1] == 0.25F &&
+            loaded.modulation.routes[2].source_output == 2 &&
+            loaded.modulation.routes[2].destination_kind ==
+                ModulationDestinationKind::modulator_input &&
+            loaded.modulation.routes[2].destination_input == 1 &&
+            loaded.modulation.modulators[4].type == ModulatorType::velocity &&
+            loaded.modulation.modulators[4].owner_kind ==
+                ModulatorOwnerKind::voice_definition &&
+            loaded.modulation.routes[3].scope == ModulationScope::voice &&
+            loaded.modulation.sources[0].tempo_sync &&
+            loaded.midi.clock_source == MidiClockSource::external &&
+            loaded.midi.forward_external_clock &&
+            loaded.midi.route_count == 1 &&
+            loaded.midi.routes[0].output_channel == 4 &&
+            std::fabs(loaded.modulation
+                          .sources[static_cast<std::size_t>(
+                              ModulationSourceId::envelope_follower)]
+                          .follower_release_seconds -
+                      0.3F) < 0.0001F &&
+            loaded.timeline.tracks[0].instrument_instance_id == 2 &&
+            loaded.missing_assets.empty() && save_metrics.metadata_bytes > 0 &&
+            load_metrics.metadata_bytes > 0,
+        "unified project round trip");
 
     auto missing_owner = project;
     missing_owner.modulation.modulator_count = 6;
@@ -5982,9 +6186,9 @@ void test_mixer_and_routing() {
     check(group_recorder.arm(group_recording, error) &&
               group_recorder.start(0, error),
           "arm group recording tap");
-    group_recorder.capture_internal(
-        RecordingSource::group_post_fader, group_mixer->group_left(0),
-        group_mixer->group_right(0), 0, 100);
+    group_recorder.capture_internal(RecordingSource::group_post_fader,
+                                    group_mixer->group_left(0),
+                                    group_mixer->group_right(0), 0, 100);
     check(group_recorder.status().state == RecordingState::completed &&
               std::fabs(group_recorder.completed_sample().interleaved[0] -
                         0.25F) < 0.0001F,
@@ -6007,9 +6211,8 @@ void test_mixer_and_routing() {
             }
             std::span<float> output{rendered.data() + begin, count};
             std::array<float, 8> right_output{};
-            rendered_mixer->process(
-                output,
-                {right_output.data() + begin, count});
+            rendered_mixer->process(output,
+                                    {right_output.data() + begin, count});
         }
         return rendered;
     };
@@ -6185,8 +6388,7 @@ void test_mixer_and_routing() {
     std::filesystem::remove_all(path);
     save_project(project, path);
     const auto restored = load_project(path);
-    check(restored.mixer.track_count == 2 &&
-              restored.mixer.group_count == 2 &&
+    check(restored.mixer.track_count == 2 && restored.mixer.group_count == 2 &&
               restored.mixer.groups[0].id == 100 &&
               restored.mixer.groups[1].destination_group == 100 &&
               restored.mixer.tracks[0].destination_group == 100 &&
@@ -6260,21 +6462,19 @@ void test_mixer_and_routing() {
     check(group_result.accepted, group_result.error.c_str());
     app_engine.process(rendered_left, rendered_right);
     group_result = application.execute(
-        {"effect.create.v1",
-         {{"id", std::int64_t{902}}, {"type", "gain"}}});
+        {"effect.create.v1", {{"id", std::int64_t{902}}, {"type", "gain"}}});
     check(group_result.accepted, group_result.error.c_str());
-    group_result = application.execute(
-        {"effect.insert.v1",
-         {{"id", std::int64_t{902}},
-          {"chain", "group"},
-          {"index", std::int64_t{1}},
-          {"position", std::int64_t{0}}}});
+    group_result = application.execute({"effect.insert.v1",
+                                        {{"id", std::int64_t{902}},
+                                         {"chain", "group"},
+                                         {"index", std::int64_t{1}},
+                                         {"position", std::int64_t{0}}}});
     check(group_result.accepted, group_result.error.c_str());
     check(application
               .execute({"modulator.create.v1",
                         {{"type", std::int64_t{1}},
-                         {"owner", static_cast<std::int64_t>(
-                                       ModulatorOwnerKind::group)},
+                         {"owner",
+                          static_cast<std::int64_t>(ModulatorOwnerKind::group)},
                          {"owner_id", std::int64_t{1}},
                          {"name", "Group LFO"}}})
               .accepted,
@@ -6283,8 +6483,8 @@ void test_mixer_and_routing() {
         application.snapshot().modulation.modulators[0].id;
     check(application
               .execute({"modulator.route-create.v1",
-                        {{"source_id", static_cast<std::int64_t>(
-                                           group_modulator_id)},
+                        {{"source_id",
+                          static_cast<std::int64_t>(group_modulator_id)},
                          {"destination", "mixer.group.pan"},
                          {"depth", 0.25}}})
               .accepted,
@@ -6315,8 +6515,7 @@ void test_mixer_and_routing() {
               ModulatorOwnerKind::group,
           "observable group modulation state");
     check(!application
-               .execute({"mixer.group-delete.v1",
-                         {{"id", std::int64_t{1}}}})
+               .execute({"mixer.group-delete.v1", {{"id", std::int64_t{1}}}})
                .accepted,
           "referenced group deletion rejection");
     check(application
@@ -6597,6 +6796,7 @@ int main() {
         test_realtime_time_stretch();
         test_timeline_and_tracks();
         test_pattern_clip_arrangement();
+        test_live_arrangement_recording();
         test_unified_project_persistence();
         test_audio_recording_and_resampling();
         test_mixer_and_routing();

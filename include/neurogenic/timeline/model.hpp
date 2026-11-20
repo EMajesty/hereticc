@@ -110,11 +110,7 @@ enum class VoiceTransitionPolicy : std::uint8_t {
     release_outgoing,
     stop_outgoing
 };
-enum class SongEndBehavior : std::uint8_t {
-    loop,
-    stop,
-    return_to_live
-};
+enum class SongEndBehavior : std::uint8_t { loop, stop, return_to_live };
 struct PatternFollowAction {
     FollowActionType type{FollowActionType::next};
     std::uint16_t after_repetitions{1};
@@ -165,6 +161,9 @@ struct SongArrangement {
     MusicalTick song_start{}, song_end{};
     bool loop_enabled{};
     MusicalTick loop_start{}, loop_end{};
+    // Absolute song-position parameter events. These are materialized into the
+    // existing timeline event stream; base parameter values remain unchanged.
+    std::vector<MusicalEvent> automation;
 };
 struct Timeline {
     TransportMetadata transport;

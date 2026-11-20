@@ -1,5 +1,12 @@
 # Architecture
 
+Live arrangement capture uses a bounded callback-to-control acknowledgement
+queue. The callback emits only the exact activation frame; the application
+thread converts it to musical time, builds clips/automation, validates a full
+snapshot and publishes through `TimelineService`. No editing, allocation,
+locking or serialization occurs in the callback. See
+`ARRANGEMENT_RECORDING.md`.
+
 Pattern definitions, clip placements, and song ranges are control-side data in
 the revisioned `Timeline`. `materialize_arrangement` validates and expands a
 live pattern or song into a temporary legacy-shaped timeline before

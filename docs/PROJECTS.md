@@ -1,12 +1,14 @@
 # Project persistence
 
-Project format 3 uses timeline metadata version 6 to persist pattern
+Project format 4 uses timeline metadata version 7 to persist pattern
 collections, clips, song and loop
 ranges, stable-ID chain entries/repeats, follow actions, launch/voice policies,
-and song-end behavior in `timeline.ngt`. Project format 2/timeline version 5
-loads with compatible chain defaults; older versions migrate to arrangement
+song-end behavior and committed live-recording automation in `timeline.ngt`.
+Project format 3/timeline version 6 loads with an empty automation lane; format
+2/timeline version 5 loads with compatible chain defaults. Older versions migrate to arrangement
 `legacy` mode without changing events or sound. Transient queued-boundary
-timing, active voices, and callback diagnostics are not persisted.
+timing, pending recording passes, active voices, and callback diagnostics are
+not persisted.
 
 Modulation metadata version 8 adds group owners, group follower taps and stable
 group parameter destinations. Version 7 persists stable instances and owners plus graph

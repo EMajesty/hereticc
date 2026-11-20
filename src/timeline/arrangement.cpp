@@ -1,4 +1,6 @@
 #include "neurogenic/timeline/arrangement.hpp"
+#include "neurogenic/dsp/parameter_destination.hpp"
+#include "neurogenic/instrument/instrument.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -19,8 +21,7 @@ const Track *track(const Timeline &t, TrackId id) {
 EventId placed_id(ClipId clip, EventId source, std::uint64_t repetition) {
     auto value = clip * 0x9e3779b97f4a7c15ULL;
     value ^= source + 0x9e3779b97f4a7c15ULL + (value << 6U) + (value >> 2U);
-    value ^= repetition + 0x517cc1b727220a95ULL + (value << 6U) +
-             (value >> 2U);
+    value ^= repetition + 0x517cc1b727220a95ULL + (value << 6U) + (value >> 2U);
     return value == 0 ? 1 : value;
 }
 std::uint64_t random_word(std::uint64_t seed, PatternId pattern,
@@ -111,6 +112,19 @@ bool validate_arrangement(const Timeline &timeline, std::string &error,
             return false;
         }
     }
+    if (a.automation.size() > limits.expanded_events) {
+        error = "arrangement automation capacity exceeded";
+        return false;
+    }
+    std::set<EventId> automation_ids;
+    for (const auto &event : a.automation)
+        if (!event.id || !automation_ids.insert(event.id).second ||
+            event.type != MusicalEventType::parameter || event.tick < 0 ||
+            event.parameter_destination.empty() ||
+            !std::isfinite(event.value)) {
+            error = "arrangement automation event is invalid";
+            return false;
+        }
     if (a.return_live_pattern && !pattern(a, a.return_live_pattern)) {
         error = "song return pattern does not exist";
         return false;
@@ -118,11 +132,10 @@ bool validate_arrangement(const Timeline &timeline, std::string &error,
     for (const auto &clip : a.clips) {
         if (!clip.id || !clip_ids.insert(clip.id).second ||
             !pattern(a, clip.pattern) || clip.start < 0 || clip.duration <= 0 ||
-            clip.start > std::numeric_limits<MusicalTick>::max() -
-                             clip.duration ||
-            clip.transpose < -127 ||
-            !std::isfinite(clip.velocity_scale) || clip.velocity_scale < 0 ||
-            clip.velocity_scale > 4) {
+            clip.start >
+                std::numeric_limits<MusicalTick>::max() - clip.duration ||
+            clip.transpose < -127 || !std::isfinite(clip.velocity_scale) ||
+            clip.velocity_scale < 0 || clip.velocity_scale > 4) {
             error = "invalid arrangement clip";
             return false;
         }
@@ -132,9 +145,9 @@ bool validate_arrangement(const Timeline &timeline, std::string &error,
             error = "song range is invalid";
             return false;
         }
-        if (a.loop_enabled && (a.loop_start < a.song_start ||
-                               a.loop_end <= a.loop_start ||
-                               a.loop_end > a.song_end)) {
+        if (a.loop_enabled &&
+            (a.loop_start < a.song_start || a.loop_end <= a.loop_start ||
+             a.loop_end > a.song_end)) {
             error = "arrangement loop range is invalid";
             return false;
         }
@@ -147,7 +160,8 @@ bool validate_arrangement(const Timeline &timeline, std::string &error,
             const auto *left = pattern(a, a.clips[i].pattern);
             for (std::size_t j = i + 1; j < a.clips.size(); ++j) {
                 if (!a.clips[j].enabled ||
-                    a.clips[i].start + a.clips[i].duration <= a.clips[j].start ||
+                    a.clips[i].start + a.clips[i].duration <=
+                        a.clips[j].start ||
                     a.clips[j].start + a.clips[j].duration <= a.clips[i].start)
                     continue;
                 const auto *right = pattern(a, a.clips[j].pattern);
@@ -169,14 +183,14 @@ bool validate_arrangement(const Timeline &timeline, std::string &error,
             const auto *definition = pattern(a, clip.pattern);
             for (const auto &pt : definition->tracks) {
                 const auto repetitions =
-                    clip.loop
-                        ? static_cast<std::uint64_t>(
-                              1 + (clip.duration - 1) / pt.pattern.length)
-                        : 1ULL;
-                const auto events = static_cast<std::uint64_t>(
-                    pt.pattern.events.size());
-                if (events && repetitions >
-                                  (limits.expanded_events - expanded) / events) {
+                    clip.loop ? static_cast<std::uint64_t>(
+                                    1 + (clip.duration - 1) / pt.pattern.length)
+                              : 1ULL;
+                const auto events =
+                    static_cast<std::uint64_t>(pt.pattern.events.size());
+                if (events &&
+                    repetitions >
+                        (limits.expanded_events - expanded) / events) {
                     error = "expanded arrangement event capacity exceeded";
                     return false;
                 }
@@ -210,8 +224,8 @@ bool materialize_arrangement(const Timeline &source, Timeline &result,
             arrangement.song_start = 0;
             MusicalTick cursor{};
             ClipId clip_id = 1;
-            auto entry_index = std::min(a.pattern_chain_position,
-                                        a.chain_entries.size() - 1);
+            auto entry_index =
+                std::min(a.pattern_chain_position, a.chain_entries.size() - 1);
             std::set<std::size_t> visited;
             for (std::size_t step = 0; step < a.chain_entries.size(); ++step) {
                 if (!visited.insert(entry_index).second)
@@ -221,18 +235,17 @@ bool materialize_arrangement(const Timeline &source, Timeline &result,
                 const auto repeats = std::max<std::uint16_t>(
                     entry.repeats, definition->follow.after_repetitions);
                 for (std::uint16_t repeat = 0; repeat < repeats; ++repeat) {
-                    arrangement.clips.push_back(
-                        {clip_id++, definition->id, cursor, definition->length,
-                         false, 0, 1, true});
+                    arrangement.clips.push_back({clip_id++, definition->id,
+                                                 cursor, definition->length,
+                                                 false, 0, 1, true});
                     cursor += definition->length;
                 }
                 auto next = entry_index + 1;
-                const auto random = random_word(source.generation_seed,
-                                                definition->id, step);
-                const auto fires =
-                    static_cast<double>(random >> 11U) /
-                        static_cast<double>(1ULL << 53U) <
-                    definition->follow.probability;
+                const auto random =
+                    random_word(source.generation_seed, definition->id, step);
+                const auto fires = static_cast<double>(random >> 11U) /
+                                       static_cast<double>(1ULL << 53U) <
+                                   definition->follow.probability;
                 if (fires) {
                     if (definition->follow.type == FollowActionType::stop)
                         break;
@@ -254,8 +267,8 @@ bool materialize_arrangement(const Timeline &source, Timeline &result,
                         break;
                     }
                     case FollowActionType::random_eligible:
-                        next = static_cast<std::size_t>(
-                            random % a.chain_entries.size());
+                        next = static_cast<std::size_t>(random %
+                                                        a.chain_entries.size());
                         break;
                     case FollowActionType::continue_current:
                         next = entry_index;
@@ -293,8 +306,9 @@ bool materialize_arrangement(const Timeline &source, Timeline &result,
         for (auto &t : result.tracks)
             t.pattern.length = selected->length;
         for (const auto &pt : selected->tracks) {
-            auto it = std::find_if(result.tracks.begin(), result.tracks.end(),
-                                   [&](const auto &t) { return t.id == pt.track; });
+            auto it =
+                std::find_if(result.tracks.begin(), result.tracks.end(),
+                             [&](const auto &t) { return t.id == pt.track; });
             it->pattern = pt.pattern;
         }
         error.clear();
@@ -312,12 +326,13 @@ bool materialize_arrangement(const Timeline &source, Timeline &result,
         const auto *definition = pattern(a, clip.pattern);
         const auto clip_end = clip.start + clip.duration;
         for (const auto &pt : definition->tracks) {
-            auto output = std::find_if(result.tracks.begin(), result.tracks.end(),
-                                       [&](const auto &t) { return t.id == pt.track; });
+            auto output =
+                std::find_if(result.tracks.begin(), result.tracks.end(),
+                             [&](const auto &t) { return t.id == pt.track; });
             for (std::uint64_t repetition = 0;; ++repetition) {
-                const auto origin = clip.start +
-                                    static_cast<MusicalTick>(repetition) *
-                                        pt.pattern.length;
+                const auto origin =
+                    clip.start +
+                    static_cast<MusicalTick>(repetition) * pt.pattern.length;
                 if (origin >= clip_end || (!clip.loop && repetition != 0))
                     break;
                 for (const auto &source_event : pt.pattern.events) {
@@ -347,13 +362,41 @@ bool materialize_arrangement(const Timeline &source, Timeline &result,
                             event.velocity * clip.velocity_scale, 0.0F, 1.0F);
                     }
                     if (event.type == MusicalEventType::note)
-                        event.duration = std::min(
-                            event.duration, range_end - absolute);
+                        event.duration =
+                            std::min(event.duration, range_end - absolute);
                     output->pattern.events.push_back(std::move(event));
                 }
             }
         }
     }
+    if (!a.automation.empty() && result.tracks.empty()) {
+        error = "arrangement automation requires a timeline track";
+        return false;
+    }
+    if (!result.tracks.empty())
+        for (const auto &source : a.automation)
+            if (source.tick >= range_start && source.tick < range_end) {
+                auto event = source;
+                event.tick -= range_start;
+                while (!ids.insert(event.id).second)
+                    ++event.id;
+                auto destination = result.tracks.begin();
+                if (const auto resolved = resolve_parameter_destination(
+                        event.parameter_destination);
+                    resolved &&
+                    resolved->target == ParameterTarget::subtractive_synth)
+                    destination =
+                        std::find_if(result.tracks.begin(), result.tracks.end(),
+                                     [](const auto &candidate) {
+                                         return candidate.instrument_id ==
+                                                subtractive_instrument_id;
+                                     });
+                if (destination == result.tracks.end()) {
+                    error = "arrangement automation has no compatible track";
+                    return false;
+                }
+                destination->pattern.events.push_back(std::move(event));
+            }
     error.clear();
     return true;
 }

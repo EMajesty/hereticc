@@ -1,5 +1,10 @@
 # Performance monitoring and benchmarks
 
+`arrangement_recording_4096_events` separates bounded capture cost from
+control-side validation/commit cost for rapid launches and dense automation.
+Callback acknowledgement remains a fixed queue push. Results are host
+measurements, not Raspberry Pi 5 or N150 claims.
+
 Arrangement scenarios compile and schedule 16 patterns/64 clips and 64
 patterns/256 clips. `preparation_ns` contains control-side materialization and
 compilation; buffer processing reports scheduler cost separately.

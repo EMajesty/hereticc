@@ -3,6 +3,7 @@
 #include "neurogenic/audio/slicing.hpp"
 #include "neurogenic/performance/monitor.hpp"
 #include "neurogenic/project/project.hpp"
+#include "neurogenic/timeline/arrangement_recording.hpp"
 #include "neurogenic/timeline/edit.hpp"
 #include <array>
 #include <cstdint>
@@ -234,6 +235,11 @@ struct ApplicationState {
     MidiProjectConfiguration midi;
     std::uint64_t midi_dropped{}, midi_sent{};
     ExternalClockState external_midi_clock;
+    ArrangementRecordingStatus arrangement_recording;
+    std::uint32_t arrangement_recording_api_version{1};
+    std::vector<CapturedPatternLaunch> captured_pattern_launches;
+    std::vector<CapturedAutomationChange> captured_automation_changes;
+    std::vector<MusicalEvent> arrangement_automation;
     std::array<bool, maximum_midi_ports> midi_output_connected{};
     std::array<bool, maximum_midi_ports> midi_input_connected{};
 };
@@ -268,6 +274,10 @@ class ApplicationService {
     [[nodiscard]] std::uint64_t rejected_commands() const noexcept;
     [[nodiscard]] SliceService &slices() noexcept { return slices_; }
     [[nodiscard]] RecordingService &recording() noexcept { return recording_; }
+    [[nodiscard]] ArrangementRecordingService &
+    arrangement_recording() noexcept {
+        return arrangement_recording_;
+    }
     [[nodiscard]] MidiOutputScheduler &midi_output() noexcept {
         return midi_output_;
     }
@@ -288,6 +298,7 @@ class ApplicationService {
     SampleManager &samples_;
     mutable SliceService slices_;
     mutable RecordingService recording_;
+    mutable ArrangementRecordingService arrangement_recording_;
     RecordingConfiguration recording_configuration_;
     std::uint64_t recording_fixed_bars_{};
     mutable MixerConfiguration mixer_configuration_;
@@ -311,6 +322,12 @@ class ApplicationService {
     mutable std::optional<MusicalTick> queued_launch_tick_;
     mutable std::optional<std::uint64_t> queued_launch_frame_;
     mutable std::uint64_t observed_song_end_count_{};
+    mutable std::uint64_t observed_timeline_activation_count_{};
+    mutable std::uint64_t observed_timeline_activation_drops_{};
+    mutable PatternId pending_record_pattern_{};
+    mutable bool pending_record_chain_{};
+    mutable std::optional<std::uint64_t> pending_record_frame_;
+    MusicalTick automation_thinning_ticks_{ticks_per_quarter / 64};
     bool fill_momentary_{};
     Project project_;
     mutable SystemMonitor system_monitor_;
@@ -325,7 +342,8 @@ struct TextEntryState {
 class TextEntryModel {
   public:
     [[nodiscard]] static constexpr std::string_view characters() noexcept {
-        return " ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.";
+        return " ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+               "-_.";
     }
     void begin(std::string initial = {});
     void direct(std::string_view);

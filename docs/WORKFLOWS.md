@@ -1,5 +1,14 @@
 # End-to-end workflows
 
+## Record a live pattern performance
+
+Arm arrangement recording, choose replace or overdub, optionally enable
+automation/count-in, and start at the desired transport position. Launch
+patterns or a chain; transitions are timestamped at actual activation. Stop,
+inspect pending counts/overflow, then commit or discard. Commit creates ordinary
+editable clips and automation; Undo removes the whole pass. Save the project to
+persist it. See `ARRANGEMENT_RECORDING.md`.
+
 ## Build a live set or song
 
 Create reusable patterns through arrangement actions, edit their track events

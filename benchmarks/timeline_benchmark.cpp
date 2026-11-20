@@ -7,8 +7,8 @@
 #include "neurogenic/midi/routing.hpp"
 #include "neurogenic/performance/monitor.hpp"
 #include "neurogenic/project/project.hpp"
-#include "neurogenic/timeline/playback.hpp"
 #include "neurogenic/timeline/arrangement.hpp"
+#include "neurogenic/timeline/playback.hpp"
 #include "neurogenic/ui/gui.hpp"
 #include <charconv>
 #include <chrono>
@@ -730,8 +730,8 @@ void group_mixer_case(std::size_t groups, bool effects) {
     }
     if (effects)
         for (std::size_t group = 0; group < groups; ++group) {
-            const auto instance = static_cast<neurogenic::EffectInstanceId>(
-                group + 1);
+            const auto instance =
+                static_cast<neurogenic::EffectInstanceId>(group + 1);
             auto &effect = configuration.effects.instances[group];
             effect.id = instance;
             effect.type = neurogenic::EffectProcessorType::saturation;
@@ -868,13 +868,15 @@ void modulation_case(std::string name, std::size_t route_count,
     configuration.update_interval = 32;
     configuration.modulator_count =
         std::min(instance_count, configuration.modulators.size());
-    for (std::size_t index = 0; index < configuration.modulator_count; ++index) {
+    for (std::size_t index = 0; index < configuration.modulator_count;
+         ++index) {
         auto &instance = configuration.modulators[index];
         instance.id = static_cast<neurogenic::ModulatorInstanceId>(index + 1);
         instance.type = index % 4 == 0 ? neurogenic::ModulatorType::sample_hold
-                                      : neurogenic::ModulatorType::lfo;
+                                       : neurogenic::ModulatorType::lfo;
         instance.owner_kind = neurogenic::ModulatorOwnerKind::master;
-        instance.settings.rate_hz = 0.25F + static_cast<float>(index % 13) * 0.1F;
+        instance.settings.rate_hz =
+            0.25F + static_cast<float>(index % 13) * 0.1F;
         instance.settings.tempo_sync = tempo_sync;
         instance.settings.seed = static_cast<std::uint32_t>(1000 + index);
     }
@@ -890,8 +892,9 @@ void modulation_case(std::string name, std::size_t route_count,
         value.id = static_cast<neurogenic::ModulationRouteId>(route + 1);
         value.source = static_cast<neurogenic::ModulationSourceId>(route % 4);
         if (configuration.modulator_count)
-            value.source_instance = static_cast<neurogenic::ModulatorInstanceId>(
-                route % configuration.modulator_count + 1);
+            value.source_instance =
+                static_cast<neurogenic::ModulatorInstanceId>(
+                    route % configuration.modulator_count + 1);
         value.depth = (route & 1U) ? -0.1F : 0.1F;
         if (route % 6 == 0) {
             value.destination = {
@@ -961,8 +964,9 @@ void modulation_graph_case(std::string name, std::size_t instance_count,
                            bool mixed = false) {
     neurogenic::ModulationConfiguration configuration;
     configuration.update_interval = 32;
-    configuration.modulator_count = std::min(
-        instance_count, neurogenic::ModulationConfiguration::maximum_modulators);
+    configuration.modulator_count =
+        std::min(instance_count,
+                 neurogenic::ModulationConfiguration::maximum_modulators);
     for (std::size_t i = 0; i < configuration.modulator_count; ++i) {
         auto &instance = configuration.modulators[i];
         instance.id = static_cast<neurogenic::ModulatorInstanceId>(i + 1);
@@ -989,8 +993,8 @@ void modulation_graph_case(std::string name, std::size_t instance_count,
         route.id = static_cast<neurogenic::ModulationRouteId>(i + 1);
         route.source_instance = static_cast<neurogenic::ModulatorInstanceId>(
             i % configuration.modulator_count + 1);
-        const auto &source = configuration.modulators[
-            static_cast<std::size_t>(route.source_instance - 1)];
+        const auto &source = configuration.modulators[static_cast<std::size_t>(
+            route.source_instance - 1)];
         route.scope = source.owner_kind == neurogenic::ModulatorOwnerKind::track
                           ? neurogenic::ModulationScope::track
                           : neurogenic::ModulationScope::global;
@@ -1125,20 +1129,21 @@ void sample_voice_modulation_case(std::size_t voice_count,
                                   std::size_t definition_count) {
     neurogenic::ModulationConfiguration configuration;
     configuration.update_interval = 32;
-    configuration.modulator_count = std::min(
-        definition_count,
-        neurogenic::ModulationConfiguration::maximum_modulators);
-    constexpr std::array types{
-        neurogenic::ModulatorType::adsr, neurogenic::ModulatorType::lfo,
-        neurogenic::ModulatorType::clocked_random,
-        neurogenic::ModulatorType::function_generator,
-        neurogenic::ModulatorType::step_sequencer,
-        neurogenic::ModulatorType::velocity};
+    configuration.modulator_count =
+        std::min(definition_count,
+                 neurogenic::ModulationConfiguration::maximum_modulators);
+    constexpr std::array types{neurogenic::ModulatorType::adsr,
+                               neurogenic::ModulatorType::lfo,
+                               neurogenic::ModulatorType::clocked_random,
+                               neurogenic::ModulatorType::function_generator,
+                               neurogenic::ModulatorType::step_sequencer,
+                               neurogenic::ModulatorType::velocity};
     for (std::size_t i = 0; i < configuration.modulator_count; ++i) {
         auto &definition = configuration.modulators[i];
         definition.id = static_cast<neurogenic::ModulatorInstanceId>(i + 1);
         definition.type = types[i % types.size()];
-        definition.owner_kind = neurogenic::ModulatorOwnerKind::voice_definition;
+        definition.owner_kind =
+            neurogenic::ModulatorOwnerKind::voice_definition;
         definition.owner_id = 1;
         definition.settings.rate_hz = 0.5F + static_cast<float>(i) * 0.1F;
         definition.settings.retrigger = true;
@@ -1147,11 +1152,12 @@ void sample_voice_modulation_case(std::size_t voice_count,
     for (std::size_t i = 0; i < configuration.route_count; ++i) {
         auto &route = configuration.routes[i];
         route.id = static_cast<neurogenic::ModulationRouteId>(i + 1);
-        route.source_instance = static_cast<neurogenic::ModulatorInstanceId>(i + 1);
+        route.source_instance =
+            static_cast<neurogenic::ModulatorInstanceId>(i + 1);
         route.destination = {
             neurogenic::ParameterTarget::sample_voice,
             static_cast<std::uint32_t>(
-                i % 3 == 0 ? neurogenic::SampleModulationParameter::pitch
+                i % 3 == 0   ? neurogenic::SampleModulationParameter::pitch
                 : i % 3 == 1 ? neurogenic::SampleModulationParameter::gain
                              : neurogenic::SampleModulationParameter::pan),
             1};
@@ -1173,7 +1179,8 @@ void sample_voice_modulation_case(std::size_t voice_count,
             voices[i], configuration, 1, 0.5F,
             static_cast<std::uint64_t>(i + 1));
     const auto preparation_ns =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - prepare)
+        std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
+                                                             prepare)
             .count();
     const auto begin = Clock::now();
     for (std::size_t block = 0; block < iterations; ++block)
@@ -1186,7 +1193,8 @@ void sample_voice_modulation_case(std::size_t voice_count,
     result("sample_voice_modulation_" + std::to_string(voice_count) + "v_" +
                std::to_string(definition_count) + "m",
            48000, 256,
-           std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - begin)
+           std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
+                                                                begin)
                    .count() /
                iterations,
            preparation_ns);
@@ -1341,8 +1349,8 @@ void arrangement_case(std::size_t pattern_count, std::size_t clip_count) {
     for (std::size_t clip = 0; clip < clip_count; ++clip)
         source.arrangement.clips.push_back(
             {clip + 1, clip % pattern_count + 1,
-             static_cast<neurogenic::MusicalTick>(clip * 960), 960, false, 0,
-             1, true});
+             static_cast<neurogenic::MusicalTick>(clip * 960), 960, false, 0, 1,
+             true});
     source.arrangement.song_end = static_cast<neurogenic::MusicalTick>(
         std::max<std::size_t>(1, clip_count) * 960);
     source.arrangement.playback_mode = neurogenic::TimelinePlaybackMode::song;
@@ -1383,9 +1391,10 @@ void pattern_chain_case(std::size_t entry_count) {
         pattern.name = "Chain " + std::to_string(index + 1);
         pattern.length = 960;
         pattern.tracks.push_back(
-            {1, {960, {{index + 1, 0,
-                        neurogenic::MusicalEventType::note,
-                        static_cast<std::uint8_t>(36 + index), 0.7F, 120}}}});
+            {1,
+             {960,
+              {{index + 1, 0, neurogenic::MusicalEventType::note,
+                static_cast<std::uint8_t>(36 + index), 0.7F, 120}}}});
         source.arrangement.patterns.push_back(std::move(pattern));
     }
     source.arrangement.playback_mode =
@@ -1414,13 +1423,62 @@ void pattern_chain_case(std::size_t entry_count) {
         checksum += scheduler.schedule(frame, 256, events);
         frame += 256;
     }
-    result("pattern_chain_" + std::to_string(entry_count) + "_entries",
-           48'000, 256,
+    result("pattern_chain_" + std::to_string(entry_count) + "_entries", 48'000,
+           256,
            std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() -
                                                                 begin)
                    .count() /
                iterations,
            preparation);
+}
+
+void arrangement_recording_case() {
+    neurogenic::Timeline timeline;
+    timeline.tracks.push_back(
+        {1,
+         "Record",
+         false,
+         {960, {}},
+         std::string(neurogenic::subtractive_instrument_id)});
+    for (std::uint64_t id = 1; id <= 8; ++id) {
+        neurogenic::PatternDefinition pattern;
+        pattern.id = id;
+        pattern.name = "Recorded " + std::to_string(id);
+        pattern.length = 960;
+        pattern.tracks.push_back({1, {960, {}}});
+        timeline.arrangement.patterns.push_back(std::move(pattern));
+    }
+    neurogenic::TimelineService service(
+        [](const neurogenic::Timeline &, std::string &) { return true; },
+        timeline);
+    neurogenic::ArrangementRecordingService recorder(8192);
+    std::string error;
+    recorder.arm(true, error);
+    recorder.start(0, neurogenic::ArrangementRecordMode::replace, 0, true,
+                   error);
+    const auto begin = Clock::now();
+    constexpr std::size_t events = 4096;
+    for (std::size_t event = 0; event < events; ++event) {
+        if ((event % 4) == 0)
+            recorder.capture_pattern(
+                event / 4 % 8 + 1, static_cast<neurogenic::MusicalTick>(event));
+        recorder.capture_automation(
+            "synth.cutoff", static_cast<float>(100 + event % 1000),
+            static_cast<neurogenic::MusicalTick>(event), 0);
+    }
+    const auto capture = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                             Clock::now() - begin)
+                             .count();
+    recorder.stop(events + 1, error);
+    const auto commit_begin = Clock::now();
+    if (!recorder.commit(service, error))
+        throw std::runtime_error(error);
+    const auto commit = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            Clock::now() - commit_begin)
+                            .count();
+    checksum += service.snapshot().timeline.arrangement.automation.size();
+    result("arrangement_recording_4096_events", 48'000, 256, capture / events,
+           commit);
 }
 
 int main(int argc, char **argv) {
@@ -1468,6 +1526,7 @@ int main(int argc, char **argv) {
     arrangement_case(16, 64);
     arrangement_case(64, 256);
     pattern_chain_case(64);
+    arrangement_recording_case();
     automation_case("parameter_locks_sparse", 4);
     automation_case("parameter_locks_dense", 256);
     automation_case("mixed_sample_synth_automation", 64, true);
@@ -1523,8 +1582,7 @@ int main(int argc, char **argv) {
     modulation_case("modulation_tempo_sync", 16, true);
     modulation_case("modulator_instances_8", 16, false, 8);
     modulation_case("modulator_instances_32", 64, false, 32);
-    modulation_case("modulator_instances_64_dense_routes_128", 128, false,
-                    64);
+    modulation_case("modulator_instances_64_dense_routes_128", 128, false, 64);
     modulation_graph_case("modulation_graph_16_32", 16, 32, false);
     modulation_graph_case("modulation_graph_32_64", 32, 64, false);
     modulation_graph_case("modulation_graph_64_128", 64, 128, false);

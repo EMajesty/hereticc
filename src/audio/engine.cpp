@@ -477,8 +477,8 @@ void AudioEngine::activate_timeline(const TimelinePublication &publication,
     active_timeline_end_frame_ = 0;
     if (timeline->playback_length > 0 &&
         timeline->song_end_behavior != SongEndBehavior::loop) {
-        const auto duration = timeline_scheduler_.frame_at_tick(
-            timeline->playback_length);
+        const auto duration =
+            timeline_scheduler_.frame_at_tick(timeline->playback_length);
         active_timeline_end_frame_ =
             duration > std::numeric_limits<std::uint64_t>::max() - actual_frame
                 ? std::numeric_limits<std::uint64_t>::max()
@@ -486,6 +486,9 @@ void AudioEngine::activate_timeline(const TimelinePublication &publication,
     }
     last_timeline_activation_frame_.store(actual_frame,
                                           std::memory_order_release);
+    timeline_activation_count_.fetch_add(1, std::memory_order_release);
+    if (!timeline_activations_.push({actual_frame}))
+        dropped_timeline_activations_.fetch_add(1, std::memory_order_relaxed);
     last_timeline_lateness_frames_.store(
         actual_frame > publication.activation_frame
             ? actual_frame - publication.activation_frame
@@ -637,8 +640,8 @@ void AudioEngine::start_voice(std::uint8_t note, float velocity, TrackId track,
     voice.timeline_owned = timeline_owned;
     voice.preview = preview;
     reset_sample_voice_modulation(voice.voice_modulation,
-                                  modulation_.configuration(), track,
-                                  velocity, occurrence ^ voice.age);
+                                  modulation_.configuration(), track, velocity,
+                                  occurrence ^ voice.age);
     voice.active = true;
 }
 
@@ -986,8 +989,8 @@ void AudioEngine::process(std::span<float> left,
     std::uint32_t timeline_stop_offset = static_cast<std::uint32_t>(frames);
     bool timeline_stops_this_buffer{};
     if (transport_playing_) {
-        const auto range_start = accept_external_clock_ ? external_start_frame
-                                                        : transport_frame_;
+        const auto range_start =
+            accept_external_clock_ ? external_start_frame : transport_frame_;
         if (has_pending_timeline_ &&
             pending_timeline_.activation_frame <= range_start) {
             activate_timeline(pending_timeline_, range_start);
@@ -1001,8 +1004,9 @@ void AudioEngine::process(std::span<float> left,
                     active_timeline_end_frame_ < raw_range_end
                 ? active_timeline_end_frame_
                 : raw_range_end;
-        timeline_stops_this_buffer = active_timeline_end_frame_ != 0 &&
-                                     active_timeline_end_frame_ <= raw_range_end;
+        timeline_stops_this_buffer =
+            active_timeline_end_frame_ != 0 &&
+            active_timeline_end_frame_ <= raw_range_end;
         if (timeline_stops_this_buffer && raw_range_end > range_start)
             timeline_stop_offset = static_cast<std::uint32_t>(
                 (static_cast<long double>(range_end - range_start) * frames) /
@@ -1022,17 +1026,16 @@ void AudioEngine::process(std::span<float> left,
                 range_start, boundary, first_frames, timeline_events_);
             activate_timeline(pending_timeline_, boundary);
             has_pending_timeline_ = false;
-            auto remainder = std::span(timeline_events_).subspan(timeline_count);
+            auto remainder =
+                std::span(timeline_events_).subspan(timeline_count);
             const auto second = timeline_scheduler_.schedule_range(
-                boundary, range_end,
-                output_frames - first_frames, remainder);
+                boundary, range_end, output_frames - first_frames, remainder);
             for (std::size_t i = 0; i < second; ++i)
                 remainder[i].frame += first_frames;
             timeline_count += second;
         } else
             timeline_count = timeline_scheduler_.schedule_range(
-                range_start, range_end, output_frames,
-                timeline_events_);
+                range_start, range_end, output_frames, timeline_events_);
     }
     dropped_timeline_events_.store(timeline_scheduler_.dropped_events(),
                                    std::memory_order_release);
@@ -1057,10 +1060,9 @@ void AudioEngine::process(std::span<float> left,
             song_end_count_.fetch_add(1, std::memory_order_relaxed);
             if (auto *midi = midi_output_.load(std::memory_order_acquire))
                 if (midi_clock_configuration_.enabled)
-                    midi_clock_.stop(
-                        *midi,
-                        {midi_clock_configuration_.ports.data(),
-                         midi_clock_configuration_.port_count});
+                    midi_clock_.stop(*midi,
+                                     {midi_clock_configuration_.ports.data(),
+                                      midi_clock_configuration_.port_count});
         }
         modulation_.process_frame([&](ParameterDestination destination,
                                       float value) noexcept {
@@ -1209,8 +1211,8 @@ void AudioEngine::process(std::span<float> left,
                         packet.size = 3;
                         if (event.midi_output_port > 0 &&
                             event.midi_output_port <= maximum_midi_ports)
-                            timeline_midi_notes_[event.midi_output_port - 1]
-                                                [channel][event.pitch] =
+                            timeline_midi_notes_[event.midi_output_port -
+                                                 1][channel][event.pitch] =
                                 event.type == MusicalEventType::note_on;
                     } else if (event.type == MusicalEventType::control_change) {
                         packet.bytes = {
@@ -1288,9 +1290,8 @@ void AudioEngine::process(std::span<float> left,
             }
             const auto level = voice.base_gain * voice.modulation_gain *
                                voice_modulation.gain * voice.envelope_level;
-            const auto pan = std::clamp(voice.modulation_pan +
-                                            voice_modulation.pan,
-                                        -1.0F, 1.0F);
+            const auto pan = std::clamp(
+                voice.modulation_pan + voice_modulation.pan, -1.0F, 1.0F);
             sample_left *= pan > 0 ? 1.0F - pan : 1.0F;
             sample_right *= pan < 0 ? 1.0F + pan : 1.0F;
             const auto routed =
@@ -1379,10 +1380,9 @@ void AudioEngine::process(std::span<float> left,
             song_end_count_.fetch_add(1, std::memory_order_relaxed);
             if (auto *midi = midi_output_.load(std::memory_order_acquire))
                 if (midi_clock_configuration_.enabled)
-                    midi_clock_.stop(
-                        *midi,
-                        {midi_clock_configuration_.ports.data(),
-                         midi_clock_configuration_.port_count});
+                    midi_clock_.stop(*midi,
+                                     {midi_clock_configuration_.ports.data(),
+                                      midi_clock_configuration_.port_count});
         }
         transport_frame_ = active_timeline_end_frame_;
         active_timeline_end_frame_ = 0;
@@ -1446,10 +1446,10 @@ void AudioEngine::process(std::span<float> left,
             recorder->capture_internal(
                 RecordingSource::group_pre_effects, mixer_.group_pre_left(i),
                 mixer_.group_pre_right(i), callback_frame, group_id);
-            recorder->capture_internal(
-                RecordingSource::group_post_effects,
-                mixer_.group_post_effect_left(i),
-                mixer_.group_post_effect_right(i), callback_frame, group_id);
+            recorder->capture_internal(RecordingSource::group_post_effects,
+                                       mixer_.group_post_effect_left(i),
+                                       mixer_.group_post_effect_right(i),
+                                       callback_frame, group_id);
             recorder->capture_internal(
                 RecordingSource::group_post_fader, mixer_.group_left(i),
                 mixer_.group_right(i), callback_frame, group_id);

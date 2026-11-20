@@ -1,6 +1,6 @@
 #include "neurogenic/timeline/edit.hpp"
-#include "neurogenic/timeline/arrangement.hpp"
 #include "neurogenic/midi/routing.hpp"
+#include "neurogenic/timeline/arrangement.hpp"
 #include "neurogenic/timeline/playback.hpp"
 #include <algorithm>
 #include <cmath>
@@ -394,9 +394,13 @@ bool TimelineTransaction::create_pattern(PatternId id, std::string name,
         error = "invalid or duplicate pattern";
         return false;
     }
-    patterns.push_back({id, std::move(name), length,
+    patterns.push_back({id,
+                        std::move(name),
+                        length,
                         timeline_.transport.time_signature_numerator,
-                        timeline_.transport.time_signature_denominator, {}, {}});
+                        timeline_.transport.time_signature_denominator,
+                        {},
+                        {}});
     error.clear();
     return true;
 }
@@ -404,16 +408,17 @@ bool TimelineTransaction::duplicate_pattern(PatternId source,
                                             PatternId destination,
                                             std::string name,
                                             std::string &error) {
-    const auto found = std::find_if(
-        timeline_.arrangement.patterns.begin(),
-        timeline_.arrangement.patterns.end(),
-        [=](const auto &p) { return p.id == source; });
+    const auto found =
+        std::find_if(timeline_.arrangement.patterns.begin(),
+                     timeline_.arrangement.patterns.end(),
+                     [=](const auto &p) { return p.id == source; });
     if (found == timeline_.arrangement.patterns.end()) {
         error = "source pattern does not exist";
         return false;
     }
     const auto source_copy = *found;
-    if (!create_pattern(destination, std::move(name), source_copy.length, error))
+    if (!create_pattern(destination, std::move(name), source_copy.length,
+                        error))
         return false;
     auto &copy = timeline_.arrangement.patterns.back();
     copy.time_signature_numerator = source_copy.time_signature_numerator;
@@ -458,18 +463,18 @@ bool TimelineTransaction::set_pattern_track(PatternId pattern_id,
                                             TrackId track_id,
                                             MusicalPattern pattern_value,
                                             std::string &error) {
-    auto found = std::find_if(timeline_.arrangement.patterns.begin(),
-                              timeline_.arrangement.patterns.end(),
-                              [=](const auto &p) { return p.id == pattern_id; });
+    auto found =
+        std::find_if(timeline_.arrangement.patterns.begin(),
+                     timeline_.arrangement.patterns.end(),
+                     [=](const auto &p) { return p.id == pattern_id; });
     if (found == timeline_.arrangement.patterns.end() ||
         !find_track(track_id) || pattern_value.length <= 0) {
         error = "pattern or track does not exist";
         return false;
     }
-    auto target = std::find_if(found->tracks.begin(), found->tracks.end(),
-                               [=](const auto &p) {
-                                   return p.track == track_id;
-                               });
+    auto target =
+        std::find_if(found->tracks.begin(), found->tracks.end(),
+                     [=](const auto &p) { return p.track == track_id; });
     if (target == found->tracks.end())
         found->tracks.push_back({track_id, std::move(pattern_value)});
     else
@@ -479,9 +484,10 @@ bool TimelineTransaction::set_pattern_track(PatternId pattern_id,
 }
 bool TimelineTransaction::create_clip(ArrangementClip clip,
                                       std::string &error) {
-    if (!clip.id || std::any_of(timeline_.arrangement.clips.begin(),
-                                timeline_.arrangement.clips.end(),
-                                [&](const auto &c) { return c.id == clip.id; })) {
+    if (!clip.id ||
+        std::any_of(timeline_.arrangement.clips.begin(),
+                    timeline_.arrangement.clips.end(),
+                    [&](const auto &c) { return c.id == clip.id; })) {
         error = "invalid or duplicate clip";
         return false;
     }
@@ -517,6 +523,38 @@ bool TimelineTransaction::delete_clip(ClipId id, std::string &error) {
         error = "clip does not exist";
         return false;
     }
+    error.clear();
+    return true;
+}
+bool TimelineTransaction::update_arrangement_automation(EventId id,
+                                                        MusicalTick tick,
+                                                        float value,
+                                                        std::string &error) {
+    auto &events = timeline_.arrangement.automation;
+    const auto found =
+        std::find_if(events.begin(), events.end(),
+                     [=](const auto &event) { return event.id == id; });
+    if (found == events.end() || tick < 0 || !std::isfinite(value)) {
+        error = found == events.end() ? "arrangement automation does not exist"
+                                      : "invalid arrangement automation value";
+        return false;
+    }
+    found->tick = tick;
+    found->value = value;
+    error.clear();
+    return true;
+}
+bool TimelineTransaction::delete_arrangement_automation(EventId id,
+                                                        std::string &error) {
+    auto &events = timeline_.arrangement.automation;
+    const auto found =
+        std::find_if(events.begin(), events.end(),
+                     [=](const auto &event) { return event.id == id; });
+    if (found == events.end()) {
+        error = "arrangement automation does not exist";
+        return false;
+    }
+    events.erase(found);
     error.clear();
     return true;
 }
@@ -561,8 +599,7 @@ bool TimelineTransaction::set_song_range(MusicalTick start, MusicalTick end,
     return true;
 }
 bool TimelineTransaction::set_loop_region(bool enabled, MusicalTick start,
-                                          MusicalTick end,
-                                          std::string &error) {
+                                          MusicalTick end, std::string &error) {
     if (enabled && (start < timeline_.arrangement.song_start || end <= start ||
                     end > timeline_.arrangement.song_end)) {
         error = "invalid arrangement loop region";
@@ -596,8 +633,8 @@ bool TimelineTransaction::set_chain_running(bool running,
                                             std::size_t start_entry,
                                             std::string &error) {
     auto &a = timeline_.arrangement;
-    if (running && (a.chain_entries.empty() ||
-                    start_entry >= a.chain_entries.size())) {
+    if (running &&
+        (a.chain_entries.empty() || start_entry >= a.chain_entries.size())) {
         error = "pattern chain start entry is invalid";
         return false;
     }
@@ -657,7 +694,8 @@ bool TimelineTransaction::set_song_end_behavior(SongEndBehavior behavior,
 PatternId TimelineTransaction::next_pattern_id() const noexcept {
     PatternId next = 1;
     for (const auto &pattern : timeline_.arrangement.patterns)
-        if (pattern.id >= next && pattern.id < std::numeric_limits<PatternId>::max())
+        if (pattern.id >= next &&
+            pattern.id < std::numeric_limits<PatternId>::max())
             next = pattern.id + 1;
     return next;
 }

@@ -1,6 +1,6 @@
 #include "neurogenic/application/control.hpp"
-#include "neurogenic/dsp/voice_modulation.hpp"
 #include "neurogenic/dsp/parameter_destination.hpp"
+#include "neurogenic/dsp/voice_modulation.hpp"
 #include "neurogenic/timeline/arrangement.hpp"
 #include <algorithm>
 #include <chrono>
@@ -157,9 +157,9 @@ ActionRegistry::ActionRegistry() {
                {{"id", ValueType::integer}, {"name", ValueType::text}}));
     add(action("pattern.delete.v1", "Delete pattern", "Arrangement",
                {{"id", ValueType::integer}}));
-    add(action("pattern.launch.v1", "Launch pattern", "Arrangement",
-               {{"id", ValueType::integer},
-                {"queued", ValueType::boolean, false}}));
+    add(action(
+        "pattern.launch.v1", "Launch pattern", "Arrangement",
+        {{"id", ValueType::integer}, {"queued", ValueType::boolean, false}}));
     add(action("arrangement.mode-set.v1", "Set playback mode", "Arrangement",
                {{"mode", ValueType::text}}));
     add(action("arrangement.clip-create.v1", "Create clip", "Arrangement",
@@ -213,6 +213,30 @@ ActionRegistry::ActionRegistry() {
                 {"pattern", ValueType::integer, false}}));
     add(action("arrangement.return.v1", "Return to arrangement",
                "Arrangement"));
+    add(action("arrangement.record-arm.v1", "Arm arrangement recording",
+               "Arrangement", {{"armed", ValueType::boolean}}));
+    add(action("arrangement.record-start.v1", "Start arrangement recording",
+               "Arrangement",
+               {{"mode", ValueType::text},
+                {"count_in_bars", ValueType::integer, false},
+                {"automation", ValueType::boolean, false}}));
+    add(action("arrangement.record-stop.v1", "Stop arrangement recording",
+               "Arrangement"));
+    add(action("arrangement.record-commit.v1", "Commit arrangement recording",
+               "Arrangement"));
+    add(action("arrangement.record-discard.v1", "Discard arrangement recording",
+               "Arrangement"));
+    add(action("arrangement.automation-arm.v1", "Arm automation recording",
+               "Arrangement", {{"armed", ValueType::boolean}}));
+    add(action("arrangement.automation-thinning.v1", "Set automation thinning",
+               "Arrangement", {{"ticks", ValueType::integer}}));
+    add(action("arrangement.automation-update.v1", "Edit recorded automation",
+               "Arrangement",
+               {{"id", ValueType::integer},
+                {"tick", ValueType::integer},
+                {"value", ValueType::real}}));
+    add(action("arrangement.automation-delete.v1", "Delete recorded automation",
+               "Arrangement", {{"id", ValueType::integer}}));
     add(action("step.select.v1", "Select step", "Sequencer",
                {{"step", ValueType::integer}}));
     add(action("step.toggle.v1", "Toggle step", "Sequencer",
@@ -446,22 +470,24 @@ ActionRegistry::ActionRegistry() {
                {{"id", ValueType::integer}, {"name", ValueType::text}}));
     add(action("mixer.group-select.v1", "Select group bus", "Mixer",
                {{"id", ValueType::integer}}));
-    add(action("mixer.track-destination.v1", "Set track destination", "Mixer",
-               {{"track_id", ValueType::integer},
-                {"group_id", ValueType::integer}}));
+    add(action(
+        "mixer.track-destination.v1", "Set track destination", "Mixer",
+        {{"track_id", ValueType::integer}, {"group_id", ValueType::integer}}));
     add(action("mixer.group-output.v1", "Set group destination", "Mixer",
                {{"id", ValueType::integer},
                 {"group_id", ValueType::integer},
                 {"output_pair", ValueType::integer, false}}));
     add(action("mixer.group-levels.v1", "Set group gain and pan", "Mixer",
-               {{"id", ValueType::integer}, {"gain", ValueType::real},
+               {{"id", ValueType::integer},
+                {"gain", ValueType::real},
                 {"pan", ValueType::real}}));
     add(action("mixer.group-mute-toggle.v1", "Toggle group mute", "Mixer",
                {{"id", ValueType::integer}}));
     add(action("mixer.group-solo-toggle.v1", "Toggle group solo", "Mixer",
                {{"id", ValueType::integer}}));
     add(action("mixer.group-aux-send.v1", "Set group auxiliary send", "Mixer",
-               {{"id", ValueType::integer}, {"aux", ValueType::integer},
+               {{"id", ValueType::integer},
+                {"aux", ValueType::integer},
                 {"value", ValueType::real},
                 {"pre_fader", ValueType::boolean, false}}));
     add(action("mixer.fx-loop-select.v1", "Select external FX loop", "Routing",
@@ -632,10 +658,9 @@ ActionRegistry::ActionRegistry() {
                 {"depth", ValueType::real}}));
     add(action("modulation.connection-delete.v1", "Delete graph connection",
                "Modulation", {{"connection_id", ValueType::integer}}));
-    add(action("modulation.connection-depth.v1", "Set connection depth",
-               "Modulation",
-               {{"connection_id", ValueType::integer},
-                {"depth", ValueType::real}}));
+    add(action(
+        "modulation.connection-depth.v1", "Set connection depth", "Modulation",
+        {{"connection_id", ValueType::integer}, {"depth", ValueType::real}}));
     add(action("modulation.connection-enable.v1", "Enable connection",
                "Modulation",
                {{"connection_id", ValueType::integer},
@@ -1262,13 +1287,13 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                      RecordingSource::group_post_effects ||
                  recording_configuration_.source ==
                      RecordingSource::group_post_fader) &&
-                std::none_of(
-                    mixer_configuration_.groups.begin(),
-                    mixer_configuration_.groups.begin() +
-                        mixer_configuration_.group_count,
-                    [&](const auto &group) {
-                        return group.id == recording_configuration_.source_id;
-                    }))
+                std::none_of(mixer_configuration_.groups.begin(),
+                             mixer_configuration_.groups.begin() +
+                                 mixer_configuration_.group_count,
+                             [&](const auto &group) {
+                                 return group.id ==
+                                        recording_configuration_.source_id;
+                             }))
                 error = "group recording source is unavailable";
             if (recording_configuration_.source ==
                     RecordingSource::track_channel &&
@@ -1778,6 +1803,18 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 mixer_configuration_ = next;
                 project_.mixer = next;
                 state_.project_dirty = true;
+                if (command.action_id == "effect.parameter-set.v1") {
+                    const auto destination =
+                        "fx." +
+                        std::to_string(*argument<std::int64_t>(command, "id")) +
+                        "." +
+                        std::to_string(
+                            *argument<std::int64_t>(command, "parameter"));
+                    arrangement_recording_.capture_automation(
+                        destination,
+                        static_cast<float>(*argument<double>(command, "value")),
+                        state_.transport_tick, automation_thinning_ticks_);
+                }
             }
         }
         changed_locked();
@@ -1862,11 +1899,10 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 std::uint64_t next_id = 1;
                 for (std::size_t i = 0; i < mixer_configuration_.group_count;
                      ++i)
-                    next_id = std::max(
-                        next_id,
-                        static_cast<std::uint64_t>(
-                            mixer_configuration_.groups[i].id) +
-                            1);
+                    next_id = std::max(next_id,
+                                       static_cast<std::uint64_t>(
+                                           mixer_configuration_.groups[i].id) +
+                                           1);
                 if (next_id > std::numeric_limits<MixerBusId>::max())
                     error = "group bus ID space is exhausted";
                 else {
@@ -1881,28 +1917,28 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 }
             }
         } else if (command.action_id == "mixer.group-select.v1") {
-            const auto id = static_cast<MixerBusId>(
-                *argument<std::int64_t>(command, "id"));
+            const auto id =
+                static_cast<MixerBusId>(*argument<std::int64_t>(command, "id"));
             if (find_group(id) == mixer_configuration_.groups.begin() +
                                       mixer_configuration_.group_count)
                 error = "group bus does not exist";
             else
                 state_.selected_group = id;
         } else if (command.action_id == "mixer.group-delete.v1") {
-            const auto id = static_cast<MixerBusId>(
-                *argument<std::int64_t>(command, "id"));
+            const auto id =
+                static_cast<MixerBusId>(*argument<std::int64_t>(command, "id"));
             const auto found = find_group(id);
             if (found == mixer_configuration_.groups.begin() +
                              mixer_configuration_.group_count)
                 error = "group bus does not exist";
             else {
-                const auto referenced_track = std::any_of(
-                    mixer_configuration_.tracks.begin(),
-                    mixer_configuration_.tracks.begin() +
-                        mixer_configuration_.track_count,
-                    [&](const auto &track) {
-                        return track.destination_group == id;
-                    });
+                const auto referenced_track =
+                    std::any_of(mixer_configuration_.tracks.begin(),
+                                mixer_configuration_.tracks.begin() +
+                                    mixer_configuration_.track_count,
+                                [&](const auto &track) {
+                                    return track.destination_group == id;
+                                });
                 const auto referenced_group = std::any_of(
                     mixer_configuration_.groups.begin(),
                     mixer_configuration_.groups.begin() +
@@ -1910,24 +1946,25 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     [&](const auto &group) {
                         return group.id != id && group.destination_group == id;
                     });
-                const auto referenced_modulator = std::any_of(
-                    modulation_configuration_.modulators.begin(),
-                    modulation_configuration_.modulators.begin() +
-                        modulation_configuration_.modulator_count,
-                    [&](const auto &modulator) {
-                        return modulator.owner_kind == ModulatorOwnerKind::group &&
-                               modulator.owner_id == id;
-                    });
-                const auto referenced_route = std::any_of(
-                    modulation_configuration_.routes.begin(),
-                    modulation_configuration_.routes.begin() +
-                        modulation_configuration_.route_count,
-                    [&](const auto &route) {
-                        return route.destination_owner_explicit &&
-                               route.destination_owner_kind ==
-                                   ModulatorOwnerKind::group &&
-                               route.destination_owner_id == id;
-                    });
+                const auto referenced_modulator =
+                    std::any_of(modulation_configuration_.modulators.begin(),
+                                modulation_configuration_.modulators.begin() +
+                                    modulation_configuration_.modulator_count,
+                                [&](const auto &modulator) {
+                                    return modulator.owner_kind ==
+                                               ModulatorOwnerKind::group &&
+                                           modulator.owner_id == id;
+                                });
+                const auto referenced_route =
+                    std::any_of(modulation_configuration_.routes.begin(),
+                                modulation_configuration_.routes.begin() +
+                                    modulation_configuration_.route_count,
+                                [&](const auto &route) {
+                                    return route.destination_owner_explicit &&
+                                           route.destination_owner_kind ==
+                                               ModulatorOwnerKind::group &&
+                                           route.destination_owner_id == id;
+                                });
                 const auto referenced_external = std::any_of(
                     mixer_configuration_.external_fx.begin(),
                     mixer_configuration_.external_fx.end(),
@@ -1956,12 +1993,11 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                               mixer_configuration_.groups.begin() +
                                   mixer_configuration_.group_count,
                               found);
-                    std::move(mixer_configuration_.effects.groups.begin() +
-                                  slot + 1,
-                              mixer_configuration_.effects.groups.begin() +
-                                  mixer_configuration_.group_count,
-                              mixer_configuration_.effects.groups.begin() +
-                                  slot);
+                    std::move(
+                        mixer_configuration_.effects.groups.begin() + slot + 1,
+                        mixer_configuration_.effects.groups.begin() +
+                            mixer_configuration_.group_count,
+                        mixer_configuration_.effects.groups.begin() + slot);
                     --mixer_configuration_.group_count;
                     mixer_configuration_
                         .groups[mixer_configuration_.group_count] = {};
@@ -1973,8 +2009,8 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 }
             }
         } else if (command.action_id == "mixer.group-rename.v1") {
-            const auto id = static_cast<MixerBusId>(
-                *argument<std::int64_t>(command, "id"));
+            const auto id =
+                static_cast<MixerBusId>(*argument<std::int64_t>(command, "id"));
             const auto &name = *argument<std::string>(command, "name");
             const auto found = find_group(id);
             if (found == mixer_configuration_.groups.begin() +
@@ -2000,10 +2036,9 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             if (track == mixer_configuration_.tracks.begin() +
                              mixer_configuration_.track_count)
                 error = "mixer track does not exist";
-            else if (group_id &&
-                     find_group(group_id) ==
-                         mixer_configuration_.groups.begin() +
-                             mixer_configuration_.group_count)
+            else if (group_id && find_group(group_id) ==
+                                     mixer_configuration_.groups.begin() +
+                                         mixer_configuration_.group_count)
                 error = "group bus does not exist";
             else {
                 track->destination_group = group_id;
@@ -2016,8 +2051,8 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                    command.action_id == "mixer.group-mute-toggle.v1" ||
                    command.action_id == "mixer.group-solo-toggle.v1" ||
                    command.action_id == "mixer.group-aux-send.v1") {
-            const auto id = static_cast<MixerBusId>(
-                *argument<std::int64_t>(command, "id"));
+            const auto id =
+                static_cast<MixerBusId>(*argument<std::int64_t>(command, "id"));
             const auto found = find_group(id);
             if (found == mixer_configuration_.groups.begin() +
                              mixer_configuration_.group_count)
@@ -2032,8 +2067,7 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 if ((destination && find_group(destination) ==
                                         mixer_configuration_.groups.begin() +
                                             mixer_configuration_.group_count) ||
-                    (output != -1 && output != 0 && output != 2 &&
-                     output != 4))
+                    (output != -1 && output != 0 && output != 2 && output != 4))
                     error = "invalid group destination";
                 else {
                     found->destination_group = destination;
@@ -2066,8 +2100,7 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 else {
                     found->aux_send[static_cast<std::size_t>(aux)] =
                         static_cast<float>(value);
-                    if (const auto *pre =
-                            argument<bool>(command, "pre_fader"))
+                    if (const auto *pre = argument<bool>(command, "pre_fader"))
                         found->aux_pre_fader[static_cast<std::size_t>(aux)] =
                             *pre;
                     changed = true;
@@ -2121,8 +2154,8 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 else if (source == "group")
                     loop.source = ExternalFxSource::group;
                 else
-                    error =
-                        "external FX source must be track, aux, group, or master";
+                    error = "external FX source must be track, aux, group, or "
+                            "master";
                 loop.source_id = static_cast<std::uint64_t>(source_id);
                 loop.send_left = static_cast<std::uint8_t>(send_left);
                 loop.send_right = static_cast<std::uint8_t>(send_right);
@@ -2373,6 +2406,60 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                         parameters_.set("mixer.selected.pan",
                                         static_cast<double>(channel.pan),
                                         ignored);
+                }
+            }
+        }
+        if (changed && error.empty()) {
+            const auto capture = [&](std::string destination, float value) {
+                arrangement_recording_.capture_automation(
+                    std::move(destination), value, state_.transport_tick,
+                    automation_thinning_ticks_);
+            };
+            if (command.action_id == "mixer.master-gain-set.v1")
+                capture("mixer.master.gain", mixer_configuration_.master.gain);
+            else if (command.action_id == "mixer.group-levels.v1") {
+                const auto id = *argument<std::int64_t>(command, "id");
+                const auto found = find_group(static_cast<MixerBusId>(id));
+                capture("mixer.group." + std::to_string(id) + ".gain",
+                        found->gain);
+                capture("mixer.group." + std::to_string(id) + ".pan",
+                        found->pan);
+            } else if (command.action_id == "mixer.group-aux-send.v1") {
+                const auto id = *argument<std::int64_t>(command, "id");
+                const auto aux = *argument<std::int64_t>(command, "aux");
+                const auto found = find_group(static_cast<MixerBusId>(id));
+                capture("mixer.group." + std::to_string(id) + ".aux-" +
+                            std::to_string(aux + 1),
+                        found->aux_send[static_cast<std::size_t>(aux)]);
+            } else if (command.action_id == "mixer.fx-loop-levels.v1") {
+                const auto index = *argument<std::int64_t>(command, "index");
+                const auto &loop =
+                    mixer_configuration_
+                        .external_fx[static_cast<std::size_t>(index)];
+                const auto prefix =
+                    "external-fx." + std::to_string(index + 1) + ".";
+                capture(prefix + "send-gain", loop.send_gain);
+                capture(prefix + "return-gain", loop.return_gain);
+                capture(prefix + "wet", loop.wet);
+            } else if (command.action_id == "mixer.aux-set.v1") {
+                const auto aux = *argument<std::int64_t>(command, "aux");
+                capture("mixer.aux." + std::to_string(aux + 1) + ".return",
+                        mixer_configuration_.aux[static_cast<std::size_t>(aux)]
+                            .return_gain);
+            } else if (state_.selected_mixer_channel <
+                       mixer_configuration_.track_count) {
+                const auto &channel =
+                    mixer_configuration_.tracks[state_.selected_mixer_channel];
+                const auto prefix =
+                    "mixer.track." + std::to_string(channel.track) + ".";
+                if (command.action_id == "mixer.gain-set.v1")
+                    capture(prefix + "gain", channel.gain);
+                else if (command.action_id == "mixer.pan-set.v1")
+                    capture(prefix + "pan", channel.pan);
+                else if (command.action_id == "mixer.aux-send-set.v1") {
+                    const auto aux = *argument<std::int64_t>(command, "aux");
+                    capture(prefix + "aux-" + std::to_string(aux + 1),
+                            channel.aux_send[static_cast<std::size_t>(aux)]);
                 }
             }
         }
@@ -3026,15 +3113,26 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
         engine_.play();
         changed = true;
     } else if (command.action_id == "transport.stop.v1") {
+        if (arrangement_recording_.status().phase ==
+            ArrangementRecordPhase::recording)
+            arrangement_recording_.stop(state_.transport_tick, error);
         engine_.stop();
         changed = true;
     } else if (command.action_id == "transport.restart.v1") {
-        engine_.restart();
-        changed = true;
+        if (arrangement_recording_.status().phase ==
+            ArrangementRecordPhase::recording)
+            error = "stop arrangement recording before restarting transport";
+        else {
+            engine_.restart();
+            changed = true;
+        }
     } else if (command.action_id == "arrangement.seek.v1") {
         const auto tick = *argument<std::int64_t>(command, "tick");
         const auto snapshot = timeline_.snapshot();
-        if (tick < 0)
+        if (arrangement_recording_.status().phase ==
+            ArrangementRecordPhase::recording)
+            error = "stop arrangement recording before seeking";
+        else if (tick < 0)
             error = "arrangement seek tick must be nonnegative";
         else {
             const auto frame =
@@ -3135,15 +3233,14 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                                       : state_.selected_track;
             if ((requested && *requested <= 0) || id == 0)
                 error = "track ID must be positive";
-            else if (std::any_of(
-                         modulation_configuration_.modulators.begin(),
-                         modulation_configuration_.modulators.begin() +
-                             modulation_configuration_.modulator_count,
-                         [&](const auto &instance) {
-                             return instance.owner_kind ==
-                                        ModulatorOwnerKind::track &&
-                                    instance.owner_id == id;
-                         }))
+            else if (std::any_of(modulation_configuration_.modulators.begin(),
+                                 modulation_configuration_.modulators.begin() +
+                                     modulation_configuration_.modulator_count,
+                                 [&](const auto &instance) {
+                                     return instance.owner_kind ==
+                                                ModulatorOwnerKind::track &&
+                                            instance.owner_id == id;
+                                 }))
                 error = "track owns modulators; delete or reassign them first";
             else if (!transaction.delete_track(id, error) ||
                      !timeline_.commit(
@@ -3232,6 +3329,69 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 state_.selected_pattern = static_cast<std::uint64_t>(id);
                 changed_locked();
             }
+        } else if (command.action_id == "arrangement.record-arm.v1") {
+            if (arrangement_recording_.arm(*argument<bool>(command, "armed"),
+                                           error))
+                changed_locked();
+        } else if (command.action_id == "arrangement.automation-arm.v1") {
+            if (arrangement_recording_.arm_automation(
+                    *argument<bool>(command, "armed"), error))
+                changed_locked();
+        } else if (command.action_id == "arrangement.automation-thinning.v1") {
+            const auto ticks = *argument<std::int64_t>(command, "ticks");
+            if (ticks < 0)
+                error = "automation thinning must be nonnegative";
+            else {
+                automation_thinning_ticks_ = ticks;
+                changed_locked();
+            }
+        } else if (command.action_id == "arrangement.record-start.v1") {
+            const auto &mode = *argument<std::string>(command, "mode");
+            const auto bars = argument<std::int64_t>(command, "count_in_bars");
+            const auto automation = argument<bool>(command, "automation");
+            if (mode != "replace" && mode != "overdub")
+                error = "recording mode must be replace or overdub";
+            else if (bars && *bars < 0)
+                error = "count-in bars must be nonnegative";
+            else {
+                const auto timeline = timeline_.snapshot();
+                const auto bar =
+                    static_cast<MusicalTick>(ticks_per_quarter) *
+                    timeline.timeline.transport.time_signature_numerator * 4 /
+                    timeline.timeline.transport.time_signature_denominator;
+                const auto prior = arrangement_recording_.status();
+                if (arrangement_recording_.start(
+                        state_.transport_tick,
+                        mode == "replace" ? ArrangementRecordMode::replace
+                                          : ArrangementRecordMode::overdub,
+                        (bars ? *bars : 0) * bar,
+                        automation ? *automation : prior.automation_armed,
+                        error)) {
+                    const auto &arrangement = timeline.timeline.arrangement;
+                    if (arrangement.playback_mode ==
+                            TimelinePlaybackMode::live_pattern &&
+                        arrangement.active_pattern)
+                        arrangement_recording_.capture_pattern(
+                            arrangement.active_pattern,
+                            state_.transport_tick + (bars ? *bars : 0) * bar);
+                    if (arrangement.chain_running)
+                        arrangement_recording_.capture_chain(
+                            timeline.timeline,
+                            state_.transport_tick + (bars ? *bars : 0) * bar);
+                    changed_locked();
+                }
+            }
+        } else if (command.action_id == "arrangement.record-stop.v1") {
+            if (arrangement_recording_.stop(state_.transport_tick, error))
+                changed_locked();
+        } else if (command.action_id == "arrangement.record-commit.v1") {
+            if (arrangement_recording_.commit(timeline_, error)) {
+                state_.project_dirty = true;
+                changed_locked();
+            }
+        } else if (command.action_id == "arrangement.record-discard.v1") {
+            arrangement_recording_.discard();
+            changed_locked();
         } else if (command.action_id == "pattern.create.v1" ||
                    command.action_id == "pattern.duplicate.v1" ||
                    command.action_id == "pattern.rename.v1" ||
@@ -3251,20 +3411,21 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                    command.action_id == "arrangement.clip-update.v1" ||
                    command.action_id == "arrangement.clip-delete.v1" ||
                    command.action_id == "arrangement.range-set.v1" ||
-                   command.action_id == "arrangement.loop-set.v1") {
+                   command.action_id == "arrangement.loop-set.v1" ||
+                   command.action_id == "arrangement.automation-update.v1" ||
+                   command.action_id == "arrangement.automation-delete.v1") {
             auto transaction = timeline_.edit();
             TimelineService::Publish scheduled_publisher;
             if (command.action_id == "pattern.create.v1") {
                 const auto requested = argument<std::int64_t>(command, "id");
                 if (requested && *requested <= 0)
                     error = "pattern ID must be positive";
-                const auto id = requested
-                                    ? static_cast<PatternId>(*requested)
-                                    : transaction.next_pattern_id();
+                const auto id = requested ? static_cast<PatternId>(*requested)
+                                          : transaction.next_pattern_id();
                 if (error.empty())
                     transaction.create_pattern(
-                    id, *argument<std::string>(command, "name"),
-                    *argument<std::int64_t>(command, "length"), error);
+                        id, *argument<std::string>(command, "name"),
+                        *argument<std::int64_t>(command, "length"), error);
             } else if (command.action_id == "pattern.duplicate.v1") {
                 const auto requested = argument<std::int64_t>(command, "id");
                 const auto source = *argument<std::int64_t>(command, "source");
@@ -3272,11 +3433,10 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     error = "pattern IDs must be positive";
                 if (error.empty())
                     transaction.duplicate_pattern(
-                    static_cast<PatternId>(
-                        source),
-                    requested ? static_cast<PatternId>(*requested)
-                              : transaction.next_pattern_id(),
-                    *argument<std::string>(command, "name"), error);
+                        static_cast<PatternId>(source),
+                        requested ? static_cast<PatternId>(*requested)
+                                  : transaction.next_pattern_id(),
+                        *argument<std::string>(command, "name"), error);
             } else if (command.action_id == "pattern.rename.v1") {
                 const auto id = *argument<std::int64_t>(command, "id");
                 if (id <= 0)
@@ -3290,7 +3450,8 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 if (id <= 0)
                     error = "pattern ID must be positive";
                 else
-                    transaction.delete_pattern(static_cast<PatternId>(id), error);
+                    transaction.delete_pattern(static_cast<PatternId>(id),
+                                               error);
             } else if (command.action_id == "pattern.launch.v1") {
                 const auto raw_id = *argument<std::int64_t>(command, "id");
                 const auto id = static_cast<PatternId>(raw_id);
@@ -3301,10 +3462,12 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 else
                     transaction.launch_pattern(id, use_queue, error);
                 if (error.empty() && use_queue) {
-                    const auto &arrangement = transaction.timeline().arrangement;
-                    const auto found = std::find_if(
-                        arrangement.patterns.begin(), arrangement.patterns.end(),
-                        [=](const auto &p) { return p.id == id; });
+                    const auto &arrangement =
+                        transaction.timeline().arrangement;
+                    const auto found =
+                        std::find_if(arrangement.patterns.begin(),
+                                     arrangement.patterns.end(),
+                                     [=](const auto &p) { return p.id == id; });
                     queued_launch_tick_ = launch_boundary(
                         state_.transport_tick, arrangement.launch_quantization,
                         found->length, transaction.timeline().transport);
@@ -3315,22 +3478,24 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                              .transport.microseconds_per_quarter) /
                         (static_cast<long double>(ticks_per_quarter) *
                          1'000'000.0L);
-                    queued_launch_frame_ = static_cast<std::uint64_t>(
-                        std::llround(frame));
+                    queued_launch_frame_ =
+                        static_cast<std::uint64_t>(std::llround(frame));
                     const auto policy = arrangement.voice_transition;
-                    scheduled_publisher =
-                        [this, id, policy,
-                         activation = *queued_launch_frame_](
-                            const Timeline &queued_timeline,
-                            std::string &publish_error) {
-                            auto audible = queued_timeline;
-                            audible.arrangement.active_pattern = id;
-                            audible.arrangement.queued_pattern = 0;
-                            audible.arrangement.playback_mode =
-                                TimelinePlaybackMode::live_pattern;
-                            return engine_.queue_timeline_at(
-                                audible, activation, policy, publish_error);
-                        };
+                    scheduled_publisher = [this, id, policy,
+                                           activation = *queued_launch_frame_](
+                                              const Timeline &queued_timeline,
+                                              std::string &publish_error) {
+                        auto audible = queued_timeline;
+                        audible.arrangement.active_pattern = id;
+                        audible.arrangement.queued_pattern = 0;
+                        audible.arrangement.playback_mode =
+                            TimelinePlaybackMode::live_pattern;
+                        return engine_.queue_timeline_at(audible, activation,
+                                                         policy, publish_error);
+                    };
+                } else if (error.empty()) {
+                    queued_launch_tick_.reset();
+                    queued_launch_frame_.reset();
                 }
             } else if (command.action_id == "arrangement.mode-set.v1") {
                 const auto &mode = *argument<std::string>(command, "mode");
@@ -3347,10 +3512,13 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     error = "unknown arrangement playback mode";
             } else if (command.action_id == "pattern.chain-entry-set.v1") {
                 const auto index = *argument<std::int64_t>(command, "index");
-                const auto pattern = *argument<std::int64_t>(command, "pattern");
-                const auto repeats = *argument<std::int64_t>(command, "repeats");
+                const auto pattern =
+                    *argument<std::int64_t>(command, "pattern");
+                const auto repeats =
+                    *argument<std::int64_t>(command, "repeats");
                 auto entries = transaction.timeline().arrangement.chain_entries;
-                if (index < 0 || static_cast<std::size_t>(index) > entries.size() ||
+                if (index < 0 ||
+                    static_cast<std::size_t>(index) > entries.size() ||
                     pattern <= 0 || repeats <= 0 || repeats > 65535)
                     error = "invalid pattern chain entry";
                 else {
@@ -3370,7 +3538,8 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 const auto entry = argument<std::int64_t>(command, "entry");
                 const auto loop = argument<bool>(command, "loop");
                 if (loop) {
-                    auto entries = transaction.timeline().arrangement.chain_entries;
+                    auto entries =
+                        transaction.timeline().arrangement.chain_entries;
                     transaction.set_pattern_chain(
                         transaction.timeline().arrangement.pattern_chain_id,
                         std::move(entries), *loop, error);
@@ -3405,25 +3574,25 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     error = "unknown pattern follow action";
                 const auto repetitions =
                     *argument<std::int64_t>(command, "repetitions");
-                const auto probability = argument<double>(command, "probability");
+                const auto probability =
+                    argument<double>(command, "probability");
                 const auto target = argument<std::int64_t>(command, "target");
                 if (repetitions <= 0 || repetitions > 65535)
                     error = "follow repetitions must be 1..65535";
                 else {
                     follow.after_repetitions =
                         static_cast<std::uint16_t>(repetitions);
-                    follow.probability = probability
-                                             ? static_cast<float>(*probability)
-                                             : 1.0F;
-                    follow.target = target ? static_cast<PatternId>(*target) : 0;
+                    follow.probability =
+                        probability ? static_cast<float>(*probability) : 1.0F;
+                    follow.target =
+                        target ? static_cast<PatternId>(*target) : 0;
                 }
                 if (error.empty())
                     transaction.set_follow_action(
                         static_cast<PatternId>(
                             *argument<std::int64_t>(command, "pattern")),
                         follow, error);
-            } else if (command.action_id ==
-                       "pattern.launch-quantization.v1") {
+            } else if (command.action_id == "pattern.launch-quantization.v1") {
                 const auto &value =
                     *argument<std::string>(command, "quantization");
                 if (value == "immediate")
@@ -3476,7 +3645,8 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             } else if (command.action_id == "arrangement.clip-create.v1") {
                 ArrangementClip clip;
                 const auto requested = argument<std::int64_t>(command, "id");
-                const auto pattern = *argument<std::int64_t>(command, "pattern");
+                const auto pattern =
+                    *argument<std::int64_t>(command, "pattern");
                 if ((requested && *requested <= 0) || pattern <= 0)
                     error = "clip and pattern IDs must be positive";
                 clip.id = requested ? static_cast<ClipId>(*requested)
@@ -3486,7 +3656,8 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 clip.duration = *argument<std::int64_t>(command, "duration");
                 if (const auto value = argument<bool>(command, "loop"))
                     clip.loop = *value;
-                if (const auto value = argument<std::int64_t>(command, "transpose")) {
+                if (const auto value =
+                        argument<std::int64_t>(command, "transpose")) {
                     if (*value < -127 || *value > 127)
                         error = "clip transpose must be -127..127";
                     else
@@ -3505,21 +3676,26 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     [=](const auto &clip) { return clip.id == id; });
                 if (raw_id <= 0)
                     error = "clip ID must be positive";
-                else if (found == transaction.timeline().arrangement.clips.end())
+                else if (found ==
+                         transaction.timeline().arrangement.clips.end())
                     error = "clip does not exist";
                 else {
                     auto clip = *found;
-                    if (const auto value = argument<std::int64_t>(command, "start"))
+                    if (const auto value =
+                            argument<std::int64_t>(command, "start"))
                         clip.start = *value;
-                    if (const auto value = argument<std::int64_t>(command, "duration"))
+                    if (const auto value =
+                            argument<std::int64_t>(command, "duration"))
                         clip.duration = *value;
-                    if (const auto value = argument<std::int64_t>(command, "transpose")) {
+                    if (const auto value =
+                            argument<std::int64_t>(command, "transpose")) {
                         if (*value < -127 || *value > 127)
                             error = "clip transpose must be -127..127";
                         else
                             clip.transpose = static_cast<std::int8_t>(*value);
                     }
-                    if (const auto value = argument<double>(command, "velocity"))
+                    if (const auto value =
+                            argument<double>(command, "velocity"))
                         clip.velocity_scale = static_cast<float>(*value);
                     if (const auto value = argument<bool>(command, "enabled"))
                         clip.enabled = *value;
@@ -3536,11 +3712,29 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 transaction.set_song_range(
                     *argument<std::int64_t>(command, "start"),
                     *argument<std::int64_t>(command, "end"), error);
-            } else {
+            } else if (command.action_id == "arrangement.loop-set.v1") {
                 transaction.set_loop_region(
                     *argument<bool>(command, "enabled"),
                     *argument<std::int64_t>(command, "start"),
                     *argument<std::int64_t>(command, "end"), error);
+            } else if (command.action_id ==
+                       "arrangement.automation-update.v1") {
+                const auto id = *argument<std::int64_t>(command, "id");
+                if (id <= 0)
+                    error = "automation event ID must be positive";
+                else
+                    transaction.update_arrangement_automation(
+                        static_cast<EventId>(id),
+                        *argument<std::int64_t>(command, "tick"),
+                        static_cast<float>(*argument<double>(command, "value")),
+                        error);
+            } else {
+                const auto id = *argument<std::int64_t>(command, "id");
+                if (id <= 0)
+                    error = "automation event ID must be positive";
+                else
+                    transaction.delete_arrangement_automation(
+                        static_cast<EventId>(id), error);
             }
             const auto committed =
                 error.empty() &&
@@ -3553,6 +3747,17 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                            std::move(transaction),
                            TimelineCommitPolicy::next_audio_callback, error));
             if (committed) {
+                if (command.action_id == "pattern.launch.v1") {
+                    pending_record_pattern_ = static_cast<PatternId>(
+                        *argument<std::int64_t>(command, "id"));
+                    pending_record_frame_ =
+                        queued_launch_frame_.value_or(engine_.frame_position());
+                }
+                if (command.action_id == "pattern.chain-play.v1") {
+                    pending_record_chain_ = true;
+                    pending_record_frame_ =
+                        queued_launch_frame_.value_or(engine_.frame_position());
+                }
                 state_.project_dirty = true;
                 changed_locked();
             }
@@ -4627,7 +4832,8 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 const auto source = find_instance(source_id);
                 const auto destination = find_instance(destination_id);
                 if (source == next.modulators.begin() + next.modulator_count ||
-                    destination == next.modulators.begin() + next.modulator_count)
+                    destination ==
+                        next.modulators.begin() + next.modulator_count)
                     error = "graph connection references a missing modulator";
                 else if (!std::isfinite(depth) || depth < -1 || depth > 1)
                     error = "connection depth must be -1..1";
@@ -4661,7 +4867,7 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                         source->owner_kind == ModulatorOwnerKind::track
                             ? ModulationScope::track
                         : source->owner_kind ==
-                                  ModulatorOwnerKind::voice_definition
+                                ModulatorOwnerKind::voice_definition
                             ? ModulationScope::voice
                             : ModulationScope::global;
                     route.track_id = route.scope != ModulationScope::global
@@ -4682,23 +4888,24 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     instance->shared = *argument<bool>(command, "shared");
                 else {
                     const auto tap = *argument<std::int64_t>(command, "tap");
-                    const auto tap_id = *argument<std::int64_t>(command, "tap_id");
+                    const auto tap_id =
+                        *argument<std::int64_t>(command, "tap_id");
                     if (instance->type != ModulatorType::envelope_follower ||
                         tap < 0 ||
-                        tap > static_cast<std::int64_t>(
-                                  FollowerTapKind::group) ||
+                        tap >
+                            static_cast<std::int64_t>(FollowerTapKind::group) ||
                         tap_id < 0)
                         error = "invalid envelope follower tap";
                     else if (static_cast<FollowerTapKind>(tap) ==
                                  FollowerTapKind::group &&
-                             std::none_of(
-                                 mixer_configuration_.groups.begin(),
-                                 mixer_configuration_.groups.begin() +
-                                     mixer_configuration_.group_count,
-                                 [&](const auto &group) {
-                                     return group.id ==
-                                            static_cast<MixerBusId>(tap_id);
-                                 }))
+                             std::none_of(mixer_configuration_.groups.begin(),
+                                          mixer_configuration_.groups.begin() +
+                                              mixer_configuration_.group_count,
+                                          [&](const auto &group) {
+                                              return group.id ==
+                                                     static_cast<MixerBusId>(
+                                                         tap_id);
+                                          }))
                         error = "envelope follower group tap does not exist";
                     else {
                         instance->settings.follower_tap =
@@ -4715,7 +4922,8 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     [&](const auto &value) { return value.id == id; });
                 if (route == next.routes.begin() + next.route_count)
                     error = "modulation connection does not exist";
-                else if (command.action_id == "modulation.connection-delete.v1") {
+                else if (command.action_id ==
+                         "modulation.connection-delete.v1") {
                     std::move(route + 1, next.routes.begin() + next.route_count,
                               route);
                     --next.route_count;
@@ -4730,8 +4938,7 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     route->enabled = *argument<bool>(command, "enabled");
             }
             ModulationGraphDiagnostics diagnostics;
-            if (error.empty() &&
-                !validate_modulation_graph(next, diagnostics))
+            if (error.empty() && !validate_modulation_graph(next, diagnostics))
                 error = "connection " + std::to_string(diagnostics.connection) +
                         ": " + diagnostics.message;
             if (error.empty() && !engine_.publish_modulation(next))
@@ -4755,12 +4962,18 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     [&](const auto &value) { return value.id == id; });
             };
             if (command.action_id == "modulator.create.v1") {
-                const auto type_value = *argument<std::int64_t>(command, "type");
-                const auto owner_value = *argument<std::int64_t>(command, "owner");
-                const auto owner_id = *argument<std::int64_t>(command, "owner_id");
-                if (type_value < static_cast<std::int64_t>(ModulatorType::lfo) ||
-                    type_value > static_cast<std::int64_t>(ModulatorType::gate) ||
-                    owner_value < static_cast<std::int64_t>(ModulatorOwnerKind::track) ||
+                const auto type_value =
+                    *argument<std::int64_t>(command, "type");
+                const auto owner_value =
+                    *argument<std::int64_t>(command, "owner");
+                const auto owner_id =
+                    *argument<std::int64_t>(command, "owner_id");
+                if (type_value <
+                        static_cast<std::int64_t>(ModulatorType::lfo) ||
+                    type_value >
+                        static_cast<std::int64_t>(ModulatorType::gate) ||
+                    owner_value <
+                        static_cast<std::int64_t>(ModulatorOwnerKind::track) ||
                     owner_value > static_cast<std::int64_t>(
                                       ModulatorOwnerKind::voice_definition) ||
                     owner_id < 0)
@@ -4768,40 +4981,50 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 else if (next.modulator_count == next.modulators.size())
                     error = "modulator capacity is exhausted (64 instances)";
                 else {
-                    const auto owner = static_cast<ModulatorOwnerKind>(owner_value);
+                    const auto owner =
+                        static_cast<ModulatorOwnerKind>(owner_value);
                     if (owner == ModulatorOwnerKind::track ||
                         owner == ModulatorOwnerKind::voice_definition) {
                         const auto timeline = timeline_.snapshot().timeline;
-                        if (std::none_of(timeline.tracks.begin(), timeline.tracks.end(),
-                                         [&](const auto &track) {
-                                             return track.id == static_cast<TrackId>(owner_id);
-                                         }))
+                        if (std::none_of(
+                                timeline.tracks.begin(), timeline.tracks.end(),
+                                [&](const auto &track) {
+                                    return track.id ==
+                                           static_cast<TrackId>(owner_id);
+                                }))
                             error = "modulator owner track does not exist";
-                        else if (owner == ModulatorOwnerKind::voice_definition &&
+                        else if (owner ==
+                                     ModulatorOwnerKind::voice_definition &&
                                  !voice_modulator_supported(
                                      static_cast<ModulatorType>(type_value)))
-                            error = "modulator type does not support voice ownership";
-                    } else if (owner == ModulatorOwnerKind::auxiliary && owner_id >= 2)
+                            error = "modulator type does not support voice "
+                                    "ownership";
+                    } else if (owner == ModulatorOwnerKind::auxiliary &&
+                               owner_id >= 2)
                         error = "modulator auxiliary owner does not exist";
-                    else if (owner == ModulatorOwnerKind::master && owner_id != 0)
+                    else if (owner == ModulatorOwnerKind::master &&
+                             owner_id != 0)
                         error = "master owner ID must be zero";
                     else if (owner == ModulatorOwnerKind::group &&
-                             std::none_of(
-                                 mixer_configuration_.groups.begin(),
-                                 mixer_configuration_.groups.begin() +
-                                     mixer_configuration_.group_count,
-                                 [&](const auto &group) {
-                                     return group.id ==
-                                            static_cast<MixerBusId>(owner_id);
-                                 }))
+                             std::none_of(mixer_configuration_.groups.begin(),
+                                          mixer_configuration_.groups.begin() +
+                                              mixer_configuration_.group_count,
+                                          [&](const auto &group) {
+                                              return group.id ==
+                                                     static_cast<MixerBusId>(
+                                                         owner_id);
+                                          }))
                         error = "modulator group owner does not exist";
                     if (error.empty()) {
-                        auto &instance = next.modulators[next.modulator_count++];
+                        auto &instance =
+                            next.modulators[next.modulator_count++];
                         instance.id = next_modulator_instance_id_++;
                         instance.type = static_cast<ModulatorType>(type_value);
                         instance.owner_kind = owner;
-                        instance.owner_id = static_cast<std::uint64_t>(owner_id);
-                        if (const auto *name = argument<std::string>(command, "name")) {
+                        instance.owner_id =
+                            static_cast<std::uint64_t>(owner_id);
+                        if (const auto *name =
+                                argument<std::string>(command, "name")) {
                             if (name->size() >= instance.display_name.size())
                                 error = "modulator name is too long";
                             else
@@ -4816,12 +5039,14 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 const auto source = find_instance(source_id);
                 const auto destination_id =
                     *argument<std::string>(command, "destination");
-                const auto destination = resolve_parameter_destination(destination_id);
+                const auto destination =
+                    resolve_parameter_destination(destination_id);
                 const auto descriptor = parameters_.get(destination_id);
                 const auto depth = *argument<double>(command, "depth");
                 if (source == next.modulators.begin() + next.modulator_count)
                     error = "modulator source instance does not exist";
-                else if (!destination || !descriptor || !descriptor->modulatable ||
+                else if (!destination || !descriptor ||
+                         !descriptor->modulatable ||
                          descriptor->type != ParameterType::real)
                     error = "parameter is not a modulation destination";
                 else if (!std::isfinite(depth) || depth < -1 || depth > 1)
@@ -4833,8 +5058,10 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     route.id = next_modulation_route_id_++;
                     route.source_instance = source_id;
                     route.destination = *destination;
-                    route.minimum = static_cast<float>(number(descriptor->minimum));
-                    route.maximum = static_cast<float>(number(descriptor->maximum));
+                    route.minimum =
+                        static_cast<float>(number(descriptor->minimum));
+                    route.maximum =
+                        static_cast<float>(number(descriptor->maximum));
                     route.base_value =
                         static_cast<float>(number(descriptor->current_value));
                     route.depth = static_cast<float>(depth);
@@ -4842,7 +5069,7 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                         source->owner_kind == ModulatorOwnerKind::track
                             ? ModulationScope::track
                         : source->owner_kind ==
-                                  ModulatorOwnerKind::voice_definition
+                                ModulatorOwnerKind::voice_definition
                             ? ModulationScope::voice
                             : ModulationScope::global;
                     route.track_id = route.scope != ModulationScope::global
@@ -4859,29 +5086,33 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                         route.destination.instance =
                             static_cast<std::uint32_t>(source->owner_id);
                         route.destination_owner_explicit = true;
-                        route.destination_owner_kind = ModulatorOwnerKind::group;
+                        route.destination_owner_kind =
+                            ModulatorOwnerKind::group;
                         route.destination_owner_id = source->owner_id;
                     }
                     if (const auto *instance = argument<std::int64_t>(
                             command, "destination_instance")) {
                         if (*instance < 0 ||
-                            *instance > std::numeric_limits<std::uint32_t>::max())
+                            *instance >
+                                std::numeric_limits<std::uint32_t>::max())
                             error = "destination instance is out of range";
                         else
                             route.destination.instance =
                                 static_cast<std::uint32_t>(*instance);
                     }
-                    const auto owner = argument<std::int64_t>(
-                        command, "destination_owner");
-                    const auto owner_id = argument<std::int64_t>(
-                        command, "destination_owner_id");
+                    const auto owner =
+                        argument<std::int64_t>(command, "destination_owner");
+                    const auto owner_id =
+                        argument<std::int64_t>(command, "destination_owner_id");
                     if ((owner && !owner_id) || (!owner && owner_id))
-                        error = "destination owner kind and ID are both required";
+                        error =
+                            "destination owner kind and ID are both required";
                     else if (owner &&
                              (*owner < static_cast<std::int64_t>(
                                            ModulatorOwnerKind::track) ||
-                              *owner > static_cast<std::int64_t>(
-                                           ModulatorOwnerKind::voice_definition) ||
+                              *owner >
+                                  static_cast<std::int64_t>(
+                                      ModulatorOwnerKind::voice_definition) ||
                               *owner_id < 0))
                         error = "invalid destination owner";
                     else if (owner) {
@@ -4894,23 +5125,31 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 }
             } else {
                 const auto raw = *argument<std::int64_t>(command, "id");
-                const auto found = find_instance(static_cast<ModulatorInstanceId>(raw));
-                if (raw <= 0 || found == next.modulators.begin() + next.modulator_count)
+                const auto found =
+                    find_instance(static_cast<ModulatorInstanceId>(raw));
+                if (raw <= 0 ||
+                    found == next.modulators.begin() + next.modulator_count)
                     error = "modulator instance does not exist";
                 else if (command.action_id == "modulator.delete.v1") {
                     const auto referenced = std::any_of(
-                        next.routes.begin(), next.routes.begin() + next.route_count,
-                        [&](const auto &route) { return route.source_instance == found->id; });
+                        next.routes.begin(),
+                        next.routes.begin() + next.route_count,
+                        [&](const auto &route) {
+                            return route.source_instance == found->id;
+                        });
                     if (referenced)
                         error = "modulator is still referenced by a route";
                     else {
-                        std::move(found + 1, next.modulators.begin() + next.modulator_count,
+                        std::move(found + 1,
+                                  next.modulators.begin() +
+                                      next.modulator_count,
                                   found);
                         --next.modulator_count;
                     }
                 } else if (command.action_id == "modulator.duplicate.v1") {
                     if (next.modulator_count == next.modulators.size())
-                        error = "modulator capacity is exhausted (64 instances)";
+                        error =
+                            "modulator capacity is exhausted (64 instances)";
                     else {
                         auto copy = *found;
                         copy.id = next_modulator_instance_id_++;
@@ -4924,75 +5163,135 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                         error = "modulator name is too long";
                     else {
                         found->display_name.fill(0);
-                        std::copy(name.begin(), name.end(), found->display_name.begin());
+                        std::copy(name.begin(), name.end(),
+                                  found->display_name.begin());
                     }
                 } else if (command.action_id == "modulator.parameter-set.v1") {
-                    const auto &name = *argument<std::string>(command, "parameter");
+                    const auto &name =
+                        *argument<std::string>(command, "parameter");
                     const auto value = *argument<double>(command, "value");
                     const auto *type = find_modulator_type(found->type);
-                    const auto descriptor = type ? std::find_if(
-                        type->parameters.begin(), type->parameters.end(),
-                        [&](const auto &candidate) { return candidate.id == name; })
-                                                 : std::span<const ModulatorParameterDescriptor>::iterator{};
+                    const auto descriptor =
+                        type ? std::find_if(type->parameters.begin(),
+                                            type->parameters.end(),
+                                            [&](const auto &candidate) {
+                                                return candidate.id == name;
+                                            })
+                             : std::span<const ModulatorParameterDescriptor>::
+                                   iterator{};
                     if (!std::isfinite(value))
                         error = "modulator parameter must be finite";
                     else if (!type || descriptor == type->parameters.end() ||
                              value < descriptor->minimum ||
                              value > descriptor->maximum)
-                        error = "unknown modulator parameter or value out of range";
+                        error =
+                            "unknown modulator parameter or value out of range";
                     else {
                         auto &settings = found->settings;
                         const auto numeric = static_cast<float>(value);
                         switch (descriptor->numeric_id) {
-                        case ModulatorParameterId::rate: settings.rate_hz = numeric; break;
-                        case ModulatorParameterId::beats: settings.beats_per_cycle = numeric; break;
+                        case ModulatorParameterId::rate:
+                            settings.rate_hz = numeric;
+                            break;
+                        case ModulatorParameterId::beats:
+                            settings.beats_per_cycle = numeric;
+                            break;
                         case ModulatorParameterId::attack:
                             if (found->type == ModulatorType::envelope_follower)
                                 settings.follower_attack_seconds = numeric;
-                            else settings.attack_seconds = numeric;
+                            else
+                                settings.attack_seconds = numeric;
                             break;
-                        case ModulatorParameterId::decay: settings.decay_seconds = numeric; break;
-                        case ModulatorParameterId::sustain: settings.sustain = numeric; break;
+                        case ModulatorParameterId::decay:
+                            settings.decay_seconds = numeric;
+                            break;
+                        case ModulatorParameterId::sustain:
+                            settings.sustain = numeric;
+                            break;
                         case ModulatorParameterId::release:
                             if (found->type == ModulatorType::envelope_follower)
                                 settings.follower_release_seconds = numeric;
-                            else settings.release_seconds = numeric;
+                            else
+                                settings.release_seconds = numeric;
                             break;
-                        case ModulatorParameterId::follower_gain: settings.follower_gain = numeric; break;
-                        case ModulatorParameterId::follower_threshold: settings.follower_threshold = numeric; break;
-                        case ModulatorParameterId::step_duration: settings.step_duration_beats = numeric; break;
-                        case ModulatorParameterId::swing: settings.swing = numeric; break;
-                        case ModulatorParameterId::gate_length: settings.gate_length = numeric; break;
+                        case ModulatorParameterId::follower_gain:
+                            settings.follower_gain = numeric;
+                            break;
+                        case ModulatorParameterId::follower_threshold:
+                            settings.follower_threshold = numeric;
+                            break;
+                        case ModulatorParameterId::step_duration:
+                            settings.step_duration_beats = numeric;
+                            break;
+                        case ModulatorParameterId::swing:
+                            settings.swing = numeric;
+                            break;
+                        case ModulatorParameterId::gate_length:
+                            settings.gate_length = numeric;
+                            break;
                         case ModulatorParameterId::step_count:
-                            settings.step_count = static_cast<std::uint8_t>(value);
-                            settings.pulses = std::min(settings.pulses, settings.step_count);
+                            settings.step_count =
+                                static_cast<std::uint8_t>(value);
+                            settings.pulses =
+                                std::min(settings.pulses, settings.step_count);
                             settings.rotation %= settings.step_count;
                             break;
-                        case ModulatorParameterId::pulses: settings.pulses = static_cast<std::uint8_t>(value); break;
-                        case ModulatorParameterId::rotation: settings.rotation = static_cast<std::uint8_t>(value); break;
-                        case ModulatorParameterId::order: settings.order = static_cast<std::uint8_t>(value); break;
-                        case ModulatorParameterId::distribution: settings.distribution = static_cast<std::uint8_t>(value); break;
-                        case ModulatorParameterId::correlation: settings.correlation = numeric; break;
-                        case ModulatorParameterId::quantization: settings.quantization = numeric; break;
-                        case ModulatorParameterId::slew: settings.slew_seconds = numeric; break;
-                        case ModulatorParameterId::rise: settings.rise_seconds = numeric; break;
-                        case ModulatorParameterId::fall: settings.fall_seconds = numeric; break;
-                        case ModulatorParameterId::curve: settings.curve = numeric; break;
-                        case ModulatorParameterId::scale: settings.scale = numeric; break;
-                        case ModulatorParameterId::offset: settings.offset = numeric; break;
-                        case ModulatorParameterId::chaos: settings.chaos = numeric; break;
-                        default: error = "parameter is not editable"; break;
+                        case ModulatorParameterId::pulses:
+                            settings.pulses = static_cast<std::uint8_t>(value);
+                            break;
+                        case ModulatorParameterId::rotation:
+                            settings.rotation =
+                                static_cast<std::uint8_t>(value);
+                            break;
+                        case ModulatorParameterId::order:
+                            settings.order = static_cast<std::uint8_t>(value);
+                            break;
+                        case ModulatorParameterId::distribution:
+                            settings.distribution =
+                                static_cast<std::uint8_t>(value);
+                            break;
+                        case ModulatorParameterId::correlation:
+                            settings.correlation = numeric;
+                            break;
+                        case ModulatorParameterId::quantization:
+                            settings.quantization = numeric;
+                            break;
+                        case ModulatorParameterId::slew:
+                            settings.slew_seconds = numeric;
+                            break;
+                        case ModulatorParameterId::rise:
+                            settings.rise_seconds = numeric;
+                            break;
+                        case ModulatorParameterId::fall:
+                            settings.fall_seconds = numeric;
+                            break;
+                        case ModulatorParameterId::curve:
+                            settings.curve = numeric;
+                            break;
+                        case ModulatorParameterId::scale:
+                            settings.scale = numeric;
+                            break;
+                        case ModulatorParameterId::offset:
+                            settings.offset = numeric;
+                            break;
+                        case ModulatorParameterId::chaos:
+                            settings.chaos = numeric;
+                            break;
+                        default:
+                            error = "parameter is not editable";
+                            break;
                         }
                     }
                 } else if (command.action_id == "modulator.step-set.v1") {
                     const auto step = *argument<std::int64_t>(command, "step");
                     const auto value = *argument<double>(command, "value");
-                    if (found->type != ModulatorType::step_sequencer || step < 0 ||
-                        step >= found->settings.step_count ||
+                    if (found->type != ModulatorType::step_sequencer ||
+                        step < 0 || step >= found->settings.step_count ||
                         !std::isfinite(value) || value < -1 || value > 1)
                         error = "invalid step modulator value";
                     else
-                        found->settings.step_values[static_cast<std::size_t>(step)] =
+                        found->settings
+                            .step_values[static_cast<std::size_t>(step)] =
                             static_cast<float>(value);
                 }
             }
@@ -5314,6 +5613,33 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
     }
     if (error.empty()) {
         const auto &id = command.action_id;
+        std::string automation_id;
+        std::optional<float> automation_value;
+        if (id == "parameter.set-normalized.v1" ||
+            id == "parameter.adjust.v1" || id == "parameter.reset.v1") {
+            automation_id = *argument<std::string>(command, "parameter_id");
+            if (const auto descriptor = parameters_.get(automation_id);
+                descriptor && descriptor->automatable &&
+                resolve_parameter_destination(automation_id) &&
+                is_numeric(descriptor->current_value))
+                automation_value =
+                    static_cast<float>(number(descriptor->current_value));
+        } else if (id == "instrument.instance-parameter-set.v1") {
+            const auto &parameter =
+                *argument<std::string>(command, "parameter_id");
+            automation_id = "synth.instance." +
+                            std::to_string(*argument<std::int64_t>(
+                                command, "instance_id")) +
+                            "." + parameter.substr(parameter.find('.') + 1);
+            automation_value =
+                static_cast<float>(*argument<double>(command, "value"));
+        }
+        if (automation_value) {
+            std::lock_guard lock(mutex_);
+            arrangement_recording_.capture_automation(
+                std::move(automation_id), *automation_value,
+                state_.transport_tick, automation_thinning_ticks_);
+        }
         const auto musical_edit =
             id.rfind("step.", 0) == 0 || id.rfind("slice.", 0) == 0 ||
             id.rfind("sample.load", 0) == 0 ||
@@ -5325,8 +5651,7 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             id.rfind("track.mute", 0) == 0 ||
             id.rfind("track.instrument", 0) == 0 ||
             id.rfind("track.midi-destination", 0) == 0 ||
-            id.rfind("pattern.", 0) == 0 ||
-            id.rfind("arrangement.", 0) == 0 ||
+            id.rfind("pattern.", 0) == 0 || id.rfind("arrangement.", 0) == 0 ||
             id.rfind("transport.tempo", 0) == 0 ||
             id.rfind("modulation.route", 0) == 0 ||
             id.rfind("modulation.source", 0) == 0 ||
@@ -5376,6 +5701,32 @@ void ApplicationService::synchronize_locked() const {
     const auto playing = engine_.playing();
     const auto frame = engine_.frame_position();
     auto timeline = timeline_.snapshot();
+    AudioEngine::TimelineActivationEvent activation;
+    while (engine_.pop_timeline_activation(activation)) {
+        ++observed_timeline_activation_count_;
+        if (pending_record_frame_ && activation.frame < *pending_record_frame_)
+            continue;
+        const auto activation_tick = static_cast<MusicalTick>(
+            (static_cast<long double>(activation.frame) * ticks_per_quarter *
+             1'000'000.0L) /
+            (static_cast<long double>(engine_.sample_rate()) *
+             timeline.timeline.transport.microseconds_per_quarter));
+        if (pending_record_pattern_)
+            arrangement_recording_.capture_pattern(pending_record_pattern_,
+                                                   activation_tick);
+        if (pending_record_chain_)
+            arrangement_recording_.capture_chain(timeline.timeline,
+                                                 activation_tick);
+        pending_record_pattern_ = 0;
+        pending_record_chain_ = false;
+        pending_record_frame_.reset();
+    }
+    const auto activation_drops = engine_.dropped_timeline_activations();
+    if (activation_drops != observed_timeline_activation_drops_) {
+        arrangement_recording_.report_overflow(
+            activation_drops - observed_timeline_activation_drops_);
+        observed_timeline_activation_drops_ = activation_drops;
+    }
     const auto song_end_count = engine_.song_end_count();
     if (song_end_count != observed_song_end_count_) {
         observed_song_end_count_ = song_end_count;
@@ -5386,10 +5737,9 @@ void ApplicationService::synchronize_locked() const {
             std::string return_error;
             if (transaction.launch_pattern(arrangement.return_live_pattern,
                                            false, return_error) &&
-                timeline_.commit(
-                    std::move(transaction),
-                    TimelineCommitPolicy::next_audio_callback,
-                    return_error)) {
+                timeline_.commit(std::move(transaction),
+                                 TimelineCommitPolicy::next_audio_callback,
+                                 return_error)) {
                 timeline = timeline_.snapshot();
                 state_.project_dirty = true;
             } else
@@ -5400,24 +5750,24 @@ void ApplicationService::synchronize_locked() const {
     }
     if (queued_launch_frame_ &&
         engine_.last_timeline_activation_frame() >= *queued_launch_frame_) {
-            auto transaction = timeline_.edit();
-            std::string activation_error;
-            const auto id = transaction.timeline().arrangement.queued_pattern;
-            if (id && transaction.launch_pattern(id, false, activation_error) &&
-                timeline_.commit_with(
-                    std::move(transaction),
-                    TimelineCommitPolicy::next_audio_callback,
-                    [](const Timeline &, std::string &) { return true; },
-                    activation_error)) {
-                queued_launch_tick_.reset();
-                queued_launch_frame_.reset();
-                timeline = timeline_.snapshot();
-                state_.project_dirty = true;
-            } else if (!activation_error.empty()) {
-                state_.arrangement_error = std::move(activation_error);
-                queued_launch_tick_.reset();
-                queued_launch_frame_.reset();
-            }
+        auto transaction = timeline_.edit();
+        std::string activation_error;
+        const auto id = transaction.timeline().arrangement.queued_pattern;
+        if (id && transaction.launch_pattern(id, false, activation_error) &&
+            timeline_.commit_with(
+                std::move(transaction),
+                TimelineCommitPolicy::next_audio_callback,
+                [](const Timeline &, std::string &) { return true; },
+                activation_error)) {
+            queued_launch_tick_.reset();
+            queued_launch_frame_.reset();
+            timeline = timeline_.snapshot();
+            state_.project_dirty = true;
+        } else if (!activation_error.empty()) {
+            state_.arrangement_error = std::move(activation_error);
+            queued_launch_tick_.reset();
+            queued_launch_frame_.reset();
+        }
     }
     const auto history = timeline_.history_status();
     auto slots = samples_.states();
@@ -5671,7 +6021,8 @@ void ApplicationService::synchronize_locked() const {
         !arrangement.chain_entries.empty()) {
         auto next = arrangement.pattern_chain_position + 1;
         if (next >= arrangement.chain_entries.size())
-            next = arrangement.chain_loop ? 0 : arrangement.chain_entries.size();
+            next =
+                arrangement.chain_loop ? 0 : arrangement.chain_entries.size();
         if (next < arrangement.chain_entries.size())
             state_.next_pattern = arrangement.chain_entries[next].pattern;
     }
@@ -5684,18 +6035,21 @@ void ApplicationService::synchronize_locked() const {
     state_.next_launch_frame = queued_launch_frame_.value_or(0);
     state_.last_launch_frame = engine_.last_timeline_activation_frame();
     state_.launch_lateness_frames = engine_.last_timeline_lateness_frames();
+    state_.arrangement_recording = arrangement_recording_.status();
+    state_.captured_pattern_launches = arrangement_recording_.patterns();
+    state_.captured_automation_changes = arrangement_recording_.automation();
+    state_.arrangement_automation = arrangement.automation;
     state_.patterns.clear();
     state_.patterns.reserve(arrangement.patterns.size());
     for (const auto &pattern : arrangement.patterns)
-        state_.patterns.push_back(
-            {pattern.id, pattern.name, pattern.length, pattern.tracks.size(),
-             pattern.follow});
+        state_.patterns.push_back({pattern.id, pattern.name, pattern.length,
+                                   pattern.tracks.size(), pattern.follow});
     state_.clips.clear();
     state_.clips.reserve(arrangement.clips.size());
     for (const auto &clip : arrangement.clips)
-        state_.clips.push_back({clip.id, clip.pattern, clip.start, clip.duration,
-                                clip.loop, clip.enabled, clip.transpose,
-                                clip.velocity_scale});
+        state_.clips.push_back({clip.id, clip.pattern, clip.start,
+                                clip.duration, clip.loop, clip.enabled,
+                                clip.transpose, clip.velocity_scale});
     state_.pattern_chain_id = arrangement.pattern_chain_id;
     state_.pattern_chain_position = arrangement.pattern_chain_position;
     state_.pattern_chain_loop = arrangement.chain_loop;
@@ -5705,8 +6059,7 @@ void ApplicationService::synchronize_locked() const {
     state_.pattern_chain_entries.clear();
     state_.pattern_chain_entries.reserve(arrangement.chain_entries.size());
     for (const auto &entry : arrangement.chain_entries)
-        state_.pattern_chain_entries.push_back(
-            {entry.pattern, entry.repeats});
+        state_.pattern_chain_entries.push_back({entry.pattern, entry.repeats});
     if (state_.selected_track == 0 && !timeline.timeline.tracks.empty())
         state_.selected_track = timeline.timeline.tracks.front().id;
     state_.tracks.clear();
