@@ -1,5 +1,11 @@
 # Architecture
 
+Reusable sound configuration is stored outside projects by the versioned
+`PresetLibrary`. It composes the authoritative slice, native-FX and modulation
+serializers, validates and remaps template IDs on the control thread, then
+hands bounded configurations to existing publication paths. See
+[PRESETS.md](PRESETS.md).
+
 The versioned [application discovery contract](APPLICATION_DISCOVERY.md)
 projects existing actions, parameters, objects and subsystem descriptors into a
 single copied control-side model. The

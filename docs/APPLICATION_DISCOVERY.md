@@ -1,5 +1,9 @@
 # Application discovery contract
 
+Preset clients consume presentation-neutral metadata, dependency lists,
+validation diagnostics and typed `PresetLibrary` operations for synth, sample,
+FX-chain and track-sound entries. See [PRESETS.md](PRESETS.md).
+
 NEUROGENIC exposes a presentation-neutral discovery document for native GUI,
 UI Studio, controllers, MIDI mapping, Lua and future remote clients. Discovery
 is a control-side view over `ApplicationService`, `ActionRegistry`, parameter

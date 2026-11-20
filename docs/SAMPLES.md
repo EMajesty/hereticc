@@ -1,5 +1,9 @@
 # Live sample management
 
+Sample-instrument presets reuse slice sidecars and immutable sample references.
+They store paths and playback metadata, never PCM; missing assets stay
+inspectable for relinking. See [PRESETS.md](PRESETS.md).
+
 ## Polyphonic modulation
 
 Sample and slice voices instantiate track-owned voice definitions. Note-on

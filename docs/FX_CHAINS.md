@@ -1,5 +1,9 @@
 # Native FX chains
 
+FX preset IDs are template identities. Import allocates fresh runtime IDs and
+remaps chain/modulation references, so repeated instances have independent DSP
+state. See [PRESETS.md](PRESETS.md).
+
 NEUROGENIC has bounded serial native effect chains on mixer tracks, group
 buses, both auxiliary buses, and the stereo master. Processor types and processor instances
 are separate: a type describes code and parameters, while each instance has a

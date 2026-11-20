@@ -805,6 +805,21 @@ MacroProject load_macros(const std::filesystem::path &path) {
 }
 } // namespace
 
+void save_modulation_configuration(
+    const ModulationConfiguration &configuration,
+    const std::filesystem::path &path) {
+    ModulationGraphDiagnostics diagnostics;
+    if (!validate_modulation_graph(configuration, diagnostics))
+        throw std::invalid_argument("invalid modulation preset: " +
+                                    diagnostics.message);
+    checked_write(path, serialize_modulation(configuration));
+}
+
+ModulationConfiguration load_modulation_configuration(
+    const std::filesystem::path &path) {
+    return load_modulation(path);
+}
+
 void save_project(const Project &project,
                   const std::filesystem::path &directory,
                   ProjectIoMetrics *metrics) {

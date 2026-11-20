@@ -35,6 +35,10 @@ void save_project(const Project &, const std::filesystem::path &directory,
                   ProjectIoMetrics *metrics = nullptr);
 Project load_project(const std::filesystem::path &directory,
                      ProjectIoMetrics *metrics = nullptr);
+void save_modulation_configuration(const ModulationConfiguration &,
+                                   const std::filesystem::path &);
+ModulationConfiguration
+load_modulation_configuration(const std::filesystem::path &);
 bool relink_project_sample(Project &, const std::filesystem::path &missing,
                            const std::filesystem::path &replacement,
                            std::string &error);

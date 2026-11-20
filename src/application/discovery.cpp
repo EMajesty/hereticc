@@ -1,6 +1,7 @@
 #include "neurogenic/application/discovery.hpp"
 #include "neurogenic/dsp/effect_chain.hpp"
 #include "neurogenic/dsp/modulation.hpp"
+#include "neurogenic/project/preset.hpp"
 #include <algorithm>
 #include <iomanip>
 #include <set>
@@ -117,6 +118,7 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
         {"timeline-arrangement", 2, true, {}}, {"native-fx-chains", 1, true, {}},
         {"modulation-graph", 6, true, {}}, {"performance-macros", 2, true, {}},
         {"midi-routing", 2, true, {}}, {"audio-recording", 1, true, {}},
+        {"sound-presets", 1, true, {}},
         {"high-frequency-telemetry", 1, true, {}},
         {"typed-parameter-bindings", 1, true, {}}};
     result.object_types = {
@@ -136,6 +138,8 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
         {"modulator", "Modulator", true, true, true},
         {"modulator-type", "Modulator type", false, false, false},
         {"fx-processor-type", "Effect processor type", false, false, false},
+        {"preset-type", "Preset type", false, false, false},
+        {"preset", "Sound preset", true, true, true},
         {"modulation-connection", "Modulation connection", true, true, true},
         {"performance-macro", "Performance macro", true, true, true},
         {"scene", "Scene", true, true, true},
@@ -146,6 +150,14 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
                       {"arrangement", "arrangement:main", "project:current", "Arrangement", true, false, state.arrangement_error},
                       {"master", "master:main", "project:current", "Master", true, false, {}},
                       {"recording-session", "recording-session:main", "project:current", "Recording", true, false, state.recording.error}};
+    for (const auto type : {PresetType::synth_patch,
+                            PresetType::sample_instrument,
+                            PresetType::fx_chain,
+                            PresetType::track_sound}) {
+        const auto id = std::string(preset_type_name(type));
+        result.objects.push_back(
+            {"preset-type", "preset-type:" + id, {}, id, true, false, {}});
+    }
     for (const auto &type : modulator_type_registry()) {
         const auto parent = "modulator-type:" + std::string(type.id);
         result.objects.push_back({"modulator-type", parent, {},

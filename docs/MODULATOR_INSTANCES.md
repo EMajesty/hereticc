@@ -1,5 +1,9 @@
 # Dynamic modulator instances
 
+Preset-local modulator and route IDs are remapped together. Runtime phase,
+envelope and voice state is excluded; invalid external references are rejected
+before publication. See [PRESETS.md](PRESETS.md).
+
 ## Voice definitions
 
 `voice_definition` owners are persisted track templates. Each sample note

@@ -1,5 +1,9 @@
 # Project persistence
 
+Projects restore complete sessions; presets are smaller reusable sound
+configurations. Applying a preset does not implicitly change project routing,
+group or master ownership. See [PRESETS.md](PRESETS.md).
+
 Project format 5 uses timeline metadata version 7 to persist pattern
 collections, clips, song and loop
 ranges, stable-ID chain entries/repeats, follow actions, launch/voice policies,
