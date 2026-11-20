@@ -2,6 +2,7 @@
 #include "neurogenic/audio/recording.hpp"
 #include "neurogenic/dsp/parameter_destination.hpp"
 #include <algorithm>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -313,7 +314,7 @@ bool AudioEngine::set_synth_parameter(SynthParameter parameter, float value,
         return false;
     if (!dsp_commands_.push({DspCommand::Target::synth,
                              static_cast<std::uint32_t>(parameter), value,
-                             instance})) {
+                             instance, {}})) {
         dropped_dsp_commands_.fetch_add(1);
         return false;
     }
@@ -322,7 +323,8 @@ bool AudioEngine::set_synth_parameter(SynthParameter parameter, float value,
 bool AudioEngine::set_delay_parameter(DelayParameter parameter,
                                       float value) noexcept {
     if (!dsp_commands_.push({DspCommand::Target::delay,
-                             static_cast<std::uint32_t>(parameter), value})) {
+                             static_cast<std::uint32_t>(parameter), value, 0,
+                             {}})) {
         dropped_dsp_commands_.fetch_add(1);
         return false;
     }
@@ -330,7 +332,8 @@ bool AudioEngine::set_delay_parameter(DelayParameter parameter,
 }
 bool AudioEngine::set_delay_bypass(bool value) noexcept {
     if (!dsp_commands_.push(
-            {DspCommand::Target::delay_bypass, 0, value ? 1.0F : 0.0F})) {
+            {DspCommand::Target::delay_bypass, 0, value ? 1.0F : 0.0F, 0,
+             {}})) {
         dropped_dsp_commands_.fetch_add(1);
         return false;
     }
@@ -355,7 +358,8 @@ bool AudioEngine::publish_modulation(
 bool AudioEngine::set_modulation_input(ModulationSourceId source,
                                        float value) noexcept {
     if (!dsp_commands_.push({DspCommand::Target::modulation_input,
-                             static_cast<std::uint32_t>(source), value})) {
+                             static_cast<std::uint32_t>(source), value, 0,
+                             {}})) {
         dropped_dsp_commands_.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
@@ -364,11 +368,60 @@ bool AudioEngine::set_modulation_input(ModulationSourceId source,
 bool AudioEngine::set_modulator_value(ModulatorInstanceId instance,
                                       float value) noexcept {
     if (!dsp_commands_.push(
-            {DspCommand::Target::modulator_value, instance, value})) {
+            {DspCommand::Target::modulator_value, instance, value, 0, {}})) {
         dropped_dsp_commands_.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
     return true;
+}
+bool AudioEngine::schedule_macro_morph(
+    const MacroMorphCommand &command) noexcept {
+    DspCommand dsp;
+    dsp.target = DspCommand::Target::macro_morph;
+    dsp.morph = command;
+    if (!dsp_commands_.push(dsp)) {
+        dropped_macro_morph_commands_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    return true;
+}
+bool AudioEngine::stop_macro_morph(ModulatorInstanceId instance) noexcept {
+    MacroMorphCommand command;
+    command.type = MacroMorphCommandType::stop;
+    command.instance = instance;
+    return schedule_macro_morph(command);
+}
+std::array<MacroMorphRuntime, MacroMorphProcessor::capacity>
+AudioEngine::macro_morphs() const noexcept {
+    std::array<MacroMorphRuntime, MacroMorphProcessor::capacity> result{};
+    for (std::size_t i = 0; i < result.size(); ++i) {
+        auto &morph = result[i];
+        morph.morph_id = published_morph_ids_[i].load(std::memory_order_acquire);
+        morph.instance = static_cast<ModulatorInstanceId>(
+            published_morph_instances_[i].load(std::memory_order_acquire));
+        morph.start_frame =
+            published_morph_start_frames_[i].load(std::memory_order_acquire);
+        morph.end_frame =
+            published_morph_end_frames_[i].load(std::memory_order_acquire);
+        morph.start_value = std::bit_cast<float>(
+            published_morph_start_values_[i].load(std::memory_order_acquire));
+        morph.target_value = std::bit_cast<float>(
+            published_morph_target_values_[i].load(std::memory_order_acquire));
+        morph.effective_value = std::bit_cast<float>(
+            published_morph_effective_values_[i].load(std::memory_order_acquire));
+        morph.progress = std::bit_cast<float>(
+            published_morph_progress_[i].load(std::memory_order_acquire));
+        const auto flags =
+            published_morph_flags_[i].load(std::memory_order_acquire);
+        morph.active = flags & 1U;
+        morph.scheduled = flags & 2U;
+        morph.interrupted = flags & 4U;
+        morph.completed = flags & 8U;
+        morph.duration_unit = static_cast<MacroMorphDurationUnit>(
+            (flags >> 4U) & 1U);
+        morph.curve = static_cast<MacroMorphCurve>((flags >> 5U) & 3U);
+    }
+    return result;
 }
 
 bool AudioEngine::queue_pattern(const Pattern &pattern) noexcept {
@@ -777,8 +830,14 @@ void AudioEngine::process(std::span<float> left,
         else if (dsp.target == DspCommand::Target::modulation_input)
             modulation_.set_input(
                 static_cast<ModulationSourceId>(dsp.parameter), dsp.value);
-        else
+        else if (dsp.target == DspCommand::Target::modulator_value) {
+            macro_morphs_.override_value(dsp.parameter, dsp.value);
             modulation_.set_modulator_value(dsp.parameter, dsp.value);
+        } else if (!macro_morphs_.command(
+                       dsp.morph, rate_,
+                       60'000'000.0 / active_timeline_tempo_us_))
+            dropped_macro_morph_commands_.fetch_add(1,
+                                                    std::memory_order_relaxed);
     }
     SynthTrigger synth_trigger;
     while (synth_triggers_.pop(synth_trigger)) {
@@ -1075,6 +1134,29 @@ void AudioEngine::process(std::span<float> left,
                                      {midi_clock_configuration_.ports.data(),
                                       midi_clock_configuration_.port_count});
         }
+        const auto morph_range_start =
+            accept_external_clock_ ? external_start_frame : transport_frame_;
+        const auto morph_range_end = accept_external_clock_
+                                         ? external_end_frame
+                                         : transport_frame_ + frames;
+        const auto morph_frame = morph_range_end >= morph_range_start
+                                     ? morph_range_start +
+                                           static_cast<std::uint64_t>(
+                                               (static_cast<__uint128_t>(
+                                                    morph_range_end -
+                                                    morph_range_start) *
+                                                frame) /
+                                               std::max<std::size_t>(1, frames))
+                                     : morph_range_start;
+        const auto morph_tempo =
+            accept_external_clock_ && external_clock.tempo_bpm > 0
+                ? external_clock.tempo_bpm
+                : 60'000'000.0 / active_timeline_tempo_us_;
+        macro_morphs_.process(
+            morph_frame, transport_playing_, rate_, morph_tempo,
+            [&](ModulatorInstanceId instance, float value) noexcept {
+                modulation_.set_modulator_value(instance, value);
+            });
         modulation_.process_frame([&](ParameterDestination destination,
                                       float value) noexcept {
             if (destination.target == ParameterTarget::subtractive_synth) {
@@ -1155,6 +1237,8 @@ void AudioEngine::process(std::span<float> left,
             if (event.type == MusicalEventType::parameter) {
                 if (event.parameter_target == static_cast<std::uint32_t>(
                                                   ParameterTarget::performance_macro)) {
+                    macro_morphs_.override_value(event.instrument_instance,
+                                                 event.value);
                     modulation_.set_modulator_value(event.instrument_instance,
                                                     event.value);
                     continue;
@@ -1416,6 +1500,36 @@ void AudioEngine::process(std::span<float> left,
     }
     published_frame_.store(transport_frame_, std::memory_order_release);
     published_playing_.store(transport_playing_, std::memory_order_release);
+    for (std::size_t i = 0; i < MacroMorphProcessor::capacity; ++i) {
+        const auto &morph = macro_morphs_.morphs()[i];
+        published_morph_ids_[i].store(morph.morph_id,
+                                      std::memory_order_release);
+        published_morph_instances_[i].store(morph.instance,
+                                            std::memory_order_release);
+        published_morph_start_frames_[i].store(morph.start_frame,
+                                               std::memory_order_release);
+        published_morph_end_frames_[i].store(morph.end_frame,
+                                             std::memory_order_release);
+        published_morph_start_values_[i].store(
+            std::bit_cast<std::uint32_t>(morph.start_value),
+            std::memory_order_release);
+        published_morph_target_values_[i].store(
+            std::bit_cast<std::uint32_t>(morph.target_value),
+            std::memory_order_release);
+        published_morph_effective_values_[i].store(
+            std::bit_cast<std::uint32_t>(morph.effective_value),
+            std::memory_order_release);
+        published_morph_progress_[i].store(
+            std::bit_cast<std::uint32_t>(morph.progress),
+            std::memory_order_release);
+        const auto flags = static_cast<std::uint32_t>(morph.active) |
+                           (static_cast<std::uint32_t>(morph.scheduled) << 1U) |
+                           (static_cast<std::uint32_t>(morph.interrupted) << 2U) |
+                           (static_cast<std::uint32_t>(morph.completed) << 3U) |
+                           (static_cast<std::uint32_t>(morph.duration_unit) << 4U) |
+                           (static_cast<std::uint32_t>(morph.curve) << 5U);
+        published_morph_flags_[i].store(flags, std::memory_order_release);
+    }
     mixer_.process(left.first(frames), right.first(frames),
                    physical_output_ ? std::span<float>{physical_output_,
                                                        physical_output_samples_}

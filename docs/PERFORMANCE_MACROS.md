@@ -31,11 +31,32 @@ not every downstream assignment.
 ## Scenes and morphs
 
 A performance scene has a stable ID, name, captured macro values, and a default
-morph preference. Recall interpolates normalized macro values on the control
-side and sends bounded value commands to the audio engine. Durations may be
-seconds or musical quarter-note units. A new recall replaces the active morph;
-stop leaves values at their current positions. Deleted or missing macro targets
-are ignored while remaining scene targets continue.
+morph preference. Recall prepares fixed-size commands on the control thread;
+the audio callback executes them against absolute transport frames. Durations
+may be seconds or musical quarter-note units. Linear, exponential, logarithmic
+and S-curve interpolation are supported. Up to 32 independent macro morphs may
+run concurrently. Recalling a macro already in flight replaces that macro's
+morph; Stop leaves it at its current effective value. Missing targets are
+reported and skipped while valid targets continue, and a recall with no valid
+targets fails.
+
+Timed values update at a fixed 32-frame control interval. A scheduled start is
+therefore observed no later than 31 transport frames after its exact boundary
+(about 0.65 ms at 48 kHz); completion and progress use the authoritative frame
+position rather than callback boundaries. Seconds durations count transported
+frames. Beat durations integrate the current authoritative tempo, so fractional
+BPM and mid-morph tempo changes are followed without resetting progress.
+External synchronization uses the externally followed frame range and tempo.
+Timed morphs freeze on Stop and resume on Continue. Backward seeking preserves
+the completed fraction and rebases the remaining morph; seeking beyond a
+scheduled start catches up from the requested boundary. Immediate recalls apply
+at the first processed sample even while transport is stopped.
+
+Manual macro changes and recorded macro automation share the ordered DSP command
+queue with morph commands. The most recently processed semantic value interrupts
+the active morph for that macro; a later scene recall replaces it. Automation is
+stored only for the macro value, never expanded into downstream assignments.
+The callback queue has 128 usable command slots and exposes overflow counts.
 
 Scene definitions are separate from existing routing scenes, so loading an old
 routing scene does not silently change macro values. Morph runtime progress,
@@ -49,13 +70,18 @@ morph progress, capacities and validation diagnostics. This is presentation
 neutral: UI Studio may render the same macro as a slider, knob, button, XY axis
 or custom SVG widget.
 
-Project format 5 adds `macros.ngm` to each committed generation. Older projects
-load an empty macro collection without changing their sound. Invalid owners,
-destinations, duplicate IDs and over-budget data are rejected before audio
-publication.
+Project format 5 adds `macros.ngm` to each committed generation. Macro metadata
+version 2 persists each scene's interpolation curve; version 1 loads with the
+linear default. Active morph progress, scheduled frames and smoothing state are
+transient. Older projects load an empty macro collection without changing their
+sound. Invalid owners, destinations, duplicate IDs and over-budget data are
+rejected before audio publication.
 
 Current limitations: scene capture stores macro values (the optional numeric
 parameter list is reserved), assignment-specific smoothing metadata is
-persisted but DSP destinations currently use their existing smoothing, morphs
-are advanced at application-state synchronization rate, and Undo/Redo remains
-timeline-oriented rather than a general project-object history.
+persisted but DSP destinations currently use their existing smoothing, recorded
+automation segments remain discrete, and Undo/Redo remains timeline-oriented
+rather than a general project-object history. The reusable callback-safe
+`ParameterSmoother` supports bypass, linear ramps and exponential smoothing for
+future destinations; it is not stacked on processors that already smooth their
+inputs.

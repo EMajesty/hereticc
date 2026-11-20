@@ -3,6 +3,7 @@
 #include "neurogenic/audio/sample.hpp"
 #include "neurogenic/core/spsc_queue.hpp"
 #include "neurogenic/dsp/modulation.hpp"
+#include "neurogenic/dsp/macro_morph.hpp"
 #include "neurogenic/dsp/processor.hpp"
 #include "neurogenic/dsp/purest_gain.hpp"
 #include "neurogenic/dsp/time_stretch.hpp"
@@ -110,6 +111,13 @@ class AudioEngine {
     publish_modulation(const ModulationConfiguration &configuration) noexcept;
     [[nodiscard]] bool set_modulation_input(ModulationSourceId, float) noexcept;
     [[nodiscard]] bool set_modulator_value(ModulatorInstanceId, float) noexcept;
+    [[nodiscard]] bool schedule_macro_morph(const MacroMorphCommand &) noexcept;
+    [[nodiscard]] bool stop_macro_morph(ModulatorInstanceId) noexcept;
+    [[nodiscard]] std::array<MacroMorphRuntime, MacroMorphProcessor::capacity>
+    macro_morphs() const noexcept;
+    [[nodiscard]] std::uint64_t dropped_macro_morph_commands() const noexcept {
+        return dropped_macro_morph_commands_.load(std::memory_order_acquire);
+    }
     [[nodiscard]] ModulationSnapshot modulation_snapshot() const noexcept {
         return modulation_.snapshot();
     }
@@ -316,12 +324,14 @@ class AudioEngine {
             delay,
             delay_bypass,
             modulation_input,
-            modulator_value
+            modulator_value,
+            macro_morph
         };
         Target target{};
         std::uint32_t parameter{};
         float value{};
         InstrumentInstanceId instance{};
+        MacroMorphCommand morph;
     };
     struct Voice {
         const Sample *sample{};
@@ -456,6 +466,15 @@ class AudioEngine {
     SpscQueue<Trigger, 65> triggers_;
     SpscQueue<SynthTrigger, 65> synth_triggers_;
     SpscQueue<DspCommand, 129> dsp_commands_;
+    MacroMorphProcessor macro_morphs_;
+    std::array<std::atomic<std::uint64_t>, MacroMorphProcessor::capacity>
+        published_morph_ids_{}, published_morph_instances_{},
+        published_morph_start_frames_{}, published_morph_end_frames_{};
+    std::array<std::atomic<std::uint32_t>, MacroMorphProcessor::capacity>
+        published_morph_start_values_{}, published_morph_target_values_{},
+        published_morph_effective_values_{}, published_morph_progress_{},
+        published_morph_flags_{};
+    std::atomic<std::uint64_t> dropped_macro_morph_commands_{};
     SpscQueue<ModulationConfiguration, 5> modulation_configurations_;
     SpscQueue<Pattern, 9> patterns_;
     static constexpr std::size_t timeline_plan_slot_count = 4;

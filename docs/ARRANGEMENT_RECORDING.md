@@ -38,7 +38,12 @@ then destination clamping.
 
 Macro gestures are recorded as `macro.<source-instance>.value` semantic
 automation. Downstream mapped parameters are deliberately not expanded into
-separate automation lanes, preserving the editable macro performance.
+separate automation lanes, preserving the editable macro performance. Playback
+delivers those events through the same ordered callback queue used by manual
+macro changes and prepared scene morphs. The most recently processed semantic
+macro event interrupts an active morph for that macro. Automation remains
+discrete in this version; interpolated segments are a documented extension
+point rather than synthesized control-rate events.
 
 Commit is one validated `TimelineService` transaction, so a pass is one
 undo/redo operation. Revision or publication failure leaves history and the

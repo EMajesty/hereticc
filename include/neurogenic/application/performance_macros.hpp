@@ -1,8 +1,10 @@
 #pragma once
 #include "neurogenic/audio/mixer.hpp"
 #include "neurogenic/dsp/modulation.hpp"
+#include "neurogenic/dsp/macro_morph.hpp"
 #include "neurogenic/timeline/model.hpp"
 #include <cstdint>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -42,6 +44,7 @@ struct PerformanceScene {
     std::vector<std::pair<std::string, float>> parameter_values;
     float morph_duration{};
     bool tempo_sync{};
+    MacroMorphCurve curve{MacroMorphCurve::linear};
 };
 
 struct MacroProject {
@@ -62,7 +65,7 @@ struct MacroMorphStatus {
 };
 
 struct MacroDiscoverySnapshot {
-    std::uint32_t api_version{1};
+    std::uint32_t api_version{2};
     std::vector<PerformanceMacro> macros;
     std::vector<PerformanceScene> scenes;
     MacroMorphStatus morph;
@@ -70,6 +73,12 @@ struct MacroDiscoverySnapshot {
     std::size_t assignment_capacity{MacroProject::default_assignment_capacity};
     std::size_t scene_capacity{MacroProject::default_scene_capacity};
     std::vector<std::string> validation_errors;
+    std::vector<MacroMorphRuntime> active_morphs;
+    std::vector<std::pair<PerformanceMacroId, float>> effective_values;
+    std::uint32_t morph_control_interval{MacroMorphProcessor::control_interval};
+    std::uint64_t dropped_morph_commands{};
+    bool absolute_frame_scheduling{true}, seconds_duration{true},
+        beats_duration{true};
 };
 
 class PerformanceMacroService {
@@ -87,7 +96,8 @@ class PerformanceMacroService {
                 std::string &);
     bool remove_assignment(PerformanceMacroId, MacroAssignmentId,
                            std::string &);
-    bool capture_scene(std::string, float, bool, PerformanceSceneId &,
+    bool capture_scene(std::string, float, bool, MacroMorphCurve,
+                       PerformanceSceneId &,
                        std::string &);
     bool erase_scene(PerformanceSceneId, std::string &);
     bool start_morph(PerformanceSceneId, float, bool, MusicalTick,
@@ -95,6 +105,10 @@ class PerformanceMacroService {
     void stop_morph() noexcept;
     bool advance(MusicalTick, std::uint64_t,
                  std::vector<std::pair<ModulatorInstanceId, float>> &) noexcept;
+    bool prepare_scene_morph(
+        PerformanceSceneId, float, bool, MacroMorphCurve, std::uint64_t,
+        std::span<const MacroMorphRuntime>, std::uint64_t &,
+        std::vector<MacroMorphCommand> &, std::string &);
     bool compile(const ModulationConfiguration &, ModulationConfiguration &,
                  std::string &) const;
     [[nodiscard]] MacroDiscoverySnapshot snapshot() const;

@@ -1619,7 +1619,8 @@ void test_performance_macros() {
           "stable independent macro source identities");
 
     PerformanceSceneId scene{};
-    check(macros.capture_scene("A", 2.0F, false, scene, error),
+    check(macros.capture_scene("A", 2.0F, false, MacroMorphCurve::linear,
+                               scene, error),
           "capture performance scene");
     check(macros.set_value(macro_id, 1.0F, error), "change macro before recall");
     check(macros.start_morph(scene, 1.0F, false, 0, 100, 1000, 120.0,
@@ -1643,6 +1644,233 @@ void test_performance_macros() {
               ".value")
               .has_value(),
           "macro automation destination discovery");
+}
+
+void test_precise_macro_morphing() {
+    using namespace neurogenic;
+    MacroMorphProcessor processor;
+    std::array<float, 9> values{};
+    const auto apply = [&](ModulatorInstanceId instance, float value) {
+        values[instance] = value;
+    };
+    MacroMorphCommand immediate;
+    immediate.morph_id = 1;
+    immediate.instance = 1;
+    immediate.start_frame = 64;
+    immediate.start_value = 0.1F;
+    immediate.target_value = 0.9F;
+    check(processor.command(immediate, 1000, 120),
+          "queue immediate macro recall");
+    processor.process(64, false, 1000, 120, apply);
+    near(values[1], 0.9F, "immediate recall while transport stopped");
+
+    MacroMorphCommand timed = immediate;
+    timed.morph_id = 2;
+    timed.instance = 2;
+    timed.start_frame = 100;
+    timed.start_value = 0;
+    timed.target_value = 1;
+    timed.duration = 1;
+    check(processor.command(timed, 1000, 120), "queue timed macro morph");
+    for (std::uint64_t frame = 0; frame <= 1124; ++frame)
+        processor.process(frame, true, 1000, 120, apply);
+    near(values[2], 1.0F, "timed morph completion");
+    const auto timed_state = std::find_if(
+        processor.morphs().begin(), processor.morphs().end(),
+        [](const auto &morph) { return morph.instance == 2; });
+    check(timed_state != processor.morphs().end() && timed_state->completed &&
+              timed_state->end_frame == 1100,
+          "timed morph completion diagnostics");
+
+    MacroMorphCommand beat = timed;
+    beat.morph_id = 3;
+    beat.instance = 3;
+    beat.start_frame = 0;
+    beat.duration_unit = MacroMorphDurationUnit::beats;
+    beat.duration = 1;
+    check(processor.command(beat, 1000, 60), "queue beat morph");
+    for (std::uint64_t frame = 0; frame < 500; ++frame)
+        processor.process(frame, true, 1000, 60, apply);
+    check(values[3] > 0.43F && values[3] < 0.54F,
+          "beat morph first half at 60 BPM");
+    for (std::uint64_t frame = 500; frame <= 800; ++frame)
+        processor.process(frame, true, 1000, 120, apply);
+    near(values[3], 1.0F, "beat morph follows tempo change");
+
+    MacroMorphCommand paused = timed;
+    paused.morph_id = 4;
+    paused.instance = 4;
+    paused.start_frame = 1000;
+    paused.duration = 0.5;
+    check(processor.command(paused, 1000, 120), "queue pausable morph");
+    for (std::uint64_t frame = 1000; frame < 1200; ++frame)
+        processor.process(frame, true, 1000, 120, apply);
+    const auto before_stop = values[4];
+    for (int callback = 0; callback < 20; ++callback)
+        processor.process(1200, false, 1000, 120, apply);
+    near(values[4], before_stop, "transport stop freezes macro morph");
+    for (std::uint64_t frame = 1200; frame <= 1600; ++frame)
+        processor.process(frame, true, 1000, 120, apply);
+    near(values[4], 1.0F, "transport continue resumes macro morph");
+
+    for (ModulatorInstanceId instance = 5; instance <= 8; ++instance) {
+        auto simultaneous = timed;
+        simultaneous.morph_id = 10 + instance;
+        simultaneous.instance = instance;
+        simultaneous.start_frame = 2000;
+        simultaneous.duration = 0.25;
+        simultaneous.curve = instance == 5 ? MacroMorphCurve::exponential
+                                           : MacroMorphCurve::s_curve;
+        check(processor.command(simultaneous, 1000, 120),
+              "queue simultaneous morph");
+    }
+    for (std::uint64_t frame = 2000; frame <= 2300; ++frame)
+        processor.process(frame, true, 1000, 120, apply);
+    for (ModulatorInstanceId instance = 5; instance <= 8; ++instance)
+        near(values[instance], 1.0F, "simultaneous morph completion");
+
+    MacroMorphCommand interrupted = timed;
+    interrupted.morph_id = 30;
+    interrupted.instance = 5;
+    interrupted.start_frame = 3000;
+    interrupted.duration = 1;
+    check(processor.command(interrupted, 1000, 120), "start interrupt target");
+    for (std::uint64_t frame = 3000; frame < 3300; ++frame)
+        processor.process(frame, true, 1000, 120, apply);
+    interrupted.morph_id = 31;
+    interrupted.start_frame = 3300;
+    interrupted.start_value = values[5];
+    interrupted.target_value = 0.2F;
+    interrupted.duration = 0.1;
+    check(processor.command(interrupted, 1000, 120), "replace active morph");
+    for (std::uint64_t frame = 3300; frame <= 3450; ++frame)
+        processor.process(frame, true, 1000, 120, apply);
+    near(values[5], 0.2F, "replacement morph target");
+
+    MacroMorphCommand seeked = timed;
+    seeked.morph_id = 40;
+    seeked.instance = 6;
+    seeked.start_frame = 4000;
+    seeked.duration = 0.5;
+    check(processor.command(seeked, 1000, 120), "queue seek-safe morph");
+    for (std::uint64_t frame = 4000; frame < 4200; ++frame)
+        processor.process(frame, true, 1000, 120, apply);
+    const auto before_seek = values[6];
+    processor.process(1000, true, 1000, 120, apply);
+    for (std::uint64_t frame = 1001; frame <= 1400; ++frame)
+        processor.process(frame, true, 1000, 120, apply);
+    check(values[6] >= before_seek && values[6] > 0.95F,
+          "active morph rebases safely after transport seek");
+
+    ParameterSmoother smoother;
+    smoother.reset(0);
+    smoother.set_target(1, 0.1F, 1000, ParameterSmoothingMode::linear);
+    for (int i = 0; i < 100; ++i)
+        smoother.process();
+    near(smoother.value(), 1, "linear parameter smoothing");
+    smoother.reset(0);
+    smoother.set_target(1, 0.01F, 1000,
+                        ParameterSmoothingMode::exponential);
+    const auto first = smoother.process();
+    for (int i = 0; i < 100; ++i)
+        smoother.process();
+    check(first > 0 && first < 1 && smoother.value() > 0.99F,
+          "exponential parameter smoothing");
+    smoother.set_target(0.25F, 0, 1000, ParameterSmoothingMode::bypass);
+    near(smoother.value(), 0.25F, "discrete smoothing bypass");
+
+    auto configured_engine = [] {
+        auto engine = std::make_unique<AudioEngine>(48000);
+        ModulationConfiguration configuration;
+        configuration.modulator_count = 1;
+        configuration.modulators[0].id = 0x40000001U;
+        configuration.modulators[0].type = ModulatorType::performance_macro;
+        configuration.modulators[0].owner_kind = ModulatorOwnerKind::master;
+        configuration.modulators[0].settings.manual_value = 0;
+        ModulationGraphDiagnostics diagnostics;
+        check(prepare_modulation_graph(configuration, diagnostics),
+              "prepare engine morph modulation");
+        check(engine->publish_modulation(configuration),
+              "publish engine morph modulation");
+        engine->play();
+        MacroMorphCommand command;
+        command.morph_id = 100;
+        command.instance = 0x40000001U;
+        command.start_frame = 0;
+        command.target_value = 1;
+        command.duration = 0.02;
+        check(engine->schedule_macro_morph(command), "schedule engine morph");
+        return engine;
+    };
+    auto fixed = configured_engine();
+    auto partitioned = configured_engine();
+    std::vector<float> left(992), right(992);
+    fixed->process(left, right);
+    std::array<std::size_t, 9> partitions{17, 113, 64, 5, 251,
+                                          97, 301, 112, 32};
+    for (const auto frames : partitions)
+        partitioned->process(std::span<float>(left).first(frames),
+                             std::span<float>(right).first(frames));
+    const auto fixed_morphs = fixed->macro_morphs();
+    const auto partitioned_morphs = partitioned->macro_morphs();
+    near(fixed_morphs[0].effective_value,
+         partitioned_morphs[0].effective_value,
+         "morph callback partition independence");
+    check(fixed_morphs[0].completed && partitioned_morphs[0].completed,
+          "engine morph completion acknowledgement");
+
+    AudioEngine automated(48000);
+    ModulationConfiguration automation_configuration;
+    automation_configuration.modulator_count = 1;
+    automation_configuration.modulators[0].id = 0x40000002U;
+    automation_configuration.modulators[0].type =
+        ModulatorType::performance_macro;
+    automation_configuration.modulators[0].owner_kind =
+        ModulatorOwnerKind::master;
+    ModulationGraphDiagnostics automation_graph;
+    check(prepare_modulation_graph(automation_configuration, automation_graph) &&
+              automated.publish_modulation(automation_configuration),
+          "prepare automated macro");
+    Timeline automation_timeline;
+    Track automation_track;
+    automation_track.id = 1;
+    automation_track.pattern.length = ticks_per_quarter;
+    MusicalEvent automation_event{1, 0, MusicalEventType::parameter};
+    automation_event.parameter_destination =
+        "macro." + std::to_string(0x40000002U) + ".value";
+    automation_event.value = 0.3F;
+    automation_track.pattern.events.push_back(automation_event);
+    automation_timeline.tracks.push_back(automation_track);
+    std::string automation_error;
+    check(automated.queue_timeline(automation_timeline, automation_error),
+          "queue macro automation timeline");
+    MacroMorphCommand automated_morph;
+    automated_morph.morph_id = 200;
+    automated_morph.instance = 0x40000002U;
+    automated_morph.target_value = 1;
+    automated_morph.duration = 1;
+    check(automated.schedule_macro_morph(automated_morph),
+          "queue morph before recorded automation");
+    std::array<float, 64> automated_left{}, automated_right{};
+    automated.process(automated_left, automated_right);
+    const auto automated_state = automated.macro_morphs();
+    check(automated_state[0].interrupted && !automated_state[0].active,
+          "recorded macro automation interrupts active morph");
+    near(automated_state[0].effective_value, 0.3F,
+         "recorded macro automation value timing");
+
+    AudioEngine overflow_engine;
+    MacroMorphCommand queued;
+    queued.morph_id = 1;
+    queued.instance = 1;
+    std::size_t accepted{};
+    for (std::size_t i = 0; i < 160; ++i) {
+        queued.morph_id = i + 1;
+        queued.instance = static_cast<ModulatorInstanceId>(i + 1);
+        accepted += overflow_engine.schedule_macro_morph(queued);
+    }
+    check(accepted < 160 && overflow_engine.dropped_macro_morph_commands() > 0,
+          "bounded macro morph command queue overflow diagnostics");
 }
 
 void test_midi_routing_and_clock() {
@@ -3780,7 +4008,8 @@ void test_unified_project_persistence() {
          true, 0.02F, 2});
     project.performance_macros.macros.push_back(persisted_macro);
     project.performance_macros.scenes.push_back(
-        {81, "Drop", {{41, 0.1F}}, {}, 4.0F, true});
+        {81, "Drop", {{41, 0.1F}}, {}, 4.0F, true,
+         MacroMorphCurve::s_curve});
     project.midi.clock_source = MidiClockSource::external;
     project.midi.forward_external_clock = true;
     project.midi.route_count = 1;
@@ -3845,6 +4074,8 @@ void test_unified_project_persistence() {
                 ModulationMappingCurve::exponential &&
             loaded.performance_macros.scenes.size() == 1 &&
             loaded.performance_macros.scenes[0].macro_values[0].first == 41 &&
+            loaded.performance_macros.scenes[0].curve ==
+                MacroMorphCurve::s_curve &&
             loaded.modulation.sources[0].tempo_sync &&
             loaded.midi.clock_source == MidiClockSource::external &&
             loaded.midi.forward_external_clock &&
@@ -4942,6 +5173,38 @@ void test_application_control_and_controllers() {
                             .value -
                         0.8F) < 0.0001F,
           "macro value semantic action");
+    check(application
+              .execute({"macro.scene-capture.v1",
+                        {{"name", std::string("Snapshot")},
+                         {"curve", std::string("s-curve")}},
+                        "test",
+                        4})
+              .accepted,
+          "capture macro scene action");
+    check(application
+              .execute({"macro.value-set.v1",
+                        {{"id", static_cast<std::int64_t>(created_macro)},
+                         {"value", 0.2}},
+                        "test",
+                        5})
+              .accepted,
+          "move macro before scene recall");
+    check(application
+              .execute({"macro.scene-recall.v1",
+                        {{"id", std::int64_t{1}}, {"duration", 0.0}},
+                        "test",
+                        6})
+              .accepted,
+          "schedule immediate scene recall action");
+    std::array<float, 64> macro_left{}, macro_right{};
+    engine.process(macro_left, macro_right);
+    const auto macro_state = application.snapshot().performance_macros;
+    check(!macro_state.effective_values.empty() &&
+              std::fabs(macro_state.effective_values.front().second - 0.8F) <
+                  0.0001F &&
+              !macro_state.active_morphs.empty() &&
+              macro_state.active_morphs.front().completed,
+          "immediate scene recall state acknowledgement");
     auto selection = application.execute(
         {"track.select.v1", {{"track_id", std::int64_t{2}}}, "test", 1});
     check(selection.accepted && application.snapshot().selected_track == 2,
@@ -6928,6 +7191,7 @@ int main() {
         test_midi_routing_and_clock();
         test_modulation_engine();
         test_performance_macros();
+        test_precise_macro_morphing();
         test_polyphonic_sample_modulation();
         test_native_synthesis_and_dsp();
         test_native_effect_chains();

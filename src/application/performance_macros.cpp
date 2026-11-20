@@ -135,6 +135,26 @@ bool PerformanceMacroService::replace(MacroProject project,
         error = "performance macro assignment capacity exceeded";
         return false;
     }
+    for (std::size_t i = 0; i < project.scenes.size(); ++i) {
+        const auto &scene = project.scenes[i];
+        if (!scene.id || scene.name.empty() || scene.name.size() > 128 ||
+            !std::isfinite(scene.morph_duration) || scene.morph_duration < 0 ||
+            scene.morph_duration > 3600 ||
+            scene.curve > MacroMorphCurve::s_curve ||
+            std::any_of(scene.macro_values.begin(), scene.macro_values.end(),
+                        [](const auto &value) {
+                            return !value.first || !std::isfinite(value.second) ||
+                                   value.second < 0 || value.second > 1;
+                        })) {
+            error = "invalid performance scene";
+            return false;
+        }
+        for (std::size_t other = 0; other < i; ++other)
+            if (project.scenes[other].id == scene.id) {
+                error = "duplicate performance scene identity";
+                return false;
+            }
+    }
     project_ = std::move(project);
     morph_ = {};
     error.clear();
@@ -264,10 +284,11 @@ bool PerformanceMacroService::remove_assignment(PerformanceMacroId macro_id,
 
 bool PerformanceMacroService::capture_scene(std::string name, float duration,
                                             bool tempo_sync,
+                                            MacroMorphCurve curve,
                                             PerformanceSceneId &id,
                                             std::string &error) {
     if (name.empty() || name.size() > 128 || !std::isfinite(duration) ||
-        duration < 0 || duration > 3600 ||
+        duration < 0 || duration > 3600 || curve > MacroMorphCurve::s_curve ||
         project_.scenes.size() == MacroProject::default_scene_capacity) {
         error = "invalid performance scene or scene capacity exhausted";
         return false;
@@ -280,6 +301,7 @@ bool PerformanceMacroService::capture_scene(std::string name, float duration,
     scene.name = std::move(name);
     scene.morph_duration = duration;
     scene.tempo_sync = tempo_sync;
+    scene.curve = curve;
     for (const auto &macro : project_.macros)
         scene.macro_values.emplace_back(macro.id, macro.value);
     project_.scenes.push_back(std::move(scene));
@@ -363,6 +385,57 @@ bool PerformanceMacroService::advance(
         }
     if (morph_.progress >= 1)
         morph_.active = false;
+    return true;
+}
+
+bool PerformanceMacroService::prepare_scene_morph(
+    PerformanceSceneId id, float duration, bool tempo_sync,
+    MacroMorphCurve curve, std::uint64_t start_frame,
+    std::span<const MacroMorphRuntime> runtime, std::uint64_t &next_morph_id,
+    std::vector<MacroMorphCommand> &commands, std::string &error) {
+    const auto scene = std::find_if(project_.scenes.begin(), project_.scenes.end(),
+                                    [=](const auto &candidate) {
+                                        return candidate.id == id;
+                                    });
+    if (scene == project_.scenes.end() || !std::isfinite(duration) ||
+        duration < 0 || duration > 3600 ||
+        curve > MacroMorphCurve::s_curve) {
+        error = "invalid performance scene morph";
+        return false;
+    }
+    commands.clear();
+    for (const auto &[macro_id, target] : scene->macro_values) {
+        auto *macro = find(macro_id);
+        if (!macro)
+            continue;
+        auto start = macro->value;
+        const auto active = std::find_if(
+            runtime.begin(), runtime.end(), [&](const auto &candidate) {
+                return candidate.instance == macro->source_instance &&
+                       (candidate.active || candidate.scheduled ||
+                        candidate.completed || candidate.interrupted);
+            });
+        if (active != runtime.end())
+            start = active->effective_value;
+        MacroMorphCommand command;
+        command.type = MacroMorphCommandType::start;
+        command.morph_id = next_morph_id++;
+        command.instance = macro->source_instance;
+        command.start_frame = start_frame;
+        command.start_value = std::clamp(start, 0.0F, 1.0F);
+        command.target_value = std::clamp(target, 0.0F, 1.0F);
+        command.duration = duration;
+        command.duration_unit = tempo_sync ? MacroMorphDurationUnit::beats
+                                           : MacroMorphDurationUnit::seconds;
+        command.curve = curve;
+        commands.push_back(command);
+        macro->value = command.target_value;
+    }
+    if (commands.empty()) {
+        error = "performance scene has no available macro targets";
+        return false;
+    }
+    error.clear();
     return true;
 }
 

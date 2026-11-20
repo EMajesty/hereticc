@@ -377,3 +377,14 @@ mapping, performance scenes, control-side seconds or tempo morphs, semantic
 automation, project format 5 persistence and a versioned discovery snapshot.
 Assignment smoothing currently delegates to the destination's existing DSP
 smoothing; general project-object Undo/Redo remains deferred.
+
+Task 048 moves scene morph execution into a fixed-capacity audio-thread control
+processor. Prepared commands support absolute transport-frame starts,
+seconds/beat durations, four curves, 32 simultaneous morphs, replacement,
+stop-at-current-value, tempo changes, transport stop/continue and seek rebasing.
+Manual and recorded automation values share the ordered DSP queue and interrupt
+an active morph deterministically. Runtime discovery exposes effective values,
+progress, scheduled frames, completion and queue drops. Macro metadata version
+2 persists scene curves; transient morph state remains excluded. Recorded macro
+automation is still discrete, and the 32-frame control interval is the current
+timing granularity.

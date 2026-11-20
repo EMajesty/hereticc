@@ -689,7 +689,7 @@ MidiProjectConfiguration load_midi(const std::filesystem::path &path) {
 }
 std::string serialize_macros(const MacroProject &project) {
     std::ostringstream out;
-    out << "NEUROGENIC_PERFORMANCE_MACROS 1\n" << std::setprecision(9)
+    out << "NEUROGENIC_PERFORMANCE_MACROS 2\n" << std::setprecision(9)
         << "macros " << project.macros.size() << '\n';
     for (const auto &macro : project.macros) {
         out << "macro " << macro.id << ' ' << macro.source_instance << ' '
@@ -710,7 +710,8 @@ std::string serialize_macros(const MacroProject &project) {
     out << "scenes " << project.scenes.size() << '\n';
     for (const auto &scene : project.scenes) {
         out << "scene " << scene.id << ' ' << scene.morph_duration << ' '
-            << scene.tempo_sync << ' ' << std::quoted(scene.name) << ' '
+            << scene.tempo_sync << ' ' << static_cast<unsigned>(scene.curve)
+            << ' ' << std::quoted(scene.name) << ' '
             << scene.macro_values.size() << ' '
             << scene.parameter_values.size() << '\n';
         for (const auto &[id, value] : scene.macro_values)
@@ -729,7 +730,8 @@ MacroProject load_macros(const std::filesystem::path &path) {
     MacroProject result;
     std::size_t macro_count{};
     if (!(input >> magic >> version) ||
-        magic != "NEUROGENIC_PERFORMANCE_MACROS" || version != 1 ||
+        magic != "NEUROGENIC_PERFORMANCE_MACROS" ||
+        (version != 1 && version != 2) ||
         !(input >> label >> macro_count) || label != "macros" ||
         macro_count > MacroProject::default_macro_capacity)
         throw std::runtime_error("unsupported performance macro metadata");
@@ -770,13 +772,18 @@ MacroProject load_macros(const std::filesystem::path &path) {
     for (std::size_t i = 0; i < scene_count; ++i) {
         PerformanceScene scene;
         std::size_t macro_values{}, parameter_values{};
+        unsigned curve{};
         if (!(input >> label >> scene.id >> scene.morph_duration >>
-              scene.tempo_sync >> std::quoted(scene.name) >> macro_values >>
+              scene.tempo_sync) ||
+            (version >= 2 && !(input >> curve)) ||
+            !(input >> std::quoted(scene.name) >> macro_values >>
               parameter_values) ||
             label != "scene" ||
+            curve > static_cast<unsigned>(MacroMorphCurve::s_curve) ||
             macro_values > MacroProject::default_macro_capacity ||
             parameter_values > MacroProject::default_assignment_capacity)
             throw std::runtime_error("malformed performance scene");
+        scene.curve = static_cast<MacroMorphCurve>(curve);
         for (std::size_t value = 0; value < macro_values; ++value) {
             PerformanceMacroId id{};
             float amount{};

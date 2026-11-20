@@ -268,14 +268,17 @@ ActionRegistry::ActionRegistry() {
                "Performance",
                {{"name", ValueType::text},
                 {"duration", ValueType::real, false},
-                {"tempo_sync", ValueType::boolean, false}}));
+                {"tempo_sync", ValueType::boolean, false},
+                {"curve", ValueType::text, false}}));
     add(action("macro.scene-delete.v1", "Delete performance scene",
                "Performance", {{"id", ValueType::integer}}));
     add(action("macro.scene-recall.v1", "Recall performance scene",
                "Performance",
                {{"id", ValueType::integer},
                 {"duration", ValueType::real, false},
-                {"tempo_sync", ValueType::boolean, false}}));
+                {"tempo_sync", ValueType::boolean, false},
+                {"curve", ValueType::text, false},
+                {"start_frame", ValueType::integer, false}}));
     add(action("macro.morph-stop.v1", "Stop performance morph",
                "Performance"));
     add(action("macro.query.v1", "Query performance macros", "Performance"));
@@ -1287,6 +1290,20 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             const auto *value = argument<std::string>(command, name);
             return value ? *value : std::move(fallback);
         };
+        const auto morph_curve = [&](std::string value,
+                                     MacroMorphCurve fallback) {
+            if (value.empty())
+                return fallback;
+            if (value == "exponential")
+                return MacroMorphCurve::exponential;
+            if (value == "logarithmic")
+                return MacroMorphCurve::logarithmic;
+            if (value == "s-curve")
+                return MacroMorphCurve::s_curve;
+            if (value != "linear")
+                error = "unknown macro morph curve";
+            return MacroMorphCurve::linear;
+        };
         const auto previous = performance_macros_.project();
         bool structural{};
         if (command.action_id == "macro.create.v1") {
@@ -1376,38 +1393,71 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 static_cast<MacroAssignmentId>(integer("assignment_id")), error);
         } else if (command.action_id == "macro.scene-capture.v1") {
             PerformanceSceneId id{};
+            const auto curve = morph_curve(text("curve"),
+                                           MacroMorphCurve::linear);
             structural = performance_macros_.capture_scene(
                 text("name"), static_cast<float>(real("duration")),
-                boolean("tempo_sync"), id, error);
+                boolean("tempo_sync"), curve, id, error);
         } else if (command.action_id == "macro.scene-delete.v1") {
             structural = performance_macros_.erase_scene(
                 static_cast<PerformanceSceneId>(integer("id")), error);
         } else if (command.action_id == "macro.scene-recall.v1") {
-            const auto duration = static_cast<float>(real("duration"));
-            const auto tempo_sync = boolean("tempo_sync");
-            if (performance_macros_.start_morph(
-                    static_cast<PerformanceSceneId>(integer("id")), duration,
-                    tempo_sync, state_.transport_tick, engine_.frame_position(),
-                    engine_.sample_rate(),
-                    60'000'000.0 /
-                        timeline_.snapshot().timeline.transport
-                            .microseconds_per_quarter,
-                    error)) {
-                std::vector<std::pair<ModulatorInstanceId, float>> updates;
-                performance_macros_.advance(state_.transport_tick,
-                                            engine_.frame_position(), updates);
-                for (const auto &[instance, value] : updates)
-                    if (!engine_.set_modulator_value(instance, value)) {
-                        error = "DSP command queue is full";
+            const auto scene_id =
+                static_cast<PerformanceSceneId>(integer("id"));
+            const auto &scenes = performance_macros_.project().scenes;
+            const auto scene = std::find_if(
+                scenes.begin(), scenes.end(), [=](const auto &candidate) {
+                    return candidate.id == scene_id;
+                });
+            if (scene == scenes.end())
+                error = "performance scene was not found";
+            else {
+                const auto duration_argument = argument<double>(command, "duration");
+                const auto sync_argument = argument<bool>(command, "tempo_sync");
+                const auto curve = morph_curve(text("curve"), scene->curve);
+                const auto start_argument =
+                    argument<std::int64_t>(command, "start_frame");
+                if (start_argument && *start_argument < 0)
+                    error = "morph start frame must be nonnegative";
+                std::vector<MacroMorphCommand> commands;
+                const auto runtime_morphs = engine_.macro_morphs();
+                if (error.empty() && performance_macros_.prepare_scene_morph(
+                                         scene_id,
+                                         static_cast<float>(duration_argument
+                                                                ? *duration_argument
+                                                                : scene->morph_duration),
+                                         sync_argument ? *sync_argument
+                                                       : scene->tempo_sync,
+                                         curve,
+                                         start_argument
+                                             ? static_cast<std::uint64_t>(
+                                                   *start_argument)
+                                             : engine_.frame_position(),
+                                         runtime_morphs,
+                                         next_macro_morph_id_, commands,
+                                         error)) {
+                    std::vector<ModulatorInstanceId> queued;
+                    for (const auto &morph : commands)
+                        if (!engine_.schedule_macro_morph(morph)) {
+                            error = "macro morph command queue is full";
+                            break;
+                        } else
+                            queued.push_back(morph.instance);
+                    if (!error.empty()) {
+                        for (const auto instance : queued)
+                            (void)engine_.stop_macro_morph(instance);
                         std::string ignored;
                         (void)performance_macros_.replace(
                             previous, timeline_.snapshot().timeline,
                             mixer_configuration_, ignored);
-                        break;
                     }
+                }
             }
         } else if (command.action_id == "macro.morph-stop.v1") {
-            performance_macros_.stop_morph();
+            MacroMorphCommand stop;
+            stop.type = MacroMorphCommandType::stop_all;
+            if (!engine_.schedule_macro_morph(stop))
+                error = "macro morph command queue is full";
         }
         if (error.empty() && structural) {
             if (!publish_modulation_with_macros(modulation_configuration_, error)) {
@@ -5922,15 +5972,6 @@ void ApplicationService::synchronize_locked() const {
     const auto playing = engine_.playing();
     const auto frame = engine_.frame_position();
     auto timeline = timeline_.snapshot();
-    std::vector<std::pair<ModulatorInstanceId, float>> macro_updates;
-    if (performance_macros_.advance(state_.transport_tick, frame,
-                                    macro_updates))
-        for (const auto &[instance, value] : macro_updates)
-            if (!engine_.set_modulator_value(instance, value)) {
-                state_.project_error = "macro morph DSP command queue is full";
-                performance_macros_.stop_morph();
-                break;
-            }
     AudioEngine::TimelineActivationEvent activation;
     while (engine_.pop_timeline_activation(activation)) {
         ++observed_timeline_activation_count_;
@@ -6379,6 +6420,38 @@ void ApplicationService::synchronize_locked() const {
     (void)validate_modulation_graph(state_.modulation, graph);
     state_.modulation_graph = std::move(graph);
     state_.performance_macros = performance_macros_.snapshot();
+    const auto runtime_morphs = engine_.macro_morphs();
+    for (const auto &macro : state_.performance_macros.macros) {
+        auto effective = macro.value;
+        const auto runtime = std::find_if(
+            runtime_morphs.begin(), runtime_morphs.end(),
+            [&](const auto &candidate) {
+                return candidate.instance == macro.source_instance &&
+                       (candidate.active || candidate.scheduled ||
+                        candidate.completed || candidate.interrupted);
+            });
+        if (runtime != runtime_morphs.end()) {
+            effective = runtime->effective_value;
+            state_.performance_macros.active_morphs.push_back(*runtime);
+            if ((runtime->active || runtime->scheduled) &&
+                !state_.performance_macros.morph.active) {
+                state_.performance_macros.morph.active = true;
+                state_.performance_macros.morph.tempo_sync =
+                    runtime->duration_unit == MacroMorphDurationUnit::beats;
+                state_.performance_macros.morph.progress = runtime->progress;
+                state_.performance_macros.morph.start_frame =
+                    runtime->start_frame;
+                state_.performance_macros.morph.duration_frames =
+                    runtime->end_frame >= runtime->start_frame
+                        ? runtime->end_frame - runtime->start_frame
+                        : 0;
+            }
+        }
+        state_.performance_macros.effective_values.emplace_back(macro.id,
+                                                                 effective);
+    }
+    state_.performance_macros.dropped_morph_commands =
+        engine_.dropped_macro_morph_commands();
     state_.performance.generation = system_monitor_.generation();
     state_.performance.monotonic_milliseconds =
         system_monitor_.monotonic_milliseconds();

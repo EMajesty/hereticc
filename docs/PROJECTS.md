@@ -40,7 +40,9 @@ timeline data.
 NEUROGENIC projects use a directory format independent of SDL, Lua, and
 controller layouts. Project format 5 adds optional `macros.ngm`
 performance-macro and scene metadata. Formats through Task 046 load with an
-empty collection. Runtime morph progress is intentionally excluded.
+empty collection. Macro metadata version 2 adds persisted scene interpolation
+curves; version 1 scenes migrate to linear curves. Runtime morph progress,
+absolute scheduling frames and smoothing state are intentionally excluded.
 
 ```text
 My Set/

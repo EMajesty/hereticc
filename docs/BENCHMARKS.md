@@ -303,3 +303,14 @@ measurements only and must not be treated as Raspberry Pi 5 or N150 claims.
 On the 2026-11-20 Ryzen 7 7800X3D Debug host, a 20-iteration run measured
 approximately 12.4 microseconds per buffer for 8/32 and 35.9 microseconds for
 16/64, with 3.8/6.5 microseconds of graph preparation and about 74.2 MiB RSS.
+
+Task 048 adds callback-executed morph scenarios for 8 and 16 simultaneous
+morphs, rapid scene recall, and 128 active macro assignments. A 20-iteration
+Debug run on the 2026-11-20 Ryzen 7 7800X3D host measured 4.22 microseconds per
+256-frame buffer for 8 morphs, 4.91 microseconds for 16 morphs and 4.24
+microseconds for rapid recall. The 16-macro/128-assignment graph measured 95.05
+microseconds per buffer with 11.58 microseconds preparation; process RSS was
+about 74.3 MiB. Morph command preparation measured below 0.5 microseconds in
+these cases. These are short deterministic host averages, not worst-case,
+Raspberry Pi 5, N150, physical-audio or XRUN claims. Scheduling accuracy is
+bounded by the 32-frame control interval, independently of callback size.

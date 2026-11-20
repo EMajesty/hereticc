@@ -1113,6 +1113,52 @@ void performance_macro_case(std::size_t macro_count,
                std::to_string(assignment_count),
            48000, 256, elapsed, preparation);
 }
+
+void macro_morph_case(std::size_t count, bool rapid_recall = false) {
+    neurogenic::MacroMorphProcessor processor;
+    const auto preparation_begin = Clock::now();
+    for (std::size_t i = 0; i < count; ++i) {
+        neurogenic::MacroMorphCommand command;
+        command.morph_id = i + 1;
+        command.instance = static_cast<neurogenic::ModulatorInstanceId>(i + 1);
+        command.target_value = 1;
+        command.duration = 2;
+        command.curve = neurogenic::MacroMorphCurve::s_curve;
+        if (!processor.command(command, 48000, 120))
+            throw std::runtime_error("macro morph benchmark capacity");
+    }
+    const auto preparation = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            Clock::now() - preparation_begin)
+            .count());
+    std::uint64_t frame{};
+    const auto begin = Clock::now();
+    for (std::size_t iteration = 0; iteration < iterations; ++iteration) {
+        if (rapid_recall) {
+            neurogenic::MacroMorphCommand command;
+            command.morph_id = count + iteration + 1;
+            command.instance = 1;
+            command.start_frame = frame;
+            command.start_value = iteration & 1U ? 1.0F : 0.0F;
+            command.target_value = iteration & 1U ? 0.0F : 1.0F;
+            command.duration = 0.05;
+            (void)processor.command(command, 48000, 120);
+        }
+        for (std::size_t sample = 0; sample < 256; ++sample, ++frame)
+            processor.process(frame, true, 48000, 120,
+                              [](auto, float value) {
+                                  checksum += static_cast<std::uint64_t>(
+                                      value * 1000.0F);
+                              });
+    }
+    const auto elapsed = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - begin)
+            .count() /
+        iterations);
+    result(rapid_recall ? "performance_macro_rapid_scene_recall"
+                        : "performance_macro_morphs_" + std::to_string(count),
+           48000, 256, elapsed, preparation);
+}
 void synth_instance_case(std::size_t instance_count, bool voice_modulation) {
     neurogenic::AudioEngine engine(48000, 32);
     neurogenic::Timeline timeline;
@@ -1645,6 +1691,10 @@ int main(int argc, char **argv) {
     modulation_graph_case("native_modulators_mixed_64", 64, 128, false, true);
     performance_macro_case(8, 32);
     performance_macro_case(16, 64);
+    performance_macro_case(16, 128);
+    macro_morph_case(8);
+    macro_morph_case(16);
+    macro_morph_case(8, true);
     synth_instance_case(4, false);
     synth_instance_case(8, false);
     synth_instance_case(16, false);

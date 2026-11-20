@@ -34,6 +34,14 @@ instances. Their assignments contribute native-unit deltas relative to the
 macro default, allowing several macros and ordinary modulators to share one
 destination without changing its stored base or automation value.
 
+Macro source values may be manual, timeline-automated, modulator-driven or
+produced by a prepared scene morph. Morphing changes only the macro source's
+effective value. Destination composition remains
+`automation-or-base + modulation + macro deltas`; locks and stored bases are
+not rewritten. Macro morph interpolation runs at the same bounded 32-frame
+control cadence, and existing destination smoothing is retained rather than
+duplicated.
+
 The sum is performed in the destination's normalized range and converted back
 to native units. A step lock or automation event replaces the base layer until
 another event changes it; routes remain active. Snapshots expose stored base

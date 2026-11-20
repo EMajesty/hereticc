@@ -306,9 +306,12 @@ destination validation or maintaining another pattern model.
 Modulation is a numeric layer after stored base and timeline automation.
 
 Performance macros compile to ordinary bounded modulator instances and routes;
-there is no parallel macro DSP path. Scene morph schedules are prepared and
-advanced on the control side, while the callback consumes only numeric source
-updates and the previously compiled graph.
+there is no parallel destination-composition path. Scene morph commands are
+prepared on the control side and placed in the same bounded ordered DSP queue as
+manual and automated macro values. A fixed-capacity callback processor advances
+them from authoritative transport frames at a 32-frame control interval; it
+does not allocate, lock, construct graphs or access persistence. Runtime status
+is copied through lock-free atomics for application discovery.
 Global and per-track source banks are distinct; track banks own independent
 phase, envelope, retrigger, and seeded random state. See
 [MODULATION.md](MODULATION.md).
