@@ -1,5 +1,12 @@
 # Implementation status
 
+Task 037 advances the controller protocol to compatible version 1.1 with
+bounded formatted values/ranges/units/revisions, explicit page mappings shared
+by GUI and hardware, finalized dedicated IDs, fine/accelerated encoders,
+calibrated target-aware pickup, richer mode/performance LEDs and full-refresh
+retry after feedback overflow. Calibration persistence and physical firmware
+testing remain open.
+
 Task 036 adds bounded versioned controller framing with CRC, nonblocking USB
 CDC serial transport, negotiation/capabilities, semantic dispatch, RGB and
 context feedback, exact-path reconnection, simulator tests, JSON diagnostics

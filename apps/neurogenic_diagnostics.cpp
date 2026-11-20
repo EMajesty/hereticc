@@ -265,6 +265,11 @@ int main(int argc, char **argv) {
             state.received = 4;
             state.sent = 3;
             state.feedback_revision = 1;
+            state.analog[0] = 24000;
+            state.pickup_direction[0] = 1;
+            state.context[0] = {0, "Tempo", "120", "BPM",
+                                "transport.tempo", {}, 20, 300, true, false,
+                                false, 0, 1};
             std::cout << controller_protocol_json(state) << '\n';
             return 0;
         }

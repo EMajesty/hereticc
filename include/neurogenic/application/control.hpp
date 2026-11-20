@@ -170,6 +170,7 @@ struct ApplicationState {
     std::uint64_t generation_seed{};
     std::size_t undo_depth{}, redo_depth{}, history_capacity{};
     PadMode pad_mode{PadMode::step};
+    std::string controller_context{"sequencer"};
     std::string parameter_page{"main"}, focused_element{"transport"};
     ModifierState modifiers;
     std::vector<std::string> available_actions;

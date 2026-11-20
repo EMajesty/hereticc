@@ -5,6 +5,14 @@ The dedicated 2×8 controller uses the host protocol in
 the host resolves pages, modes, actions, parameters and RGB feedback. The eight
 upper parameter encoders are explicitly smooth, non-push controls.
 
+`build_controller_context()` is the mapping source for serial feedback and GUI
+edge labels. Contexts name explicit stable parameters rather than taking the
+first eight registry entries. Relative encoders clamp through
+`ParameterRegistry`; Shift gives fine adjustment and larger deltas receive
+bounded acceleration. Faders and the crossfader use calibrated target-aware
+soft takeover. The stable ID table and 1.0/1.1 formats are in the protocol
+document.
+
 Mixer clients use `mixer.channel-select.v1`, `mixer.gain-set.v1`,
 `mixer.pan-set.v1`, `mixer.mute-toggle.v1`, `mixer.solo-toggle.v1`,
 `mixer.aux-send-set.v1` and `mixer.output-pair-set.v1`. Eight encoders naturally

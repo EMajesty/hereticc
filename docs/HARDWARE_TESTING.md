@@ -6,6 +6,10 @@ For the dedicated controller, first run
 encoder direction, fader range, RGB ordering/brightness, heartbeat, unplug and
 replug, and full-state restoration. The host never substitutes another TTY.
 See [CONTROLLER_PROTOCOL.md](CONTROLLER_PROTOCOL.md).
+Firmware bring-up must negotiate minor 1 before using IDs 24–35 or extended
+context feedback. Confirm value/range/unit formatting, Shift fine movement,
+encoder direction, pickup arrows, scene-recall pickup invalidation, incremental
+LED traffic and complete refresh after reset/reconnect.
 
 NEUROGENIC does not infer hardware compatibility from compilation. These tools
 collect repeatable evidence on the N150, Raspberry Pi 5, and development hosts

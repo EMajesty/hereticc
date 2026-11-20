@@ -11,7 +11,7 @@
 
 namespace neurogenic {
 inline constexpr std::uint8_t controller_protocol_major = 1;
-inline constexpr std::uint8_t controller_protocol_minor = 0;
+inline constexpr std::uint8_t controller_protocol_minor = 1;
 inline constexpr std::size_t controller_maximum_payload = 256;
 inline constexpr std::size_t controller_maximum_frame = 268;
 
@@ -64,10 +64,31 @@ enum class ControllerConnection : std::uint8_t {
 };
 struct ContextControl {
     std::uint16_t control_id{};
-    std::string label, value, unit;
+    std::string label, value, unit, parameter_id, action_id;
     double minimum{}, maximum{};
-    bool active{};
+    bool active{}, bipolar{}, pickup{};
+    std::int8_t pickup_direction{};
+    std::uint64_t feedback_revision{};
 };
+enum class DedicatedControlId : std::uint16_t {
+    play = 24,
+    stop,
+    record,
+    shift,
+    select,
+    data_push,
+    mode_step,
+    mode_pad,
+    mode_levels,
+    mode_notes,
+    page_previous,
+    page_next
+};
+struct AnalogCalibration {
+    std::uint16_t minimum{}, maximum{65535}, dead_zone{128};
+};
+[[nodiscard]] std::array<ContextControl, 16>
+build_controller_context(const ApplicationState &);
 struct ControllerProtocolState {
     ControllerConnection connection{ControllerConnection::disconnected};
     std::string device_id, firmware, error;
@@ -76,8 +97,11 @@ struct ControllerProtocolState {
     std::uint64_t received{}, sent{}, dropped_input{}, dropped_output{},
         reconnects{}, event_rate{}, feedback_revision{};
     std::array<std::uint16_t, 5> analog{};
+    std::array<AnalogCalibration, 5> calibration{};
+    std::array<bool, 5> pickup_acquired{};
+    std::array<std::int8_t, 5> pickup_direction{};
     std::array<std::int32_t, 9> encoders{};
-    std::array<std::uint32_t, 32> leds{};
+    std::array<std::uint32_t, 48> leds{};
     std::array<ContextControl, 16> context{};
 };
 
@@ -90,6 +114,8 @@ class ControllerHost {
     void publish(const ApplicationState &);
     void connected();
     void disconnected(std::string reason = {});
+    bool set_analog_calibration(std::size_t, AnalogCalibration,
+                                std::string &error) noexcept;
     [[nodiscard]] std::optional<ControllerPacket> next_output() noexcept;
     [[nodiscard]] ControllerProtocolState snapshot() const { return state_; }
 
@@ -104,6 +130,8 @@ class ControllerHost {
     std::string expected_device_id_;
     ControllerProtocolState state_;
     std::array<bool, 5> pickup_{};
+    std::array<double, 5> pickup_target_{};
+    std::array<double, 5> last_effective_target_{};
 };
 
 class ControllerSerialTransport {
@@ -131,7 +159,8 @@ class ControllerSerialTransport {
 class SimulatedController {
   public:
     explicit SimulatedController(ControllerHost &host) : host_(&host) {}
-    bool negotiate(std::string device_id = "neurogenic.simulator");
+    bool negotiate(std::string device_id = "neurogenic.simulator",
+                   std::uint8_t minor = controller_protocol_minor);
     bool button(std::uint16_t id, bool pressed);
     bool encoder(std::uint16_t id, std::int16_t delta);
     bool analog(std::uint16_t id, std::uint16_t value);

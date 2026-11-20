@@ -5,6 +5,11 @@ The dedicated physical controller is an `ApplicationService` client.
 `ControllerFrameDecoder` owns bounded wire framing, and `ControllerHost` owns
 negotiation, semantic dispatch and revisioned feedback. None is visible to the
 audio callback. The packet/session boundary permits a future HID transport.
+The revisioned `ApplicationState::controller_context` selects explicit mapping
+groups. `build_controller_context()` combines context, focus, modifiers,
+performance mode and parameter metadata for both GUI and CDC clients. Absolute
+pickup compares calibrated raw state against effective values and cannot write
+DSP parameters until acquired.
 
 Timeline-owned sample and synth voices render into fixed per-track buffers.
 The bounded mixer applies channel gain/pan/mute/solo, two aux buses, physical

@@ -3660,19 +3660,28 @@ void test_physical_controller_protocol() {
           "controller grid command acceptance");
     check(!timeline.snapshot().timeline.tracks[0].pattern.events.empty(),
           "controller semantic step dispatch");
-    check(simulator.button(25, true), "controller mode event");
+    check(simulator.button(
+              static_cast<std::uint16_t>(DedicatedControlId::mode_pad), true),
+          "controller mode event");
     const auto mode_results = application.dispatch_pending();
     check(!mode_results.empty() && mode_results.front().accepted,
           "controller mode command acceptance");
     check(application.snapshot().pad_mode == PadMode::pad,
           "controller mode switching");
-    check(simulator.analog(0, 32768) && simulator.analog(0, 65535),
+    host.publish(application.snapshot());
+    const auto initial_feedback = simulator.drain_feedback();
+    check(simulator.analog(0, 32768) &&
+              host.snapshot().pickup_direction[0] == 0 &&
+              simulator.analog(0, 65535),
           "controller fader pickup input");
+    check(host.set_analog_calibration(1, {1000, 64000, 256}, protocol_error) &&
+              !host.set_analog_calibration(7, {0, 0, 0}, protocol_error),
+          "controller analog calibration validation");
     check(simulator.encoder(0, 3) && host.snapshot().encoders[0] == 3 &&
               host.snapshot().analog[0] == 65535,
           "controller raw encoder and analog diagnostics");
     host.publish(application.snapshot());
-    const auto feedback = simulator.drain_feedback();
+    const auto feedback = initial_feedback;
     check(std::any_of(feedback.begin(), feedback.end(),
                       [](const auto &packet) {
                           return packet.type == ControllerMessageType::led;
@@ -3680,9 +3689,94 @@ void test_physical_controller_protocol() {
               host.snapshot().feedback_revision ==
                   application.snapshot().revision,
           "controller LED/context state synchronization");
+    check(std::any_of(feedback.begin(), feedback.end(),
+                      [](const auto &packet) {
+                          return packet.type ==
+                                     ControllerMessageType::context &&
+                                 packet.payload.size() > 20;
+                      }),
+          "controller 1.1 extended contextual feedback");
+    host.publish(application.snapshot());
+    check(simulator.drain_feedback().empty(),
+          "controller redundant feedback suppression");
+    const auto sequencer_context =
+        build_controller_context(application.snapshot());
+    check(sequencer_context[0].parameter_id == "transport.tempo" &&
+              sequencer_context[0].active &&
+              sequencer_context[0].maximum > sequencer_context[0].minimum,
+          "controller explicit contextual parameter mapping");
+    check(simulator.button(
+              static_cast<std::uint16_t>(DedicatedControlId::shift), true),
+          "controller shift press");
+    (void)application.dispatch_pending();
+    check(application.snapshot().modifiers.shift,
+          "controller shift semantic state");
+    std::array<float, 1> controller_left{}, controller_right{};
+    engine.process(controller_left, controller_right);
+    const auto shifted_context =
+        build_controller_context(application.snapshot());
+    check(shifted_context[8].label == "UNDO" &&
+              shifted_context[9].label == "REDO",
+          "controller shift contextual layer");
+    const auto tempo_before = std::get<double>(
+        application.parameters().get("transport.tempo")->current_value);
+    check(simulator.encoder(0, 1), "controller fine encoder input");
+    const auto fine_results = application.dispatch_pending();
+    check(!fine_results.empty() && fine_results.back().accepted,
+          fine_results.empty() ? "controller fine command missing"
+                               : fine_results.back().error.c_str());
+    engine.process(controller_left, controller_right);
+    const auto tempo_fine = std::get<double>(
+        application.parameters().get("transport.tempo")->current_value);
+    check(tempo_fine > tempo_before && tempo_fine - tempo_before < 1.0,
+          "controller Shift fine adjustment");
+    check(simulator.button(
+              static_cast<std::uint16_t>(DedicatedControlId::shift), false),
+          "controller shift release");
+    (void)application.dispatch_pending();
+    check(simulator.encoder(0, 4), "controller accelerated encoder input");
+    (void)application.dispatch_pending();
+    const auto tempo_coarse = std::get<double>(
+        application.parameters().get("transport.tempo")->current_value);
+    check(tempo_coarse - tempo_fine > 0.4, "controller coarse acceleration");
+    check(simulator.analog(4, 32768) && simulator.analog(4, 65535),
+          "controller crossfader pickup");
+    (void)application.dispatch_pending();
+    engine.process(controller_left, controller_right);
+    check(application
+              .execute({"parameter.set-normalized.v1",
+                        {{"parameter_id", std::string("mixer.selected.gain")},
+                         {"value", 0.2}}})
+              .accepted,
+          "controller pickup target change");
+    host.publish(application.snapshot());
+    check(host.snapshot().pickup_direction[0] == -1,
+          "controller pickup invalidation and direction");
+    check(!host.snapshot().pickup_acquired[0],
+          "controller pickup remains disengaged before target crossing");
+    (void)simulator.drain_feedback();
+    for (const auto id :
+         {DedicatedControlId::play, DedicatedControlId::stop,
+          DedicatedControlId::record, DedicatedControlId::select,
+          DedicatedControlId::data_push, DedicatedControlId::mode_step,
+          DedicatedControlId::mode_levels, DedicatedControlId::mode_notes,
+          DedicatedControlId::page_previous, DedicatedControlId::page_next})
+        check(simulator.button(static_cast<std::uint16_t>(id), true) &&
+                  simulator.button(static_cast<std::uint16_t>(id), false),
+              "controller dedicated button protocol");
+    (void)application.dispatch_pending();
     host.disconnected("test");
     check(host.snapshot().connection == ControllerConnection::disconnected,
           "controller disconnect lifecycle");
+    check(simulator.negotiate("test-controller"),
+          "controller reconnect negotiation");
+    host.publish(application.snapshot());
+    const auto reconnect_feedback = simulator.drain_feedback();
+    check(std::count_if(reconnect_feedback.begin(), reconnect_feedback.end(),
+                        [](const auto &p) {
+                            return p.type == ControllerMessageType::led;
+                        }) >= 20,
+          "controller reconnect full feedback refresh");
 
     ControllerHost incompatible(application);
     incompatible.connected();
@@ -3701,6 +3795,18 @@ void test_physical_controller_protocol() {
               wrong_identity.snapshot().connection ==
                   ControllerConnection::incompatible,
           "controller identity mismatch");
+    ControllerHost legacy(application);
+    SimulatedController legacy_simulator(legacy);
+    check(legacy_simulator.negotiate("legacy", 0),
+          "controller protocol 1.0 minor compatibility");
+    legacy.publish(application.snapshot());
+    const auto legacy_feedback = legacy_simulator.drain_feedback();
+    check(std::any_of(legacy_feedback.begin(), legacy_feedback.end(),
+                      [](const auto &p) {
+                          return p.type == ControllerMessageType::context &&
+                                 p.payload.size() <= 40;
+                      }),
+          "legacy contextual feedback payload");
 
     ControllerHost bounded(application, 1);
     SimulatedController bounded_simulator(bounded);
@@ -3710,17 +3816,36 @@ void test_physical_controller_protocol() {
     check(bounded.snapshot().dropped_output > 0,
           "controller bounded feedback queue overflow");
     check(controller_protocol_json(host.snapshot())
-                  .find("neurogenic.controller-protocol.v1") !=
-              std::string::npos,
+                      .find("neurogenic.controller-protocol.v1") !=
+                  std::string::npos &&
+              controller_protocol_json(host.snapshot()).find("\"pickup\"") !=
+                  std::string::npos &&
+              controller_protocol_json(host.snapshot()).find("\"context\"") !=
+                  std::string::npos,
           "controller diagnostic JSON");
     GuiModel gui(application);
     const auto &frame = gui.frame(1920, 1200);
     check(std::any_of(frame.commands.begin(), frame.commands.end(),
                       [](const auto &command) {
                           return command.type == DrawCommand::Type::text &&
-                                 command.text == "SELECT";
+                                 command.text == "FOCUS-";
                       }),
           "GUI/controller contextual label consistency");
+    check(gui.input({GuiInput::Type::key_down, GuiKey::tab}, 1920, 1200),
+          "GUI controller-context navigation");
+    const auto sample_state = application.snapshot();
+    const auto sample_context = build_controller_context(sample_state);
+    const auto &sample_frame = gui.frame(1920, 1200);
+    check(sample_state.controller_context == "samples" &&
+              sample_context[0].parameter_id == "sample.pitch" &&
+              std::any_of(
+                  sample_frame.commands.begin(), sample_frame.commands.end(),
+                  [&](const auto &command) {
+                      return command.type == DrawCommand::Type::text &&
+                             command.text.find(sample_context[0].label) !=
+                                 std::string::npos;
+                  }),
+          "GUI and physical controller shared context model");
 }
 
 void test_interactive_step_sequencer() {

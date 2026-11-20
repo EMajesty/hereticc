@@ -4,6 +4,10 @@ The display's upper and lower edges show the host assignments for eight upper
 encoders and eight lower contextual buttons. They derive from the same
 application snapshot as controller feedback; the GUI remains optional and is
 never authoritative for those assignments.
+Each upper label includes the formatted value and unit sent to 1.1 firmware.
+Disabled assignments render muted. Changing GUI tabs updates the
+host-authoritative context, and Shift exposes the same lower-button layer on
+screen and hardware.
 
 The MIDI view reports clock ownership, lock/acquiring/holdover/lost state,
 measured tempo, phase error, SPP, connected logical ports, configured

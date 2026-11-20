@@ -408,6 +408,8 @@ ActionRegistry::ActionRegistry() {
         "mutation settings are not represented by this initial command"));
     add(action("pad.mode-select.v1", "Select pad mode", "Performance",
                {{"mode", ValueType::text}}));
+    add(action("controller.context-select.v1", "Select controller context",
+               "Controllers", {{"context", ValueType::text}}));
     add(action("navigation.focus-next.v1", "Focus next", "Navigation"));
     add(action("navigation.focus-previous.v1", "Focus previous", "Navigation"));
     add(action("navigation.adjust.v1", "Adjust focused item", "Navigation",
@@ -3266,6 +3268,20 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     SampleSlotId{static_cast<std::uint32_t>(id)};
                 state_.selected_slice = 0;
                 changed_locked();
+            }
+        } else if (command.action_id == "controller.context-select.v1") {
+            const auto context = argument<std::string>(command, "context");
+            static constexpr std::string_view contexts[]{
+                "sequencer", "samples", "parameters", "xy", "performance",
+                "settings", "recording", "mixer", "routing", "modulation",
+                "midi"};
+            if (!context || std::find(std::begin(contexts), std::end(contexts),
+                                      *context) == std::end(contexts))
+                error = context ? "unknown controller context" : error;
+            else {
+                state_.controller_context = *context;
+                state_.parameter_page = *context;
+                changed = true;
             }
         } else if (command.action_id == "pad.mode-select.v1") {
             const auto &mode = *argument<std::string>(command, "mode");

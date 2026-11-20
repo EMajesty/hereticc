@@ -1,4 +1,5 @@
 #include "neurogenic/ui/gui.hpp"
+#include "neurogenic/application/controller_protocol.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -342,28 +343,25 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
                                                              : UiColor::panel);
         text(l.tabs[i], UiColor::text, names[i]);
     }
-    // The dedicated controller is intentionally display-agnostic: these
-    // labels describe the current host assignments for its eight upper
-    // encoders and eight lower contextual buttons.
+    // Both the display and physical controller consume this exact mapping.
+    const auto controller_context=build_controller_context(state);
     const float context_width =
         static_cast<float>(frame_.viewport_width) / 8.0F;
     for (std::size_t i = 0; i < 8; ++i) {
-        std::string upper = "--";
-        if (i < state.parameters.size()) {
-            upper = state.parameters[i].name;
-            if (!state.parameters[i].unit.empty())
-                upper += " [" + state.parameters[i].unit + "]";
-        }
+        const auto &upper_control=controller_context[i];
+        std::string upper=upper_control.label;
+        if(upper_control.active)upper += " " + upper_control.value +
+            (upper_control.unit.empty()?"":" "+upper_control.unit);
         text({context_width * i + 3 * l.scale, l.top.y + l.top.h - 18 * l.scale,
               context_width - 6 * l.scale, 16 * l.scale},
-             i < state.parameters.size() ? UiColor::accent : UiColor::muted,
+             upper_control.active ? UiColor::accent : UiColor::muted,
              upper);
-        static constexpr const char *lower_labels[]{
-            "SELECT", "EDIT", "PREV", "NEXT", "BACK", "ENTER", "PAGE", "MENU"};
+        const auto &lower_control=controller_context[8+i];
         text({context_width * i + 3 * l.scale,
               static_cast<float>(frame_.viewport_height) - 19 * l.scale,
               context_width - 6 * l.scale, 16 * l.scale},
-             UiColor::muted, lower_labels[i]);
+             lower_control.active?UiColor::text:UiColor::muted,
+             lower_control.label);
     }
     rect(l.content, UiColor::panel);
     if (l.inspector_visible)
@@ -1206,6 +1204,12 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
         if (input.key == GuiKey::tab) {
             view_ =
                 static_cast<GuiView>((static_cast<unsigned>(view_) + 1) % 11);
+            static constexpr const char *contexts[]{
+                "sequencer", "samples", "parameters", "xy", "performance",
+                "settings", "recording", "mixer", "routing", "modulation",
+                "midi"};
+            submit(command("controller.context-select.v1",
+                           {{"context",std::string(contexts[static_cast<std::size_t>(view_)])}}));
             frame_.state_revision = std::numeric_limits<std::uint64_t>::max();
             return true;
         }
@@ -1494,6 +1498,12 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
         for (std::size_t i = 0; i < l.tabs.size(); ++i)
             if (l.tabs[i].contains(input.x, input.y)) {
                 view_ = static_cast<GuiView>(i);
+                static constexpr const char *contexts[]{
+                    "sequencer", "samples", "parameters", "xy", "performance",
+                    "settings", "recording", "mixer", "routing", "modulation",
+                    "midi"};
+                submit(command("controller.context-select.v1",
+                               {{"context",std::string(contexts[i])}}));
                 frame_.state_revision =
                     std::numeric_limits<std::uint64_t>::max();
                 return true;
