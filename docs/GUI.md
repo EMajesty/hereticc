@@ -1,5 +1,10 @@
 # Graphical interface
 
+The display's upper and lower edges show the host assignments for eight upper
+encoders and eight lower contextual buttons. They derive from the same
+application snapshot as controller feedback; the GUI remains optional and is
+never authoritative for those assignments.
+
 The MIDI view reports clock ownership, lock/acquiring/holdover/lost state,
 measured tempo, phase error, SPP, connected logical ports, configured
 outputs/routes and queue counters. Enter toggles internal/external

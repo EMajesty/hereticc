@@ -1,5 +1,10 @@
 # Application control and controller API
 
+The dedicated 2×8 controller uses the host protocol in
+[CONTROLLER_PROTOCOL.md](CONTROLLER_PROTOCOL.md). Its MCU reports raw controls;
+the host resolves pages, modes, actions, parameters and RGB feedback. The eight
+upper parameter encoders are explicitly smooth, non-push controls.
+
 Mixer clients use `mixer.channel-select.v1`, `mixer.gain-set.v1`,
 `mixer.pan-set.v1`, `mixer.mute-toggle.v1`, `mixer.solo-toggle.v1`,
 `mixer.aux-send-set.v1` and `mixer.output-pair-set.v1`. Eight encoders naturally

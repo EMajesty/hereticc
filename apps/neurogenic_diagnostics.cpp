@@ -1,7 +1,8 @@
+#include "neurogenic/application/controller_protocol.hpp"
+#include "neurogenic/application/lifecycle.hpp"
 #include "neurogenic/audio/device.hpp"
 #include "neurogenic/audio/engine.hpp"
 #include "neurogenic/audio/sample.hpp"
-#include "neurogenic/application/lifecycle.hpp"
 #include "neurogenic/diagnostics/hardware.hpp"
 #include "neurogenic/midi/input.hpp"
 #include "neurogenic/midi/mapping.hpp"
@@ -20,7 +21,8 @@
 namespace {
 using namespace neurogenic;
 struct Options {
-    bool json{}, headless{}, stress{}, realtime{}, controller_inspect{}, display_test{}, lifecycle_test{};
+    bool json{}, headless{}, stress{}, realtime{}, controller_inspect{},
+        controller_protocol_test{}, display_test{}, lifecycle_test{};
     double seconds{2.0};
     std::uint32_t buffer{256}, sample_voices{8}, synth_voices{4};
     std::uint16_t input_channels{}, output_channels{2};
@@ -29,36 +31,46 @@ struct Options {
 std::string json_escape(std::string_view value) {
     std::string result;
     for (const char character : value) {
-        if (character == '"' || character == '\\') result += '\\';
-        if (static_cast<unsigned char>(character) >= 0x20) result += character;
+        if (character == '"' || character == '\\')
+            result += '\\';
+        if (static_cast<unsigned char>(character) >= 0x20)
+            result += character;
     }
     return result;
 }
 std::uint32_t number(const char *text, const char *name) {
     std::uint32_t value{};
     const std::string_view source{text};
-    const auto result = std::from_chars(source.data(), source.data() + source.size(), value);
+    const auto result =
+        std::from_chars(source.data(), source.data() + source.size(), value);
     if (result.ec != std::errc{} || result.ptr != source.data() + source.size())
         throw std::invalid_argument(std::string(name) + " expects an integer");
     return value;
 }
 void usage() {
-    std::cout <<
-        "usage: neurogenic-diagnostics [OPTIONS]\n"
-        "  --json                 emit neurogenic.hardware-diagnostics.v1 JSON\n"
-        "  --headless             use the explicit null audio backend\n"
-        "  --stress SECONDS       run deterministic engine stress diagnostics\n"
-        "  --realtime             use a physical/null device during stress\n"
-        "  --buffer FRAMES        offline stress callback size (default 256)\n"
-        "  --sample-voices N      simultaneous sample voices (default 8)\n"
-        "  --synth-voices N       simultaneous synth voices (default 4)\n"
-        "  --audio NAME           output device index/name\n"
-        "  --input NAME           duplex input device index/name\n"
-        "  --input-channels N     requested capture channels (0..6)\n"
-        "  --output-channels N    requested playback channels (1..6)\n"
-        "  --display-test         report native display and scaling test profiles\n"
-        "  --lifecycle-test       emit simulated bounded startup/shutdown stages\n"
-        "  --controller-inspect   inspect lines: CONTROL TYPE RAW [ACTION]\n";
+    std::cout
+        << "usage: neurogenic-diagnostics [OPTIONS]\n"
+           "  --json                 emit neurogenic.hardware-diagnostics.v1 "
+           "JSON\n"
+           "  --headless             use the explicit null audio backend\n"
+           "  --stress SECONDS       run deterministic engine stress "
+           "diagnostics\n"
+           "  --realtime             use a physical/null device during stress\n"
+           "  --buffer FRAMES        offline stress callback size (default "
+           "256)\n"
+           "  --sample-voices N      simultaneous sample voices (default 8)\n"
+           "  --synth-voices N       simultaneous synth voices (default 4)\n"
+           "  --audio NAME           output device index/name\n"
+           "  --input NAME           duplex input device index/name\n"
+           "  --input-channels N     requested capture channels (0..6)\n"
+           "  --output-channels N    requested playback channels (1..6)\n"
+           "  --display-test         report native display and scaling test "
+           "profiles\n"
+           "  --lifecycle-test       emit simulated bounded startup/shutdown "
+           "stages\n"
+           "  --controller-inspect   inspect lines: CONTROL TYPE RAW [ACTION]\n"
+           "  --controller-protocol-test emit simulated controller protocol "
+           "JSON\n";
 }
 PerformanceSnapshot performance(AudioEngine &engine) {
     PerformanceSnapshot result;
@@ -97,13 +109,15 @@ HardwareDiagnosticSnapshot inspect(AudioDevice &audio, MidiInput &input,
     result.midi_input_backend = input.backend();
     result.midi_output_backend = output.backend();
     std::uint32_t id{1};
-    for (const auto &name : input.inputs()) result.midi_inputs.push_back({id++, name, false});
+    for (const auto &name : input.inputs())
+        result.midi_inputs.push_back({id++, name, false});
     for (const auto &port : output.outputs())
         result.midi_outputs.push_back({port.id, port.name, port.connected});
     const auto display = query_display_diagnostic();
-    result.display = {display.available, display.width, display.height,
-                      display.drawable_width, display.drawable_height,
-                      display.content_scale, display.backend};
+    result.display = {display.available,       display.width,
+                      display.height,          display.drawable_width,
+                      display.drawable_height, display.content_scale,
+                      display.backend};
     return result;
 }
 void inspect_controller() {
@@ -113,24 +127,30 @@ void inspect_controller() {
         std::string id, type, action;
         double raw{};
         if (!(in >> id >> type >> raw)) {
-            std::cout << "{\"schema\":\"neurogenic.controller-event.v1\",\"error\":\"expected CONTROL TYPE RAW [ACTION]\"}\n";
+            std::cout << "{\"schema\":\"neurogenic.controller-event.v1\","
+                         "\"error\":\"expected CONTROL TYPE RAW [ACTION]\"}\n";
             continue;
         }
         in >> action;
         const double normalized = type == "encoder" ? std::clamp(raw, -1.0, 1.0)
-                                                       : std::clamp(raw, 0.0, 1.0);
-        std::cout << "{\"schema\":\"neurogenic.controller-event.v1\",\"control_id\":\""
-                  << json_escape(id) << "\",\"type\":\"" << json_escape(type) << "\",\"raw\":" << raw
-                  << ",\"normalized\":" << normalized << ",\"transition\":\""
-                  << ((type == "button") ? (raw > 0.5 ? "pressed" : "released") : "value")
+                                                    : std::clamp(raw, 0.0, 1.0);
+        std::cout << "{\"schema\":\"neurogenic.controller-event.v1\",\"control_"
+                     "id\":\""
+                  << json_escape(id) << "\",\"type\":\"" << json_escape(type)
+                  << "\",\"raw\":" << raw << ",\"normalized\":" << normalized
+                  << ",\"transition\":\""
+                  << ((type == "button") ? (raw > 0.5 ? "pressed" : "released")
+                                         : "value")
                   << "\",\"action\":\"" << json_escape(action) << "\"}\n";
     }
 }
 void display_test() {
     const auto native = query_display_diagnostic();
-    std::cout << "{\"schema\":\"neurogenic.display-test.v1\",\"native\":{\"available\":"
-              << (native.available ? "true" : "false") << ",\"width\":"
-              << native.width << ",\"height\":" << native.height
+    std::cout << "{\"schema\":\"neurogenic.display-test.v1\",\"native\":{"
+                 "\"available\":"
+              << (native.available ? "true" : "false")
+              << ",\"width\":" << native.width
+              << ",\"height\":" << native.height
               << ",\"content_scale\":" << native.content_scale
               << ",\"backend\":\"" << json_escape(native.backend)
               << "\"},\"profiles\":["
@@ -145,23 +165,31 @@ PerformanceSnapshot stress(AudioEngine &engine, const Options &options,
                            AudioDevice &device, std::string &error) {
     Sample sample{48000, 1, std::vector<float>(48000)};
     for (std::size_t i = 0; i < sample.interleaved.size(); ++i)
-        sample.interleaved[i] = 0.15F * std::sin(6.283185307F * 220.0F * static_cast<float>(i) / 48000.0F);
+        sample.interleaved[i] =
+            0.15F *
+            std::sin(6.283185307F * 220.0F * static_cast<float>(i) / 48000.0F);
     engine.set_sample(std::move(sample));
-    for (std::uint32_t i = 0; i < options.sample_voices; ++i) engine.trigger(36, 0.7F);
+    for (std::uint32_t i = 0; i < options.sample_voices; ++i)
+        engine.trigger(36, 0.7F);
     for (std::uint32_t i = 0; i < options.synth_voices; ++i)
-        engine.trigger_synth(static_cast<std::uint8_t>(48 + i % 24), 0.7F, true);
+        engine.trigger_synth(static_cast<std::uint8_t>(48 + i % 24), 0.7F,
+                             true);
     const auto begin = std::chrono::steady_clock::now();
     const auto finish = begin + std::chrono::duration<double>(options.seconds);
     if (options.realtime) {
-        const bool started = options.input_channels || options.output_channels != 2
-            ? device.start_duplex(options.output, options.input, options.input_channels,
-                                  error, options.output_channels)
-            : device.start(options.output, error);
-        if (!started) throw std::runtime_error(error);
+        const bool started =
+            options.input_channels || options.output_channels != 2
+                ? device.start_duplex(options.output, options.input,
+                                      options.input_channels, error,
+                                      options.output_channels)
+                : device.start(options.output, error);
+        if (!started)
+            throw std::runtime_error(error);
         std::this_thread::sleep_until(finish);
         device.stop();
     } else {
-        std::vector<float> output(static_cast<std::size_t>(options.buffer) * options.output_channels);
+        std::vector<float> output(static_cast<std::size_t>(options.buffer) *
+                                  options.output_channels);
         while (std::chrono::steady_clock::now() < finish)
             engine.process_io(output, options.output_channels);
     }
@@ -174,50 +202,97 @@ int main(int argc, char **argv) {
         Options options;
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
-            if (arg == "--json") options.json = true;
-            else if (arg == "--headless") options.headless = true;
-            else if (arg == "--realtime") options.realtime = true;
-            else if (arg == "--controller-inspect") options.controller_inspect = true;
-            else if (arg == "--display-test") options.display_test = true;
-            else if (arg == "--lifecycle-test") options.lifecycle_test = true;
-            else if (arg == "--stress" && i + 1 < argc) { options.stress = true; options.seconds = std::stod(argv[++i]); }
-            else if (arg == "--buffer" && i + 1 < argc) options.buffer = number(argv[++i], "--buffer");
-            else if (arg == "--sample-voices" && i + 1 < argc) options.sample_voices = number(argv[++i], "--sample-voices");
-            else if (arg == "--synth-voices" && i + 1 < argc) options.synth_voices = number(argv[++i], "--synth-voices");
-            else if (arg == "--audio" && i + 1 < argc) options.output = argv[++i];
-            else if (arg == "--input" && i + 1 < argc) options.input = argv[++i];
-            else if (arg == "--input-channels" && i + 1 < argc) options.input_channels = static_cast<std::uint16_t>(number(argv[++i], "--input-channels"));
-            else if (arg == "--output-channels" && i + 1 < argc) options.output_channels = static_cast<std::uint16_t>(number(argv[++i], "--output-channels"));
-            else if (arg == "--help") { usage(); return 0; }
-            else { usage(); return 2; }
+            if (arg == "--json")
+                options.json = true;
+            else if (arg == "--headless")
+                options.headless = true;
+            else if (arg == "--realtime")
+                options.realtime = true;
+            else if (arg == "--controller-inspect")
+                options.controller_inspect = true;
+            else if (arg == "--controller-protocol-test")
+                options.controller_protocol_test = true;
+            else if (arg == "--display-test")
+                options.display_test = true;
+            else if (arg == "--lifecycle-test")
+                options.lifecycle_test = true;
+            else if (arg == "--stress" && i + 1 < argc) {
+                options.stress = true;
+                options.seconds = std::stod(argv[++i]);
+            } else if (arg == "--buffer" && i + 1 < argc)
+                options.buffer = number(argv[++i], "--buffer");
+            else if (arg == "--sample-voices" && i + 1 < argc)
+                options.sample_voices = number(argv[++i], "--sample-voices");
+            else if (arg == "--synth-voices" && i + 1 < argc)
+                options.synth_voices = number(argv[++i], "--synth-voices");
+            else if (arg == "--audio" && i + 1 < argc)
+                options.output = argv[++i];
+            else if (arg == "--input" && i + 1 < argc)
+                options.input = argv[++i];
+            else if (arg == "--input-channels" && i + 1 < argc)
+                options.input_channels = static_cast<std::uint16_t>(
+                    number(argv[++i], "--input-channels"));
+            else if (arg == "--output-channels" && i + 1 < argc)
+                options.output_channels = static_cast<std::uint16_t>(
+                    number(argv[++i], "--output-channels"));
+            else if (arg == "--help") {
+                usage();
+                return 0;
+            } else {
+                usage();
+                return 2;
+            }
         }
         if (!(options.seconds > 0.0 && options.seconds <= 3600.0) ||
             !options.buffer || options.buffer > 8192 ||
             options.sample_voices > 256 || options.synth_voices > 512 ||
             options.input_channels > 6 || !options.output_channels ||
             options.output_channels > 6)
-            throw std::invalid_argument("duration/buffer/channel configuration is outside diagnostic limits");
-        if (options.controller_inspect) { inspect_controller(); return 0; }
-        if (options.display_test) { display_test(); return 0; }
+            throw std::invalid_argument("duration/buffer/channel configuration "
+                                        "is outside diagnostic limits");
+        if (options.controller_inspect) {
+            inspect_controller();
+            return 0;
+        }
+        if (options.controller_protocol_test) {
+            ControllerProtocolState state;
+            state.connection = ControllerConnection::connected;
+            state.device_id = "neurogenic.simulator";
+            state.firmware = "diagnostic";
+            state.protocol_major = controller_protocol_major;
+            state.protocol_minor = controller_protocol_minor;
+            state.capabilities = 0x3f;
+            state.received = 4;
+            state.sent = 3;
+            state.feedback_revision = 1;
+            std::cout << controller_protocol_json(state) << '\n';
+            return 0;
+        }
+        if (options.display_test) {
+            display_test();
+            return 0;
+        }
         if (options.lifecycle_test) {
             ApplianceLifecycle lifecycle;
-            for (const auto stage : {StartupStage::configuration,
-                                     StartupStage::project_selection,
-                                     StartupStage::project_restoration,
-                                     StartupStage::audio, StartupStage::midi,
-                                     StartupStage::controllers, StartupStage::gui}) {
+            for (const auto stage :
+                 {StartupStage::configuration, StartupStage::project_selection,
+                  StartupStage::project_restoration, StartupStage::audio,
+                  StartupStage::midi, StartupStage::controllers,
+                  StartupStage::gui}) {
                 lifecycle.transition(stage, 0.5F);
                 std::cout << lifecycle_json(lifecycle.snapshot()) << '\n';
             }
             lifecycle.ready();
             std::cout << lifecycle_json(lifecycle.snapshot()) << '\n';
             std::string reason;
-            (void)lifecycle.request_shutdown(false, UnsavedShutdownChoice::cancel, reason);
+            (void)lifecycle.request_shutdown(
+                false, UnsavedShutdownChoice::cancel, reason);
             lifecycle.stopped();
             std::cout << lifecycle_json(lifecycle.snapshot()) << '\n';
             return 0;
         }
-        AudioEngine engine(48000, std::max<std::size_t>(32, options.sample_voices));
+        AudioEngine engine(48000,
+                           std::max<std::size_t>(32, options.sample_voices));
         MidiMapper mapper;
         AudioDevice audio(engine, options.headless);
         MidiInput midi_input(mapper);
@@ -228,22 +303,30 @@ int main(int argc, char **argv) {
             const auto measurements = stress(engine, options, audio, error);
             HardwareTestReport report;
             report.application_commit = snapshot.application_commit;
-            report.hardware_identity = snapshot.cpu_model + " / " + snapshot.architecture;
+            report.hardware_identity =
+                snapshot.cpu_model + " / " + snapshot.architecture;
             report.os_kernel = snapshot.distribution + " / " + snapshot.kernel;
-            report.audio_configuration = std::to_string(engine.sample_rate()) + " Hz, " +
+            report.audio_configuration =
+                std::to_string(engine.sample_rate()) + " Hz, " +
                 std::to_string(options.buffer) + " frames, " +
                 std::to_string(options.output_channels) + " output channels";
-            report.scenario = options.realtime ? "realtime-device-stress" : "offline-engine-stress";
-            report.status = measurements.audio.deadline_overruns == 0 ? "pass" : "fail";
-            report.limitations = options.realtime
-                ? "deadline misses are measured callback overruns; backend XRUN counters are unavailable"
-                : "offline processing is not evidence of hardware real-time performance";
+            report.scenario = options.realtime ? "realtime-device-stress"
+                                               : "offline-engine-stress";
+            report.status =
+                measurements.audio.deadline_overruns == 0 ? "pass" : "fail";
+            report.limitations =
+                options.realtime
+                    ? "deadline misses are measured callback overruns; backend "
+                      "XRUN counters are unavailable"
+                    : "offline processing is not evidence of hardware "
+                      "real-time performance";
             report.measurements = measurements;
             std::cout << hardware_test_report_json(report) << '\n';
             return 0;
         }
         std::cout << (options.json ? hardware_diagnostics_json(snapshot)
-                                  : hardware_diagnostics_summary(snapshot)) << '\n';
+                                   : hardware_diagnostics_summary(snapshot))
+                  << '\n';
         return 0;
     } catch (const std::exception &error) {
         std::cerr << "diagnostics failed: " << error.what() << '\n';

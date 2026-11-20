@@ -1,14 +1,15 @@
 #include "neurogenic/application/control.hpp"
 #include "neurogenic/application/controller.hpp"
+#include "neurogenic/application/controller_protocol.hpp"
 #include "neurogenic/application/lifecycle.hpp"
 #include "neurogenic/audio/engine.hpp"
 #include "neurogenic/audio/sample_manager.hpp"
 #include "neurogenic/core/control_dispatcher.hpp"
 #include "neurogenic/core/spsc_queue.hpp"
+#include "neurogenic/diagnostics/hardware.hpp"
 #include "neurogenic/dsp/modulation.hpp"
 #include "neurogenic/dsp/parameter_destination.hpp"
 #include "neurogenic/dsp/processor.hpp"
-#include "neurogenic/diagnostics/hardware.hpp"
 #include "neurogenic/instrument/subtractive_synth.hpp"
 #include "neurogenic/midi/mapping.hpp"
 #include "neurogenic/midi/routing.hpp"
@@ -66,8 +67,10 @@ void test_hardware_diagnostics() {
     snapshot.midi_outputs.push_back({1, "synth", false});
     snapshot.display = {true, 1920, 1200, 1920, 1200, 1.5F, "dummy"};
     const auto json = hardware_diagnostics_json(snapshot);
-    check(json.find("neurogenic.hardware-diagnostics.v1") != std::string::npos &&
-              json.find("\"sample_rate\":48000,\"channels\":6") != std::string::npos &&
+    check(json.find("neurogenic.hardware-diagnostics.v1") !=
+                  std::string::npos &&
+              json.find("\"sample_rate\":48000,\"channels\":6") !=
+                  std::string::npos &&
               json.find("Test \\\"Linux\\\"") != std::string::npos &&
               json.find("\"content_scale\":1.5") != std::string::npos,
           "hardware diagnostic JSON schema/capabilities");
@@ -88,7 +91,8 @@ void test_hardware_diagnostics() {
     check(report_json.find("neurogenic.hardware-test-report.v1") !=
                   std::string::npos &&
               report_json.find("six-channel-routing") != std::string::npos &&
-              report_json.find("neurogenic.performance.v1") != std::string::npos,
+              report_json.find("neurogenic.performance.v1") !=
+                  std::string::npos,
           "versioned hardware report");
     const auto host = system_diagnostics();
     check(!host.architecture.empty() && !host.kernel.empty() &&
@@ -150,7 +154,8 @@ void test_appliance_lifecycle() {
     std::string warning;
     const auto explicit_project = root / "explicit.ngp";
     check(select_startup_project(restored, explicit_project, warning) ==
-              explicit_project && warning.empty(),
+                  explicit_project &&
+              warning.empty(),
           "explicit project did not override reopen-last");
     check(select_startup_project(restored, {}, warning).empty() &&
               warning.find("unavailable") != std::string::npos,
@@ -785,8 +790,8 @@ void test_midi_routing_and_clock() {
           "clock dispatch is prioritized over dense note traffic");
     AudioEngine congested_input;
     for (int i = 0; i < 300; ++i)
-        (void)congested_input.receive_midi({1, {0xF8, 0, 0}, 1,
-                                            static_cast<std::uint64_t>(i + 1)});
+        (void)congested_input.receive_midi(
+            {1, {0xF8, 0, 0}, 1, static_cast<std::uint64_t>(i + 1)});
     check(congested_input.dropped_midi_inputs() > 0,
           "MIDI input congestion is bounded and observable");
     MidiOutputScheduler panic;
@@ -850,8 +855,8 @@ void test_midi_routing_and_clock() {
 
     MidiRoutingConfiguration engine_routing;
     engine_routing.route_count = 1;
-    engine_routing.routes[0] =
-        {9, 1, 2, 0, 3, true, true, true, true, false, false, true};
+    engine_routing.routes[0] = {9,    1,    2,    0,     3,     true,
+                                true, true, true, false, false, true};
     engine_routing.accept_external_clock = true;
     check(midi_audio.publish_midi_routing(engine_routing),
           "publish realtime MIDI routing");
@@ -865,10 +870,11 @@ void test_midi_routing_and_clock() {
         sent.push_back(packet);
         return true;
     });
-    check(std::any_of(sent.begin(), sent.end(), [](const auto &packet) {
-              return packet.port == 2 && packet.bytes[0] == 0x93 &&
-                     packet.bytes[1] == 67;
-          }) &&
+    check(std::any_of(sent.begin(), sent.end(),
+                      [](const auto &packet) {
+                          return packet.port == 2 && packet.bytes[0] == 0x93 &&
+                                 packet.bytes[1] == 67;
+                      }) &&
               !midi_audio.playing(),
           "audio-owned MIDI thru and external Stop");
 
@@ -901,8 +907,7 @@ void test_midi_routing_and_clock() {
         std::uint64_t note_frame = std::numeric_limits<std::uint64_t>::max();
         for (int pulse = 0; pulse < 32; ++pulse) {
             pulse_timestamp += 20'833'333ULL;
-            check(synced.receive_midi(
-                      {1, {0xF8, 0, 0}, 1, pulse_timestamp}),
+            check(synced.receive_midi({1, {0xF8, 0, 0}, 1, pulse_timestamp}),
                   "enqueue external clock pulse");
             for (std::uint32_t advanced = 0; advanced < 1000;
                  advanced += partition) {
@@ -956,8 +961,7 @@ void test_midi_routing_and_clock() {
     forwarding_clock.ports[0] = 1;
     forwarding_clock.ports[1] = 2;
     check(forwarding.publish_midi_clock_output(forwarding_clock) &&
-              forwarding.receive_midi(
-                  {1, {0xF8, 0, 0}, 1, 20'833'333ULL}),
+              forwarding.receive_midi({1, {0xF8, 0, 0}, 1, 20'833'333ULL}),
           "enqueue forwarded external clock");
     forwarding.process(positioned_left, positioned_right);
     sent.clear();
@@ -965,12 +969,15 @@ void test_midi_routing_and_clock() {
         sent.push_back(packet);
         return true;
     });
-    check(std::count_if(sent.begin(), sent.end(), [](const auto &packet) {
-              return packet.port == 2 && packet.bytes[0] == 0xF8;
-          }) == 1 &&
-              std::none_of(sent.begin(), sent.end(), [](const auto &packet) {
-                  return packet.port == 1 && packet.bytes[0] == 0xF8;
-              }),
+    check(std::count_if(sent.begin(), sent.end(),
+                        [](const auto &packet) {
+                            return packet.port == 2 && packet.bytes[0] == 0xF8;
+                        }) == 1 &&
+              std::none_of(sent.begin(), sent.end(),
+                           [](const auto &packet) {
+                               return packet.port == 1 &&
+                                      packet.bytes[0] == 0xF8;
+                           }),
           "external clock forwards explicitly without source-port feedback");
 
     const auto midi_path =
@@ -2449,8 +2456,8 @@ void test_unified_project_persistence() {
     project.midi.clock_source = MidiClockSource::external;
     project.midi.forward_external_clock = true;
     project.midi.route_count = 1;
-    project.midi.routes[0] =
-        {51, 1, 2, 0, 4, true, true, false, false, false, false, true};
+    project.midi.routes[0] = {51,   1,     2,     0,     4,     true,
+                              true, false, false, false, false, true};
     project.midi.output_selectors[1][0] = '2';
 
     ProjectIoMetrics save_metrics, load_metrics;
@@ -2574,14 +2581,15 @@ void test_unified_project_persistence() {
               application.snapshot().project_dirty,
           "project parameter dirty tracking");
     check(!application
-                   .execute(
-                       {"project.open.v1", {{"path", action_project.string()}}})
-                   .accepted && application.snapshot().project_dirty,
+                  .execute(
+                      {"project.open.v1", {{"path", action_project.string()}}})
+                  .accepted &&
+              application.snapshot().project_dirty,
           "dirty project open lacked unsaved-work protection");
     check(application
-                  .execute({"project.open.v1",
-                            {{"path", action_project.string()},
-                             {"discard", true}}})
+                  .execute(
+                      {"project.open.v1",
+                       {{"path", action_project.string()}, {"discard", true}}})
                   .accepted &&
               !application.snapshot().project_dirty &&
               application.snapshot().project_name == "Actions",
@@ -3601,6 +3609,118 @@ void test_application_control_and_controllers() {
                                  std::holds_alternative<double>(item.value);
                       }),
           "parameter value feedback");
+}
+
+void test_physical_controller_protocol() {
+    using namespace neurogenic;
+    ControllerPacket source{ControllerMessageType::encoder, 42, {3, 0, 7, 0}};
+    const auto encoded = encode_controller_packet(source);
+    check(!encoded.empty() && encoded.size() <= controller_maximum_frame,
+          "controller packet encoding");
+    ControllerFrameDecoder decoder;
+    decoder.push(std::span<const std::uint8_t>(encoded.data(), 5));
+    check(!decoder.pop(), "partial controller frame accepted");
+    decoder.push(
+        std::span<const std::uint8_t>(encoded.data() + 5, encoded.size() - 5));
+    const auto decoded = decoder.pop();
+    check(decoded && decoded->type == source.type &&
+              decoded->sequence == source.sequence &&
+              decoded->payload == source.payload,
+          "controller framing round-trip");
+    auto corrupt = encoded;
+    corrupt[10] ^= 0x40;
+    decoder.push(corrupt);
+    check(!decoder.pop() && decoder.invalid_frames() > 0,
+          "controller CRC rejection");
+
+    AudioEngine engine;
+    Timeline initial;
+    initial.tracks = {{1, "controller", false, {3840, {}}}};
+    TimelineService timeline(
+        [&](const Timeline &value, std::string &message) {
+            return engine.queue_timeline(value, message);
+        },
+        initial);
+    SampleManager samples(engine);
+    ApplicationService application(engine, timeline, samples, 32);
+    ControllerHost host(application, 64);
+    SimulatedController simulator(host);
+    check(simulator.negotiate("test-controller") &&
+              host.snapshot().connection == ControllerConnection::connected,
+          "controller protocol negotiation");
+    std::string protocol_error;
+    check(
+        host.receive({ControllerMessageType::capabilities, 2, {0x3f, 0, 0, 0}},
+                     protocol_error) &&
+            host.snapshot().capabilities == 0x3f,
+        "controller capability discovery");
+    check(simulator.button(0, true), "controller grid event");
+    const auto grid_results = application.dispatch_pending();
+    check(!grid_results.empty() && grid_results.front().accepted,
+          "controller grid command acceptance");
+    check(!timeline.snapshot().timeline.tracks[0].pattern.events.empty(),
+          "controller semantic step dispatch");
+    check(simulator.button(25, true), "controller mode event");
+    const auto mode_results = application.dispatch_pending();
+    check(!mode_results.empty() && mode_results.front().accepted,
+          "controller mode command acceptance");
+    check(application.snapshot().pad_mode == PadMode::pad,
+          "controller mode switching");
+    check(simulator.analog(0, 32768) && simulator.analog(0, 65535),
+          "controller fader pickup input");
+    check(simulator.encoder(0, 3) && host.snapshot().encoders[0] == 3 &&
+              host.snapshot().analog[0] == 65535,
+          "controller raw encoder and analog diagnostics");
+    host.publish(application.snapshot());
+    const auto feedback = simulator.drain_feedback();
+    check(std::any_of(feedback.begin(), feedback.end(),
+                      [](const auto &packet) {
+                          return packet.type == ControllerMessageType::led;
+                      }) &&
+              host.snapshot().feedback_revision ==
+                  application.snapshot().revision,
+          "controller LED/context state synchronization");
+    host.disconnected("test");
+    check(host.snapshot().connection == ControllerConnection::disconnected,
+          "controller disconnect lifecycle");
+
+    ControllerHost incompatible(application);
+    incompatible.connected();
+    check(!incompatible.receive(
+              {ControllerMessageType::hello_reply,
+               1,
+               {static_cast<std::uint8_t>(controller_protocol_major + 1), 0, 3,
+                1, 'b', 'a', 'd', 'x'}},
+              protocol_error) &&
+              incompatible.snapshot().connection ==
+                  ControllerConnection::incompatible,
+          "controller major-version mismatch");
+    ControllerHost wrong_identity(application, 128, "expected-controller");
+    SimulatedController wrong_simulator(wrong_identity);
+    check(!wrong_simulator.negotiate("different-controller") &&
+              wrong_identity.snapshot().connection ==
+                  ControllerConnection::incompatible,
+          "controller identity mismatch");
+
+    ControllerHost bounded(application, 1);
+    SimulatedController bounded_simulator(bounded);
+    check(bounded_simulator.negotiate("bounded"),
+          "bounded controller negotiation");
+    bounded.publish(application.snapshot());
+    check(bounded.snapshot().dropped_output > 0,
+          "controller bounded feedback queue overflow");
+    check(controller_protocol_json(host.snapshot())
+                  .find("neurogenic.controller-protocol.v1") !=
+              std::string::npos,
+          "controller diagnostic JSON");
+    GuiModel gui(application);
+    const auto &frame = gui.frame(1920, 1200);
+    check(std::any_of(frame.commands.begin(), frame.commands.end(),
+                      [](const auto &command) {
+                          return command.type == DrawCommand::Type::text &&
+                                 command.text == "SELECT";
+                      }),
+          "GUI/controller contextual label consistency");
 }
 
 void test_interactive_step_sequencer() {
@@ -4843,8 +4963,7 @@ void test_mixer_and_routing() {
               application.snapshot().midi.clock_source ==
                   MidiClockSource::external &&
               application
-                  .execute({"midi.clock-forward-set.v1",
-                            {{"enabled", true}}})
+                  .execute({"midi.clock-forward-set.v1", {{"enabled", true}}})
                   .accepted &&
               application.snapshot().midi.forward_external_clock &&
               !gui.frame(1024, 600).commands.empty(),
@@ -5054,6 +5173,7 @@ int main() {
         test_midi_control_dispatch();
         test_timeline_editing_and_generation();
         test_application_control_and_controllers();
+        test_physical_controller_protocol();
         test_interactive_step_sequencer();
         test_undo_redo_and_step_properties();
         test_parameter_locks_and_automation();

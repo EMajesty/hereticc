@@ -1,0 +1,147 @@
+#pragma once
+#include "neurogenic/application/controller.hpp"
+#include <array>
+#include <cstdint>
+#include <deque>
+#include <filesystem>
+#include <optional>
+#include <span>
+#include <string>
+#include <vector>
+
+namespace neurogenic {
+inline constexpr std::uint8_t controller_protocol_major = 1;
+inline constexpr std::uint8_t controller_protocol_minor = 0;
+inline constexpr std::size_t controller_maximum_payload = 256;
+inline constexpr std::size_t controller_maximum_frame = 268;
+
+enum class ControllerMessageType : std::uint8_t {
+    hello = 1,
+    hello_reply,
+    capabilities,
+    button,
+    encoder,
+    analog,
+    led,
+    context,
+    state_sync,
+    heartbeat,
+    error,
+    reset
+};
+struct ControllerPacket {
+    ControllerMessageType type{};
+    std::uint32_t sequence{};
+    std::vector<std::uint8_t> payload;
+};
+[[nodiscard]] std::vector<std::uint8_t>
+encode_controller_packet(const ControllerPacket &);
+class ControllerFrameDecoder {
+  public:
+    explicit ControllerFrameDecoder(std::size_t capacity = 1024)
+        : capacity_(capacity) {}
+    void push(std::span<const std::uint8_t>) noexcept;
+    [[nodiscard]] std::optional<ControllerPacket> pop() noexcept;
+    [[nodiscard]] std::uint64_t invalid_frames() const noexcept {
+        return invalid_;
+    }
+    [[nodiscard]] std::uint64_t dropped_bytes() const noexcept {
+        return dropped_;
+    }
+
+  private:
+    std::deque<std::uint8_t> bytes_;
+    std::size_t capacity_{};
+    std::uint64_t invalid_{}, dropped_{};
+};
+
+enum class ControllerConnection : std::uint8_t {
+    disconnected,
+    negotiating,
+    connected,
+    incompatible,
+    error
+};
+struct ContextControl {
+    std::uint16_t control_id{};
+    std::string label, value, unit;
+    double minimum{}, maximum{};
+    bool active{};
+};
+struct ControllerProtocolState {
+    ControllerConnection connection{ControllerConnection::disconnected};
+    std::string device_id, firmware, error;
+    std::uint8_t protocol_major{}, protocol_minor{};
+    std::uint32_t capabilities{};
+    std::uint64_t received{}, sent{}, dropped_input{}, dropped_output{},
+        reconnects{}, event_rate{}, feedback_revision{};
+    std::array<std::uint16_t, 5> analog{};
+    std::array<std::int32_t, 9> encoders{};
+    std::array<std::uint32_t, 32> leds{};
+    std::array<ContextControl, 16> context{};
+};
+
+class ControllerHost {
+  public:
+    explicit ControllerHost(ApplicationService &,
+                            std::size_t queue_capacity = 128,
+                            std::string expected_device_id = {});
+    bool receive(const ControllerPacket &, std::string &error) noexcept;
+    void publish(const ApplicationState &);
+    void connected();
+    void disconnected(std::string reason = {});
+    [[nodiscard]] std::optional<ControllerPacket> next_output() noexcept;
+    [[nodiscard]] ControllerProtocolState snapshot() const { return state_; }
+
+  private:
+    bool enqueue(ControllerPacket) noexcept;
+    void dispatch_input(std::string id, double value, bool pressed,
+                        std::uint64_t sequence);
+    ApplicationService *application_{};
+    std::deque<ControllerPacket> output_;
+    std::size_t capacity_{};
+    std::uint32_t sequence_{1};
+    std::string expected_device_id_;
+    ControllerProtocolState state_;
+    std::array<bool, 5> pickup_{};
+};
+
+class ControllerSerialTransport {
+  public:
+    explicit ControllerSerialTransport(std::size_t queue_capacity = 128);
+    ~ControllerSerialTransport();
+    bool open(const std::filesystem::path &, std::string &error);
+    void close() noexcept;
+    bool poll(ControllerHost &, std::string &error) noexcept;
+    bool send(const ControllerPacket &) noexcept;
+    [[nodiscard]] bool connected() const noexcept { return fd_ >= 0; }
+    [[nodiscard]] std::uint64_t dropped_output() const noexcept {
+        return dropped_;
+    }
+
+  private:
+    int fd_{-1};
+    std::filesystem::path identity_;
+    ControllerFrameDecoder decoder_;
+    std::deque<std::vector<std::uint8_t>> output_;
+    std::size_t capacity_{};
+    std::uint64_t dropped_{};
+};
+
+class SimulatedController {
+  public:
+    explicit SimulatedController(ControllerHost &host) : host_(&host) {}
+    bool negotiate(std::string device_id = "neurogenic.simulator");
+    bool button(std::uint16_t id, bool pressed);
+    bool encoder(std::uint16_t id, std::int16_t delta);
+    bool analog(std::uint16_t id, std::uint16_t value);
+    [[nodiscard]] std::vector<ControllerPacket> drain_feedback();
+
+  private:
+    bool send(ControllerMessageType, std::vector<std::uint8_t>);
+    ControllerHost *host_{};
+    std::uint32_t sequence_{1};
+};
+[[nodiscard]] std::string
+controller_protocol_json(const ControllerProtocolState &);
+} // namespace neurogenic

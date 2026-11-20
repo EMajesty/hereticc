@@ -1,5 +1,12 @@
 # Hardware bring-up and diagnostic reports
 
+For the dedicated controller, first run
+`neurogenic-diagnostics --controller-protocol-test`, then launch with
+`neurogenic --gui --controller /dev/serial/by-id/...`. Verify every transition,
+encoder direction, fader range, RGB ordering/brightness, heartbeat, unplug and
+replug, and full-state restoration. The host never substitutes another TTY.
+See [CONTROLLER_PROTOCOL.md](CONTROLLER_PROTOCOL.md).
+
 NEUROGENIC does not infer hardware compatibility from compilation. These tools
 collect repeatable evidence on the N150, Raspberry Pi 5, and development hosts
 without changing system configuration.

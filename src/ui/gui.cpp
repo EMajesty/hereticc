@@ -214,14 +214,14 @@ GuiLayout GuiModel::layout(int width, int height) const {
         (keyboard_width - key_gap * (keyboard_columns - 1)) / keyboard_columns;
     const float key_height = 44;
     for (std::size_t i = 0; i < text_characters.size(); ++i)
-        result.text_keys.push_back(r(
-            keyboard_x + (i % keyboard_columns) * (key_width + key_gap),
-            keyboard_y + (i / keyboard_columns) * (key_height + key_gap),
-            key_width, key_height));
-    const float controls_y = keyboard_y +
-                             ((text_characters.size() + keyboard_columns - 1) /
-                              keyboard_columns) *
-                                 (key_height + key_gap);
+        result.text_keys.push_back(
+            r(keyboard_x + (i % keyboard_columns) * (key_width + key_gap),
+              keyboard_y + (i / keyboard_columns) * (key_height + key_gap),
+              key_width, key_height));
+    const float controls_y =
+        keyboard_y +
+        ((text_characters.size() + keyboard_columns - 1) / keyboard_columns) *
+            (key_height + key_gap);
     result.text_backspace = r(keyboard_x, controls_y, 150, 48);
     result.text_cancel = r(keyboard_x + 160, controls_y, 150, 48);
     result.text_commit = r(keyboard_x + 320, controls_y, 150, 48);
@@ -270,28 +270,29 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
         rect({0, 0, static_cast<float>(frame_.viewport_width),
               static_cast<float>(frame_.viewport_height)},
              UiColor::panel);
-        text({28 * l.scale, 24 * l.scale,
-              frame_.viewport_width - 56 * l.scale, 60 * l.scale},
+        text({28 * l.scale, 24 * l.scale, frame_.viewport_width - 56 * l.scale,
+              60 * l.scale},
              UiColor::accent,
              "PROJECT NAME: " + text_entry_.state().text + "  [" +
                  text_entry_.state().selected + "]");
         for (std::size_t i = 0; i < l.text_keys.size(); ++i) {
             const auto selected = text_focus_ == i;
-            rect(l.text_keys[i], selected ? UiColor::selected
-                                          : UiColor::background);
+            rect(l.text_keys[i],
+                 selected ? UiColor::selected : UiColor::background);
             text(l.text_keys[i], UiColor::text,
-                 text_characters[i] == ' ' ? "SPACE"
-                                           : std::string(1, text_characters[i]));
+                 text_characters[i] == ' '
+                     ? "SPACE"
+                     : std::string(1, text_characters[i]));
         }
-        rect(l.text_backspace,
-             text_focus_ == text_characters.size() ? UiColor::selected
-                                                   : UiColor::background);
-        rect(l.text_cancel,
-             text_focus_ == text_characters.size() + 1 ? UiColor::selected
-                                                       : UiColor::background);
-        rect(l.text_commit,
-             text_focus_ == text_characters.size() + 2 ? UiColor::selected
-                                                       : UiColor::background);
+        rect(l.text_backspace, text_focus_ == text_characters.size()
+                                   ? UiColor::selected
+                                   : UiColor::background);
+        rect(l.text_cancel, text_focus_ == text_characters.size() + 1
+                                ? UiColor::selected
+                                : UiColor::background);
+        rect(l.text_commit, text_focus_ == text_characters.size() + 2
+                                ? UiColor::selected
+                                : UiColor::background);
         text(l.text_backspace, UiColor::text, "BACKSPACE");
         text(l.text_cancel, UiColor::text, "CANCEL");
         text(l.text_commit, UiColor::text, "DONE");
@@ -341,6 +342,29 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
                                                              : UiColor::panel);
         text(l.tabs[i], UiColor::text, names[i]);
     }
+    // The dedicated controller is intentionally display-agnostic: these
+    // labels describe the current host assignments for its eight upper
+    // encoders and eight lower contextual buttons.
+    const float context_width =
+        static_cast<float>(frame_.viewport_width) / 8.0F;
+    for (std::size_t i = 0; i < 8; ++i) {
+        std::string upper = "--";
+        if (i < state.parameters.size()) {
+            upper = state.parameters[i].name;
+            if (!state.parameters[i].unit.empty())
+                upper += " [" + state.parameters[i].unit + "]";
+        }
+        text({context_width * i + 3 * l.scale, l.top.y + l.top.h - 18 * l.scale,
+              context_width - 6 * l.scale, 16 * l.scale},
+             i < state.parameters.size() ? UiColor::accent : UiColor::muted,
+             upper);
+        static constexpr const char *lower_labels[]{
+            "SELECT", "EDIT", "PREV", "NEXT", "BACK", "ENTER", "PAGE", "MENU"};
+        text({context_width * i + 3 * l.scale,
+              static_cast<float>(frame_.viewport_height) - 19 * l.scale,
+              context_width - 6 * l.scale, 16 * l.scale},
+             UiColor::muted, lower_labels[i]);
+    }
     rect(l.content, UiColor::panel);
     if (l.inspector_visible)
         rect(l.parameters, UiColor::panel);
@@ -371,8 +395,8 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
                                 : UiColor::background);
             text(l.rows[i], item.muted ? UiColor::muted : UiColor::text,
                  std::to_string(item.id) + "  " + item.name + "  " +
-                     item.instrument_id + "  " +
-                     "#" + std::to_string(item.instrument_instance_id) + "  " +
+                     item.instrument_id + "  " + "#" +
+                     std::to_string(item.instrument_instance_id) + "  " +
                      std::to_string(item.pattern_length) + " ticks" +
                      (item.muted ? "  MUTED" : ""));
         }
@@ -778,8 +802,8 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
              UiColor::accent, "MODULATION MATRIX");
         const auto source_name = [](ModulationSourceId source) {
             static constexpr const char *names[]{
-                "LFO 1", "LFO 2", "LFO 3", "LFO 4", "ENV", "S&H",
-                "SMOOTH", "X", "Y", "VELOCITY", "MIDI CC"};
+                "LFO 1",  "LFO 2", "LFO 3", "LFO 4",    "ENV",    "S&H",
+                "SMOOTH", "X",     "Y",     "VELOCITY", "MIDI CC"};
             return names[static_cast<std::size_t>(source)];
         };
         const auto destination_name = [&](ParameterDestination destination) {
@@ -811,7 +835,8 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
                           ? " / ALL"
                           : " / INST " +
                                 std::to_string(route.destination.instance)) +
-                     "  EFF " + std::to_string(
+                     "  EFF " +
+                     std::to_string(
                          state.modulation_runtime.effective_values[i]));
         }
         if (state.modulation.route_count == 0)
@@ -824,28 +849,34 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
         const auto &clock = state.external_midi_clock;
         const auto status_name = [](MidiSyncStatus status) {
             switch (status) {
-            case MidiSyncStatus::stopped: return "STOPPED";
-            case MidiSyncStatus::acquiring: return "ACQUIRING";
-            case MidiSyncStatus::locked: return "LOCKED";
-            case MidiSyncStatus::holdover: return "HOLDOVER";
-            case MidiSyncStatus::lost: return "LOST";
+            case MidiSyncStatus::stopped:
+                return "STOPPED";
+            case MidiSyncStatus::acquiring:
+                return "ACQUIRING";
+            case MidiSyncStatus::locked:
+                return "LOCKED";
+            case MidiSyncStatus::holdover:
+                return "HOLDOVER";
+            case MidiSyncStatus::lost:
+                return "LOST";
             }
             return "UNKNOWN";
         };
-        const auto connected_inputs = static_cast<std::size_t>(std::count(
-            state.midi_input_connected.begin(),
-            state.midi_input_connected.end(), true));
-        const auto connected_outputs = static_cast<std::size_t>(std::count(
-            state.midi_output_connected.begin(),
-            state.midi_output_connected.end(), true));
+        const auto connected_inputs = static_cast<std::size_t>(
+            std::count(state.midi_input_connected.begin(),
+                       state.midi_input_connected.end(), true));
+        const auto connected_outputs = static_cast<std::size_t>(
+            std::count(state.midi_output_connected.begin(),
+                       state.midi_output_connected.end(), true));
         const std::array<std::string, 7> rows{
             "CLOCK SOURCE  " +
                 std::string(state.midi.clock_source == MidiClockSource::internal
                                 ? "INTERNAL"
                                 : "EXTERNAL"),
             "SYNC  " + std::string(status_name(clock.sync_status)) + "  " +
-                "  " + (clock.available ? std::to_string(clock.tempo_bpm)
-                                             : std::string("NO CLOCK")) +
+                "  " +
+                (clock.available ? std::to_string(clock.tempo_bpm)
+                                 : std::string("NO CLOCK")) +
                 (clock.dropout ? "  DROPOUT" : ""),
             "PHASE ERROR  " + std::to_string(clock.phase_error_pulses) +
                 " PULSES  SPP " + std::to_string(clock.song_position),
@@ -857,8 +888,8 @@ void GuiModel::render(const ApplicationState &state, const GuiLayout &l) {
                 std::to_string(state.midi_dropped)};
         for (std::size_t i = 0; i < rows.size(); ++i) {
             rect(l.rows[i], i == 0 ? UiColor::selected : UiColor::background);
-            text(l.rows[i], i == 1 && clock.dropout ? UiColor::error
-                                                    : UiColor::text,
+            text(l.rows[i],
+                 i == 1 && clock.dropout ? UiColor::error : UiColor::text,
                  rows[i]);
         }
         text(l.rows[7], UiColor::muted,
@@ -1183,13 +1214,13 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
                 if (shift_)
                     submit(command("midi.panic.v1"));
                 else
-                    submit(command(
-                        "midi.clock-source-set.v1",
-                        {{"source",
-                          std::string(state.midi.clock_source ==
-                                              MidiClockSource::internal
-                                          ? "external"
-                                          : "internal")}}));
+                    submit(
+                        command("midi.clock-source-set.v1",
+                                {{"source",
+                                  std::string(state.midi.clock_source ==
+                                                      MidiClockSource::internal
+                                                  ? "external"
+                                                  : "internal")}}));
             } else if (view_ == GuiView::routing) {
                 const auto index = state.selected_external_fx_loop;
                 const auto &loop = state.mixer.configuration.external_fx[index];
@@ -1299,43 +1330,41 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
             return true;
         }
         if ((input.key == GuiKey::up || input.key == GuiKey::down) &&
-            view_ == GuiView::modulation &&
-            state.modulation.route_count != 0) {
+            view_ == GuiView::modulation && state.modulation.route_count != 0) {
             std::size_t current{};
             for (std::size_t i = 0; i < state.modulation.route_count; ++i)
                 if (state.modulation.routes[i].id ==
                     state.selected_modulation_route)
                     current = i;
-            const auto next = input.key == GuiKey::down
-                                  ? (current + 1) %
-                                        state.modulation.route_count
-                                  : (current + state.modulation.route_count - 1) %
-                                        state.modulation.route_count;
-            submit(command(
-                "modulation.route-select.v1",
-                {{"route_id", static_cast<std::int64_t>(
-                                  state.modulation.routes[next].id)}}));
+            const auto next =
+                input.key == GuiKey::down
+                    ? (current + 1) % state.modulation.route_count
+                    : (current + state.modulation.route_count - 1) %
+                          state.modulation.route_count;
+            submit(
+                command("modulation.route-select.v1",
+                        {{"route_id", static_cast<std::int64_t>(
+                                          state.modulation.routes[next].id)}}));
             return true;
         }
         if ((input.key == GuiKey::left || input.key == GuiKey::right) &&
-            view_ == GuiView::modulation &&
-            state.selected_modulation_route) {
+            view_ == GuiView::modulation && state.selected_modulation_route) {
             const auto found = std::find_if(
                 state.modulation.routes.begin(),
                 state.modulation.routes.begin() + state.modulation.route_count,
                 [&](const auto &route) {
                     return route.id == state.selected_modulation_route;
                 });
-            if (found != state.modulation.routes.begin() +
-                             state.modulation.route_count)
+            if (found !=
+                state.modulation.routes.begin() + state.modulation.route_count)
                 submit(command(
                     "modulation.route-depth.v1",
                     {{"route_id", static_cast<std::int64_t>(found->id)},
-                     {"depth", static_cast<double>(std::clamp(
-                                   found->depth +
-                                       (input.key == GuiKey::right ? 0.05F
-                                                                   : -0.05F),
-                                   -1.0F, 1.0F))}}));
+                     {"depth",
+                      static_cast<double>(std::clamp(
+                          found->depth +
+                              (input.key == GuiKey::right ? 0.05F : -0.05F),
+                          -1.0F, 1.0F))}}));
             return true;
         }
         if ((input.key == GuiKey::left || input.key == GuiKey::right) &&
@@ -1490,11 +1519,10 @@ bool GuiModel::input(const GuiInput &input, int width, int height) {
             l.rows[0].contains(input.x, input.y)) {
             submit(command(
                 "midi.clock-source-set.v1",
-                {{"source",
-                  std::string(state.midi.clock_source ==
-                                      MidiClockSource::internal
-                                  ? "external"
-                                  : "internal")}}));
+                {{"source", std::string(state.midi.clock_source ==
+                                                MidiClockSource::internal
+                                            ? "external"
+                                            : "internal")}}));
             return true;
         }
         if (view_ == GuiView::mixer)

@@ -1,5 +1,11 @@
 # Implementation status
 
+Task 036 adds bounded versioned controller framing with CRC, nonblocking USB
+CDC serial transport, negotiation/capabilities, semantic dispatch, RGB and
+context feedback, exact-path reconnection, simulator tests, JSON diagnostics
+and matching GUI edge labels. USB HID and MCU firmware are intentionally
+unimplemented, and physical USB behavior remains unverified.
+
 Task 035 adds revisioned appliance startup/shutdown stages, separate persistent
 preferences, explicit project override/reopen-last behavior, degraded GUI or
 interactive startup without audio, coordinated recording/transport/MIDI/device

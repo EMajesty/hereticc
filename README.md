@@ -8,6 +8,10 @@ check out
 
 # NEUROGENIC
 
+The dedicated controller host interface uses a versioned USB CDC binary
+protocol; see [controller protocol](docs/CONTROLLER_PROTOCOL.md). Launch it with
+`--controller /dev/serial/by-id/...`. Controller hardware remains optional.
+
 NEUROGENIC is an open-source, hardware-independent C++20 audio and MIDI
 workstation engine. Its first live vertical slice plays a WAV through miniaudio,
 receives MIDI through libremidi, executes Lua 5.4 through sol2, applies generated

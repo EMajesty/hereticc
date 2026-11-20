@@ -1,5 +1,11 @@
 # Architecture
 
+The dedicated physical controller is an `ApplicationService` client.
+`ControllerSerialTransport` owns nonblocking Linux TTY I/O,
+`ControllerFrameDecoder` owns bounded wire framing, and `ControllerHost` owns
+negotiation, semantic dispatch and revisioned feedback. None is visible to the
+audio callback. The packet/session boundary permits a future HID transport.
+
 Timeline-owned sample and synth voices render into fixed per-track buffers.
 The bounded mixer applies channel gain/pan/mute/solo, two aux buses, physical
 inputs, master gain, metering and explicit outputs before the existing master
