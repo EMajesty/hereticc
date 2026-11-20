@@ -405,3 +405,12 @@ progress, scheduled frames, completion and queue drops. Macro metadata version
 2 persists scene curves; transient morph state remains excluded. Recorded macro
 automation is still discrete, and the 32-frame control interval is the current
 timing granularity.
+
+Task 051 adds a presentation-neutral typed binding service over Task 050
+discovery. It covers stable and selected-object references, authoritative
+base/effective values, native/normalized/relative controls, structured
+validation errors, fader pickup, high-resolution MIDI normalization and bounded
+capability/state/telemetry notifications with explicit overflow
+resynchronization. Dynamic FX and modulator parameters use their existing
+instance-aware semantic actions. Text metadata and per-field delta payloads
+remain future extensions.

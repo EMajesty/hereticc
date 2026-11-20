@@ -246,6 +246,47 @@ const ModulatorTypeDescriptor *find_modulator_type(ModulatorType type) noexcept 
                                     });
     return found == registry.end() ? nullptr : &*found;
 }
+float modulator_parameter_value(const ModulationSourceSettings &value,
+                                ModulatorType type,
+                                ModulatorParameterId parameter) noexcept {
+    switch (parameter) {
+    case ModulatorParameterId::rate: return value.rate_hz;
+    case ModulatorParameterId::beats: return value.beats_per_cycle;
+    case ModulatorParameterId::attack:
+        return type == ModulatorType::envelope_follower
+                   ? value.follower_attack_seconds
+                   : value.attack_seconds;
+    case ModulatorParameterId::decay: return value.decay_seconds;
+    case ModulatorParameterId::sustain: return value.sustain;
+    case ModulatorParameterId::release:
+        return type == ModulatorType::envelope_follower
+                   ? value.follower_release_seconds
+                   : value.release_seconds;
+    case ModulatorParameterId::follower_gain: return value.follower_gain;
+    case ModulatorParameterId::follower_threshold:
+        return value.follower_threshold;
+    case ModulatorParameterId::step_duration:
+        return value.step_duration_beats;
+    case ModulatorParameterId::swing: return value.swing;
+    case ModulatorParameterId::pulses: return value.pulses;
+    case ModulatorParameterId::rotation: return value.rotation;
+    case ModulatorParameterId::gate_length: return value.gate_length;
+    case ModulatorParameterId::step_count: return value.step_count;
+    case ModulatorParameterId::order: return value.order;
+    case ModulatorParameterId::distribution: return value.distribution;
+    case ModulatorParameterId::correlation: return value.correlation;
+    case ModulatorParameterId::quantization: return value.quantization;
+    case ModulatorParameterId::slew: return value.slew_seconds;
+    case ModulatorParameterId::rise: return value.rise_seconds;
+    case ModulatorParameterId::fall: return value.fall_seconds;
+    case ModulatorParameterId::curve: return value.curve;
+    case ModulatorParameterId::scale: return value.scale;
+    case ModulatorParameterId::offset: return value.offset;
+    case ModulatorParameterId::chaos: return value.chaos;
+    case ModulatorParameterId::manual_value: return value.manual_value;
+    }
+    return 0;
+}
 
 bool validate_modulation_graph(const ModulationConfiguration &configuration,
                                ModulationGraphDiagnostics &diagnostics) {

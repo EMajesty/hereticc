@@ -33,7 +33,7 @@ include(cmake/Dependencies.cmake)
 find_package(Threads REQUIRED)
 
 add_library(neurogenic_engine
-  src/application/control.cpp src/application/controller.cpp src/application/controller_protocol.cpp src/application/discovery.cpp src/application/lifecycle.cpp src/application/performance_macros.cpp
+  src/application/control.cpp src/application/controller.cpp src/application/controller_protocol.cpp src/application/discovery.cpp src/application/parameter_binding.cpp src/application/lifecycle.cpp src/application/performance_macros.cpp
   src/audio/engine.cpp src/audio/mixer.cpp src/audio/recording.cpp src/audio/sample.cpp src/audio/sample_manager.cpp src/audio/slicing.cpp src/core/command.cpp src/core/control_dispatcher.cpp
   src/dsp/effect_chain.cpp src/dsp/modulation.cpp src/dsp/voice_modulation.cpp src/dsp/purest_gain.cpp src/dsp/processor.cpp src/dsp/parameter_destination.cpp src/dsp/time_stretch.cpp src/instrument/subtractive_synth.cpp src/midi/mapping.cpp src/midi/routing.cpp src/project/project.cpp
   src/diagnostics/hardware.cpp
@@ -117,6 +117,15 @@ if(NEUROGENIC_BUILD_TESTS)
   add_test(NAME neurogenic_discovery_tests COMMAND neurogenic_discovery_tests)
   set_tests_properties(neurogenic_discovery_tests PROPERTIES
     PASS_REGULAR_EXPRESSION "neurogenic.discovery-tests.v1 passed" TIMEOUT 10)
+  add_executable(neurogenic_parameter_binding_tests
+    tests/parameter_binding_tests.cpp)
+  target_link_libraries(neurogenic_parameter_binding_tests PRIVATE
+    neurogenic_engine)
+  add_test(NAME neurogenic_parameter_binding_tests
+    COMMAND neurogenic_parameter_binding_tests)
+  set_tests_properties(neurogenic_parameter_binding_tests PROPERTIES
+    PASS_REGULAR_EXPRESSION "neurogenic.parameter-binding-tests.v1 passed"
+    TIMEOUT 10)
   add_test(NAME neurogenic_diagnostics_stress
     COMMAND neurogenic_diagnostics --headless --stress 0.05 --buffer 127
       --sample-voices 8 --synth-voices 4)

@@ -48,6 +48,12 @@ struct DiscoveryParameter {
     bool readable{true}, writable{true}, continuous{}, automatable{},
         modulatable{};
     std::vector<std::string> choices;
+    // Presentation-neutral control hints. They describe value semantics, not
+    // a widget or physical controller assignment.
+    std::string format_style{"decimal"};
+    std::uint8_t precision{2};
+    bool supports_absolute{true}, supports_relative{true},
+        pickup_recommended{}, supports_high_resolution{true};
 };
 
 struct DiscoveryAction {

@@ -2,7 +2,9 @@
 
 Controller clients may inspect
 [application discovery](APPLICATION_DISCOVERY.md) for semantic actions,
-parameters, object availability and resource limits. Discovery contains no
+[typed parameter bindings](PARAMETER_BINDINGS.md) for absolute, relative,
+toggle and momentary controls, and the discovery document for parameters,
+object availability and resource limits. Discovery contains no
 button counts or physical layout; profiles continue to map stable semantic IDs.
 
 Pattern and arrangement actions are semantic and layout-independent. Task 045

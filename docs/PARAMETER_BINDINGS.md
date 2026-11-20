@@ -1,0 +1,74 @@
+# Typed parameter bindings
+
+NEUROGENIC's binding layer is a control-side adapter over application
+discovery and semantic actions. It does not provide another DSP control path.
+`ParameterBindingService` resolves a `BindingReference`, reads the discovered
+base/effective values, validates a typed proposal, and invokes the existing
+semantic setter action.
+
+## References and lifetime
+
+A reference contains a target kind, object ID, parameter ID and the discovery
+revision from which it was obtained. Explicit object IDs are never substituted.
+If an FX, modulator, track or other object disappears, resolution returns a
+structured `missing_object` or `stale_reference` error. A `selected_track`
+reference resolves the current selection on every use; changing selection is
+therefore intentional rebinding. State and telemetry paths resolve only when
+listed by application discovery.
+
+Errors distinguish missing/stale objects, unknown parameters or state paths,
+type/range/choice failures, read-only values, unsupported operations, rejected
+semantic actions and update-stream overflow.
+
+## Descriptor and control semantics
+
+Descriptors retain authoritative subsystem IDs, bounds, defaults, choices,
+base/effective values and automation/modulation flags. Discovery adds neutral
+format hints (`decimal`, `integer`, `percent`, `boolean`, or `choice`), display
+precision, absolute/relative support, pickup recommendation and high-resolution
+support. These hints do not prescribe a widget.
+
+The generic control model supports:
+
+- absolute native or normalized values;
+- relative encoder steps;
+- boolean toggle and momentary operation;
+- 14-bit or other bounded integer normalization;
+- nonmotorized-fader pickup with observable above/below direction.
+
+Native values are range-checked before conversion to the existing normalized
+semantic setter. Dynamic FX and modulator instance writes use their existing
+instance-aware semantic actions. Presentation clients never receive DSP
+pointers.
+
+## Revisions and resynchronization
+
+`BindingUpdateStream` separates capability, ordinary state and telemetry
+notifications. Delivery is bounded. When capacity is exceeded, queued deltas
+are replaced by one `resync_required` marker and a dropped-update counter;
+clients must fetch a fresh discovery document and application snapshot, then
+call `resynchronize`. No complete snapshot diffing, serialization or update
+queue work occurs in the audio callback.
+
+Typical client flow:
+
+1. Export discovery and choose a compatible object/parameter descriptor.
+2. Store its stable binding reference and discovery revision.
+3. Resolve/read, then render its base or effective value.
+4. Validate and apply input through `ParameterBindingService`.
+5. Consume revision notifications; on overflow, explicitly resynchronize.
+6. Show structured errors and keep missing explicit targets unbound.
+
+## Current limitations
+
+The binding stream reports revision classes, not per-field patches. Clients
+still read the bounded application snapshot after notification. Historical
+semantic action arguments do not all carry numeric ranges or enum choices;
+parameter descriptors remain authoritative for value validation. Text-valued
+project metadata uses semantic actions and is not yet represented by the
+numeric `ParameterType` registry. No network transport, declarative renderer or
+UI Studio editor is included.
+
+The deterministic host test also reports control-side read cost. This measures
+discovery/resolution overhead on the current machine and is not an audio-thread
+or Raspberry Pi 5 performance claim.

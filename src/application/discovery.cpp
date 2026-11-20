@@ -117,7 +117,8 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
         {"timeline-arrangement", 2, true, {}}, {"native-fx-chains", 1, true, {}},
         {"modulation-graph", 6, true, {}}, {"performance-macros", 2, true, {}},
         {"midi-routing", 2, true, {}}, {"audio-recording", 1, true, {}},
-        {"high-frequency-telemetry", 1, true, {}}};
+        {"high-frequency-telemetry", 1, true, {}},
+        {"typed-parameter-bindings", 1, true, {}}};
     result.object_types = {
         {"project", "Project", false, false, true},
         {"transport", "Transport", false, false, false},
@@ -242,9 +243,28 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
     }
     for (std::size_t i = 0; i < state.modulation.modulator_count; ++i) {
         const auto &mod = state.modulation.modulators[i];
-        result.objects.push_back({"modulator", object_id("modulator", mod.id),
+        const auto parent = object_id("modulator", mod.id);
+        result.objects.push_back({"modulator", parent,
                                   "project:current", std::string(mod.display_name.data()), true,
                                   false, {}});
+        if (const auto *type = find_modulator_type(mod.type))
+            for (const auto &parameter : type->parameters) {
+                const auto current = modulator_parameter_value(
+                    mod.settings, mod.type, parameter.numeric_id);
+                result.parameters.push_back(
+                    {"modulator." + std::to_string(mod.id) + "." +
+                         std::string(parameter.id),
+                     parent, std::string(parameter.name),
+                     std::string(parameter.unit),
+                     parameter.discrete ? ParameterType::integer
+                                        : ParameterType::real,
+                     static_cast<double>(parameter.minimum),
+                     static_cast<double>(parameter.maximum),
+                     static_cast<double>(parameter.default_value),
+                     static_cast<double>(current), static_cast<double>(current),
+                     parameter.discrete ? 1.0 : 0.0, true, true,
+                     !parameter.discrete, false, parameter.modulatable, {}});
+            }
     }
     for (std::size_t i = 0; i < state.modulation.route_count; ++i)
         result.objects.push_back({"modulation-connection",
@@ -303,6 +323,26 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
                                     state.performance_macros.validation_errors.end());
     std::sort(result.objects.begin(), result.objects.end(), [](const auto &a, const auto &b) { return a.id < b.id; });
     std::sort(result.parameters.begin(), result.parameters.end(), [](const auto &a, const auto &b) { return a.id < b.id; });
+    for (auto &parameter : result.parameters) {
+        parameter.pickup_recommended = parameter.continuous && parameter.writable;
+        if (parameter.type == ParameterType::boolean) {
+            parameter.format_style = "boolean";
+            parameter.precision = 0;
+            parameter.supports_relative = false;
+            parameter.supports_high_resolution = false;
+        } else if (parameter.type == ParameterType::enumeration) {
+            parameter.format_style = "choice";
+            parameter.precision = 0;
+            parameter.supports_relative = false;
+            parameter.supports_high_resolution = false;
+        } else if (parameter.type == ParameterType::integer) {
+            parameter.format_style = "integer";
+            parameter.precision = 0;
+        } else if (parameter.unit == "%") {
+            parameter.format_style = "percent";
+            parameter.precision = 1;
+        }
+    }
     std::sort(result.actions.begin(), result.actions.end(), [](const auto &a, const auto &b) { return a.descriptor.id < b.descriptor.id; });
     return result;
 }
@@ -405,7 +445,14 @@ std::string discovery_json(const ApplicationDiscovery &value) {
             << ",\"writable\":" << (v.writable ? "true" : "false")
             << ",\"continuous\":" << (v.continuous ? "true" : "false")
             << ",\"automatable\":" << (v.automatable ? "true" : "false")
-            << ",\"modulatable\":" << (v.modulatable ? "true" : "false") << ",\"choices\":[";
+            << ",\"modulatable\":" << (v.modulatable ? "true" : "false")
+            << ",\"format_hint\":{\"style\":\"" << escape(v.format_style)
+            << "\",\"precision\":" << static_cast<unsigned>(v.precision)
+            << ",\"absolute\":" << (v.supports_absolute ? "true" : "false")
+            << ",\"relative\":" << (v.supports_relative ? "true" : "false")
+            << ",\"pickup\":" << (v.pickup_recommended ? "true" : "false")
+            << ",\"high_resolution\":" << (v.supports_high_resolution ? "true" : "false")
+            << "},\"choices\":[";
         for (std::size_t c = 0; c < v.choices.size(); ++c) { if (c) out << ','; out << '"' << escape(v.choices[c]) << '"'; }
         out << "]}";
     }

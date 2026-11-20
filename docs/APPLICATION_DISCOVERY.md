@@ -22,7 +22,8 @@ Output is deterministic for identical capabilities and state. Schema
 - `object_types`: presentation-neutral create/delete/select capabilities.
 - `objects`: typed identities, parent, label, availability and diagnostics.
 - `parameters`: stable ID, parent, type, unit, bounds, default, base/effective
-  values, access flags, automation/modulation eligibility and choices.
+  values, access flags, automation/modulation eligibility, choices and
+  presentation-neutral formatting/control hints.
 - `actions`: the existing semantic registry with descriptions, availability
   and typed required/optional arguments.
 - `state_bindings`: stable paths, value kinds and update-rate classification.
@@ -47,9 +48,11 @@ instances, modulator types and instances, modulation connections, macros,
 scenes, recording, and stable logical MIDI ports. Unconnected MIDI ports remain
 visible but unavailable so a project binding cannot silently move.
 
-Native FX and modulator registries are type objects with parameter metadata. FX
-instances additionally expose current instance-aware parameters. Existing DSP
-and semantic parameter IDs are retained.
+Native FX and modulator registries are type objects with parameter metadata.
+FX and modulator instances additionally expose current instance-aware base and
+effective parameter values. Existing DSP and semantic parameter IDs are
+retained. The [typed binding contract](PARAMETER_BINDINGS.md) resolves these
+descriptors and routes writes through the existing semantic actions.
 
 ## Actions and state bindings
 
@@ -96,6 +99,6 @@ Assembly, validation and JSON serialization run outside the audio callback.
 Discovery adds no callback allocation, locking, JSON work or DSP processing.
 
 Current limitations: historical action descriptors do not all expose numeric
-ranges or enum choices; modulator current instance values remain primarily in
-the modulation runtime snapshot; export is local rather than a network service;
-and no declarative renderer or UI Studio editor exists yet.
+ranges or enum choices; text project metadata is action-driven rather than a
+registered parameter; export is local rather than a network service; and no
+declarative renderer or UI Studio editor exists yet.

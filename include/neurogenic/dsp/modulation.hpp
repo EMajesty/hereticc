@@ -112,10 +112,14 @@ struct ModulatorTypeDescriptor {
     std::uint32_t estimated_state_bytes{};
     std::uint32_t version{1};
 };
+struct ModulationSourceSettings;
 [[nodiscard]] std::span<const ModulatorTypeDescriptor>
 modulator_type_registry() noexcept;
 [[nodiscard]] const ModulatorTypeDescriptor *
 find_modulator_type(ModulatorType) noexcept;
+[[nodiscard]] float modulator_parameter_value(
+    const ModulationSourceSettings &, ModulatorType,
+    ModulatorParameterId) noexcept;
 
 struct ModulationSourceSettings {
     static constexpr std::size_t maximum_steps = 16;
