@@ -1,4 +1,5 @@
 #include "neurogenic/timeline/arrangement.hpp"
+#include "neurogenic/timeline/performance_launching.hpp"
 #include "neurogenic/dsp/parameter_destination.hpp"
 #include "neurogenic/instrument/instrument.hpp"
 #include <algorithm>
@@ -270,6 +271,12 @@ bool validate_arrangement(const Timeline &timeline, std::string &error,
             }
         }
     }
+    PerformanceLauncher launcher;
+    if (!launcher.configure(timeline, error)) return false;
+    if (!std::isfinite(a.fixed_velocity) || a.fixed_velocity < 0 || a.fixed_velocity > 1) {
+        error = "performance fixed velocity is invalid";
+        return false;
+    }
     error.clear();
     return true;
 }
@@ -505,12 +512,15 @@ MusicalTick launch_boundary(MusicalTick now, LaunchQuantization quantization,
         return now;
     MusicalTick quantum = ticks_per_quarter;
     if (quantization == LaunchQuantization::bar ||
-        quantization == LaunchQuantization::two_bars) {
+        quantization == LaunchQuantization::two_bars ||
+        quantization == LaunchQuantization::four_bars ||
+        quantization == LaunchQuantization::eight_bars) {
         quantum = static_cast<MusicalTick>(ticks_per_quarter) *
                   transport.time_signature_numerator * 4 /
                   transport.time_signature_denominator;
-        if (quantization == LaunchQuantization::two_bars)
-            quantum *= 2;
+        if (quantization == LaunchQuantization::two_bars) quantum *= 2;
+        else if (quantization == LaunchQuantization::four_bars) quantum *= 4;
+        else if (quantization == LaunchQuantization::eight_bars) quantum *= 8;
     } else if (quantization == LaunchQuantization::pattern_end)
         quantum = pattern_length;
     return quantum <= 0 ? now : ((now + quantum - 1) / quantum) * quantum;

@@ -296,6 +296,15 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
              object_id("track", clip.clip.track),
              "Audio clip " + std::to_string(clip.clip.id),
              clip.source_available, false, clip.validation_error});
+    for (const auto &slot : state.performance_launching.slots)
+        result.objects.push_back(
+            {"performance-launch-slot", object_id("performance-launch-slot", slot.id),
+             object_id("track", slot.track),
+             "Launch slot " + std::to_string(slot.id), true, false, {}});
+    for (const auto &scene : state.performance_launching.scenes)
+        result.objects.push_back(
+            {"performance-launch-scene", object_id("performance-launch-scene", scene.id),
+             "arrangement:main", scene.name, true, false, {}});
     for (const auto &session : state.live_loops)
         result.objects.push_back(
             {"live-loop-session", object_id("live-loop-session", session.id),
@@ -463,6 +472,12 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
                              SampleProcessingService::maximum_jobs});
     result.limits.push_back(
         {"audio-clips", state.audio_clips.size(), 1024});
+    result.limits.push_back({"performance-launch-slots",
+                             state.performance_launching.slots.size(),
+                             maximum_launch_slots});
+    result.limits.push_back({"performance-launch-scenes",
+                             state.performance_launching.scenes.size(),
+                             maximum_performance_scenes});
     result.limits.push_back(
         {"live-loop-sessions", state.live_loops.size(),
          LiveLoopService::maximum_sessions});

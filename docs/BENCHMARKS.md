@@ -1,5 +1,8 @@
 # Performance monitoring and benchmarks
 
+Control-side preparation/cancellation workloads cover 16 and 64 slots and are
+reported separately from the existing pattern/audio callback workloads.
+
 Gapless handoff adds one bounded callback split without a PCM copy. Reserved PCM
 is `frames * channels * sizeof(float)`, plus one sample-version slot and voice.
 Live-loop callback cost otherwise follows the existing `internal_master_recording` path;

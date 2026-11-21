@@ -1,5 +1,8 @@
 # Application discovery contract
 
+Task 062 adds launch-slot and launch-scene objects, capacities, typed actions
+and revisioned launcher state without prescribing layout.
+
 Capability `live-looping` version 2 describes stable sessions, sources,
 quantization, lifecycle, progress, phase and semantic actions.
 

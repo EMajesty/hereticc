@@ -1,5 +1,9 @@
 # Patterns, clips, and arrangements
 
+Patterns and audio clips may be referenced by stable performance launch slots.
+Session launches use the same compiler and transport; arrangement/session/hybrid
+intent is explicit. See `PERFORMANCE_LAUNCHING.md`.
+
 Completed live-loop passes become ordinary looping audio clips through a
 timeline transaction. No separate looper lane or mixer path exists.
 

@@ -9,6 +9,7 @@
 #include "neurogenic/project/project.hpp"
 #include "neurogenic/timeline/arrangement.hpp"
 #include "neurogenic/timeline/playback.hpp"
+#include "neurogenic/timeline/performance_launching.hpp"
 #include "neurogenic/ui/gui.hpp"
 #include <charconv>
 #include <chrono>
@@ -1575,6 +1576,41 @@ void arrangement_case(std::size_t pattern_count, std::size_t clip_count) {
                iterations,
            preparation);
 }
+void performance_launch_case(std::size_t slot_count) {
+    neurogenic::Timeline timeline;
+    timeline.tracks.push_back({1, "Launch"});
+    neurogenic::PatternDefinition pattern;
+    pattern.id = 1; pattern.name = "Pattern"; pattern.length = 3840;
+    pattern.tracks.push_back({1, {3840, {}}});
+    timeline.arrangement.patterns.push_back(pattern);
+    for (std::size_t i = 0; i < slot_count; ++i)
+        timeline.arrangement.launch_slots.push_back(
+            {i + 1, 1, neurogenic::LaunchSourceType::pattern, 1,
+             neurogenic::LaunchBehavior::loop,
+             neurogenic::LaunchQuantization::bar});
+    neurogenic::PerformanceLauncher launcher;
+    std::string error;
+    const auto prepare = Clock::now();
+    if (!launcher.configure(timeline, error)) throw std::runtime_error(error);
+    const auto preparation = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        Clock::now() - prepare).count();
+    const auto begin = Clock::now();
+    for (std::size_t i = 0; i < iterations; ++i) {
+        neurogenic::PreparedLaunch launch;
+        if (!launcher.prepare_slot(i % slot_count + 1,
+                neurogenic::PreparedLaunchOperation::start, i * 17, i * 425,
+                launch, error)) {
+            launcher.cancel(i % slot_count + 1);
+            --i;
+            continue;
+        }
+        launcher.cancel(launch.slot);
+        checksum += launch.activation_frame;
+    }
+    result("performance_launch_slots_" + std::to_string(slot_count), 48000, 256,
+           std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - begin).count() /
+               iterations, preparation);
+}
 void audio_clip_case(std::size_t clip_count, bool overlap = false) {
     neurogenic::Timeline source;
     source.tracks.push_back(
@@ -1769,6 +1805,8 @@ int main(int argc, char **argv) {
     publication_case();
     arrangement_case(16, 64);
     arrangement_case(64, 256);
+    performance_launch_case(16);
+    performance_launch_case(64);
     audio_clip_case(8);
     audio_clip_case(32);
     audio_clip_case(128);

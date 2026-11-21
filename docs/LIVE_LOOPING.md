@@ -1,5 +1,9 @@
 # Live loop recording
 
+Completed loops may be assigned after their gapless first-pass handoff. Slot
+assignment never delays first playback; subsequent launches use the ordinary
+audio-clip scheduler.
+
 Live looping is a control-side session layer over the existing bounded
 `RecordingService`, immutable `SampleManager` publication, and arrangement
 audio clips. It does not add a callback recorder or playback engine.

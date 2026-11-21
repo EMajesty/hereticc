@@ -1,5 +1,10 @@
 # Architecture
 
+Performance launching is a control-side coordinator over the authoritative
+timeline. It validates slot/scene definitions and publishes prepared pattern or
+audio plans at an absolute frame; existing scheduling, SampleVoice ownership
+and mixer routing remain the only playback paths.
+
 Live looping composes the callback recorder, a prepared sample-version/voice
 handoff, immutable publication and audio-clip transactions. Overdub mixing and
 activation remain control-side.

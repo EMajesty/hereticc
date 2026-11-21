@@ -38,7 +38,7 @@ add_library(neurogenic_engine
   src/dsp/effect_chain.cpp src/dsp/modulation.cpp src/dsp/voice_modulation.cpp src/dsp/purest_gain.cpp src/dsp/processor.cpp src/dsp/parameter_destination.cpp src/dsp/time_stretch.cpp src/instrument/subtractive_synth.cpp src/midi/mapping.cpp src/midi/routing.cpp src/project/project.cpp src/project/preset.cpp
   src/diagnostics/hardware.cpp
   src/performance/monitor.cpp
-  src/sequencer/scheduler.cpp src/sequencer/pattern_adapter.cpp src/scripting/runtime.cpp src/timeline/arrangement.cpp src/timeline/arrangement_recording.cpp src/timeline/edit.cpp src/timeline/io.cpp src/timeline/playback.cpp)
+  src/sequencer/scheduler.cpp src/sequencer/pattern_adapter.cpp src/scripting/runtime.cpp src/timeline/arrangement.cpp src/timeline/arrangement_recording.cpp src/timeline/edit.cpp src/timeline/io.cpp src/timeline/performance_launching.cpp src/timeline/playback.cpp)
 target_include_directories(neurogenic_engine PUBLIC include)
 target_compile_options(neurogenic_engine PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_definitions(neurogenic_engine PRIVATE
@@ -160,6 +160,15 @@ if(NEUROGENIC_BUILD_TESTS)
   add_test(NAME neurogenic_live_loop_tests COMMAND neurogenic_live_loop_tests)
   set_tests_properties(neurogenic_live_loop_tests PROPERTIES
     PASS_REGULAR_EXPRESSION "neurogenic.live-loop-tests.v1 passed"
+    TIMEOUT 10)
+  add_executable(neurogenic_performance_launching_tests
+    tests/performance_launching_tests.cpp)
+  target_link_libraries(neurogenic_performance_launching_tests PRIVATE
+    neurogenic_engine)
+  add_test(NAME neurogenic_performance_launching_tests
+    COMMAND neurogenic_performance_launching_tests)
+  set_tests_properties(neurogenic_performance_launching_tests PROPERTIES
+    PASS_REGULAR_EXPRESSION "neurogenic.performance-launching-tests.v1 passed"
     TIMEOUT 10)
   add_test(NAME neurogenic_diagnostics_stress
     COMMAND neurogenic_diagnostics --headless --stress 0.05 --buffer 127

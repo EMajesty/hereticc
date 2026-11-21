@@ -160,6 +160,28 @@ ActionRegistry::ActionRegistry() {
     add(action(
         "pattern.launch.v1", "Launch pattern", "Arrangement",
         {{"id", ValueType::integer}, {"queued", ValueType::boolean, false}}));
+    add(action("performance.slot-assign.v1", "Assign performance launch slot",
+               "Performance", {{"slot", ValueType::integer},
+               {"track", ValueType::integer}, {"source_type", ValueType::text},
+               {"source", ValueType::integer}, {"behavior", ValueType::text, false}}));
+    add(action("performance.slot-clear.v1", "Clear performance launch slot",
+               "Performance", {{"slot", ValueType::integer}}));
+    add(action("performance.slot-launch.v1", "Launch performance slot",
+               "Performance", {{"slot", ValueType::integer}}));
+    add(action("performance.slot-stop.v1", "Stop performance slot",
+               "Performance", {{"slot", ValueType::integer}}));
+    add(action("performance.slot-retrigger.v1", "Retrigger performance slot",
+               "Performance", {{"slot", ValueType::integer}}));
+    add(action("performance.slot-cancel.v1", "Cancel queued performance slot",
+               "Performance", {{"slot", ValueType::integer}}));
+    add(action("performance.slot-duplicate.v1", "Duplicate performance slot",
+               "Performance", {{"source", ValueType::integer},
+               {"slot", ValueType::integer}}));
+    add(action("performance.scene-launch.v1", "Launch performance scene",
+               "Performance", {{"scene", ValueType::integer}}));
+    add(action("performance.velocity-policy.v1", "Set performance velocity policy",
+               "Performance", {{"policy", ValueType::text},
+               {"velocity", ValueType::real, false}}));
     add(action("arrangement.mode-set.v1", "Set playback mode", "Arrangement",
                {{"mode", ValueType::text}}));
     add(action("arrangement.clip-create.v1", "Create clip", "Arrangement",
@@ -4417,6 +4439,137 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                          TimelineCommitPolicy::next_audio_callback, error)) {
             } else
                 changed_locked();
+        } else if (command.action_id == "performance.slot-assign.v1" ||
+                   command.action_id == "performance.slot-clear.v1" ||
+                   command.action_id == "performance.slot-duplicate.v1" ||
+                   command.action_id == "performance.velocity-policy.v1") {
+            auto transaction = timeline_.edit();
+            auto &arrangement = transaction.timeline().arrangement;
+            if (command.action_id == "performance.slot-clear.v1") {
+                const auto id = static_cast<LaunchSlotId>(*argument<std::int64_t>(command, "slot"));
+                const auto before = arrangement.launch_slots.size();
+                std::erase_if(arrangement.launch_slots, [=](const auto &slot) { return slot.id == id; });
+                for (const auto &scene : arrangement.performance_scenes)
+                    if (std::any_of(scene.entries.begin(), scene.entries.end(),
+                                    [=](const auto &entry) { return entry.slot == id; })) {
+                        error = "launch slot is referenced by a scene";
+                        break;
+                    }
+                if (error.empty() && before == arrangement.launch_slots.size())
+                    error = "launch slot does not exist";
+            } else if (command.action_id == "performance.slot-duplicate.v1") {
+                const auto source_id = static_cast<LaunchSlotId>(*argument<std::int64_t>(command, "source"));
+                const auto new_id = static_cast<LaunchSlotId>(*argument<std::int64_t>(command, "slot"));
+                const auto source = std::find_if(arrangement.launch_slots.begin(), arrangement.launch_slots.end(),
+                    [&](const auto &slot) { return slot.id == source_id; });
+                if (source == arrangement.launch_slots.end()) error = "source launch slot does not exist";
+                else if (!new_id || std::any_of(arrangement.launch_slots.begin(), arrangement.launch_slots.end(),
+                    [&](const auto &slot) { return slot.id == new_id; })) error = "destination launch slot already exists";
+                else { auto copy = *source; copy.id = new_id; arrangement.launch_slots.push_back(copy); }
+            } else if (command.action_id == "performance.velocity-policy.v1") {
+                const auto &policy = *argument<std::string>(command, "policy");
+                if (policy == "fixed") arrangement.velocity_policy = VelocityPolicy::fixed;
+                else if (policy == "native") arrangement.velocity_policy = VelocityPolicy::native;
+                else if (policy == "full-level") arrangement.velocity_policy = VelocityPolicy::full_level;
+                else error = "unknown velocity policy";
+                if (const auto value = argument<double>(command, "velocity"))
+                    arrangement.fixed_velocity = static_cast<float>(*value);
+            } else {
+                LaunchSlot value;
+                value.id = static_cast<LaunchSlotId>(*argument<std::int64_t>(command, "slot"));
+                value.track = static_cast<TrackId>(*argument<std::int64_t>(command, "track"));
+                value.source_id = static_cast<std::uint64_t>(*argument<std::int64_t>(command, "source"));
+                const auto &source = *argument<std::string>(command, "source_type");
+                if (source == "pattern") value.source_type = LaunchSourceType::pattern;
+                else if (source == "audio") value.source_type = LaunchSourceType::audio_clip;
+                else if (source == "live-loop") value.source_type = LaunchSourceType::live_loop;
+                else error = "unknown launch source type";
+                if (const auto behavior = argument<std::string>(command, "behavior")) {
+                    if (*behavior == "one-shot") value.behavior = LaunchBehavior::one_shot;
+                    else if (*behavior == "toggle") value.behavior = LaunchBehavior::toggle;
+                    else if (*behavior == "gate") value.behavior = LaunchBehavior::gate;
+                    else if (*behavior == "loop") value.behavior = LaunchBehavior::loop;
+                    else if (*behavior == "retrigger") value.behavior = LaunchBehavior::retrigger;
+                    else if (*behavior == "legato") value.behavior = LaunchBehavior::legato;
+                    else error = "unknown launch behavior";
+                }
+                if (error.empty()) {
+                    const auto found = std::find_if(arrangement.launch_slots.begin(), arrangement.launch_slots.end(),
+                        [&](const auto &slot) { return slot.id == value.id; });
+                    if (found == arrangement.launch_slots.end()) arrangement.launch_slots.push_back(value);
+                    else *found = value;
+                }
+            }
+            if (error.empty()) {
+                PerformanceLauncher validation(engine_.sample_rate());
+                if (validation.configure(transaction.timeline(), error) &&
+                    timeline_.commit(std::move(transaction), TimelineCommitPolicy::next_audio_callback, error)) {
+                    state_.project_dirty = true;
+                    changed_locked();
+                }
+            }
+        } else if (command.action_id == "performance.slot-cancel.v1") {
+            if (!performance_launcher_.cancel(static_cast<LaunchSlotId>(
+                    *argument<std::int64_t>(command, "slot"))))
+                error = "queued launch does not exist";
+            else changed_locked();
+        } else if (command.action_id == "performance.slot-launch.v1" ||
+                   command.action_id == "performance.slot-stop.v1" ||
+                   command.action_id == "performance.slot-retrigger.v1" ||
+                   command.action_id == "performance.scene-launch.v1") {
+            const auto snapshot = timeline_.snapshot();
+            if (performance_launcher_.configure(snapshot.timeline, error, true)) {
+                std::vector<PreparedLaunch> launches;
+                if (command.action_id == "performance.scene-launch.v1") {
+                    performance_launcher_.prepare_scene(
+                        static_cast<PerformanceSceneId>(*argument<std::int64_t>(command, "scene")),
+                        state_.transport_tick, engine_.frame_position(), launches, error);
+                } else {
+                    PreparedLaunch launch;
+                    performance_launcher_.prepare_slot(
+                        static_cast<LaunchSlotId>(*argument<std::int64_t>(command, "slot")),
+                        command.action_id == "performance.slot-stop.v1"
+                            ? PreparedLaunchOperation::stop
+                            : command.action_id == "performance.slot-retrigger.v1"
+                                ? PreparedLaunchOperation::retrigger
+                                : PreparedLaunchOperation::start,
+                        state_.transport_tick, engine_.frame_position(), launch, error);
+                    if (error.empty()) launches.push_back(launch);
+                }
+                if (error.empty() && !launches.empty()) {
+                    auto audible = snapshot.timeline;
+                    auto &a = audible.arrangement;
+                    a.playback_mode = TimelinePlaybackMode::song;
+                    a.clips.clear(); a.audio_clips.clear(); a.audio_crossfades.clear();
+                    MusicalTick length = ticks_per_quarter * 4;
+                    for (const auto &launch : launches) {
+                        if (launch.operation == PreparedLaunchOperation::stop) continue;
+                        if (launch.source_type == LaunchSourceType::pattern) {
+                            const auto p = std::find_if(a.patterns.begin(), a.patterns.end(),
+                                [&](const auto &value) { return value.id == launch.source_id; });
+                            length = std::max(length, p->length);
+                            a.clips.push_back({launch.slot, launch.source_id, 0, p->length,
+                                launch.behavior == LaunchBehavior::loop});
+                        } else {
+                            const auto source = std::find_if(snapshot.timeline.arrangement.audio_clips.begin(),
+                                snapshot.timeline.arrangement.audio_clips.end(),
+                                [&](const auto &value) { return value.id == launch.source_id; });
+                            auto clip = *source; clip.id = launch.slot; clip.start = 0;
+                            clip.track = launch.track;
+                            clip.loop = launch.behavior == LaunchBehavior::loop ||
+                                        launch.behavior == LaunchBehavior::legato;
+                            length = std::max(length, clip.duration);
+                            a.audio_clips.push_back(std::move(clip));
+                        }
+                    }
+                    a.song_start = 0; a.song_end = length; a.loop_enabled = true;
+                    a.loop_start = 0; a.loop_end = length;
+                    if (!engine_.queue_timeline_at(audible, launches.front().activation_frame,
+                                                   VoiceTransitionPolicy::release_outgoing, error))
+                        ++state_.performance_launching.diagnostics.rejected;
+                    else changed_locked();
+                }
+            }
         } else if (command.action_id == "pattern.select.v1") {
             const auto id = *argument<std::int64_t>(command, "pattern_id");
             if (id < 0)
@@ -7507,6 +7660,7 @@ void ApplicationService::synchronize_locked() const {
     AudioEngine::TimelineActivationEvent activation;
     while (engine_.pop_timeline_activation(activation)) {
         ++observed_timeline_activation_count_;
+        performance_launcher_.acknowledge(activation.frame);
         if (pending_record_frame_ && activation.frame < *pending_record_frame_)
             continue;
         const auto activation_tick = static_cast<MusicalTick>(
@@ -7864,6 +8018,19 @@ void ApplicationService::synchronize_locked() const {
             state_.next_pattern = arrangement.chain_entries[next].pattern;
     }
     state_.launch_quantization = arrangement.launch_quantization;
+    if (performance_launcher_revision_ != timeline.revision) {
+        std::string ignored;
+        if (performance_launcher_.configure(timeline.timeline, ignored))
+            performance_launcher_revision_ = timeline.revision;
+    }
+    state_.performance_launching.slots = arrangement.launch_slots;
+    state_.performance_launching.scenes = arrangement.performance_scenes;
+    state_.performance_launching.mode = arrangement.performance_mode;
+    state_.performance_launching.velocity_policy = arrangement.velocity_policy;
+    state_.performance_launching.fixed_velocity = arrangement.fixed_velocity;
+    state_.performance_launching.pending.assign(performance_launcher_.pending().begin(),
+                                                performance_launcher_.pending().end());
+    state_.performance_launching.diagnostics = performance_launcher_.diagnostics();
     state_.song_start = arrangement.song_start;
     state_.song_end = arrangement.song_end;
     state_.arrangement_loop_enabled = arrangement.loop_enabled;

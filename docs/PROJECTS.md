@@ -1,5 +1,9 @@
 # Project persistence
 
+Timeline metadata version 10 stores launch slots, scenes and velocity policy.
+Queued commands and active voices remain transient; older projects migrate to
+an empty launcher without changing playback.
+
 Live-loop sessions are transient. Completed clips use existing metadata;
 durable restoration requires explicitly saving the recorded WAV asset.
 

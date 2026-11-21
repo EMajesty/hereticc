@@ -13,6 +13,10 @@ The mixer supports bounded native track, group, aux and master effect chains. Se
 
 # NEUROGENIC
 
+Performance launching now coordinates stable pattern, audio-clip and completed
+live-loop slots plus multi-track scenes through the existing timeline and audio
+paths. See [docs/PERFORMANCE_LAUNCHING.md](docs/PERFORMANCE_LAUNCHING.md).
+
 Offline sample processing now renders whole samples, slices and regions through
 ordered trim, normalization, reverse, gain, fade, silence, resampling and
 channel-conversion jobs. Results are new immutable WAV assets and become active

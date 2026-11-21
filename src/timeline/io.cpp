@@ -94,7 +94,7 @@ Timeline load_timeline(const std::filesystem::path &path) {
                       a.loop_start >> a.loop_end) ||
                     mode > static_cast<unsigned>(TimelinePlaybackMode::song) ||
                     quantization > static_cast<unsigned>(
-                                       LaunchQuantization::pattern_end) ||
+                                       LaunchQuantization::subdivision) ||
                     loop > 1)
                     throw std::runtime_error("invalid arrangement");
                 a.playback_mode = static_cast<TimelinePlaybackMode>(mode);
@@ -122,6 +122,50 @@ Timeline load_timeline(const std::filesystem::path &path) {
                     a.song_end_behavior =
                         static_cast<SongEndBehavior>(song_end);
                 }
+                require_end(line);
+            } else if (kind == "performance_settings") {
+                unsigned mode{}, velocity{};
+                if (!(line >> mode >> velocity >> timeline.arrangement.fixed_velocity) ||
+                    mode > static_cast<unsigned>(PerformancePlaybackMode::hybrid) ||
+                    velocity > static_cast<unsigned>(VelocityPolicy::full_level))
+                    throw std::runtime_error("invalid performance settings");
+                timeline.arrangement.performance_mode = static_cast<PerformancePlaybackMode>(mode);
+                timeline.arrangement.velocity_policy = static_cast<VelocityPolicy>(velocity);
+                require_end(line);
+            } else if (kind == "launch_slot") {
+                LaunchSlot slot;
+                unsigned source{}, behavior{}, quantization{}, follow{}, override{};
+                if (!(line >> slot.id >> slot.track >> source >> slot.source_id >> behavior >>
+                      quantization >> slot.subdivision_ticks >> follow >> slot.follow_target >>
+                      slot.follow_repetitions >> slot.random_seed >> override) ||
+                    source > static_cast<unsigned>(LaunchSourceType::live_loop) ||
+                    behavior > static_cast<unsigned>(LaunchBehavior::legato) ||
+                    quantization > static_cast<unsigned>(LaunchQuantization::subdivision) ||
+                    follow > static_cast<unsigned>(SlotFollowAction::random_eligible) || override > 1)
+                    throw std::runtime_error("invalid launch slot");
+                slot.source_type = static_cast<LaunchSourceType>(source);
+                slot.behavior = static_cast<LaunchBehavior>(behavior);
+                slot.quantization = static_cast<LaunchQuantization>(quantization);
+                slot.follow = static_cast<SlotFollowAction>(follow);
+                slot.quantization_override = override != 0;
+                timeline.arrangement.launch_slots.push_back(slot);
+                require_end(line);
+            } else if (kind == "performance_scene") {
+                PerformanceLaunchScene scene;
+                unsigned quantization{};
+                std::size_t count{};
+                if (!(line >> scene.id >> quantization >> scene.subdivision_ticks >> count >>
+                      std::quoted(scene.name)) ||
+                    quantization > static_cast<unsigned>(LaunchQuantization::subdivision) || count > 64)
+                    throw std::runtime_error("invalid performance scene");
+                scene.quantization = static_cast<LaunchQuantization>(quantization);
+                for (std::size_t i = 0; i < count; ++i) {
+                    PerformanceSceneEntry entry;
+                    if (!(line >> entry.track >> entry.slot))
+                        throw std::runtime_error("invalid performance scene entry");
+                    scene.entries.push_back(entry);
+                }
+                timeline.arrangement.performance_scenes.push_back(std::move(scene));
                 require_end(line);
             } else if (kind == "pattern") {
                 PatternDefinition pattern;
@@ -409,6 +453,25 @@ void save_timeline(const Timeline &timeline,
            << static_cast<unsigned>(a.voice_transition) << ' '
            << static_cast<unsigned>(a.song_end_behavior) << ' '
            << a.return_live_pattern << '\n';
+    output << "performance_settings " << static_cast<unsigned>(a.performance_mode)
+           << ' ' << static_cast<unsigned>(a.velocity_policy) << ' '
+           << a.fixed_velocity << '\n';
+    for (const auto &slot : a.launch_slots)
+        output << "launch_slot " << slot.id << ' ' << slot.track << ' '
+               << static_cast<unsigned>(slot.source_type) << ' ' << slot.source_id << ' '
+               << static_cast<unsigned>(slot.behavior) << ' '
+               << static_cast<unsigned>(slot.quantization) << ' ' << slot.subdivision_ticks
+               << ' ' << static_cast<unsigned>(slot.follow) << ' ' << slot.follow_target
+               << ' ' << slot.follow_repetitions << ' ' << slot.random_seed << ' '
+               << (slot.quantization_override ? 1 : 0) << '\n';
+    for (const auto &scene : a.performance_scenes) {
+        output << "performance_scene " << scene.id << ' '
+               << static_cast<unsigned>(scene.quantization) << ' '
+               << scene.subdivision_ticks << ' ' << scene.entries.size() << ' '
+               << std::quoted(scene.name);
+        for (const auto &entry : scene.entries) output << ' ' << entry.track << ' ' << entry.slot;
+        output << '\n';
+    }
     output << "pattern_chain " << a.pattern_chain_position;
     for (const auto id : a.pattern_chain)
         output << ' ' << id;

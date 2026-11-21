@@ -1,5 +1,9 @@
 # Audio clips
 
+Audio and completed live-loop clips may be launched without duplicating PCM.
+They retain immutable sample ownership, stretch/loop settings, fades and parent-
+track routing.
+
 Live-loop capture creates and updates these same clip objects. A prepared
 handoff voice is replaced by the normal clip at matching ID and phase; see
 [LIVE_LOOPING.md](LIVE_LOOPING.md).

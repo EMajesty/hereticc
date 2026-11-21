@@ -9,6 +9,7 @@
 #include "neurogenic/project/project.hpp"
 #include "neurogenic/project/preset.hpp"
 #include "neurogenic/timeline/arrangement_recording.hpp"
+#include "neurogenic/timeline/performance_launching.hpp"
 #include "neurogenic/timeline/edit.hpp"
 #include <array>
 #include <cstdint>
@@ -171,6 +172,16 @@ struct AudioClipState {
     bool source_available{};
     std::string validation_error;
 };
+struct PerformanceLaunchState {
+    static constexpr std::uint32_t api_version = 1;
+    std::vector<LaunchSlot> slots;
+    std::vector<PerformanceLaunchScene> scenes;
+    std::vector<PreparedLaunch> pending;
+    PerformancePlaybackMode mode{PerformancePlaybackMode::arrangement};
+    VelocityPolicy velocity_policy{VelocityPolicy::native};
+    float fixed_velocity{1.0F};
+    LaunchDiagnostics diagnostics;
+};
 struct PatternChainEntryState {
     PatternId pattern{};
     std::uint16_t repeats{};
@@ -223,6 +234,7 @@ struct ApplicationState {
     std::vector<ClipState> clips;
     std::vector<AudioClipState> audio_clips;
     std::vector<AudioClipCrossfade> audio_crossfades;
+    PerformanceLaunchState performance_launching;
     PatternChainId pattern_chain_id{};
     std::vector<PatternChainEntryState> pattern_chain_entries;
     std::size_t pattern_chain_position{};
@@ -370,6 +382,8 @@ class ApplicationService {
     mutable RecordingService recording_;
     mutable LiveLoopService live_loops_;
     mutable ArrangementRecordingService arrangement_recording_;
+    mutable PerformanceLauncher performance_launcher_;
+    mutable std::uint64_t performance_launcher_revision_{};
     mutable PerformanceMacroService performance_macros_;
     RecordingConfiguration recording_configuration_;
     std::uint64_t recording_fixed_bars_{};

@@ -13,6 +13,8 @@ using ClipId = std::uint64_t;
 using AudioClipId = std::uint64_t;
 using AudioCrossfadeId = std::uint64_t;
 using PatternChainId = std::uint64_t;
+using LaunchSlotId = std::uint64_t;
+using PerformanceSceneId = std::uint64_t;
 using InstrumentInstanceId = std::uint32_t;
 inline constexpr InstrumentInstanceId default_synth_instance_id = 1;
 inline constexpr std::size_t maximum_instrument_instances = 16;
@@ -99,7 +101,46 @@ enum class LaunchQuantization : std::uint8_t {
     quarter,
     bar,
     two_bars,
-    pattern_end
+    pattern_end,
+    four_bars,
+    eight_bars,
+    subdivision
+};
+enum class LaunchSourceType : std::uint8_t { pattern, audio_clip, live_loop };
+enum class LaunchBehavior : std::uint8_t {
+    one_shot, toggle, gate, loop, retrigger, legato
+};
+enum class PerformancePlaybackMode : std::uint8_t {
+    arrangement, session, hybrid
+};
+enum class VelocityPolicy : std::uint8_t { fixed, native, full_level };
+enum class SlotFollowAction : std::uint8_t {
+    none, stop, repeat, next, previous, specified, random_eligible
+};
+struct LaunchSlot {
+    LaunchSlotId id{};
+    TrackId track{};
+    LaunchSourceType source_type{LaunchSourceType::pattern};
+    std::uint64_t source_id{};
+    LaunchBehavior behavior{LaunchBehavior::loop};
+    LaunchQuantization quantization{LaunchQuantization::bar};
+    MusicalTick subdivision_ticks{ticks_per_quarter / 4};
+    SlotFollowAction follow{SlotFollowAction::none};
+    LaunchSlotId follow_target{};
+    std::uint16_t follow_repetitions{1};
+    std::uint64_t random_seed{1};
+    bool quantization_override{};
+};
+struct PerformanceSceneEntry {
+    TrackId track{};
+    LaunchSlotId slot{};
+};
+struct PerformanceLaunchScene {
+    PerformanceSceneId id{};
+    std::string name;
+    std::vector<PerformanceSceneEntry> entries;
+    LaunchQuantization quantization{LaunchQuantization::bar};
+    MusicalTick subdivision_ticks{ticks_per_quarter / 4};
 };
 enum class FollowActionType : std::uint8_t {
     continue_current,
@@ -187,6 +228,11 @@ struct SongArrangement {
     std::vector<ArrangementClip> clips;
     std::vector<AudioClip> audio_clips;
     std::vector<AudioClipCrossfade> audio_crossfades;
+    std::vector<LaunchSlot> launch_slots;
+    std::vector<PerformanceLaunchScene> performance_scenes;
+    PerformancePlaybackMode performance_mode{PerformancePlaybackMode::arrangement};
+    VelocityPolicy velocity_policy{VelocityPolicy::native};
+    float fixed_velocity{1.0F};
     PatternId active_pattern{}, queued_pattern{};
     LaunchQuantization launch_quantization{LaunchQuantization::bar};
     std::vector<PatternId> pattern_chain;

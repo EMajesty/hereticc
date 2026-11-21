@@ -1,5 +1,11 @@
 # Implementation status
 
+- Task 062: stable pattern/audio/live-loop launch slots, bounded coordinated
+  scenes, quantization through eight bars/custom subdivisions, deterministic
+  follow selection, velocity policies, semantic actions/discovery and
+  timeline-v10 persistence. Automatic follow execution, scene editing actions,
+  gesture capture and general hybrid merging remain deferred.
+
 - Task 061: gapless first-pass handoff reserves PCM, sample-version and voice
   capacity before arming and activates on the exact stop frame. Overdub/replace
   handoff remains control-side.

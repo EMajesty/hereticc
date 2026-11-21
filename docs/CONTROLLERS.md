@@ -1,5 +1,9 @@
 # Application control and controller API
 
+Performance slots expose semantic launch/stop actions and an independent
+velocity policy. Fixed buttons, velocity MIDI input and optional Full Level do
+not imply a grid or dedicated hardware control.
+
 Controller clients may inspect
 [application discovery](APPLICATION_DISCOVERY.md) for semantic actions,
 [typed parameter bindings](PARAMETER_BINDINGS.md) for absolute, relative,
