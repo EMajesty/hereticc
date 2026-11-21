@@ -1,5 +1,9 @@
 # Audio clips
 
+Same-track overlap, clip-time fades and explicit crossfades are documented in
+[AUDIO_CROSSFADES.md](AUDIO_CROSSFADES.md). Source-region fades remain a
+separate nondestructive layer.
+
 Audio clips are stable 64-bit arrangement objects that reference an immutable
 sample slot rather than copying PCM. A clip owns a parent timeline track,
 asset/region reference, musical start and duration, source-frame range, gain,

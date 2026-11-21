@@ -46,11 +46,16 @@ struct PlaybackAudioClip {
     std::uint64_t source_start_frame{}, source_end_frame{};
     std::uint64_t loop_start_frame{}, loop_end_frame{};
     std::uint64_t fade_in_frames{}, fade_out_frames{};
+    MusicalTick clip_fade_in{}, clip_fade_out{};
+    MusicalTick crossfade_in{}, crossfade_out_offset{}, crossfade_out{};
     std::uint32_t loop_crossfade_frames{};
     float gain{1.0F}, pan{}, source_bpm{}, pitch_semitones{};
     AudioClipDirection direction{AudioClipDirection::forward};
     AudioClipStretchMode stretch_mode{AudioClipStretchMode::native};
     AudioClipFadeCurve fade_curve{AudioClipFadeCurve::linear};
+    AudioClipFadeCurve clip_fade_curve{AudioClipFadeCurve::linear};
+    AudioClipFadeCurve crossfade_in_curve{AudioClipFadeCurve::linear};
+    AudioClipFadeCurve crossfade_out_curve{AudioClipFadeCurve::linear};
     bool loop{};
 };
 struct PlaybackPlan {
@@ -59,6 +64,7 @@ struct PlaybackPlan {
     std::vector<PlaybackEvent> events;
     std::vector<std::size_t> scheduler_heap;
     std::vector<PlaybackAudioClip> audio_clips;
+    std::size_t peak_audio_clip_voices{};
     std::uint64_t generation_seed{};
     TimelinePlaybackMode playback_mode{TimelinePlaybackMode::legacy};
     MusicalTick playback_length{};
@@ -84,6 +90,9 @@ struct TimelineScheduledEvent {
     std::uint8_t midi_channel{};
     PlaybackAudioClip audio_clip;
     std::uint64_t audio_source_offset{};
+    std::uint64_t clip_total_frames{}, clip_fade_in_frames{},
+        clip_fade_out_frames{}, crossfade_in_frames{},
+        crossfade_out_offset_frames{}, crossfade_out_frames{};
 };
 class TimelineScheduler {
   public:

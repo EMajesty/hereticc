@@ -340,9 +340,27 @@ bool compile_timeline(const Timeline &timeline, PlaybackPlan &output,
              clip.sample_publication, clip.source_start_frame,
              clip.source_end_frame, clip.loop_start_frame,
              clip.loop_end_frame, clip.fade_in_frames,
-             clip.fade_out_frames, clip.loop_crossfade_frames, clip.gain,
+             clip.fade_out_frames, clip.clip_fade_in, clip.clip_fade_out,
+             0, 0, 0, clip.loop_crossfade_frames, clip.gain,
              clip.pan, clip.source_bpm, clip.pitch_semitones, clip.direction,
-             clip.stretch_mode, clip.fade_curve, clip.loop});
+             clip.stretch_mode, clip.fade_curve, clip.clip_fade_curve,
+             AudioClipFadeCurve::linear, AudioClipFadeCurve::linear,
+             clip.loop});
+    }
+    for (const auto &crossfade : timeline.arrangement.audio_crossfades) {
+        if (!crossfade.enabled)
+            continue;
+        auto outgoing = std::find_if(plan.audio_clips.begin(), plan.audio_clips.end(),
+            [&](const auto &clip) { return clip.id == crossfade.outgoing_clip; });
+        auto incoming = std::find_if(plan.audio_clips.begin(), plan.audio_clips.end(),
+            [&](const auto &clip) { return clip.id == crossfade.incoming_clip; });
+        if (outgoing == plan.audio_clips.end() || incoming == plan.audio_clips.end())
+            continue;
+        outgoing->crossfade_out_offset = incoming->start - outgoing->start;
+        outgoing->crossfade_out = crossfade.duration;
+        outgoing->crossfade_out_curve = crossfade.curve;
+        incoming->crossfade_in = crossfade.duration;
+        incoming->crossfade_in_curve = crossfade.curve;
     }
     std::sort(plan.audio_clips.begin(), plan.audio_clips.end(),
               [](const auto &left, const auto &right) {
@@ -352,6 +370,24 @@ bool compile_timeline(const Timeline &timeline, PlaybackPlan &output,
                       return left.track < right.track;
                   return left.id < right.id;
               });
+    struct ClipEdge { MusicalTick tick; bool start; AudioClipId id; };
+    std::vector<ClipEdge> clip_edges;
+    clip_edges.reserve(plan.audio_clips.size() * 2);
+    for (const auto &clip : plan.audio_clips) {
+        clip_edges.push_back({clip.start, true, clip.id});
+        clip_edges.push_back({clip.start + clip.duration, false, clip.id});
+    }
+    std::sort(clip_edges.begin(), clip_edges.end(), [](const auto &left,
+                                                       const auto &right) {
+        if (left.tick != right.tick) return left.tick < right.tick;
+        if (left.start != right.start) return !left.start; // stop before start
+        return left.id < right.id;
+    });
+    std::size_t active{};
+    for (const auto &edge : clip_edges) {
+        if (edge.start) plan.peak_audio_clip_voices = std::max(plan.peak_audio_clip_voices, ++active);
+        else if (active) --active;
+    }
     output = std::move(plan);
     error.clear();
     return true;
@@ -511,6 +547,16 @@ std::size_t TimelineScheduler::schedule_range(
         event.instrument = sample_instrument_key;
         event.audio_clip = clip;
         event.audio_source_offset = source_offset;
+        const auto frames_for = [&](MusicalTick ticks) {
+            return frame_at_tick(clip.start + ticks) - frame_at_tick(clip.start);
+        };
+        event.clip_total_frames = frame_at_tick(clip.start + clip.duration) -
+                                  frame_at_tick(clip.start);
+        event.clip_fade_in_frames = frames_for(clip.clip_fade_in);
+        event.clip_fade_out_frames = frames_for(clip.clip_fade_out);
+        event.crossfade_in_frames = frames_for(clip.crossfade_in);
+        event.crossfade_out_offset_frames = frames_for(clip.crossfade_out_offset);
+        event.crossfade_out_frames = frames_for(clip.crossfade_out);
         output[count++] = event;
         return true;
     };

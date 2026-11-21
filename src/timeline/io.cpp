@@ -222,6 +222,41 @@ Timeline load_timeline(const std::filesystem::path &path) {
                 clip.enabled = enabled != 0;
                 require_end(line);
                 timeline.arrangement.audio_clips.push_back(std::move(clip));
+            } else if (kind == "audio_clip_fade") {
+                if (version < 9)
+                    throw std::runtime_error("clip fade requires timeline v9");
+                AudioClipId id{};
+                MusicalTick fade_in{}, fade_out{};
+                unsigned curve{};
+                if (!(line >> id >> fade_in >> fade_out >> curve) ||
+                    curve > static_cast<unsigned>(AudioClipFadeCurve::equal_power))
+                    throw std::runtime_error("invalid audio clip fade");
+                const auto found = std::find_if(
+                    timeline.arrangement.audio_clips.begin(),
+                    timeline.arrangement.audio_clips.end(),
+                    [=](const auto &clip) { return clip.id == id; });
+                if (found == timeline.arrangement.audio_clips.end())
+                    throw std::runtime_error("audio clip fade target missing");
+                found->clip_fade_in = fade_in;
+                found->clip_fade_out = fade_out;
+                found->clip_fade_curve =
+                    static_cast<AudioClipFadeCurve>(curve);
+                require_end(line);
+            } else if (kind == "audio_crossfade") {
+                if (version < 9)
+                    throw std::runtime_error("crossfade requires timeline v9");
+                AudioClipCrossfade crossfade;
+                unsigned curve{}, enabled{};
+                if (!(line >> crossfade.id >> crossfade.outgoing_clip >>
+                      crossfade.incoming_clip >> crossfade.duration >> curve >>
+                      enabled) ||
+                    curve > static_cast<unsigned>(AudioClipFadeCurve::equal_power) ||
+                    enabled > 1)
+                    throw std::runtime_error("invalid audio crossfade");
+                crossfade.curve = static_cast<AudioClipFadeCurve>(curve);
+                crossfade.enabled = enabled != 0;
+                require_end(line);
+                timeline.arrangement.audio_crossfades.push_back(crossfade);
             } else if (kind == "pattern_chain") {
                 PatternId id{};
                 if (!(line >> timeline.arrangement.pattern_chain_position))
@@ -460,6 +495,7 @@ void save_timeline(const Timeline &timeline,
                << static_cast<int>(clip.transpose) << ' ' << clip.velocity_scale
                << ' ' << (clip.enabled ? 1 : 0) << '\n';
     for (const auto &clip : a.audio_clips)
+    {
         output << "audio_clip " << clip.id << ' ' << clip.track << ' '
                << clip.sample_slot << ' ' << std::quoted(clip.asset_reference)
                << ' ' << clip.region_id << ' ' << clip.start << ' '
@@ -474,5 +510,15 @@ void save_timeline(const Timeline &timeline,
                << clip.source_bpm << ' ' << clip.pitch_semitones << ' '
                << (clip.loop ? 1 : 0) << ' ' << (clip.enabled ? 1 : 0)
                << '\n';
+        output << "audio_clip_fade " << clip.id << ' ' << clip.clip_fade_in
+               << ' ' << clip.clip_fade_out << ' '
+               << static_cast<unsigned>(clip.clip_fade_curve) << '\n';
+    }
+    for (const auto &crossfade : a.audio_crossfades)
+        output << "audio_crossfade " << crossfade.id << ' '
+               << crossfade.outgoing_clip << ' ' << crossfade.incoming_clip
+               << ' ' << crossfade.duration << ' '
+               << static_cast<unsigned>(crossfade.curve) << ' '
+               << (crossfade.enabled ? 1 : 0) << '\n';
 }
 } // namespace neurogenic

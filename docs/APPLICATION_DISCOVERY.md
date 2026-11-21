@@ -1,5 +1,8 @@
 # Application discovery contract
 
+Capability `audio-clips` version 2 exposes clip fades and stable
+`audio-crossfade` objects without assuming arrangement geometry.
+
 Stretch-capable sample regions and audio clips expose their existing stable
 mode, source-tempo, direction, loop-boundary and crossfade fields. Effective
 ratio and algorithmic latency remain presentation-neutral state. Reverse

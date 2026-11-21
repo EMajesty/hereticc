@@ -7,6 +7,7 @@ struct ArrangementLimits {
     std::size_t patterns{256};
     std::size_t clips{4096};
     std::size_t audio_clips{1024};
+    std::size_t audio_crossfades{1024};
     std::size_t pattern_tracks{4096};
     std::size_t expanded_events{65'536};
 };

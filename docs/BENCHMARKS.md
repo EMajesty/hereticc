@@ -1,5 +1,8 @@
 # Performance monitoring and benchmarks
 
+Task 059 adds bounded overlap-envelope processing to the existing sample voice
+path; clip scheduling remains two timeline edges per clip.
+
 Task 058 extends the existing callback suite with 32 simultaneous stretched
 voices and loop-aware stretched region workloads. The preparation case remains
 separate from callback processing. Ratio rebasing, reverse reads and wrapped

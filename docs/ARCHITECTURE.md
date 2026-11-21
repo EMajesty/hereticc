@@ -1,5 +1,9 @@
 # Architecture
 
+Audio arrangement overlaps reuse the bounded sample voice pool. The timeline
+compiler resolves crossfade IDs and prepares frame ramps; the callback only
+evaluates scalar envelopes.
+
 Audio clips compile into bounded timeline start/stop edges and instantiate the
 existing timeline-owned sample voices. Audio follows the normal track →
 group/aux → master graph; there is no parallel clip mixer or sample engine.

@@ -1,5 +1,9 @@
 # Implementation status
 
+- Task 059: same-track audio overlap, musical-time linear/equal-power fades,
+  stable-ID crossfades, transactional cleanup, timeline-v9 migration and
+  prepared voice-budget validation are implemented.
+
 - Task 058: the shared realtime stretcher now supports wrapped forward/reverse
   loops, bounded equal-power loop crossfades, deterministic seek reconstruction,
   song-loop reactivation and smoothly rebased internal/external tempo changes.

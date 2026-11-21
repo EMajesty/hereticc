@@ -38,7 +38,8 @@ neurogenic::Timeline timeline_with_clip(bool loop = false) {
     return timeline;
 }
 std::vector<float> render(bool partitioned, bool loop = false,
-                          std::uint64_t seek = 0) {
+                          std::uint64_t seek = 0,
+                          const neurogenic::Timeline *custom = nullptr) {
     using namespace neurogenic;
     AudioEngine engine(48000, 8);
     SampleManager samples(engine);
@@ -50,7 +51,8 @@ std::vector<float> render(bool partitioned, bool loop = false,
     engine.stop();
     engine.process(ack_l, ack_r);
     std::string error;
-    check(engine.queue_timeline(timeline_with_clip(loop), error),
+    const auto timeline = custom ? *custom : timeline_with_clip(loop);
+    check(engine.queue_timeline(timeline, error),
           "audio clip timeline publication failed");
     engine.restart();
     if (seek) {
@@ -143,11 +145,43 @@ int main() try {
     second.id = 92;
     second.start = 4;
     overlap.arrangement.audio_clips.push_back(second);
-    check(!validate_arrangement(overlap, error) &&
-              error.find("overlap") != std::string::npos,
-          "ambiguous same-track overlap was accepted");
+    check(validate_arrangement(overlap, error),
+          "same-track audio clip overlap was rejected");
+    AudioClipCrossfade crossfade{1, 91, 92, 2,
+                                 AudioClipFadeCurve::equal_power, true};
+    overlap.arrangement.audio_crossfades.push_back(crossfade);
+    check(validate_arrangement(overlap, error), "valid crossfade rejected");
+    PlaybackPlan overlap_plan;
+    check(compile_timeline(overlap, overlap_plan, error) &&
+              overlap_plan.audio_clips.size() == 2 &&
+              overlap_plan.peak_audio_clip_voices == 2 &&
+              overlap_plan.audio_clips[0].crossfade_out == 2 &&
+              overlap_plan.audio_clips[1].crossfade_in == 2,
+          "crossfade was not compiled into clip envelopes");
+    {
+        AudioEngine constrained(48000, 1);
+        check(!constrained.queue_timeline(overlap, error) &&
+                  error.find("requires 2 voices") != std::string::npos,
+              "audio clip voice-budget exhaustion was not rejected");
+    }
+    auto faded = overlap;
+    faded.arrangement.audio_crossfades.clear();
+    faded.arrangement.audio_clips.resize(1);
+    faded.arrangement.audio_clips.front().clip_fade_in = 2;
+    faded.arrangement.audio_clips.front().clip_fade_out = 2;
+    const auto faded_pcm = render(false, false, 0, &faded);
+    check(faded_pcm[50] == 0.0F && faded_pcm[75] > faded_pcm[60] &&
+              faded_pcm[149] < faded_pcm[125],
+          "clip-time linear fade envelope is incorrect");
+    const auto crossfaded_pcm = render(false, false, 0, &overlap);
+    check(crossfaded_pcm[100] > 0.1F && crossfaded_pcm[125] > 0.4F &&
+              crossfaded_pcm[149] > 0.1F,
+          "equal-power overlapping crossfade produced invalid PCM");
     second.start = 6;
     overlap.arrangement.audio_clips.back() = second;
+    check(!validate_arrangement(overlap, error),
+          "crossfade without an actual overlap was accepted");
+    overlap.arrangement.audio_crossfades.clear();
     check(validate_arrangement(overlap, error), "adjacent audio clips rejected");
 
     TimelineService service([](const Timeline &, std::string &) { return true; },
@@ -166,6 +200,7 @@ int main() try {
               service.redo(TimelineCommitPolicy::next_audio_callback, error),
           "audio clip edits did not participate in history");
 
+
     const auto path = std::filesystem::temp_directory_path() /
                       "neurogenic-audio-clips.timeline";
     save_timeline(timeline, path);
@@ -175,7 +210,28 @@ int main() try {
     check(restored.arrangement.audio_clips.size() == 1 &&
               restored.arrangement.audio_clips.front().id == 91 &&
               restored.arrangement.audio_clips.front().sample_publication == 0,
-          "timeline-v8 audio clip round trip failed");
+          "timeline-v9 audio clip round trip failed");
+
+    const auto crossfade_path = std::filesystem::temp_directory_path() /
+                                "neurogenic-audio-crossfades.timeline";
+    auto persisted = faded;
+    auto persisted_second = persisted.arrangement.audio_clips.front();
+    persisted_second.id = 92;
+    persisted_second.start = 4;
+    persisted.arrangement.audio_clips.push_back(persisted_second);
+    persisted.arrangement.audio_crossfades.push_back(crossfade);
+    TimelineService crossfade_service(
+        [](const Timeline &, std::string &) { return true; }, persisted);
+    auto crossfade_edit = crossfade_service.edit();
+    check(crossfade_edit.delete_audio_clip(92, error) &&
+              crossfade_edit.timeline().arrangement.audio_crossfades.empty(),
+          "clip deletion left a stale crossfade reference");
+    save_timeline(persisted, crossfade_path);
+    const auto restored_crossfade = load_timeline(crossfade_path);
+    std::filesystem::remove(crossfade_path, ignored);
+    check(restored_crossfade.arrangement.audio_crossfades.size() == 1 &&
+              restored_crossfade.arrangement.audio_clips.front().clip_fade_in == 2,
+          "clip fade/crossfade persistence round trip failed");
 
     auto stretched = timeline;
     stretched.arrangement.audio_clips.front().stretch_mode =

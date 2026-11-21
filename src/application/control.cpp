@@ -225,6 +225,22 @@ ActionRegistry::ActionRegistry() {
                 {"start", ValueType::integer, false}}));
     add(action("arrangement.audio-clip-delete.v1", "Delete audio clip",
                "Arrangement", {{"id", ValueType::integer}}));
+    add(action("arrangement.audio-clip-fade-set.v1", "Set audio clip fades",
+               "Arrangement", {{"id", ValueType::integer},
+                 {"fade_in", ValueType::integer},
+                 {"fade_out", ValueType::integer},
+                 {"curve", ValueType::text}}));
+    add(action("arrangement.audio-crossfade-create.v1", "Create audio crossfade",
+               "Arrangement", {{"id", ValueType::integer, false},
+                 {"outgoing", ValueType::integer}, {"incoming", ValueType::integer},
+                 {"duration", ValueType::integer}, {"curve", ValueType::text}}));
+    add(action("arrangement.audio-crossfade-update.v1", "Edit audio crossfade",
+               "Arrangement", {{"id", ValueType::integer},
+                 {"duration", ValueType::integer, false},
+                 {"curve", ValueType::text, false},
+                 {"enabled", ValueType::boolean, false}}));
+    add(action("arrangement.audio-crossfade-delete.v1", "Delete audio crossfade",
+               "Arrangement", {{"id", ValueType::integer}}));
     add(action("arrangement.range-set.v1", "Set song range", "Arrangement",
                {{"start", ValueType::integer}, {"end", ValueType::integer}}));
     add(action("arrangement.loop-set.v1", "Set arrangement loop", "Arrangement",
@@ -4337,6 +4353,10 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                    command.action_id == "arrangement.audio-clip-update.v1" ||
                    command.action_id == "arrangement.audio-clip-duplicate.v1" ||
                    command.action_id == "arrangement.audio-clip-delete.v1" ||
+                   command.action_id == "arrangement.audio-clip-fade-set.v1" ||
+                   command.action_id == "arrangement.audio-crossfade-create.v1" ||
+                   command.action_id == "arrangement.audio-crossfade-update.v1" ||
+                   command.action_id == "arrangement.audio-crossfade-delete.v1" ||
                    command.action_id == "arrangement.range-set.v1" ||
                    command.action_id == "arrangement.loop-set.v1" ||
                    command.action_id == "arrangement.automation-update.v1" ||
@@ -4898,6 +4918,58 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 else
                     transaction.delete_audio_clip(
                         static_cast<AudioClipId>(id), error);
+            } else if (command.action_id == "arrangement.audio-clip-fade-set.v1") {
+                const auto id = *argument<std::int64_t>(command, "id");
+                auto found = std::find_if(transaction.timeline().arrangement.audio_clips.begin(),
+                    transaction.timeline().arrangement.audio_clips.end(),
+                    [=](const auto &clip) { return clip.id == static_cast<AudioClipId>(id); });
+                if (id <= 0 || found == transaction.timeline().arrangement.audio_clips.end())
+                    error = "audio clip does not exist";
+                else {
+                    auto clip = *found;
+                    clip.clip_fade_in = *argument<std::int64_t>(command, "fade_in");
+                    clip.clip_fade_out = *argument<std::int64_t>(command, "fade_out");
+                    const auto curve = *argument<std::string>(command, "curve");
+                    if (curve == "linear") clip.clip_fade_curve = AudioClipFadeCurve::linear;
+                    else if (curve == "equal-power") clip.clip_fade_curve = AudioClipFadeCurve::equal_power;
+                    else error = "fade curve must be linear or equal-power";
+                    if (error.empty()) transaction.update_audio_clip(clip, error);
+                }
+            } else if (command.action_id == "arrangement.audio-crossfade-create.v1") {
+                AudioClipCrossfade crossfade;
+                const auto requested = argument<std::int64_t>(command, "id");
+                crossfade.id = requested ? static_cast<AudioCrossfadeId>(*requested)
+                                         : transaction.next_audio_crossfade_id();
+                crossfade.outgoing_clip = static_cast<AudioClipId>(*argument<std::int64_t>(command, "outgoing"));
+                crossfade.incoming_clip = static_cast<AudioClipId>(*argument<std::int64_t>(command, "incoming"));
+                crossfade.duration = *argument<std::int64_t>(command, "duration");
+                const auto curve = *argument<std::string>(command, "curve");
+                if (curve == "linear") crossfade.curve = AudioClipFadeCurve::linear;
+                else if (curve == "equal-power") crossfade.curve = AudioClipFadeCurve::equal_power;
+                else error = "crossfade curve must be linear or equal-power";
+                if (error.empty()) transaction.create_audio_crossfade(crossfade, error);
+            } else if (command.action_id == "arrangement.audio-crossfade-update.v1") {
+                const auto id = *argument<std::int64_t>(command, "id");
+                auto found = std::find_if(transaction.timeline().arrangement.audio_crossfades.begin(),
+                    transaction.timeline().arrangement.audio_crossfades.end(),
+                    [=](const auto &value) { return value.id == static_cast<AudioCrossfadeId>(id); });
+                if (id <= 0 || found == transaction.timeline().arrangement.audio_crossfades.end())
+                    error = "audio crossfade does not exist";
+                else {
+                    auto crossfade = *found;
+                    if (const auto value = argument<std::int64_t>(command, "duration")) crossfade.duration = *value;
+                    if (const auto value = argument<bool>(command, "enabled")) crossfade.enabled = *value;
+                    if (const auto value = argument<std::string>(command, "curve")) {
+                        if (*value == "linear") crossfade.curve = AudioClipFadeCurve::linear;
+                        else if (*value == "equal-power") crossfade.curve = AudioClipFadeCurve::equal_power;
+                        else error = "crossfade curve must be linear or equal-power";
+                    }
+                    if (error.empty()) transaction.update_audio_crossfade(crossfade, error);
+                }
+            } else if (command.action_id == "arrangement.audio-crossfade-delete.v1") {
+                const auto id = *argument<std::int64_t>(command, "id");
+                if (id <= 0) error = "audio crossfade ID must be positive";
+                else transaction.delete_audio_crossfade(static_cast<AudioCrossfadeId>(id), error);
             } else if (command.action_id == "arrangement.range-set.v1") {
                 transaction.set_song_range(
                     *argument<std::int64_t>(command, "start"),
@@ -7673,6 +7745,7 @@ void ApplicationService::synchronize_locked() const {
              available ? std::string{}
                        : "source asset is missing or not audio-active"});
     }
+    state_.audio_crossfades = arrangement.audio_crossfades;
     state_.pattern_chain_id = arrangement.pattern_chain_id;
     state_.pattern_chain_position = arrangement.pattern_chain_position;
     state_.pattern_chain_loop = arrangement.chain_loop;

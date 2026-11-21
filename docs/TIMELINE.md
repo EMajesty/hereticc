@@ -1,5 +1,9 @@
 # Musical timeline
 
+Audio clips are polyphonic on a track. Equal-time activation is ordered by
+track and stable clip ID, with stops before starts. Envelopes are compiled in
+transport time rather than expanded into per-sample events.
+
 Timeline format v8 adds stable audio clips. Compilation keeps two edges per
 clip and computes loop iterations and seek phase arithmetically rather than
 expanding source loops into repeated triggers.

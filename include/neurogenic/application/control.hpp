@@ -221,6 +221,7 @@ struct ApplicationState {
     std::vector<PatternState> patterns;
     std::vector<ClipState> clips;
     std::vector<AudioClipState> audio_clips;
+    std::vector<AudioClipCrossfade> audio_crossfades;
     PatternChainId pattern_chain_id{};
     std::vector<PatternChainEntryState> pattern_chain_entries;
     std::size_t pattern_chain_position{};

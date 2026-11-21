@@ -127,7 +127,7 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
         {"sound-presets", 2, true, {}}, {"sample-regions", 1, true, {}},
         {"sample-analysis", 1, true, {}},
         {"sample-processing", 1, true, {}},
-        {"audio-clips", 1, true, {}},
+        {"audio-clips", 2, true, {}},
         {"high-frequency-telemetry", 1, true, {}},
         {"typed-parameter-bindings", 1, true, {}}};
     result.object_types = {
@@ -294,6 +294,11 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
              object_id("track", clip.clip.track),
              "Audio clip " + std::to_string(clip.clip.id),
              clip.source_available, false, clip.validation_error});
+    for (const auto &crossfade : state.audio_crossfades)
+        result.objects.push_back(
+            {"audio-crossfade", object_id("audio-crossfade", crossfade.id),
+             "arrangement:main",
+             "Audio crossfade " + std::to_string(crossfade.id), true, false, {}});
     for (std::size_t i = 0; i < state.mixer.configuration.group_count; ++i) {
         const auto &group = state.mixer.configuration.groups[i];
         result.objects.push_back({"mixer-group", object_id("mixer-group", group.id),
@@ -423,6 +428,15 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
         result.state_bindings.push_back(
             {prefix + "available", parent, "Source availability",
              DiscoveryValueKind::boolean, DiscoveryUpdateRate::state});
+        result.state_bindings.push_back(
+            {prefix + "fade", parent, "Clip-time fade settings",
+             DiscoveryValueKind::object, DiscoveryUpdateRate::state});
+    }
+    for (const auto &crossfade : state.audio_crossfades) {
+        const auto parent = object_id("audio-crossfade", crossfade.id);
+        result.state_bindings.push_back(
+            {parent + ".state", parent, "Crossfade clips, duration and curve",
+             DiscoveryValueKind::object, DiscoveryUpdateRate::state});
     }
     result.limits = {{"command-queue", 0, ApplicationService::default_queue_capacity},
                      {"mixer-tracks", state.mixer.configuration.track_count, maximum_mixer_tracks},

@@ -38,13 +38,16 @@ bool validate_arrangement(const Timeline &timeline, std::string &error,
                           ArrangementLimits limits) {
     const auto &a = timeline.arrangement;
     if (a.patterns.size() > limits.patterns || a.clips.size() > limits.clips ||
-        a.audio_clips.size() > limits.audio_clips) {
+        a.audio_clips.size() > limits.audio_clips ||
+        a.audio_crossfades.size() > limits.audio_crossfades) {
         error = "arrangement capacity exceeded";
         return false;
     }
     std::set<PatternId> pattern_ids;
     std::set<ClipId> clip_ids;
     std::set<AudioClipId> audio_clip_ids;
+    std::set<AudioCrossfadeId> audio_crossfade_ids;
+    std::set<AudioClipId> crossfade_inputs, crossfade_outputs;
     std::size_t pattern_tracks{};
     for (const auto &p : a.patterns) {
         if (!p.id || p.name.empty() || p.length <= 0 ||
@@ -153,6 +156,9 @@ bool validate_arrangement(const Timeline &timeline, std::string &error,
                 clip.source_end_frame - clip.source_start_frame ||
             clip.fade_out_frames >
                 clip.source_end_frame - clip.source_start_frame ||
+            clip.clip_fade_in < 0 || clip.clip_fade_out < 0 ||
+            clip.clip_fade_in > clip.duration ||
+            clip.clip_fade_out > clip.duration ||
             !std::isfinite(clip.gain) || clip.gain < 0 || clip.gain > 4 ||
             !std::isfinite(clip.pan) || clip.pan < -1 || clip.pan > 1 ||
             !std::isfinite(clip.source_bpm) || clip.source_bpm < 0 ||
@@ -167,6 +173,28 @@ bool validate_arrangement(const Timeline &timeline, std::string &error,
               clip.loop_crossfade_frames >
                   clip.loop_end_frame - clip.loop_start_frame))) {
             error = "invalid audio clip";
+            return false;
+        }
+    }
+    for (const auto &crossfade : a.audio_crossfades) {
+        const auto find_clip = [&](AudioClipId id) {
+            return std::find_if(a.audio_clips.begin(), a.audio_clips.end(),
+                                [=](const auto &clip) { return clip.id == id; });
+        };
+        const auto outgoing = find_clip(crossfade.outgoing_clip);
+        const auto incoming = find_clip(crossfade.incoming_clip);
+        if (!crossfade.id || !audio_crossfade_ids.insert(crossfade.id).second ||
+            (crossfade.enabled &&
+             (!crossfade_outputs.insert(crossfade.outgoing_clip).second ||
+              !crossfade_inputs.insert(crossfade.incoming_clip).second)) ||
+            crossfade.outgoing_clip == crossfade.incoming_clip ||
+            outgoing == a.audio_clips.end() || incoming == a.audio_clips.end() ||
+            outgoing->track != incoming->track || incoming->start < outgoing->start ||
+            crossfade.duration <= 0 ||
+            incoming->start >= outgoing->start + outgoing->duration ||
+            crossfade.duration > outgoing->start + outgoing->duration - incoming->start ||
+            crossfade.duration > incoming->duration) {
+            error = "invalid audio clip crossfade";
             return false;
         }
     }
@@ -206,8 +234,8 @@ bool validate_arrangement(const Timeline &timeline, std::string &error,
                     }
             }
         }
-        // Audio clips use a conservative single-lane policy. Adjacent clips
-        // are valid; enabled clips on the same track may not overlap.
+        // Audio clips are polyphonic lanes. Their stable IDs, not collection
+        // order, determine activation order at identical boundaries.
         for (std::size_t i = 0; i < a.audio_clips.size(); ++i) {
             if (!a.audio_clips[i].enabled)
                 continue;
@@ -219,17 +247,6 @@ bool validate_arrangement(const Timeline &timeline, std::string &error,
                 error = "audio clip lies outside the active song range";
                 return false;
             }
-            for (std::size_t j = i + 1; j < a.audio_clips.size(); ++j)
-                if (a.audio_clips[j].enabled &&
-                    a.audio_clips[i].track == a.audio_clips[j].track &&
-                    a.audio_clips[i].start <
-                        a.audio_clips[j].start + a.audio_clips[j].duration &&
-                    a.audio_clips[j].start <
-                        a.audio_clips[i].start + a.audio_clips[i].duration) {
-                    error = "audio clips overlap on track " +
-                            std::to_string(a.audio_clips[i].track);
-                    return false;
-                }
         }
         std::size_t expanded{};
         for (const auto &clip : a.clips) {
@@ -266,6 +283,7 @@ bool materialize_arrangement(const Timeline &source, Timeline &result,
     const auto &a = source.arrangement;
     if (a.playback_mode == TimelinePlaybackMode::legacy) {
         result.arrangement.audio_clips = a.audio_clips;
+        result.arrangement.audio_crossfades = a.audio_crossfades;
         error.clear();
         return true;
     }
@@ -385,6 +403,16 @@ bool materialize_arrangement(const Timeline &source, Timeline &result,
         clip.start = start - range_start;
         clip.duration = end - start;
         result.arrangement.audio_clips.push_back(std::move(clip));
+    }
+    for (const auto &crossfade : a.audio_crossfades) {
+        const auto present = [&](AudioClipId id) {
+            return std::any_of(result.arrangement.audio_clips.begin(),
+                               result.arrangement.audio_clips.end(),
+                               [=](const auto &clip) { return clip.id == id; });
+        };
+        if (present(crossfade.outgoing_clip) &&
+            present(crossfade.incoming_clip))
+            result.arrangement.audio_crossfades.push_back(crossfade);
     }
     for (auto &t : result.tracks)
         t.pattern.length = song_length;

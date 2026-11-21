@@ -11,6 +11,7 @@ using TrackId = std::uint64_t;
 using PatternId = std::uint64_t;
 using ClipId = std::uint64_t;
 using AudioClipId = std::uint64_t;
+using AudioCrossfadeId = std::uint64_t;
 using PatternChainId = std::uint64_t;
 using InstrumentInstanceId = std::uint32_t;
 inline constexpr InstrumentInstanceId default_synth_instance_id = 1;
@@ -162,18 +163,30 @@ struct AudioClip {
     std::uint64_t source_start_frame{}, source_end_frame{};
     std::uint64_t loop_start_frame{}, loop_end_frame{};
     std::uint64_t fade_in_frames{}, fade_out_frames{};
+    // Arrangement-domain fades. Unlike the source-frame region fades above,
+    // these follow the clip's musical time through stretch, reverse and loops.
+    MusicalTick clip_fade_in{}, clip_fade_out{};
     std::uint32_t loop_crossfade_frames{};
     float gain{1.0F}, pan{}, source_bpm{}, pitch_semitones{};
     AudioClipDirection direction{AudioClipDirection::forward};
     AudioClipStretchMode stretch_mode{AudioClipStretchMode::native};
     AudioClipFadeCurve fade_curve{AudioClipFadeCurve::linear};
+    AudioClipFadeCurve clip_fade_curve{AudioClipFadeCurve::linear};
     bool loop{}, enabled{true};
+};
+struct AudioClipCrossfade {
+    AudioCrossfadeId id{};
+    AudioClipId outgoing_clip{}, incoming_clip{};
+    MusicalTick duration{};
+    AudioClipFadeCurve curve{AudioClipFadeCurve::equal_power};
+    bool enabled{true};
 };
 struct SongArrangement {
     TimelinePlaybackMode playback_mode{TimelinePlaybackMode::legacy};
     std::vector<PatternDefinition> patterns;
     std::vector<ArrangementClip> clips;
     std::vector<AudioClip> audio_clips;
+    std::vector<AudioClipCrossfade> audio_crossfades;
     PatternId active_pattern{}, queued_pattern{};
     LaunchQuantization launch_quantization{LaunchQuantization::bar};
     std::vector<PatternId> pattern_chain;

@@ -1,5 +1,8 @@
 # Project persistence
 
+Timeline v9 adds `audio_clip_fade` and `audio_crossfade` records. Version 8
+clips migrate with unity clip envelopes and no crossfade references.
+
 Timeline v8 persists audio clips and asset references. Runtime publication IDs
 are rebuilt rather than serialized. Missing clip sources remain inspectable and
 are never rebound to an unrelated slot automatically.

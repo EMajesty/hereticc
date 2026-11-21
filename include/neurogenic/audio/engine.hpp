@@ -425,6 +425,10 @@ class AudioEngine {
         float stretch_ratio_target{1.0F}, stretch_explicit_ratio{1.0F},
             stretch_source_beats{}, stretch_source_bpm{};
         std::uint64_t start_frame{}, end_frame{};
+        std::uint64_t clip_elapsed_frames{}, clip_total_frames{},
+            clip_fade_in_frames{}, clip_fade_out_frames{},
+            crossfade_in_frames{}, crossfade_out_offset_frames{},
+            crossfade_out_frames{};
         SampleRegionPlayback region;
         float gain{}, base_gain{}, base_pan{}, modulation_gain{1.0F}, modulation_pan{},
             modulation_pitch{}, envelope_level{1.0F};
@@ -445,7 +449,10 @@ class AudioEngine {
         std::uint8_t trigger_note{}, choke_group{};
         SamplePlaybackMode mode{SamplePlaybackMode::one_shot};
         bool choke_release{}, reverse{}, stretched{}, timeline_owned{},
-            preview{}, active{};
+            preview{}, audio_clip{}, active{};
+        AudioClipFadeCurve clip_fade_curve{AudioClipFadeCurve::linear};
+        AudioClipFadeCurve crossfade_in_curve{AudioClipFadeCurve::linear};
+        AudioClipFadeCurve crossfade_out_curve{AudioClipFadeCurve::linear};
     };
     enum class SampleVersionState : std::uint8_t {
         free,
@@ -466,9 +473,15 @@ class AudioEngine {
         float gain{1.0F};
         float pan{};
         std::uint64_t source_offset_frames{};
+        std::uint64_t clip_total_frames{}, clip_fade_in_frames{},
+            clip_fade_out_frames{}, crossfade_in_frames{},
+            crossfade_out_offset_frames{}, crossfade_out_frames{};
         SamplePlaybackSettings playback;
         SampleRegionPlayback region;
-        bool enabled{};
+        AudioClipFadeCurve clip_fade_curve{AudioClipFadeCurve::linear};
+        AudioClipFadeCurve crossfade_in_curve{AudioClipFadeCurve::linear};
+        AudioClipFadeCurve crossfade_out_curve{AudioClipFadeCurve::linear};
+        bool audio_clip{}, enabled{};
     };
     struct SliceMapCommand {
         enum class Type : std::uint8_t { map, clear, settings };

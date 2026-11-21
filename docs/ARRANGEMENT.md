@@ -1,5 +1,8 @@
 # Patterns, clips, and arrangements
 
+Audio lanes allow overlap. Overlap sums normally unless a validated stable-ID
+crossfade explicitly connects the clips.
+
 Song arrangements also contain first-class audio clips referencing immutable
 sample assets. They use a non-overlapping lane per track and the same transport,
 publication and Undo/Redo model as pattern clips. See

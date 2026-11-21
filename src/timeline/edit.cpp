@@ -571,6 +571,55 @@ bool TimelineTransaction::delete_audio_clip(AudioClipId id,
         error = "audio clip does not exist";
         return false;
     }
+    std::erase_if(timeline_.arrangement.audio_crossfades,
+                  [=](const auto &crossfade) {
+                      return crossfade.outgoing_clip == id ||
+                             crossfade.incoming_clip == id;
+                  });
+    error.clear();
+    return true;
+}
+bool TimelineTransaction::create_audio_crossfade(AudioClipCrossfade crossfade,
+                                                 std::string &error) {
+    if (!crossfade.id || std::any_of(timeline_.arrangement.audio_crossfades.begin(),
+                                     timeline_.arrangement.audio_crossfades.end(),
+                                     [&](const auto &value) { return value.id == crossfade.id; })) {
+        error = "invalid or duplicate audio crossfade";
+        return false;
+    }
+    timeline_.arrangement.audio_crossfades.push_back(crossfade);
+    if (!validate_arrangement(timeline_, error)) {
+        timeline_.arrangement.audio_crossfades.pop_back();
+        return false;
+    }
+    return true;
+}
+bool TimelineTransaction::update_audio_crossfade(AudioClipCrossfade crossfade,
+                                                 std::string &error) {
+    auto found = std::find_if(timeline_.arrangement.audio_crossfades.begin(),
+                              timeline_.arrangement.audio_crossfades.end(),
+                              [&](const auto &value) { return value.id == crossfade.id; });
+    if (found == timeline_.arrangement.audio_crossfades.end()) {
+        error = "audio crossfade does not exist";
+        return false;
+    }
+    const auto previous = *found;
+    *found = crossfade;
+    if (!validate_arrangement(timeline_, error)) {
+        *found = previous;
+        return false;
+    }
+    return true;
+}
+bool TimelineTransaction::delete_audio_crossfade(AudioCrossfadeId id,
+                                                 std::string &error) {
+    const auto before = timeline_.arrangement.audio_crossfades.size();
+    std::erase_if(timeline_.arrangement.audio_crossfades,
+                  [=](const auto &value) { return value.id == id; });
+    if (before == timeline_.arrangement.audio_crossfades.size()) {
+        error = "audio crossfade does not exist";
+        return false;
+    }
     error.clear();
     return true;
 }
@@ -760,6 +809,12 @@ AudioClipId TimelineTransaction::next_audio_clip_id() const noexcept {
         if (clip.id >= next &&
             clip.id < std::numeric_limits<AudioClipId>::max())
             next = clip.id + 1;
+    return next;
+}
+AudioCrossfadeId TimelineTransaction::next_audio_crossfade_id() const noexcept {
+    AudioCrossfadeId next{1};
+    for (const auto &crossfade : timeline_.arrangement.audio_crossfades)
+        next = std::max(next, crossfade.id + 1);
     return next;
 }
 TrackId TimelineTransaction::next_track_id() const noexcept {

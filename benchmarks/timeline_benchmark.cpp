@@ -1575,7 +1575,7 @@ void arrangement_case(std::size_t pattern_count, std::size_t clip_count) {
                iterations,
            preparation);
 }
-void audio_clip_case(std::size_t clip_count) {
+void audio_clip_case(std::size_t clip_count, bool overlap = false) {
     neurogenic::Timeline source;
     source.tracks.push_back(
         {1, "Audio", false, {neurogenic::ticks_per_quarter, {}},
@@ -1583,15 +1583,18 @@ void audio_clip_case(std::size_t clip_count) {
     source.arrangement.playback_mode = neurogenic::TimelinePlaybackMode::song;
     source.arrangement.song_start = 0;
     source.arrangement.song_end = static_cast<neurogenic::MusicalTick>(
-        clip_count * neurogenic::ticks_per_quarter);
+        (overlap ? 1 : clip_count) * neurogenic::ticks_per_quarter);
     for (std::size_t i = 0; i < clip_count; ++i) {
         neurogenic::AudioClip clip;
         clip.id = i + 1;
         clip.track = 1;
         clip.sample_slot = static_cast<std::uint32_t>(i % 16);
-        clip.start = static_cast<neurogenic::MusicalTick>(
-            i * neurogenic::ticks_per_quarter);
+        clip.start = overlap ? 0 : static_cast<neurogenic::MusicalTick>(
+                                       i * neurogenic::ticks_per_quarter);
         clip.duration = neurogenic::ticks_per_quarter;
+        clip.clip_fade_in = neurogenic::ticks_per_quarter / 8;
+        clip.clip_fade_out = neurogenic::ticks_per_quarter / 8;
+        clip.clip_fade_curve = neurogenic::AudioClipFadeCurve::equal_power;
         clip.source_end_frame = 24'000;
         source.arrangement.audio_clips.push_back(clip);
     }
@@ -1618,7 +1621,8 @@ void audio_clip_case(std::size_t clip_count) {
             Clock::now() - processing_begin)
             .count() /
         iterations;
-    result("audio_clips_" + std::to_string(clip_count), 48'000, 256,
+    result(std::string(overlap ? "audio_clip_overlap_" : "audio_clips_") +
+               std::to_string(clip_count), 48'000, 256,
            processing, preparation);
 }
 
@@ -1768,6 +1772,10 @@ int main(int argc, char **argv) {
     audio_clip_case(8);
     audio_clip_case(32);
     audio_clip_case(128);
+    audio_clip_case(2, true);
+    audio_clip_case(8, true);
+    audio_clip_case(16, true);
+    audio_clip_case(32, true);
     pattern_chain_case(64);
     arrangement_recording_case();
     automation_case("parameter_locks_sparse", 4);

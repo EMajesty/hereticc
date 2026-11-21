@@ -3,7 +3,7 @@
 #include <filesystem>
 
 namespace neurogenic {
-inline constexpr unsigned timeline_file_version = 8;
+inline constexpr unsigned timeline_file_version = 9;
 Timeline load_timeline(const std::filesystem::path &);
 void save_timeline(const Timeline &, const std::filesystem::path &);
 } // namespace neurogenic

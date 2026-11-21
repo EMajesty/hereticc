@@ -803,6 +803,13 @@ bool AudioEngine::queue_timeline_at(const Timeline &timeline,
     auto plan = std::make_unique<PlaybackPlan>();
     if (!compile_timeline(timeline, *plan, error))
         return false;
+    if (plan->peak_audio_clip_voices > voices_.size()) {
+        error = "audio clip overlap requires " +
+                std::to_string(plan->peak_audio_clip_voices) +
+                " voices; configured sample voice capacity is " +
+                std::to_string(voices_.size());
+        return false;
+    }
     timeline_plans_[slot].plan = std::move(plan);
     timeline_plans_[slot].state.store(PlanState::queued,
                                       std::memory_order_release);
@@ -977,6 +984,12 @@ void AudioEngine::start_voice(std::uint8_t note, float velocity, TrackId track,
             break;
         }
     if (selected == voices_.size()) {
+        // Arrangement clips have an explicit bounded polyphony contract. They
+        // never evict pad/pattern voices (or one another) nondeterministically.
+        if (slice && slice->audio_clip) {
+            dropped_timeline_events_.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
         selected = 0;
         for (std::size_t i = 1; i < voices_.size(); ++i)
             if (voices_[i].age < voices_[selected].age)
@@ -992,6 +1005,19 @@ void AudioEngine::start_voice(std::uint8_t note, float velocity, TrackId track,
     voice.start_frame = start;
     voice.end_frame = end;
     voice.region = slice ? slice->region : SampleRegionPlayback{};
+    voice.audio_clip = slice && slice->audio_clip;
+    if (voice.audio_clip) {
+        voice.clip_elapsed_frames = slice->source_offset_frames;
+        voice.clip_total_frames = slice->clip_total_frames;
+        voice.clip_fade_in_frames = slice->clip_fade_in_frames;
+        voice.clip_fade_out_frames = slice->clip_fade_out_frames;
+        voice.crossfade_in_frames = slice->crossfade_in_frames;
+        voice.crossfade_out_offset_frames = slice->crossfade_out_offset_frames;
+        voice.crossfade_out_frames = slice->crossfade_out_frames;
+        voice.clip_fade_curve = slice->clip_fade_curve;
+        voice.crossfade_in_curve = slice->crossfade_in_curve;
+        voice.crossfade_out_curve = slice->crossfade_out_curve;
+    }
     voice.reverse = settings.reverse;
     voice.position = settings.reverse ? static_cast<double>(end - 1)
                                       : static_cast<double>(start);
@@ -1688,6 +1714,17 @@ void AudioEngine::process(std::span<float> left,
                 target.gain = clip.gain;
                 target.pan = clip.pan;
                 target.source_offset_frames = event.audio_source_offset;
+                target.clip_total_frames = event.clip_total_frames;
+                target.clip_fade_in_frames = event.clip_fade_in_frames;
+                target.clip_fade_out_frames = event.clip_fade_out_frames;
+                target.crossfade_in_frames = event.crossfade_in_frames;
+                target.crossfade_out_offset_frames =
+                    event.crossfade_out_offset_frames;
+                target.crossfade_out_frames = event.crossfade_out_frames;
+                target.clip_fade_curve = clip.clip_fade_curve;
+                target.crossfade_in_curve = clip.crossfade_in_curve;
+                target.crossfade_out_curve = clip.crossfade_out_curve;
+                target.audio_clip = true;
                 target.playback.mode = SamplePlaybackMode::one_shot;
                 target.playback.reverse =
                     clip.direction == AudioClipDirection::reverse;
@@ -1945,9 +1982,50 @@ void AudioEngine::process(std::span<float> left,
                         ? (source_remaining <= 1 ? 0.0F : 1.0F)
                         : curve((source_remaining - 1) /
                                 (voice.region.fade_out_frames - 1)));
+            const auto clip_curve = [](double normalized,
+                                       AudioClipFadeCurve curve, bool out) {
+                const auto value = static_cast<float>(
+                    std::clamp(normalized, 0.0, 1.0));
+                if (curve == AudioClipFadeCurve::equal_power)
+                    return out ? std::cos(value * 1.5707963267948966F)
+                               : std::sin(value * 1.5707963267948966F);
+                return out ? 1.0F - value : value;
+            };
+            auto clip_level = 1.0F;
+            if (voice.audio_clip && voice.clip_fade_in_frames)
+                clip_level *= clip_curve(
+                    static_cast<double>(voice.clip_elapsed_frames) /
+                        std::max<std::uint64_t>(1,
+                            voice.clip_fade_in_frames - 1),
+                    voice.clip_fade_curve, false);
+            if (voice.audio_clip && voice.clip_fade_out_frames &&
+                voice.clip_total_frames > voice.clip_fade_out_frames) {
+                const auto start = voice.clip_total_frames -
+                                   voice.clip_fade_out_frames;
+                if (voice.clip_elapsed_frames >= start)
+                    clip_level *= clip_curve(
+                        static_cast<double>(voice.clip_elapsed_frames - start) /
+                            std::max<std::uint64_t>(1,
+                                voice.clip_fade_out_frames - 1),
+                        voice.clip_fade_curve, true);
+            }
+            if (voice.audio_clip && voice.crossfade_in_frames)
+                clip_level *= clip_curve(
+                    static_cast<double>(voice.clip_elapsed_frames) /
+                        std::max<std::uint64_t>(1,
+                            voice.crossfade_in_frames - 1),
+                    voice.crossfade_in_curve, false);
+            if (voice.audio_clip && voice.crossfade_out_frames &&
+                voice.clip_elapsed_frames >= voice.crossfade_out_offset_frames)
+                clip_level *= clip_curve(
+                    static_cast<double>(voice.clip_elapsed_frames -
+                                        voice.crossfade_out_offset_frames) /
+                        std::max<std::uint64_t>(1,
+                            voice.crossfade_out_frames - 1),
+                    voice.crossfade_out_curve, true);
             const auto level = voice.base_gain * voice.modulation_gain *
                                voice_modulation.gain * voice.envelope_level *
-                               region_level;
+                               region_level * clip_level;
             const auto pan = std::clamp(voice.base_pan + voice.modulation_pan +
                                             voice_modulation.pan,
                                         -1.0F, 1.0F);
@@ -1961,6 +2039,8 @@ void AudioEngine::process(std::span<float> left,
                 left[frame] += sample_left * level;
                 right[frame] += sample_right * level;
             }
+            if (voice.audio_clip)
+                ++voice.clip_elapsed_frames;
             if (voice.envelope_stage == Voice::EnvelopeStage::attack) {
                 voice.envelope_level += voice.attack_step;
                 if (voice.envelope_level >= 1.0F) {
