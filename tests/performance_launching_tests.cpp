@@ -134,6 +134,30 @@ int main() {
     assert(captured.clips.size() == 1);
     assert(captured.audio_clips.size() == 2);
     assert(capture_service.history_status().can_undo);
+    assert(capture_service.undo(TimelineCommitPolicy::next_audio_callback,
+                                error));
+    assert(capture_service.redo(TimelineCommitPolicy::next_audio_callback,
+                                error));
+    assert(capture_service.snapshot().timeline.arrangement.audio_clips.size() ==
+           2);
+
+    // Replace capture may remove the arrangement clip used as a launch source.
+    // The first captured placement must retain that identity so persisted launch
+    // slots do not become dangling references.
+    TimelineService replace_service([](const Timeline &, std::string &value) {
+        value.clear(); return true;
+    }, fixture());
+    ArrangementRecordingService replace_capture;
+    assert(replace_capture.arm(true, error));
+    assert(replace_capture.start(0, ArrangementRecordMode::replace, 0, false,
+                                 error));
+    audio.activation_tick = 0;
+    assert(replace_capture.capture_performance(audio, 0, 301, false, 1.0F));
+    assert(replace_capture.stop(ticks_per_quarter * 4, error));
+    assert(replace_capture.commit(replace_service, error));
+    const auto replaced = replace_service.snapshot().timeline.arrangement;
+    assert(std::any_of(replaced.audio_clips.begin(), replaced.audio_clips.end(),
+                       [](const auto &clip) { return clip.id == 21; }));
     samples.shutdown();
     std::cout << "neurogenic.performance-launching-tests.v1 passed\n";
 }

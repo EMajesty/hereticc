@@ -1,8 +1,13 @@
 #include "neurogenic/audio/engine.hpp"
+#include "neurogenic/audio/live_loop.hpp"
 #include "neurogenic/audio/recording.hpp"
+#include "neurogenic/audio/sample_manager.hpp"
 #include "neurogenic/midi/routing.hpp"
 #include "neurogenic/performance/monitor.hpp"
 #include "neurogenic/project/project.hpp"
+#include "neurogenic/timeline/arrangement.hpp"
+#include "neurogenic/timeline/arrangement_recording.hpp"
+#include "neurogenic/timeline/performance_launching.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -234,15 +239,202 @@ Result run(const Tier &tier, std::span<const std::size_t> partitions) {
         fail("bounded MIDI or recording queue overflowed");
     return result;
 }
+
+void run_performance_path() {
+    AudioEngine engine(48'000, 16);
+    SampleManager samples(engine);
+    const auto source = std::make_shared<const Sample>(fixture(.2F));
+    if (!samples.publish_prepared(SampleSlotId{0}, source, "performance.wav"))
+        fail("performance sample publication failed");
+    std::array<float, 1> ack_left{}, ack_right{};
+    engine.stop();
+    engine.process(ack_left, ack_right);
+
+    Timeline timeline;
+    timeline.transport.microseconds_per_quarter = 500'000;
+    timeline.tracks = {{1, "Pattern"}, {2, "Audio"}, {3, "Live loop"}};
+    PatternDefinition pattern;
+    pattern.id = 11;
+    pattern.name = "Performance beat";
+    pattern.length = 16;
+    pattern.tracks.push_back({1, {16, {{1, 0, MusicalEventType::note, 36,
+                                       .75F, 4}}}});
+    timeline.arrangement.patterns.push_back(pattern);
+    timeline.arrangement.clips.push_back({1, 11, 0, 32, true});
+    AudioClip first;
+    first.id = 21;
+    first.track = 2;
+    first.sample_slot = 0;
+    first.start = 0;
+    first.duration = 24;
+    first.source_end_frame = source->frames();
+    first.loop_start_frame = 0;
+    first.loop_end_frame = source->frames();
+    first.loop = true;
+    first.stretch_mode = AudioClipStretchMode::tempo_sync;
+    first.source_bpm = 100.0F;
+    first.loop_crossfade_frames = 16;
+    auto second = first;
+    second.id = 22;
+    second.start = 16;
+    second.pan = .25F;
+    timeline.arrangement.audio_clips = {first, second};
+    timeline.arrangement.audio_crossfades.push_back(
+        {1, 21, 22, 8, AudioClipFadeCurve::equal_power, true});
+    timeline.arrangement.playback_mode = TimelinePlaybackMode::song;
+    timeline.arrangement.song_start = 0;
+    timeline.arrangement.song_end = 48;
+    timeline.arrangement.loop_enabled = true;
+    timeline.arrangement.loop_start = 0;
+    timeline.arrangement.loop_end = 48;
+    timeline.arrangement.launch_slots = {
+        {101, 1, LaunchSourceType::pattern, 11, LaunchBehavior::loop,
+         LaunchQuantization::bar, ticks_per_quarter / 4,
+         SlotFollowAction::next, 0, 1, 123, true},
+        {102, 1, LaunchSourceType::pattern, 11, LaunchBehavior::loop,
+         LaunchQuantization::bar, ticks_per_quarter / 4,
+         SlotFollowAction::stop, 0, 1, 321, true},
+        {103, 2, LaunchSourceType::audio_clip, 21, LaunchBehavior::loop,
+         LaunchQuantization::bar}};
+    timeline.arrangement.performance_scenes.push_back(
+        {301, "Pattern and audio", {{1, 101}, {2, 103}},
+         LaunchQuantization::bar, ticks_per_quarter / 4});
+
+    std::string error;
+    if (!validate_arrangement(timeline, error)) fail(error);
+    TimelineService timelines(
+        [&](const Timeline &value, std::string &publish_error) {
+            return engine.queue_timeline(value, publish_error);
+        }, timeline);
+    if (!engine.queue_timeline(timeline, error)) fail(error);
+    engine.restart();
+
+    MixerConfiguration mixer;
+    mixer.revision = 1;
+    mixer.track_count = 3;
+    mixer.group_count = 1;
+    mixer.groups[0].id = 50;
+    mixer.groups[0].gain = .85F;
+    for (std::size_t i = 0; i < mixer.track_count; ++i) {
+        mixer.tracks[i].track = i + 1;
+        mixer.tracks[i].destination_group = 50;
+        mixer.tracks[i].aux_send = {.1F, .05F};
+    }
+    mixer.effects.instance_count = 1;
+    mixer.effects.instances[0].id = 1;
+    mixer.effects.instances[0].type = EffectProcessorType::saturation;
+    mixer.effects.instances[0].parameter_count = 1;
+    mixer.effects.instances[0].parameters[0] = {1, 1.05F};
+    mixer.effects.groups[0] = {{1}, 1, false};
+    if (!engine.publish_mixer(mixer, error)) fail(error);
+
+    MidiRoutingConfiguration midi_routing;
+    midi_routing.accept_external_clock = true;
+    if (!engine.publish_midi_routing(midi_routing) ||
+        !engine.receive_midi({1, {0xFA, 0, 0}, 1, 1}))
+        fail("external MIDI clock setup failed");
+    for (std::uint64_t pulse = 1; pulse <= 48; ++pulse)
+        if (!engine.receive_midi(
+                {1, {0xF8, 0, 0}, 1, pulse * 20'833'333ULL}))
+            fail("external MIDI clock queue overflowed");
+
+    PerformanceLauncher launcher(48'000);
+    if (!launcher.configure(timeline, error)) fail(error);
+    std::vector<PreparedLaunch> scene;
+    if (!launcher.prepare_scene(301, 0, 0, scene, error) || scene.size() != 2 ||
+        scene[0].activation_frame != scene[1].activation_frame)
+        fail("coordinated scene preparation failed");
+    std::vector<PreparedLaunch> activated;
+    launcher.acknowledge(scene.front().activation_frame, &activated);
+    if (activated.size() != 2) fail("scene activation acknowledgement lost");
+    PreparedLaunch follow;
+    if (!launcher.prepare_follow(activated.front(), follow, error) ||
+        follow.slot != 102 || !follow.follow_transition)
+        fail("follow transition did not resolve deterministically");
+
+    ArrangementRecordingService capture;
+    if (!capture.arm(true, error) ||
+        !capture.start(0, ArrangementRecordMode::replace, 0, false, error))
+        fail("performance capture did not start");
+    for (const auto &launch : activated)
+        if (!capture.capture_performance(launch, launch.activation_frame,
+                                         launch.scene, false, .75F))
+            fail("scene activation was not captured");
+    if (!capture.capture_performance(follow, follow.activation_frame, 0, true,
+                                     .75F) ||
+        !capture.stop(64, error) || !capture.commit(timelines, error))
+        fail(error.empty() ? "performance capture commit failed" : error);
+    if (!timelines.history_status().can_undo)
+        fail("performance capture was not a coherent history operation");
+
+    // Exercise playback, external clock consumption, stretched overlapping
+    // clips, effects, routing, and callback partition independence constraints.
+    std::array<float, 257 * 2> rendered{};
+    for (const auto frames : {31U, 127U, 99U}) {
+        engine.process({rendered.data(), frames},
+                       {rendered.data() + 257, frames});
+        if (std::any_of(rendered.begin(), rendered.begin() + frames,
+                        [](float value) { return !std::isfinite(value); }))
+            fail("integrated performance render produced NaN/Inf");
+    }
+
+    RecordingService recorder(48'000, 256);
+    engine.set_recording_service(&recorder);
+    LiveLoopService loops(engine, recorder, samples, timelines);
+    LiveLoopConfiguration loop;
+    loop.destination_track = 3;
+    loop.destination_slot = SampleSlotId{7};
+    loop.source = RecordingSource::external_mono;
+    loop.channels = 1;
+    loop.quantization = LiveLoopQuantization::immediate;
+    loop.length_ticks = 4; // 100 frames at 120 BPM.
+    const auto loop_id = loops.create(loop, error);
+    if (!loop_id || !loops.arm(loop_id, LiveLoopMode::capture, error) ||
+        !loops.start(loop_id, error))
+        fail("integrated gapless live loop did not arm");
+    std::array<float, 150> input{}, loop_left{}, loop_right{};
+    for (std::size_t i = 0; i < input.size(); ++i)
+        input[i] = .1F + static_cast<float>(i) * .0001F;
+    engine.process_duplex(loop_left, loop_right, input, 1);
+    loops.update();
+    const auto session = loops.find(loop_id);
+    if (!session || !engine.gapless_handoff_completed() ||
+        engine.gapless_first_playback_frame() !=
+            session->actual_stop_frame)
+        fail("gapless live-loop handoff timing mismatch");
+    engine.set_recording_service(nullptr);
+    samples.shutdown();
+}
 } // namespace
 
-int main() {
+int main(int argc, char **argv) {
     constexpr std::array tiers{
         Tier{"light", 4, 1, 8, 24}, Tier{"medium", 16, 4, 32, 24},
         Tier{"heavy", 32, 8, 64, 16}, Tier{"stress", 32, 8, 128, 12}};
     constexpr std::array partitions{std::size_t{256}, std::size_t{127},
                                     std::size_t{65}, std::size_t{191}};
     try {
+        if (argc == 3 && std::string_view(argv[1]) == "--soak-seconds") {
+            const auto seconds = std::max(1, std::stoi(argv[2]));
+            const auto start = Clock::now();
+            const auto before = sample_system_now();
+            std::uint64_t passes{};
+            do {
+                (void)run(tiers[1], partitions);
+                run_performance_path();
+                ++passes;
+            } while (Clock::now() - start < std::chrono::seconds(seconds));
+            const auto after = sample_system_now();
+            const auto growth = before.resident_memory_available &&
+                                        after.resident_memory_available
+                                    ? static_cast<std::int64_t>(after.resident_memory_bytes) -
+                                          static_cast<std::int64_t>(before.resident_memory_bytes)
+                                    : 0;
+            std::cout << "{\"schema\":\"neurogenic.performance-soak.v1\","
+                      << "\"passes\":" << passes << ",\"rss_growth_bytes\":"
+                      << growth << "}\n";
+            return 0;
+        }
         for (const auto &tier : tiers) {
             const auto result = run(tier, partitions);
             std::cout << "{\"schema\":\"neurogenic.integration-validation.v1\","
@@ -256,7 +448,10 @@ int main() {
                       << result.recording_overflows
                       << ",\"resident_memory_bytes\":" << result.rss << "}\n";
         }
-        std::cout << "neurogenic.integration-validation.summary.v1 passed=4\n";
+        run_performance_path();
+        std::cout << "{\"schema\":\"neurogenic.live-performance-validation.v1\","
+                     "\"status\":\"passed\",\"sample_rate\":48000}\n";
+        std::cout << "neurogenic.integration-validation.summary.v1 passed=5\n";
         return 0;
     } catch (const std::exception &error) {
         std::cerr << "INTEGRATION VALIDATION FAILURE: " << error.what() << '\n';

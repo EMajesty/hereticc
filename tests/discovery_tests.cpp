@@ -41,6 +41,7 @@ int main() {
                   !supports_discovery_schema(2, 3),
               "capability version negotiation");
         check(validate_state_binding(initial, "transport.playing", error) &&
+                  validate_state_binding(initial, "performance.capture", error) &&
                   !validate_state_binding(initial, "audio.raw-pcm", error),
               "state binding validation");
         check(has_object(initial, "modulator-type") &&
@@ -53,6 +54,12 @@ int main() {
                                      !action.descriptor.arguments.empty();
                           }),
               "semantic action registry export");
+        check(std::any_of(initial.actions.begin(), initial.actions.end(),
+                          [](const auto &action) {
+                              return action.descriptor.id ==
+                                     "performance.capture-start.v1";
+                          }),
+              "performance capture action discovery");
 
         execute(application, "track.create.v1",
                 {{"track_id", std::int64_t{11}}, {"name", std::string("Discovery")},

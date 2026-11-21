@@ -1,5 +1,8 @@
 # Implementation status
 
+- Task 064: bounded integrated live-performance validation and opt-in soak mode;
+  fixed replace-capture launch-source identity and loop-range transaction bugs.
+
 - Task 063: bounded follow-action execution, editable performance scenes,
   acknowledged launch capture, and transactional conversion to ordinary
   pattern/audio arrangement clips.

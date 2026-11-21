@@ -7,6 +7,9 @@ exits nonzero on invalid output, silence, excessive levels, queue loss,
 recording overflow or persistence identity loss. Each tier emits JSON using
 schema `neurogenic.integration-validation.v1`.
 
+Task 064 adds a fifth integrated live-session scenario and an opt-in soak mode;
+see [LIVE_PERFORMANCE_VALIDATION.md](LIVE_PERFORMANCE_VALIDATION.md).
+
 ## Workload tiers
 
 | Tier | Tracks | Groups | Routes | Purpose |
@@ -41,10 +44,10 @@ migration, malformed files and appliance shutdown.
 
 ## Current workstation result
 
-On the 2026-11-20 Ryzen 7 7800X3D development host, Debug average/worst times
-were approximately 0.054/0.147 ms (light), 0.177/0.332 ms (medium),
-1.161/1.878 ms (heavy), and 1.356/2.301 ms (stress). No callback deadline
-misses, MIDI drops or recording overflows occurred; peak RSS was about 47.4
+On the 2026-11-21 Ryzen 7 7800X3D development host, Debug average/worst times
+were approximately 0.061/0.140 ms (light), 0.208/0.406 ms (medium),
+1.273/2.163 ms (heavy), and 1.281/2.121 ms (stress). No callback deadline
+misses, MIDI drops or recording overflows occurred; peak RSS was about 48.1
 MiB. These short runs are regression data, not N150, Raspberry Pi 5,
 physical-device or XRUN measurements.
 

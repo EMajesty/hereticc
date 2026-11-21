@@ -1,5 +1,10 @@
 # Architecture
 
+Integrated performance validation drives the production prepared-timeline,
+immutable-sample, mixer/FX/modulation, MIDI, live-loop, launcher, and capture
+paths. Simulated devices provide deterministic input and timestamps; there is no
+alternate test audio engine.
+
 Performance activation acknowledgements feed the control-side arrangement
 recorder. It materializes resolved launches in one validated, undoable timeline
 transaction; follow actions prepare at most one future transition per

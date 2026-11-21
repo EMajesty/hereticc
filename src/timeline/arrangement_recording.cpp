@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <set>
 
 namespace neurogenic {
 namespace {
@@ -229,6 +230,12 @@ bool ArrangementRecordingService::commit(TimelineService &service,
     const auto source_audio_clips = arrangement.audio_clips;
     arrangement.song_start = std::min(arrangement.song_start, status_.start_tick);
     arrangement.song_end = std::max(arrangement.song_end, status_.stop_tick);
+    if (arrangement.loop_enabled) {
+        arrangement.loop_start =
+            std::min(arrangement.loop_start, status_.start_tick);
+        arrangement.loop_end =
+            std::max(arrangement.loop_end, status_.stop_tick);
+    }
     if (status_.mode == ArrangementRecordMode::replace) {
         std::erase_if(arrangement.clips, [&](const auto &clip) {
             return clip.start < status_.stop_tick &&
@@ -257,18 +264,16 @@ bool ArrangementRecordingService::commit(TimelineService &service,
         if (end <= patterns_[i].tick ||
             !find_pattern(transaction.timeline(), patterns_[i].pattern))
             continue;
-        if (!transaction.create_clip(
-                {next_clip++, patterns_[i].pattern, patterns_[i].tick,
-                 end - patterns_[i].tick, true, 0, 1.0F, true},
-                error)) {
-            status_.phase = ArrangementRecordPhase::conflict;
-            status_.error = error;
-            return false;
-        }
+        arrangement.clips.push_back(
+            {next_clip++, patterns_[i].pattern, patterns_[i].tick,
+             end - patterns_[i].tick, true, 0, 1.0F, true});
     }
     AudioClipId next_audio = 1;
     for (const auto &clip : arrangement.audio_clips)
         next_audio = std::max(next_audio, clip.id + 1);
+    for (const auto &clip : source_audio_clips)
+        next_audio = std::max(next_audio, clip.id + 1);
+    std::set<AudioClipId> reused_audio_sources;
     for (std::size_t i = 0; i < performance_launches_.size(); ++i) {
         const auto &captured = performance_launches_[i];
         if (captured.operation == PreparedLaunchOperation::stop) continue;
@@ -281,29 +286,27 @@ bool ArrangementRecordingService::commit(TimelineService &service,
         if (end <= captured.tick) continue;
         if (captured.source_type == LaunchSourceType::pattern) {
             if (!find_pattern(transaction.timeline(), captured.source_id)) continue;
-            if (!transaction.create_clip(
-                    {next_clip++, captured.source_id, captured.tick,
-                     end - captured.tick, true, 0, captured.velocity, true}, error)) {
-                status_.phase = ArrangementRecordPhase::conflict;
-                status_.error = error;
-                return false;
-            }
+            arrangement.clips.push_back(
+                {next_clip++, captured.source_id, captured.tick,
+                 end - captured.tick, true, 0, captured.velocity, true});
         } else {
             const auto source = std::find_if(
                 source_audio_clips.begin(), source_audio_clips.end(),
                 [&](const auto &clip) { return clip.id == captured.source_id; });
             if (source == source_audio_clips.end()) continue;
             auto clip = *source;
-            clip.id = next_audio++;
+            const auto source_survives = std::any_of(
+                arrangement.audio_clips.begin(), arrangement.audio_clips.end(),
+                [&](const auto &existing) { return existing.id == source->id; });
+            if (!source_survives && reused_audio_sources.insert(source->id).second)
+                clip.id = source->id;
+            else
+                clip.id = next_audio++;
             clip.track = captured.track;
             clip.start = captured.tick;
             clip.duration = end - captured.tick;
             clip.enabled = true;
-            if (!transaction.create_audio_clip(std::move(clip), error)) {
-                status_.phase = ArrangementRecordPhase::conflict;
-                status_.error = error;
-                return false;
-            }
+            arrangement.audio_clips.push_back(std::move(clip));
         }
     }
     if (status_.mode == ArrangementRecordMode::replace)

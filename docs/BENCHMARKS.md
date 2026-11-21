@@ -1,5 +1,10 @@
 # Performance monitoring and benchmarks
 
+Task 064 adds stretched overlaps, crossfades, scenes/follows, capture, external
+clock input, and gapless handoff to the bounded integration workload. The
+optional `--soak-seconds` run is excluded from CI. Current workstation numbers
+and hardware constraints are in `LIVE_PERFORMANCE_VALIDATION.md`.
+
 Performance capture separates bounded activation acknowledgement handling from
 control-side arrangement commit. Hardware callback timing still requires N150
 and Raspberry Pi 5 measurements; CI results are not hardware claims.

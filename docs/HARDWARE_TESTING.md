@@ -39,6 +39,21 @@ capability until tested on a physical six-input/six-output interface.
 
 ## Audio verification and stress
 
+Run the bounded integrated session before physical stress and retain its JSONL:
+
+```sh
+./build/dev/neurogenic --headless --list-devices
+./build/dev/neurogenic-diagnostics --headless --json
+./build/dev/neurogenic_integration_validation | tee integrated.jsonl
+./build/dev/neurogenic_integration_validation --soak-seconds 3600 \
+  | tee soak.jsonl
+```
+
+For N150 and Raspberry Pi 5 comparisons, record the commit, CPU governor,
+kernel, interface, 48 kHz buffer size, deadline misses and backend XRUN count.
+Use explicit loopback tests for audio latency and MIDI clock jitter; never infer
+those values from offline callback timing.
+
 Offline engine stress is deterministic but is not hardware real-time evidence:
 
 ```sh
