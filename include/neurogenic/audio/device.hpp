@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -15,6 +16,12 @@ struct AudioPortCapabilities {
     };
     std::vector<NativeFormat> native_formats;
 };
+struct AudioDeviceStatus {
+    bool running{};
+    bool backend_xruns_available{};
+    std::uint64_t backend_xruns{};
+    std::uint64_t starts{}, stops{}, reroutes{}, interruptions{};
+};
 class AudioDevice {
   public:
     explicit AudioDevice(AudioEngine &, bool force_null = false);
@@ -26,15 +33,18 @@ class AudioDevice {
     std::vector<std::string> inputs() const;
     std::vector<AudioPortCapabilities> output_capabilities() const;
     std::vector<AudioPortCapabilities> input_capabilities() const;
-    bool start(const std::string &output, std::string &error);
+    bool start(const std::string &output, std::string &error,
+               std::uint32_t preferred_buffer_frames = 0);
     bool start_duplex(const std::string &output, const std::string &input,
                       std::uint16_t input_channels, std::string &error,
-                      std::uint16_t output_channels = 2);
+                      std::uint16_t output_channels = 2,
+                      std::uint32_t preferred_buffer_frames = 0);
     void stop() noexcept;
     [[nodiscard]] std::uint32_t selected_sample_rate() const noexcept;
     [[nodiscard]] std::uint32_t selected_buffer_frames() const noexcept;
     [[nodiscard]] std::uint16_t selected_input_channels() const noexcept;
     [[nodiscard]] std::uint16_t selected_output_channels() const noexcept;
+    [[nodiscard]] AudioDeviceStatus status() const noexcept;
 
   private:
     struct Impl;

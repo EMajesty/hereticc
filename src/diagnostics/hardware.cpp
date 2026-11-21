@@ -5,7 +5,10 @@
 #include <sstream>
 #include <string_view>
 #ifdef __linux__
+#include <sched.h>
+#include <sys/resource.h>
 #include <sys/utsname.h>
+#include <unistd.h>
 #endif
 
 #ifndef NEUROGENIC_VERSION
@@ -96,6 +99,7 @@ HardwareDiagnosticSnapshot system_diagnostics() {
     result.cpu_model = cpu_name();
     result.distribution = os_release();
     result.total_memory_bytes = sample_system_now().total_memory_bytes;
+    result.realtime = realtime_scheduling_diagnostics();
 #ifdef __linux__
     utsname name{};
     if (uname(&name) == 0) {
@@ -105,6 +109,62 @@ HardwareDiagnosticSnapshot system_diagnostics() {
 #else
     result.architecture = "unknown";
     result.kernel = "unknown";
+#endif
+    return result;
+}
+
+RealtimeSchedulingDiagnostic realtime_scheduling_diagnostics() {
+    RealtimeSchedulingDiagnostic result;
+#ifdef __linux__
+    const int policy = sched_getscheduler(0);
+    switch (policy) {
+    case SCHED_FIFO: result.policy = "fifo"; break;
+    case SCHED_RR: result.policy = "round-robin"; break;
+    case SCHED_OTHER: result.policy = "other"; break;
+#ifdef SCHED_BATCH
+    case SCHED_BATCH: result.policy = "batch"; break;
+#endif
+#ifdef SCHED_IDLE
+    case SCHED_IDLE: result.policy = "idle"; break;
+#endif
+    default: result.policy = "unknown"; break;
+    }
+    sched_param parameter{};
+    if (sched_getparam(0, &parameter) == 0)
+        result.priority = parameter.sched_priority;
+    rlimit limit{};
+    if (getrlimit(RLIMIT_RTPRIO, &limit) == 0) {
+        result.realtime_priority_limit = limit.rlim_cur == RLIM_INFINITY
+                                             ? UINT64_MAX
+                                             : limit.rlim_cur;
+        result.realtime_allowed = limit.rlim_cur != 0 || policy == SCHED_FIFO ||
+                                  policy == SCHED_RR;
+    }
+    if (getrlimit(RLIMIT_MEMLOCK, &limit) == 0) {
+        result.memory_lock_unlimited = limit.rlim_cur == RLIM_INFINITY;
+        result.memory_lock_limit_bytes = result.memory_lock_unlimited
+                                             ? UINT64_MAX
+                                             : limit.rlim_cur;
+    }
+    const long cpus = sysconf(_SC_NPROCESSORS_ONLN);
+    if (cpus > 0) result.available_cpus = static_cast<std::uint32_t>(cpus);
+    std::ifstream governor(
+        "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor");
+    governor >> result.cpu_governor;
+    if (!result.realtime_allowed)
+        result.warnings.emplace_back(
+            "real-time scheduling is unavailable; configure an RT-priority "
+            "limit for the user before low-buffer hardware testing");
+    if (!result.memory_lock_unlimited && result.memory_lock_limit_bytes < 64ULL * 1024 * 1024)
+        result.warnings.emplace_back(
+            "memory-lock limit is below 64 MiB; page faults may affect "
+            "low-latency testing");
+    if (result.cpu_governor == "powersave")
+        result.warnings.emplace_back(
+            "CPU governor is powersave; compare with a performance-oriented "
+            "profile during controlled tests");
+#else
+    result.warnings.emplace_back("real-time scheduling diagnostics require Linux");
 #endif
     return result;
 }
@@ -122,6 +182,17 @@ std::string hardware_diagnostics_json(const HardwareDiagnosticSnapshot &v) {
         << "},\"audio\":{\"backend\":\"" << escape(v.audio_backend)
         << "\",\"preferred_sample_rate\":" << v.preferred_sample_rate
         << ",\"selected_buffer_frames\":" << v.selected_buffer_frames
+        << ",\"selected_sample_rate\":" << v.selected_sample_rate
+        << ",\"selected_input_channels\":" << v.selected_input_channels
+        << ",\"selected_output_channels\":" << v.selected_output_channels
+        << ",\"running\":" << (v.audio_running ? "true" : "false")
+        << ",\"backend_xruns_available\":"
+        << (v.backend_xruns_available ? "true" : "false")
+        << ",\"backend_xruns\":" << v.backend_xruns
+        << ",\"device_events\":{\"starts\":" << v.device_starts
+        << ",\"stops\":" << v.device_stops << ",\"reroutes\":"
+        << v.device_reroutes << ",\"interruptions\":"
+        << v.device_interruptions << '}'
         << ",\"outputs\":";
     ports_json(out, v.audio_outputs);
     out << ",\"inputs\":";
@@ -138,7 +209,21 @@ std::string hardware_diagnostics_json(const HardwareDiagnosticSnapshot &v) {
         << ",\"drawable_width\":" << v.display.drawable_width
         << ",\"drawable_height\":" << v.display.drawable_height
         << ",\"content_scale\":" << v.display.content_scale
-        << ",\"backend\":\"" << escape(v.display.backend) << "\"}}";
+        << ",\"backend\":\"" << escape(v.display.backend)
+        << "\"},\"realtime\":{\"policy\":\""
+        << escape(v.realtime.policy) << "\",\"priority\":"
+        << v.realtime.priority << ",\"rtprio_limit\":"
+        << v.realtime.realtime_priority_limit << ",\"memlock_limit_bytes\":"
+        << v.realtime.memory_lock_limit_bytes << ",\"memlock_unlimited\":"
+        << (v.realtime.memory_lock_unlimited ? "true" : "false")
+        << ",\"available_cpus\":" << v.realtime.available_cpus
+        << ",\"cpu_governor\":\"" << escape(v.realtime.cpu_governor)
+        << "\",\"warnings\":[";
+    for (std::size_t i = 0; i < v.realtime.warnings.size(); ++i) {
+        if (i) out << ',';
+        out << '"' << escape(v.realtime.warnings[i]) << '"';
+    }
+    out << "]}}";
     return out.str();
 }
 
@@ -149,9 +234,17 @@ std::string hardware_diagnostics_summary(const HardwareDiagnosticSnapshot &v) {
         << v.distribution << " / " << v.kernel << "\nMemory: "
         << v.total_memory_bytes / (1024 * 1024) << " MiB\nAudio: "
         << v.audio_backend << ", preferred " << v.preferred_sample_rate
-        << " Hz, buffer " << v.selected_buffer_frames << " frames\n  outputs: "
+        << " Hz, negotiated " << v.selected_sample_rate << " Hz / "
+        << v.selected_buffer_frames << " frames / " << v.selected_input_channels
+        << " in / " << v.selected_output_channels << " out\n  outputs: "
         << v.audio_outputs.size() << ", inputs: " << v.audio_inputs.size()
-        << "\nMIDI: " << v.midi_input_backend << " in / "
+        << "\nXRUN counter: "
+        << (v.backend_xruns_available ? std::to_string(v.backend_xruns)
+                                      : "unavailable")
+        << "\nScheduling: " << v.realtime.policy << " priority "
+        << v.realtime.priority << ", RT limit "
+        << v.realtime.realtime_priority_limit << ", governor "
+        << v.realtime.cpu_governor << "\nMIDI: " << v.midi_input_backend << " in / "
         << v.midi_output_backend << " out; " << v.midi_inputs.size() << "/"
         << v.midi_outputs.size() << " ports\nDisplay: ";
     if (v.display.available)
@@ -171,7 +264,26 @@ std::string hardware_test_report_json(const HardwareTestReport &v) {
         << escape(v.audio_configuration) << "\",\"scenario\":\""
         << escape(v.scenario) << "\",\"status\":\"" << escape(v.status)
         << "\",\"limitations\":\"" << escape(v.limitations)
-        << "\",\"measurements\":" << performance_json(v.measurements) << '}';
+        << "\",\"device\":{\"physical\":"
+        << (v.physical_device ? "true" : "false")
+        << ",\"sample_rate\":" << v.sample_rate
+        << ",\"requested_buffer_frames\":" << v.requested_buffer_frames
+        << ",\"negotiated_buffer_frames\":" << v.negotiated_buffer_frames
+        << ",\"input_channels\":" << v.input_channels
+        << ",\"output_channels\":" << v.output_channels
+        << ",\"backend_xruns_available\":"
+        << (v.backend_xruns_available ? "true" : "false")
+        << ",\"backend_xruns\":" << v.backend_xruns
+        << ",\"starts\":" << v.device_starts << ",\"stops\":"
+        << v.device_stops << ",\"reroutes\":" << v.device_reroutes
+        << ",\"interruptions\":" << v.device_interruptions
+        << "},\"scheduling\":{\"policy\":\""
+        << escape(v.realtime.policy) << "\",\"priority\":"
+        << v.realtime.priority << ",\"rtprio_limit\":"
+        << v.realtime.realtime_priority_limit << ",\"memlock_limit_bytes\":"
+        << v.realtime.memory_lock_limit_bytes << ",\"cpu_governor\":\""
+        << escape(v.realtime.cpu_governor) << "\"}"
+        << ",\"measurements\":" << performance_json(v.measurements) << '}';
     return out.str();
 }
 } // namespace neurogenic

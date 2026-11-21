@@ -478,3 +478,8 @@ remain future extensions.
 Task 065 implements per-track arrangement/session ownership, partial-scene
 takeover, track-scoped sample/synth/MIDI cleanup, quantized one/all-track return,
 phase-seeked arrangement restoration, follow invalidation and revisioned state.
+Task 066 makes realtime diagnostic period selection effective, reports the
+negotiated 48 kHz period and I/O layout, exposes device lifecycle events,
+separates callback overruns from unavailable backend XRUN counters, and adds
+Linux RT-priority/memlock/governor diagnostics plus an N150 runbook. Physical
+N150 audio, latency, MIDI jitter, thermal and soak results remain unmeasured.

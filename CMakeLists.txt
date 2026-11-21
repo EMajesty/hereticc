@@ -107,7 +107,7 @@ if(NEUROGENIC_BUILD_TESTS)
   add_test(NAME neurogenic_diagnostics_schema
     COMMAND neurogenic_diagnostics --headless --json)
   set_tests_properties(neurogenic_diagnostics_schema PROPERTIES
-    PASS_REGULAR_EXPRESSION "neurogenic.hardware-diagnostics.v1" TIMEOUT 10
+    PASS_REGULAR_EXPRESSION "neurogenic.hardware-diagnostics.v2" TIMEOUT 10
     ENVIRONMENT "SDL_VIDEODRIVER=dummy")
   add_test(NAME neurogenic_discovery_schema COMMAND neurogenic-discovery --json)
   set_tests_properties(neurogenic_discovery_schema PROPERTIES
@@ -180,8 +180,17 @@ if(NEUROGENIC_BUILD_TESTS)
     COMMAND neurogenic_diagnostics --headless --realtime --stress 0.05
       --output-channels 2)
   set_tests_properties(neurogenic_diagnostics_device_lifecycle PROPERTIES
-    PASS_REGULAR_EXPRESSION "realtime-device-stress" TIMEOUT 10
+    PASS_REGULAR_EXPRESSION
+      "realtime-device-stress.*starts.:[ ]*1.*stops.:[ ]*1"
+    TIMEOUT 10
     ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+  add_test(NAME neurogenic_diagnostics_requested_period
+    COMMAND neurogenic_diagnostics --headless --realtime --stress 0.05
+      --buffer 64 --output-channels 2)
+  set_tests_properties(neurogenic_diagnostics_requested_period PROPERTIES
+    PASS_REGULAR_EXPRESSION
+      "requested_buffer_frames.:[ ]*64.*negotiated_buffer_frames.:[ ]*64"
+    TIMEOUT 10 ENVIRONMENT "SDL_VIDEODRIVER=dummy")
   add_test(NAME neurogenic_display_diagnostics
     COMMAND neurogenic_diagnostics --display-test)
   set_tests_properties(neurogenic_display_diagnostics PROPERTIES

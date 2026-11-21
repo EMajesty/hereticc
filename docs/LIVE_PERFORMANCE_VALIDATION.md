@@ -72,6 +72,10 @@ The scenario uses deterministic simulated audio/MIDI. Physical USB clock jitter,
 duplex drift, XRUN reporting, latency, thermal behavior, and hour-scale stability
 remain unverified.
 
+On N150, retain this simulated result separately from the physical 64/128/256/
+512-frame profiles in [N150_BRINGUP.md](N150_BRINGUP.md). Only device-backed
+runs establish backend stability; neither substitutes for loopback measurement.
+
 A three-second lifecycle soak completed 289 passes. RSS rose about 44 MiB during
 initial allocator/cache warm-up and then matched the one-second run's plateau;
 this is not a substitute for the documented hour-scale hardware soak.

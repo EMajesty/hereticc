@@ -435,6 +435,13 @@ are enumerated on the control thread, and startup explicitly verifies the
 negotiated 48 kHz rate. System tuning and hardware policy remain outside the
 engine.
 
+The Linux adapter accepts a preferred period hint, records negotiated period,
+rate and channel layout, and publishes atomic lifecycle counters from miniaudio
+notifications. Notification callbacks do not log or reopen devices. Recovery
+and matching-device selection remain control-side. Scheduling policy/limits,
+governor and memory-lock limits are inspected outside audio. Callback duration
+overruns and backend XRUN capability are deliberately separate diagnostics.
+
 ## Appliance lifecycle
 
 `ApplianceLifecycle` is a control-side state machine. Configuration, project

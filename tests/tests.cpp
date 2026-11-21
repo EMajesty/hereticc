@@ -509,6 +509,16 @@ void test_hardware_diagnostics() {
     snapshot.total_memory_bytes = 16ULL * 1024 * 1024 * 1024;
     snapshot.audio_backend = "simulated";
     snapshot.selected_buffer_frames = 256;
+    snapshot.selected_sample_rate = 48000;
+    snapshot.selected_input_channels = 6;
+    snapshot.selected_output_channels = 6;
+    snapshot.realtime.policy = "fifo";
+    snapshot.realtime.priority = 60;
+    snapshot.realtime.realtime_priority_limit = 70;
+    snapshot.realtime.memory_lock_limit_bytes = UINT64_MAX;
+    snapshot.realtime.memory_lock_unlimited = true;
+    snapshot.realtime.available_cpus = 4;
+    snapshot.realtime.cpu_governor = "performance";
     snapshot.audio_outputs.push_back({"six output", {{48000, 6}, {96000, 2}}});
     snapshot.audio_inputs.push_back({"six input", {{48000, 6}}});
     snapshot.midi_input_backend = "simulated";
@@ -517,16 +527,26 @@ void test_hardware_diagnostics() {
     snapshot.midi_outputs.push_back({1, "synth", false});
     snapshot.display = {true, 1920, 1200, 1920, 1200, 1.5F, "dummy"};
     const auto json = hardware_diagnostics_json(snapshot);
-    check(json.find("neurogenic.hardware-diagnostics.v1") !=
+    check(json.find("neurogenic.hardware-diagnostics.v2") !=
                   std::string::npos &&
               json.find("\"sample_rate\":48000,\"channels\":6") !=
                   std::string::npos &&
               json.find("Test \\\"Linux\\\"") != std::string::npos &&
-              json.find("\"content_scale\":1.5") != std::string::npos,
+              json.find("\"content_scale\":1.5") != std::string::npos &&
+              json.find("\"selected_input_channels\":6") !=
+                  std::string::npos &&
+              json.find("\"policy\":\"fifo\"") != std::string::npos &&
+              json.find("\"backend_xruns_available\":false") !=
+                  std::string::npos,
           "hardware diagnostic JSON schema/capabilities");
     check(hardware_diagnostics_summary(snapshot).find("1920x1200") !=
-              std::string::npos,
+                  std::string::npos &&
+              hardware_diagnostics_summary(snapshot).find("XRUN counter: unavailable") !=
+                  std::string::npos,
           "hardware diagnostic human summary");
+    const auto scheduling = realtime_scheduling_diagnostics();
+    check(!scheduling.policy.empty() && scheduling.available_cpus > 0,
+          "real-time scheduling diagnostics are bounded and available");
     HardwareTestReport report;
     report.application_commit = "abc123";
     report.hardware_identity = "simulated";
@@ -535,12 +555,25 @@ void test_hardware_diagnostics() {
     report.scenario = "six-channel-routing";
     report.status = "passed";
     report.limitations = "simulated hardware";
+    report.sample_rate = 48000;
+    report.requested_buffer_frames = 128;
+    report.negotiated_buffer_frames = 128;
+    report.input_channels = 6;
+    report.output_channels = 6;
+    report.device_starts = 1;
+    report.device_stops = 1;
+    report.realtime = snapshot.realtime;
     report.measurements.audio.available = true;
     report.measurements.audio.callback_count = 100;
     const auto report_json = hardware_test_report_json(report);
     check(report_json.find("neurogenic.hardware-test-report.v1") !=
                   std::string::npos &&
               report_json.find("six-channel-routing") != std::string::npos &&
+              report_json.find("\"requested_buffer_frames\":128") !=
+                  std::string::npos &&
+              report_json.find("\"physical\":false") != std::string::npos &&
+              report_json.find("\"starts\":1,\"stops\":1") !=
+                  std::string::npos &&
               report_json.find("neurogenic.performance.v1") !=
                   std::string::npos,
           "versioned hardware report");

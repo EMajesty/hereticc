@@ -14,6 +14,7 @@ LED traffic and complete refresh after reset/reconnect.
 NEUROGENIC does not infer hardware compatibility from compilation. These tools
 collect repeatable evidence on the N150, Raspberry Pi 5, and development hosts
 without changing system configuration.
+The focused N150 runbook is [N150_BRINGUP.md](N150_BRINGUP.md).
 
 ## Initial N150 procedure
 
@@ -76,7 +77,9 @@ Use mono or six channels only after capability inspection. Failed opens return
 nonzero and successful runs close the device cleanly. Callback deadline misses
 are processing overruns, not confirmed ALSA/PipeWire XRUNs; the current backend
 adapter has no portable XRUN counter. Offline `--buffer` controls callback size.
-Device period negotiation is reported but is not yet directly configurable.
+With `--realtime`, `--buffer` requests the miniaudio device period; reports
+retain both requested and negotiated frames. The adapter emits
+`backend_xruns_available=false` rather than fabricating a zero XRUN count.
 
 The combined mixer/aux/recording/MIDI/GUI workloads remain in
 `neurogenic_benchmark` and `neurogenic_workflows`; run them in addition to the
@@ -138,7 +141,8 @@ crossfader, and data wheel without encoding that layout in the core.
 Stress output uses `neurogenic.hardware-test-report.v1`: application commit,
 hardware/OS identity, audio configuration, scenario, status, limitations, and
 an embedded `neurogenic.performance.v1` snapshot. Inventory uses
-`neurogenic.hardware-diagnostics.v1`; controller and display records have their
+`neurogenic.hardware-diagnostics.v2` with negotiated device and Linux
+scheduling data; controller and display records have their
 own schemas. Save reports outside the source tree and compare like-for-like
 rate, buffer, duration, and workload. `pass` means no callback deadline was
 missed during that run; it does not assert absence of backend XRUNs, acceptable

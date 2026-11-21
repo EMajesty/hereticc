@@ -255,6 +255,12 @@ NEUROGENIC_BENCHMARK_BUDGET_NS=100000 ./build/dev/neurogenic_benchmark
 No budget is enabled in ordinary CI because shared-runner timings are not
 comparable. Retain JSONL from both commits and use the same machine, power mode,
 compiler, build type, and background load. Compare matching scenario records.
+
+N150 physical profiles request 64, 128, 256 and 512 frames at 48 kHz through
+`neurogenic-diagnostics --realtime`; reports retain requested/negotiated
+periods, scheduling policy, callback timing and XRUN capability. See
+[N150_BRINGUP.md](N150_BRINGUP.md). No N150 measurements have been collected;
+Null/offline results are not hardware performance.
 The checksum/schema test verifies deterministic workload execution and output,
 not identical elapsed time.
 

@@ -50,14 +50,14 @@ std::uint32_t number(const char *text, const char *name) {
 void usage() {
     std::cout
         << "usage: neurogenic-diagnostics [OPTIONS]\n"
-           "  --json                 emit neurogenic.hardware-diagnostics.v1 "
+           "  --json                 emit neurogenic.hardware-diagnostics.v2 "
            "JSON\n"
            "  --headless             use the explicit null audio backend\n"
            "  --stress SECONDS       run deterministic engine stress "
            "diagnostics\n"
            "  --realtime             use a physical/null device during stress\n"
            "  --buffer FRAMES        offline stress callback size (default "
-           "256)\n"
+           "256); realtime mode requests this device period\n"
            "  --sample-voices N      simultaneous sample voices (default 8)\n"
            "  --synth-voices N       simultaneous synth voices (default 4)\n"
            "  --audio NAME           output device index/name\n"
@@ -93,7 +93,18 @@ HardwareDiagnosticSnapshot inspect(AudioDevice &audio, MidiInput &input,
                                    MidiOutput &output, AudioEngine &engine) {
     auto result = system_diagnostics();
     result.audio_backend = audio.backend();
-    result.selected_buffer_frames = engine.buffer_frames();
+    result.selected_buffer_frames = audio.selected_buffer_frames();
+    result.selected_sample_rate = audio.selected_sample_rate();
+    result.selected_input_channels = audio.selected_input_channels();
+    result.selected_output_channels = audio.selected_output_channels();
+    const auto audio_status = audio.status();
+    result.audio_running = audio_status.running;
+    result.backend_xruns_available = audio_status.backend_xruns_available;
+    result.backend_xruns = audio_status.backend_xruns;
+    result.device_starts = audio_status.starts;
+    result.device_stops = audio_status.stops;
+    result.device_reroutes = audio_status.reroutes;
+    result.device_interruptions = audio_status.interruptions;
     for (const auto &port : audio.output_capabilities()) {
         DiagnosticAudioPort item{port.name, {}};
         for (const auto &format : port.native_formats)
@@ -181,8 +192,8 @@ PerformanceSnapshot stress(AudioEngine &engine, const Options &options,
             options.input_channels || options.output_channels != 2
                 ? device.start_duplex(options.output, options.input,
                                       options.input_channels, error,
-                                      options.output_channels)
-                : device.start(options.output, error);
+                                      options.output_channels, options.buffer)
+                : device.start(options.output, error, options.buffer);
         if (!started)
             throw std::runtime_error(error);
         std::this_thread::sleep_until(finish);
@@ -306,25 +317,50 @@ int main(int argc, char **argv) {
         if (options.stress) {
             std::string error;
             const auto measurements = stress(engine, options, audio, error);
+            snapshot = inspect(audio, midi_input, midi_output, engine);
             HardwareTestReport report;
             report.application_commit = snapshot.application_commit;
             report.hardware_identity =
                 snapshot.cpu_model + " / " + snapshot.architecture;
             report.os_kernel = snapshot.distribution + " / " + snapshot.kernel;
             report.audio_configuration =
-                std::to_string(engine.sample_rate()) + " Hz, " +
-                std::to_string(options.buffer) + " frames, " +
-                std::to_string(options.output_channels) + " output channels";
+                std::to_string(options.realtime ? audio.selected_sample_rate()
+                                                : engine.sample_rate()) +
+                " Hz, requested " + std::to_string(options.buffer) +
+                " frames, negotiated " +
+                std::to_string(options.realtime
+                                   ? audio.selected_buffer_frames()
+                                   : options.buffer) +
+                " frames, " + std::to_string(options.input_channels) + "/" +
+                std::to_string(options.output_channels) + " input/output channels";
             report.scenario = options.realtime ? "realtime-device-stress"
                                                : "offline-engine-stress";
             report.status =
                 measurements.audio.deadline_overruns == 0 ? "pass" : "fail";
             report.limitations =
                 options.realtime
-                    ? "deadline misses are measured callback overruns; backend "
-                      "XRUN counters are unavailable"
+                    ? "deadline misses are callback-duration overruns, not "
+                      "hardware XRUNs; this miniaudio/ALSA adapter does not "
+                      "expose a backend XRUN counter"
                     : "offline processing is not evidence of hardware "
                       "real-time performance";
+            report.sample_rate = options.realtime ? audio.selected_sample_rate()
+                                                  : engine.sample_rate();
+            report.requested_buffer_frames = options.buffer;
+            report.negotiated_buffer_frames =
+                options.realtime ? audio.selected_buffer_frames() : options.buffer;
+            report.input_channels = options.input_channels;
+            report.output_channels = options.output_channels;
+            report.physical_device = options.realtime && !options.headless;
+            const auto device_status = audio.status();
+            report.backend_xruns_available =
+                device_status.backend_xruns_available;
+            report.backend_xruns = device_status.backend_xruns;
+            report.device_starts = device_status.starts;
+            report.device_stops = device_status.stops;
+            report.device_reroutes = device_status.reroutes;
+            report.device_interruptions = device_status.interruptions;
+            report.realtime = snapshot.realtime;
             report.measurements = measurements;
             std::cout << hardware_test_report_json(report) << '\n';
             return 0;
