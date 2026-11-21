@@ -190,14 +190,15 @@ duration (`source frames × ratio`); semitone/cent controls set the independent
 within-grain pitch ratio. A source beat length derives the ratio from slice
 duration and current project BPM; otherwise source BPM derives
 `source BPM / project BPM`; otherwise the explicit ratio is used. Values are
-clamped to the supported 0.25–4× range and snapshotted when a voice starts. A later tempo change affects new voices, not an
-already sounding voice. There is no four-bar assumption.
+clamped to the supported 0.25–4× range. Tempo changes rebase active voice source
+time and ramp the ratio over 20 ms. There is no four-bar assumption.
 
 Full samples and slices support One-shot, Gate/Toggle release, choke, ADSR,
 velocity, probability and ratchets through the existing voice/scheduler paths.
-Reverse plus stretch intentionally falls back to the established reverse
-playback-rate path. Prepared/cache mode, warp markers and transient alignment
-are not implemented. This lightweight granular method can produce flamming,
+Reverse plus stretch uses explicit reverse overlap/add reads. Looped regions and
+clips wrap analysis reads while retaining synthesis phase. Prepared/cache mode,
+warp markers and transient alignment are not implemented. This lightweight
+granular method can produce flamming,
 phasiness and boundary coloration, especially on sustained tones or extreme
 ratios; it is intended as an initial rhythmic-loop algorithm, not professional
 offline stretching.

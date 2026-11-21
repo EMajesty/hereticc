@@ -183,8 +183,20 @@ int main() try {
     stretched.arrangement.audio_clips.front().source_bpm = 90;
     check(validate_arrangement(stretched, error), "tempo-synced clip rejected");
     stretched.arrangement.audio_clips.front().loop = true;
-    check(!validate_arrangement(stretched, error),
-          "unsupported stretched looping was not rejected");
+    stretched.arrangement.audio_clips.front().loop_start_frame = 0;
+    stretched.arrangement.audio_clips.front().loop_end_frame = 32;
+    stretched.arrangement.audio_clips.front().loop_crossfade_frames = 4;
+    check(validate_arrangement(stretched, error),
+          "loop-aware stretched clip rejected");
+    save_timeline(stretched, path);
+    const auto restored_stretched = load_timeline(path);
+    std::filesystem::remove(path, ignored);
+    check(restored_stretched.arrangement.audio_clips.front().loop &&
+              restored_stretched.arrangement.audio_clips.front().stretch_mode ==
+                  AudioClipStretchMode::tempo_sync &&
+              restored_stretched.arrangement.audio_clips.front()
+                      .loop_crossfade_frames == 4,
+          "stretched loop persistence round trip failed");
 
     std::cout << "neurogenic.audio-clip-tests.v1 passed\n";
     return 0;

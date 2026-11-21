@@ -3659,6 +3659,69 @@ void test_realtime_time_stretch() {
               state.output_frame == 12,
           "bounded stretch block processing");
 
+    configuration.time_ratio = 1.5F;
+    configuration.loop_enabled = true;
+    configuration.loop_start_frame = 600;
+    configuration.loop_end_frame = 1800;
+    configuration.loop_crossfade_frames = 64;
+    RealtimeTimeStretcher::reset(state, configuration, 0, sine.frames(), 3600);
+    near(static_cast<float>(RealtimeTimeStretcher::source_position(
+             state, configuration)),
+         2400, "stretched seek source phase");
+    std::array<float, 2048> loop_left{}, loop_right{};
+    const auto loop_count = RealtimeTimeStretcher::process_block(
+        sine, 0, sine.frames(), configuration, state, loop_left, loop_right,
+        10000);
+    check(loop_count == loop_left.size() &&
+              std::all_of(loop_left.begin(), loop_left.end(),
+                          [](float value) { return std::isfinite(value); }),
+          "loop-aware stretch did not remain bounded");
+    check(std::any_of(loop_left.begin(), loop_left.end(),
+                      [](float value) { return std::abs(value) > 1.0e-4F; }),
+          "loop-aware stretch became silent after wrap");
+
+    TimeStretchState partitioned_state;
+    RealtimeTimeStretcher::reset(partitioned_state, configuration, 0,
+                                 sine.frames(), 3600);
+    std::array<float, 2048> partitioned_left{}, partitioned_right{};
+    std::size_t partition_offset{};
+    for (const auto block : {std::size_t{17}, std::size_t{255},
+                             std::size_t{3}, std::size_t{511},
+                             std::size_t{1262}}) {
+        check(RealtimeTimeStretcher::process_block(
+                  sine, 0, sine.frames(), configuration, partitioned_state,
+                  std::span<float>(partitioned_left).subspan(partition_offset,
+                                                              block),
+                  std::span<float>(partitioned_right).subspan(partition_offset,
+                                                               block),
+                  10000) == block,
+              "partitioned stretch block was truncated");
+        partition_offset += block;
+    }
+    for (std::size_t i = 0; i < loop_left.size(); ++i)
+        check(std::abs(loop_left[i] - partitioned_left[i]) < 1.0e-7F,
+              "stretch output depends on callback partition");
+
+    const auto before_ratio_change =
+        RealtimeTimeStretcher::source_position(state, configuration);
+    RealtimeTimeStretcher::set_time_ratio(state, configuration, 0.75F);
+    near(static_cast<float>(RealtimeTimeStretcher::source_position(
+             state, configuration)),
+         static_cast<float>(before_ratio_change),
+         "tempo change preserves stretcher phase");
+    for (std::size_t i = 0; i < 48000; ++i)
+        RealtimeTimeStretcher::advance(state);
+    check(std::abs(RealtimeTimeStretcher::source_position(state, configuration) -
+                   before_ratio_change - 64000.0) < 0.05,
+          "tempo change cumulative source phase");
+
+    configuration.reverse = true;
+    configuration.loop_enabled = false;
+    RealtimeTimeStretcher::reset(state, configuration, 100, 1100, 150);
+    near(static_cast<float>(RealtimeTimeStretcher::source_position(
+             state, configuration)),
+         899, "reverse stretched seek source phase");
+
     AudioEngine engine(48000, 4);
     Sample ramp;
     ramp.sample_rate = 48000;
@@ -3696,7 +3759,41 @@ void test_realtime_time_stretch() {
     check(reverse_engine.trigger_pad(36, 1), "reverse fallback trigger");
     reverse_engine.process(tail_left, tail_right);
     check(tail_left[0] > 0.25F,
-          "reverse did not fall back to playback-rate processing");
+          "reverse stretched playback did not begin at the end boundary");
+
+    AudioEngine loop_engine(48000, 4);
+    auto loop_sample = std::make_shared<Sample>();
+    loop_sample->sample_rate = 48000;
+    loop_sample->channels = 1;
+    loop_sample->interleaved.resize(1024);
+    for (std::size_t i = 0; i < loop_sample->frames(); ++i)
+        loop_sample->interleaved[i] =
+            static_cast<float>((i % 31) + 1) / 32.0F;
+    std::uint64_t publication{};
+    check(loop_engine.publish_sample_slot(
+              SampleSlotId{0}, std::shared_ptr<const Sample>(loop_sample),
+              &publication),
+          "stretched loop sample publication");
+    SampleRegionPlayback loop_region;
+    loop_region.loop_enabled = true;
+    loop_region.loop_start_frame = 128;
+    loop_region.loop_end_frame = 768;
+    loop_region.loop_crossfade_frames = 32;
+    settings = {};
+    settings.stretch_mode = StretchMode::realtime;
+    settings.stretch_ratio = 1.25F;
+    check(loop_engine.map_note_to_region(36, SampleSlotId{0}, publication, 0,
+                                         1024, 1.0F, settings, loop_region),
+          "stretched region loop mapping");
+    loop_engine.process({tail_left.data(), 0}, {tail_right.data(), 0});
+    check(loop_engine.trigger_pad(36, 1), "stretched region loop trigger");
+    std::vector<float> loop_engine_left(4096), loop_engine_right(4096);
+    loop_engine.process(loop_engine_left, loop_engine_right);
+    check(loop_engine.active_voice_count() == 1 &&
+              std::any_of(loop_engine_left.end() - 512,
+                          loop_engine_left.end(),
+                          [](float value) { return std::abs(value) > 1.0e-4F; }),
+          "stretched region loop did not continue beyond source duration");
 }
 
 void test_sample_slots() {

@@ -161,8 +161,6 @@ bool validate_arrangement(const Timeline &timeline, std::string &error,
             (clip.stretch_mode == AudioClipStretchMode::tempo_sync &&
              clip.source_bpm <= 0) ||
             (clip.loop &&
-             clip.stretch_mode == AudioClipStretchMode::tempo_sync) ||
-            (clip.loop &&
              (clip.loop_start_frame < clip.source_start_frame ||
               clip.loop_start_frame >= clip.loop_end_frame ||
               clip.loop_end_frame > clip.source_end_frame ||

@@ -28,9 +28,9 @@ number of frames. Gate note-off leaves the loop and enters normal release;
 one-shot and toggle loops continue until their usual stop action.
 
 Realtime stretching supports region boundaries and fades, with pitch remaining
-independent of duration. Looping is intentionally disabled in the realtime
-stretcher path in this version. Non-stretched forward and reverse playback
-support loops and crossfades.
+independent of duration. Forward and reverse stretched loops wrap analysis reads
+without resetting synthesis phase and support bounded crossfades. See
+`STRETCH_ENGINE.md` for exact timing and quality limits.
 
 ## Ownership and editing
 
@@ -59,5 +59,5 @@ is presentation-neutral groundwork; no waveform-editor layout is defined.
 ## Limits
 
 Region metadata does not duplicate PCM. Work is bounded by the voice pool.
-Destructive rendering, stretch-loop integration, automatic region detection,
+Destructive rendering, automatic region detection,
 and a single Undo/Redo entry for a multi-edit region transaction are deferred.

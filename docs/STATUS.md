@@ -1,10 +1,16 @@
 # Implementation status
 
+- Task 058: the shared realtime stretcher now supports wrapped forward/reverse
+  loops, bounded equal-power loop crossfades, deterministic seek reconstruction,
+  song-loop reactivation and smoothly rebased internal/external tempo changes.
+  Correlation search, formant preservation and hardware performance validation
+  remain deferred.
+
 - Task 057: stable arrangement audio clips, transactional edits, timeline-v8
   persistence, bounded start/stop compilation, native looping, seek/song-loop
   phase recovery, existing sample-voice/mixer routing, tempo-synced non-looping
-  stretch, actions and discovery are implemented. Same-track overlap, stretched
-  looping and general clip crossfades remain deferred.
+  stretch, actions and discovery are implemented. Same-track overlap and general
+  clip crossfades remain deferred.
 
 - Task 056: bounded offline processing jobs implement trim, peak/RMS
   normalization, reverse, gain, fades, silence, portable sinc resampling and

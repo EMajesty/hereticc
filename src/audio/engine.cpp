@@ -1007,14 +1007,23 @@ void AudioEngine::start_voice(std::uint8_t note, float velocity, TrackId track,
     voice.stretch_configuration = {settings.stretch_mode,
                                    settings.stretch_quality, time_ratio,
                                    static_cast<float>(voice.increment), rate_};
-    voice.stretched = !settings.reverse &&
-                      settings.stretch_mode == StretchMode::realtime &&
+    voice.stretch_configuration.loop_enabled = voice.region.loop_enabled;
+    voice.stretch_configuration.reverse = settings.reverse;
+    voice.stretch_configuration.loop_start_frame =
+        voice.region.loop_start_frame;
+    voice.stretch_configuration.loop_end_frame = voice.region.loop_end_frame;
+    voice.stretch_configuration.loop_crossfade_frames =
+        voice.region.loop_crossfade_frames;
+    voice.stretch_explicit_ratio = settings.stretch_ratio;
+    voice.stretch_source_beats = settings.source_beats;
+    voice.stretch_source_bpm = settings.source_bpm;
+    voice.stretch_ratio_target = time_ratio;
+    voice.stretched = settings.stretch_mode == StretchMode::realtime &&
                       RealtimeTimeStretcher::valid(voice.stretch_configuration);
     if (voice.stretched) {
         RealtimeTimeStretcher::reset(voice.stretch_state,
-                                     voice.stretch_configuration);
-        voice.stretch_duration = static_cast<double>(end - start) * time_ratio;
-        voice.stretch_state.output_frame = slice ? slice->source_offset_frames : 0;
+                                     voice.stretch_configuration, start, end,
+                                     slice ? slice->source_offset_frames : 0);
     } else if (slice && slice->source_offset_frames) {
         const auto distance = static_cast<double>(slice->source_offset_frames) *
                               voice.increment;
@@ -1508,6 +1517,19 @@ void AudioEngine::process(std::span<float> left,
     for (std::size_t i = 0; i < mixer_track_count; ++i)
         mixer_tracks[i] = mixer_.active_track_id(i);
 
+    const auto playback_tempo = static_cast<float>(
+        accept_external_clock_ && external_clock.tempo_bpm > 0
+            ? external_clock.tempo_bpm
+            : 60'000'000.0 / active_timeline_tempo_us_);
+    for (auto &voice : voices_)
+        if (voice.active && voice.stretched)
+            voice.stretch_ratio_target = std::clamp(
+                RealtimeTimeStretcher::resolve_time_ratio(
+                    voice.stretch_explicit_ratio, voice.stretch_source_beats,
+                    voice.stretch_source_bpm,
+                    voice.end_frame - voice.start_frame, rate_, playback_tempo),
+                0.25F, 4.0F);
+
     for (std::size_t frame = 0; frame < frames; ++frame) {
         if (timeline_stops_this_buffer && frame == timeline_stop_offset) {
             cleanup_timeline_voices(VoiceTransitionPolicy::release_outgoing,
@@ -1781,8 +1803,26 @@ void AudioEngine::process(std::span<float> left,
             voice.stretch_configuration.pitch_ratio =
                 static_cast<float>(voice.increment);
             const auto &sample = *voice.sample;
-            if ((voice.stretched &&
-                 voice.stretch_state.output_frame >= voice.stretch_duration) ||
+            if (voice.stretched) {
+                const auto smoothing =
+                    1.0F / std::max(1.0F, static_cast<float>(rate_) * 0.02F);
+                const auto ratio = voice.stretch_configuration.time_ratio +
+                                   (voice.stretch_ratio_target -
+                                    voice.stretch_configuration.time_ratio) *
+                                       smoothing;
+                RealtimeTimeStretcher::set_time_ratio(
+                    voice.stretch_state, voice.stretch_configuration, ratio);
+            }
+            const auto stretched_source =
+                voice.stretched
+                    ? RealtimeTimeStretcher::source_position(
+                          voice.stretch_state, voice.stretch_configuration)
+                    : 0.0;
+            if ((voice.stretched && !voice.region.loop_enabled &&
+                 ((!voice.reverse &&
+                   stretched_source >= static_cast<double>(voice.end_frame)) ||
+                  (voice.reverse && stretched_source <
+                                        static_cast<double>(voice.start_frame)))) ||
                 (!voice.stretched &&
                  (voice.position < static_cast<double>(voice.start_frame) ||
                   voice.position >= static_cast<double>(voice.end_frame)))) {
@@ -1864,9 +1904,17 @@ void AudioEngine::process(std::span<float> left,
             }
             const auto source_progress =
                 voice.stretched
-                    ? voice.stretch_state.output_frame /
-                          std::max(0.25F,
-                                   voice.stretch_configuration.time_ratio)
+                    ? (voice.reverse
+                           ? static_cast<double>(voice.end_frame - 1) -
+                                 RealtimeTimeStretcher::playback_position(
+                                     voice.stretch_state,
+                                     voice.stretch_configuration,
+                                     voice.start_frame, voice.end_frame)
+                           : RealtimeTimeStretcher::playback_position(
+                                 voice.stretch_state,
+                                 voice.stretch_configuration, voice.start_frame,
+                                 voice.end_frame) -
+                                 static_cast<double>(voice.start_frame))
                     : (voice.reverse
                            ? static_cast<double>(voice.end_frame - 1) -
                                  voice.position

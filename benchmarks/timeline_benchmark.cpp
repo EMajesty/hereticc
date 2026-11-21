@@ -1781,6 +1781,7 @@ int main(int argc, char **argv) {
     region_playback_case("region_fades_16_voices", 16, false, false);
     region_playback_case("region_loops_32_voices", 32, true, false);
     region_playback_case("region_stretch_16_voices", 16, false, true);
+    region_playback_case("region_stretch_loop_16_voices", 16, true, true);
     neurogenic::SamplePlaybackSettings expressive;
     expressive.semitones = 3;
     expressive.fine_cents = 17;
@@ -1806,6 +1807,7 @@ int main(int argc, char **argv) {
     expressive_sample_case("stretch_mono_2x", 1, expressive);
     expressive_sample_case("stretch_voices_8", 8, expressive);
     expressive_sample_case("stretch_voices_16", 16, expressive);
+    expressive_sample_case("stretch_voices_32", 32, expressive);
     expressive_sample_case("stretch_mixed_ordinary_16", 16, expressive, false,
                            1, true);
     stretch_preparation_case();

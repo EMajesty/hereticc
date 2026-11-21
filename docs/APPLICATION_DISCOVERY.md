@@ -1,5 +1,11 @@
 # Application discovery contract
 
+Stretch-capable sample regions and audio clips expose their existing stable
+mode, source-tempo, direction, loop-boundary and crossfade fields. Effective
+ratio and algorithmic latency remain presentation-neutral state. Reverse
+stretch, loop continuity and deterministic seek are capabilities of the same
+objects and semantic actions, not a UI-specific playback path.
+
 Capability `audio-clips` version 1 exposes stable clip objects parented by
 tracks, source availability diagnostics, and typed create, update, duplicate
 and delete actions.

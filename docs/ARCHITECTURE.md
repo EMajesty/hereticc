@@ -324,11 +324,13 @@ replacement. `ApplicationService` validates semantic pad actions through
 
 Realtime stretch is a compact DSP extension, not a second sample engine.
 `RealtimeTimeStretcher` owns no PCM and allocates nothing: a voice embeds its
-configuration, output cursor and window size, and reads the same immutable
+configuration, output/source origins and window size, and reads the same immutable
 sample version/bounds as ordinary playback. The control side validates and
-publishes settings; voice start resolves tempo metadata and snapshots the
-effective ratio. The callback selects the stretch branch only for enabled
-forward voices, so default playback keeps its previous inner loop.
+publishes settings; voice start resolves tempo metadata. Active voices rebase
+their source-time origin before a smoothed tempo-ratio change. Wrapped source
+reads support forward/reverse region and audio-clip loops without resetting the
+synthesis clock. The callback selects the stretch branch only for enabled
+voices, so default playback keeps its previous inner loop.
 cursor; replacement cannot redirect or invalidate them. Waveform and transient
 preparation never enters the callback.
 

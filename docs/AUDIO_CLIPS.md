@@ -33,10 +33,11 @@ gain and pan are voice bases; modulation remains additive. Source replacement
 affects new activations only, while active voices retain the old version.
 
 Tempo sync reuses the realtime WSOLA-style stretcher and requires positive
-source BPM. Pitch remains independent. Stretched looping is rejected in version
-1 because the current stretcher cannot safely wrap its analysis state; native
-looping and non-looping stretch are supported. Reverse stretch retains the
-existing native-rate fallback.
+source BPM. Pitch remains independent. Stretched clips wrap analysis reads at
+source-relative loop boundaries without resetting synthesis phase. Seeking
+reconstructs phase from the compiled transport offset, and reverse stretch uses
+explicit reverse reads instead of a native-rate fallback. See
+`STRETCH_ENGINE.md` for latency and quality limits.
 
 ## Editing and overlap
 

@@ -1,5 +1,18 @@
 # Performance monitoring and benchmarks
 
+Task 058 extends the existing callback suite with 32 simultaneous stretched
+voices and loop-aware stretched region workloads. The preparation case remains
+separate from callback processing. Ratio rebasing, reverse reads and wrapped
+loop reads use constant per-voice memory; results are host regressions until
+measured on N150 or Raspberry Pi 5 hardware.
+
+On the 2026-11-21 Ryzen 7 7800X3D x86-64 Debug host (GCC 15.3, Linux
+7.3.0, 48 kHz, 256 frames, 20 iterations), 8/16/32 ordinary stretched voices
+averaged 127/246/461 microseconds per buffer. Sixteen stretched region voices
+averaged 292 microseconds and the same workload with wrapped loops/crossfades
+averaged 428 microseconds. Resident memory was about 54.0 MB. These short host
+runs report average processing cost, not hardware XRUNs or worst-case latency.
+
 `audio_clips_8`, `audio_clips_32` and `audio_clips_128` separate control-side
 plan preparation from per-buffer clip-edge scheduling. Long loops retain the
 same two-edge plan representation.

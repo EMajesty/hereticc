@@ -422,7 +422,8 @@ class AudioEngine {
         double position{}, increment{1.0}, base_increment{1.0};
         TimeStretchConfiguration stretch_configuration;
         TimeStretchState stretch_state;
-        double stretch_duration{};
+        float stretch_ratio_target{1.0F}, stretch_explicit_ratio{1.0F},
+            stretch_source_beats{}, stretch_source_bpm{};
         std::uint64_t start_frame{}, end_frame{};
         SampleRegionPlayback region;
         float gain{}, base_gain{}, base_pan{}, modulation_gain{1.0F}, modulation_pan{},
