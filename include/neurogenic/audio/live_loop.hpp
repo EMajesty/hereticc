@@ -41,6 +41,10 @@ struct LiveLoopSessionStatus {
     std::uint64_t actual_start_frame{}, actual_stop_frame{};
     std::uint64_t loop_iteration{}, captured_frames{}, overflow_count{};
     AudioClipId clip_id{};
+    bool handoff_ready{}, buffer_reserved{}, voice_reserved{},
+        handoff_completed{};
+    std::uint64_t first_playback_frame{};
+    std::string handoff_failure;
     std::string error;
 };
 
@@ -67,6 +71,7 @@ class LiveLoopService {
     struct Session {
         LiveLoopSessionStatus status;
         std::shared_ptr<const Sample> previous_sample;
+        std::shared_ptr<Sample> handoff_sample;
         std::uint64_t expected_publication{};
     };
     [[nodiscard]] MusicalTick quantum(const LiveLoopConfiguration &,

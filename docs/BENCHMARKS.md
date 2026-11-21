@@ -1,6 +1,8 @@
 # Performance monitoring and benchmarks
 
-Live-loop callback cost is the existing `internal_master_recording` path;
+Gapless handoff adds one bounded callback split without a PCM copy. Reserved PCM
+is `frames * channels * sizeof(float)`, plus one sample-version slot and voice.
+Live-loop callback cost otherwise follows the existing `internal_master_recording` path;
 overdub preparation and clip publication are control-side. Eight sessions are
 bounded, with one active capture.
 

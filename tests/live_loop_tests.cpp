@@ -128,6 +128,56 @@ int main() try {
               error.find("capacity") != std::string::npos,
           "live-loop session capacity exhaustion was not reported");
 
+    // The duplex callback deliberately spans the stop boundary. The first
+    // captured sample must be rendered at that exact frame, with neither a
+    // callback-sized silent gap nor a duplicated boundary sample.
+    {
+        AudioEngine handoff_engine(48'000, 4);
+        SampleManager handoff_samples(handoff_engine);
+        Timeline handoff_timeline;
+        handoff_timeline.tracks.push_back(
+            {1, "Gapless", false, {960, {}},
+             std::string(sample_instrument_id)});
+        handoff_timeline.arrangement.playback_mode =
+            TimelinePlaybackMode::song;
+        handoff_timeline.arrangement.song_end = 20'000;
+        TimelineService handoff_timelines(
+            [&](const Timeline &value, std::string &publish_error) {
+                return handoff_engine.queue_timeline(value, publish_error);
+            }, handoff_timeline);
+        RecordingService handoff_recorder(48'000, 256);
+        handoff_engine.set_recording_service(&handoff_recorder);
+        LiveLoopService handoff_loops(handoff_engine, handoff_recorder,
+                                      handoff_samples, handoff_timelines);
+        LiveLoopConfiguration handoff_configuration;
+        handoff_configuration.destination_track = 1;
+        handoff_configuration.destination_slot = SampleSlotId{9};
+        handoff_configuration.source = RecordingSource::external_mono;
+        handoff_configuration.channels = 1;
+        handoff_configuration.quantization = LiveLoopQuantization::immediate;
+        handoff_configuration.length_ticks = 4;
+        const auto handoff_id = handoff_loops.create(handoff_configuration,
+                                                     error);
+        check(handoff_id && handoff_loops.arm(handoff_id, LiveLoopMode::capture,
+                                              error) &&
+                  handoff_loops.start(handoff_id, error),
+              "gapless handoff did not prepare before capture");
+        std::array<float, 150> input{}, output_left{}, output_right{};
+        for (std::size_t i = 0; i < input.size(); ++i)
+            input[i] = .2F + static_cast<float>(i) * .001F;
+        handoff_engine.process_duplex(output_left, output_right, input, 1);
+        const auto handoff = handoff_loops.find(handoff_id);
+        check(handoff && handoff_engine.gapless_handoff_completed() &&
+                  handoff_engine.gapless_first_playback_frame() == 100,
+              "handoff was not activated at the exact recording boundary");
+        check(std::abs(output_left[99]) < 1e-6F &&
+                  std::abs(output_left[100] - .16F) < 1e-5F &&
+                  std::abs(output_left[101] - .1608F) < 1e-5F,
+              "first repetition contained a gap or duplicated first frame");
+        handoff_loops.update();
+        handoff_engine.set_recording_service(nullptr);
+    }
+
     engine.set_recording_service(nullptr);
     std::cout << "neurogenic.live-loop-tests.v1 passed\n";
     return 0;

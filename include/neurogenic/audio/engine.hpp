@@ -121,6 +121,13 @@ class AudioEngine {
                    std::memory_order_acquire) >= publication;
     }
     void reclaim_sample_versions() noexcept;
+    [[nodiscard]] bool prepare_gapless_handoff(
+        SampleSlotId, std::shared_ptr<Sample>, TrackId, EventId,
+        std::uint64_t loop_frames, std::string &error) noexcept;
+    void cancel_gapless_handoff() noexcept;
+    [[nodiscard]] bool gapless_handoff_prepared() const noexcept;
+    [[nodiscard]] bool gapless_handoff_completed() const noexcept;
+    [[nodiscard]] std::uint64_t gapless_first_playback_frame() const noexcept;
     [[nodiscard]] bool map_note_to_slot(std::uint8_t note,
                                         SampleSlotId id) noexcept;
     [[nodiscard]] bool has_sample_slot(SampleSlotId id) const noexcept;
@@ -574,6 +581,7 @@ class AudioEngine {
                      bool timeline_owned = false,
                      const SliceTarget *slice = nullptr, bool preview = false,
                      float pitch_offset = 0.0F) noexcept;
+    void activate_gapless_handoff(std::uint64_t) noexcept;
     void stop_timeline_voice(TrackId, EventId, std::uint64_t occurrence,
                              bool immediate = false) noexcept;
     void release_note(std::uint8_t, TrackId = 0, EventId = 0,
@@ -639,6 +647,20 @@ class AudioEngine {
     std::uint64_t next_preset_activation_{};
     std::unique_ptr<SampleVersion[]> sample_versions_;
     std::size_t sample_version_capacity_{};
+    struct GaplessHandoff {
+        // 0 idle, 1 prepared, 2 callback-activated. A single atomic phase
+        // makes cancellation and boundary activation mutually exclusive.
+        std::atomic<std::uint8_t> phase{};
+        std::atomic<std::uint64_t> first_frame{};
+        std::size_t sample_version{std::numeric_limits<std::size_t>::max()};
+        SampleSlotId slot{invalid_sample_slot};
+        TrackId track{};
+        EventId clip{};
+        std::uint64_t loop_frames{};
+    } gapless_handoff_;
+    std::atomic<std::size_t> reserved_handoff_voices_{};
+    std::atomic<std::size_t> active_voice_count_{};
+    bool split_processing_{};
     std::array<SampleSlotId, 128> note_slots_{};
     std::array<SliceTarget, 128> note_slices_{};
     std::vector<Voice> voices_;

@@ -1,6 +1,8 @@
 # Audio recording and internal resampling
 
-The bounded recorder also backs live-loop sessions. Prepared overdub/replace
+The bounded recorder also backs live-loop sessions. A fixed first pass may write
+directly into a preallocated sample and activate its reserved voice at the exact
+stop frame; see [LIVE_LOOP_HANDOFF.md](LIVE_LOOP_HANDOFF.md). Prepared overdub/replace
 results publish without changing callback capture behavior; see
 [LIVE_LOOPING.md](LIVE_LOOPING.md).
 

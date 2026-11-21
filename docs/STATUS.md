@@ -1,9 +1,12 @@
 # Implementation status
 
+- Task 061: gapless first-pass handoff reserves PCM, sample-version and voice
+  capacity before arming and activates on the exact stop frame. Overdub/replace
+  handoff remains control-side.
+
 - Task 060: stable live-loop sessions, immediate/subdivision/beat/bar capture,
   immutable feedback overdub, replace, acknowledged clip activation and
-  feedback-loop validation are implemented. Zero-gap activation and PCM undo
-  remain deferred.
+  feedback-loop validation are implemented. PCM undo remains deferred.
 
 - Task 059: same-track audio overlap, musical-time linear/equal-power fades,
   stable-ID crossfades, transactional cleanup, timeline-v9 migration and

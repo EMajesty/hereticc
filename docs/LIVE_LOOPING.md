@@ -24,11 +24,11 @@ callback use the existing bounded recorder.
 
 ## Publication and first playback
 
-After capture, PCM is prepared on the control thread, published as an immutable
-sample, and acknowledged before the arrangement changes. The first pass creates
-a looping audio clip transaction at the first loop-length boundary still in the
-future. First playback is deterministic but not zero-gap: publication and
-timeline activation may defer it by up to one loop duration.
+First-pass PCM, a sample-version slot and one voice token are reserved before
+arming. The callback seals and starts the buffer at the exact stop frame;
+control-side publication and ordinary arrangement-clip creation no longer delay
+the first repetition. The clip replaces the handoff voice by stable clip ID and
+current phase. See `LIVE_LOOP_HANDOFF.md`.
 
 ## Overdub and replace
 
@@ -48,8 +48,8 @@ supported. Monitoring reuses off/on/automatic policy. Capture or replace from
 the destination track's own tap is rejected; intentional layering requires
 overdub mode. Overflow completes the bounded pass and reports diagnostics.
 
-Discovery capability `live-looping` version 1 is presentation neutral.
+Discovery capability `live-looping` version 2 includes handoff diagnostics.
 
 Known limitations: one simultaneous capture, explicit WAV save for durable
-assets, no zero-gap first pass, no PCM-version Undo/Redo, and fixed pass length
-after arming.
+assets, no PCM-version Undo/Redo, fixed pass length after arming, and the
+overdub/replace path remains control-side.

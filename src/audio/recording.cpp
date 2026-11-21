@@ -96,6 +96,20 @@ bool RecordingService::arm(RecordingConfiguration configuration,
         error = "recording frame range overflows";
         return false;
     }
+    const auto prepared_channels =
+        configuration.source == RecordingSource::external_mono
+            ? std::uint16_t{1}
+            : configuration.source == RecordingSource::external_stereo
+                  ? std::uint16_t{2}
+                  : std::clamp<std::uint16_t>(configuration.channels, 1, 2);
+    if (gapless_storage_ &&
+        (configuration.fixed_frames == 0 ||
+         gapless_storage_->sample_rate != sample_rate_ ||
+         gapless_storage_->channels != prepared_channels ||
+         gapless_storage_->frames() != configuration.fixed_frames)) {
+        error = "prepared gapless buffer does not match recording";
+        return false;
+    }
     const auto current = state_.load(std::memory_order_acquire);
     if (current == RecordingState::recording) {
         error = "recording is already active";
@@ -286,12 +300,14 @@ void RecordingService::capture(RecordingSource source,
         const auto l = std::isfinite(left[first + i]) ? left[first + i] : 0.0F;
         const auto r =
             std::isfinite(right[first + i]) ? right[first + i] : 0.0F;
+        auto *gapless = gapless_pcm_.load(std::memory_order_acquire);
+        auto &target = gapless ? gapless->interleaved : storage_;
         if (channels == 1)
-            storage_[static_cast<std::size_t>(captured + i)] =
+            target[static_cast<std::size_t>(captured + i)] =
                 source == RecordingSource::external_mono ? l : (l + r) * 0.5F;
         else {
-            storage_[static_cast<std::size_t>(captured + i) * 2] = l;
-            storage_[static_cast<std::size_t>(captured + i) * 2 + 1] = r;
+            target[static_cast<std::size_t>(captured + i) * 2] = l;
+            target[static_cast<std::size_t>(captured + i) * 2 + 1] = r;
         }
         update_peak(peak_left_, l);
         update_peak(peak_right_, r);
@@ -308,6 +324,41 @@ void RecordingService::capture(RecordingSource source,
          callback_frame + frames >= stop) ||
         captured >= capacity_frames_)
         state_.store(RecordingState::completed, std::memory_order_release);
+}
+
+bool RecordingService::prepare_gapless_buffer(std::shared_ptr<Sample> sample,
+                                               std::string &error) noexcept {
+    if (!sample || sample->sample_rate != sample_rate_ ||
+        (sample->channels != 1 && sample->channels != 2) ||
+        sample->interleaved.empty() ||
+        sample->interleaved.size() % sample->channels != 0 ||
+        sample->frames() > capacity_frames_ ||
+        state_.load(std::memory_order_acquire) == RecordingState::recording) {
+        error = "invalid prepared gapless recording buffer";
+        return false;
+    }
+    gapless_storage_ = std::move(sample);
+    gapless_pcm_.store(gapless_storage_.get(), std::memory_order_release);
+    error.clear();
+    return true;
+}
+std::shared_ptr<Sample> RecordingService::gapless_buffer() const noexcept {
+    return gapless_storage_;
+}
+void RecordingService::release_gapless_buffer() noexcept {
+    gapless_pcm_.store(nullptr, std::memory_order_release);
+    gapless_storage_.reset();
+}
+std::uint64_t RecordingService::next_stop_boundary(
+    std::uint64_t callback_frame, std::size_t frames) const noexcept {
+    if (!gapless_pcm_.load(std::memory_order_acquire) ||
+        !start_enabled_.load(std::memory_order_acquire))
+        return 0;
+    const auto state = state_.load(std::memory_order_acquire);
+    if (state != RecordingState::armed && state != RecordingState::recording)
+        return 0;
+    const auto stop = requested_stop_.load(std::memory_order_acquire);
+    return stop > callback_frame && stop <= callback_frame + frames ? stop : 0;
 }
 
 RecordingStatus RecordingService::status() const {

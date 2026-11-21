@@ -1,6 +1,7 @@
 # Audio clips
 
-Live-loop capture creates and updates these same clip objects; see
+Live-loop capture creates and updates these same clip objects. A prepared
+handoff voice is replaced by the normal clip at matching ID and phase; see
 [LIVE_LOOPING.md](LIVE_LOOPING.md).
 
 Same-track overlap, clip-time fades and explicit crossfades are documented in

@@ -184,6 +184,40 @@ bool LiveLoopService::arm(LiveLoopSessionId id, LiveLoopMode mode,
         start_frame += static_cast<std::uint64_t>(compensation);
     const auto length_frames = frames_for_ticks(
         session->status.configuration.length_ticks, timeline);
+    if (mode == LiveLoopMode::capture) {
+        if (!session->status.clip_id)
+            session->status.clip_id = timeline_.edit().next_audio_clip_id();
+        try {
+            session->handoff_sample = std::make_shared<Sample>();
+            session->handoff_sample->sample_rate = engine_.sample_rate();
+            session->handoff_sample->channels =
+                session->status.configuration.source == RecordingSource::external_mono
+                    ? 1 : session->status.configuration.channels;
+            session->handoff_sample->interleaved.resize(
+                static_cast<std::size_t>(length_frames) *
+                session->handoff_sample->channels);
+        } catch (...) {
+            session->handoff_sample.reset();
+            error = "unable to reserve gapless capture buffer";
+            session->status.handoff_failure = error;
+            return false;
+        }
+        if (!recording_.prepare_gapless_buffer(session->handoff_sample, error) ||
+            !engine_.prepare_gapless_handoff(
+                session->status.configuration.destination_slot,
+                session->handoff_sample,
+                session->status.configuration.destination_track,
+                session->status.clip_id, length_frames, error)) {
+            recording_.release_gapless_buffer();
+            session->handoff_sample.reset();
+            session->status.handoff_failure = error;
+            return false;
+        }
+        session->status.buffer_reserved = true;
+        session->status.voice_reserved = true;
+        session->status.handoff_ready = true;
+        session->status.handoff_failure.clear();
+    }
     RecordingConfiguration recording;
     recording.source = session->status.configuration.source;
     recording.source_id = session->status.configuration.source_id;
@@ -195,7 +229,14 @@ bool LiveLoopService::arm(LiveLoopSessionId id, LiveLoopMode mode,
                                  : RecordingQuantization::beat;
     recording.start_frame = start_frame;
     recording.fixed_frames = length_frames;
-    if (!recording_.arm(recording, error)) return false;
+    if (!recording_.arm(recording, error)) {
+        if (mode == LiveLoopMode::capture) {
+            engine_.cancel_gapless_handoff();
+            recording_.release_gapless_buffer();
+            session->handoff_sample.reset();
+        }
+        return false;
+    }
     session->status.mode = mode;
     session->status.requested_start_tick = start_tick;
     session->status.requested_stop_tick =
@@ -243,7 +284,13 @@ bool LiveLoopService::stop(LiveLoopSessionId id, std::string &error) {
 bool LiveLoopService::cancel(LiveLoopSessionId id, std::string &error) {
     auto *session = mutable_find(id);
     if (!session) { error = "live-loop session does not exist"; return false; }
-    if (active_id_ == id) { recording_.cancel(); active_id_ = 0; }
+    if (active_id_ == id) {
+        recording_.cancel();
+        engine_.cancel_gapless_handoff();
+        recording_.release_gapless_buffer();
+        session->handoff_sample.reset();
+        active_id_ = 0;
+    }
     session->status.state = LiveLoopState::canceled;
     session->status.captured_frames = 0;
     error.clear();
@@ -251,6 +298,8 @@ bool LiveLoopService::cancel(LiveLoopSessionId id, std::string &error) {
 }
 void LiveLoopService::clear() noexcept {
     if (active_id_) recording_.cancel();
+    engine_.cancel_gapless_handoff();
+    recording_.release_gapless_buffer();
     active_id_ = 0;
     sessions_.clear();
 }
@@ -267,6 +316,9 @@ void LiveLoopService::update() {
     auto *session = mutable_find(active_id_);
     if (!session) return;
     auto recording = recording_.status();
+    session->status.handoff_completed = engine_.gapless_handoff_completed();
+    session->status.first_playback_frame =
+        engine_.gapless_first_playback_frame();
     session->status.captured_frames = recording.captured_frames;
     session->status.overflow_count = recording.overflow_count;
     if (recording.state == RecordingState::armed) return;
@@ -289,6 +341,16 @@ void LiveLoopService::update() {
         session->status.actual_stop_frame = recording.configuration.start_frame +
                                             recording.captured_frames;
         try {
+            if (session->status.mode == LiveLoopMode::capture) {
+                if (!session->handoff_sample ||
+                    !samples_.publish_prepared(
+                        session->status.configuration.destination_slot,
+                        session->handoff_sample, {}))
+                    throw std::runtime_error("gapless sample publication failed");
+                recording_.mark_publication_pending();
+                session->status.state = LiveLoopState::finalizing;
+                return;
+            }
             auto result = recording_.completed_sample();
             if (session->status.mode == LiveLoopMode::overdub) {
                 if (!session->previous_sample ||
@@ -309,6 +371,7 @@ void LiveLoopService::update() {
         } catch (const std::exception &exception) {
             session->status.state = LiveLoopState::error;
             session->status.error = exception.what();
+            session->status.handoff_failure = exception.what();
             active_id_ = 0;
         }
         return;
@@ -317,17 +380,19 @@ void LiveLoopService::update() {
     const auto slot = samples_.status(session->status.configuration.destination_slot);
     if (slot.state != SampleSlotLoadState::loaded || !slot.has_sample) return;
     recording_.acknowledge_audio_active();
-    const auto timeline_snapshot = timeline_.snapshot().timeline;
     auto transaction = timeline_.edit();
-    const auto now_tick = tick_at_frame(engine_.frame_position(), engine_.sample_rate(),
-                                        timeline_snapshot.transport);
     auto activation_tick = session->status.requested_stop_tick;
-    while (activation_tick <= now_tick)
-        activation_tick += session->status.configuration.length_ticks;
     std::string error;
-    if (!session->status.clip_id) {
+    const auto existing = std::find_if(
+        transaction.timeline().arrangement.audio_clips.begin(),
+        transaction.timeline().arrangement.audio_clips.end(),
+        [&](const auto &clip) { return clip.id == session->status.clip_id; });
+    if (existing == transaction.timeline().arrangement.audio_clips.end() &&
+        session->status.mode == LiveLoopMode::capture) {
         AudioClip clip;
-        clip.id = transaction.next_audio_clip_id();
+        clip.id = session->status.clip_id
+                      ? session->status.clip_id
+                      : transaction.next_audio_clip_id();
         clip.track = session->status.configuration.destination_track;
         clip.sample_slot = session->status.configuration.destination_slot.value;
         clip.sample_publication = slot.active_publication;
@@ -345,14 +410,10 @@ void LiveLoopService::update() {
         if (error.empty() && transaction.create_audio_clip(clip, error))
             session->status.clip_id = clip.id;
     } else {
-        const auto found = std::find_if(
-            transaction.timeline().arrangement.audio_clips.begin(),
-            transaction.timeline().arrangement.audio_clips.end(),
-            [&](const auto &clip) { return clip.id == session->status.clip_id; });
-        if (found == transaction.timeline().arrangement.audio_clips.end())
+        if (existing == transaction.timeline().arrangement.audio_clips.end())
             error = "live-loop audio clip no longer exists";
         else {
-            auto clip = *found;
+            auto clip = *existing;
             clip.sample_publication = slot.active_publication;
             clip.source_end_frame = slot.frames;
             clip.loop_end_frame = slot.frames;
@@ -364,6 +425,9 @@ void LiveLoopService::update() {
         session->status.state = LiveLoopState::playing;
         session->status.loop_iteration = 0;
         session->previous_sample.reset();
+        engine_.cancel_gapless_handoff();
+        recording_.release_gapless_buffer();
+        session->handoff_sample.reset();
         active_id_ = 0;
         recording_.reset();
     } else {

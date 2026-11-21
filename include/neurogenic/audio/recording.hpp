@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <span>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -84,14 +85,30 @@ class RecordingService {
                           std::uint64_t callback_frame) noexcept;
 
     [[nodiscard]] RecordingStatus status() const;
+    [[nodiscard]] RecordingState state() const noexcept {
+        return state_.load(std::memory_order_acquire);
+    }
     [[nodiscard]] bool monitoring_active() const noexcept;
     [[nodiscard]] bool finalize_to_slot(SampleManager &, std::string &error);
     [[nodiscard]] bool finalize_sample_to_slot(SampleManager &, Sample,
                                                std::string &error);
     void acknowledge_audio_active() noexcept;
+    void mark_publication_pending() noexcept {
+        state_.store(RecordingState::publication_pending,
+                     std::memory_order_release);
+    }
     [[nodiscard]] bool save_wav(const std::filesystem::path &,
                                 RecordingWavFormat, std::string &error) const;
     [[nodiscard]] Sample completed_sample() const;
+    [[nodiscard]] bool prepare_gapless_buffer(std::shared_ptr<Sample>,
+                                              std::string &error) noexcept;
+    [[nodiscard]] std::shared_ptr<Sample> gapless_buffer() const noexcept;
+    void release_gapless_buffer() noexcept;
+    [[nodiscard]] std::uint64_t next_stop_boundary(std::uint64_t,
+                                                   std::size_t) const noexcept;
+    [[nodiscard]] std::uint64_t requested_stop_frame() const noexcept {
+        return requested_stop_.load(std::memory_order_acquire);
+    }
 
   private:
     void capture(RecordingSource, std::span<const float>,
@@ -100,6 +117,8 @@ class RecordingService {
     std::uint32_t sample_rate_{};
     std::uint64_t capacity_frames_{};
     std::vector<float> storage_;
+    std::shared_ptr<Sample> gapless_storage_;
+    std::atomic<Sample *> gapless_pcm_{};
     RecordingConfiguration configuration_;
     std::atomic<RecordingState> state_{RecordingState::idle};
     std::atomic<std::uint64_t> captured_{}, dropped_{}, overflows_{},

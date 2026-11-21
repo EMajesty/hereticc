@@ -1,7 +1,8 @@
 # Architecture
 
-Live looping composes the callback recorder, immutable sample publication and
-audio-clip transactions. Overdub mixing and activation are control-side.
+Live looping composes the callback recorder, a prepared sample-version/voice
+handoff, immutable publication and audio-clip transactions. Overdub mixing and
+activation remain control-side.
 
 Audio arrangement overlaps reuse the bounded sample voice pool. The timeline
 compiler resolves crossfade IDs and prepares frame ramps; the callback only

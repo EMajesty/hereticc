@@ -131,6 +131,73 @@ void AudioEngine::reclaim_sample_versions() noexcept {
     reclaim_sample_versions_unlocked();
 }
 
+bool AudioEngine::prepare_gapless_handoff(
+    SampleSlotId slot, std::shared_ptr<Sample> sample, TrackId track,
+    EventId clip, std::uint64_t loop_frames, std::string &error) noexcept {
+    std::lock_guard lock(sample_update_producer_mutex_);
+    if (gapless_handoff_.phase.load(std::memory_order_acquire) != 0 || !sample ||
+        slot == invalid_sample_slot || !track || !clip || loop_frames == 0 ||
+        sample->sample_rate != rate_ || sample->frames() != loop_frames) {
+        error = "invalid or already prepared gapless handoff";
+        return false;
+    }
+    reclaim_sample_versions_unlocked();
+    std::size_t version = sample_version_capacity_;
+    for (std::size_t i = 0; i < sample_version_capacity_; ++i)
+        if (sample_versions_[i].state.load(std::memory_order_acquire) ==
+            SampleVersionState::free) { version = i; break; }
+    if (version == sample_version_capacity_) {
+        error = "sample-version capacity exhausted";
+        return false;
+    }
+    const auto reserved = reserved_handoff_voices_.fetch_add(
+        1, std::memory_order_acq_rel);
+    if (reserved >= voices_.size() ||
+        active_voice_count_.load(std::memory_order_acquire) + reserved >=
+            voices_.size()) {
+        reserved_handoff_voices_.fetch_sub(1, std::memory_order_acq_rel);
+        error = "sample-voice capacity exhausted";
+        return false;
+    }
+    sample_versions_[version].sample = std::move(sample);
+    sample_versions_[version].id.store(slot.value, std::memory_order_release);
+    sample_versions_[version].publication.store(++next_sample_update_sequence_,
+                                                std::memory_order_release);
+    sample_versions_[version].state.store(SampleVersionState::queued,
+                                          std::memory_order_release);
+    gapless_handoff_.sample_version = version;
+    gapless_handoff_.slot = slot;
+    gapless_handoff_.track = track;
+    gapless_handoff_.clip = clip;
+    gapless_handoff_.loop_frames = loop_frames;
+    gapless_handoff_.first_frame.store(0, std::memory_order_relaxed);
+    gapless_handoff_.phase.store(1, std::memory_order_release);
+    error.clear();
+    return true;
+}
+void AudioEngine::cancel_gapless_handoff() noexcept {
+    std::lock_guard lock(sample_update_producer_mutex_);
+    std::uint8_t prepared = 1;
+    if (gapless_handoff_.phase.compare_exchange_strong(
+            prepared, 0, std::memory_order_acq_rel)) {
+        const auto version = gapless_handoff_.sample_version;
+        if (version < sample_version_capacity_)
+            sample_versions_[version].state.store(SampleVersionState::retired,
+                                                  std::memory_order_release);
+        reserved_handoff_voices_.fetch_sub(1, std::memory_order_acq_rel);
+    } else if (prepared == 2)
+        gapless_handoff_.phase.store(0, std::memory_order_release);
+}
+bool AudioEngine::gapless_handoff_prepared() const noexcept {
+    return gapless_handoff_.phase.load(std::memory_order_acquire) == 1;
+}
+bool AudioEngine::gapless_handoff_completed() const noexcept {
+    return gapless_handoff_.phase.load(std::memory_order_acquire) == 2;
+}
+std::uint64_t AudioEngine::gapless_first_playback_frame() const noexcept {
+    return gapless_handoff_.first_frame.load(std::memory_order_acquire);
+}
+
 bool AudioEngine::publish_sample_slot(SampleSlotId id, Sample sample,
                                       std::uint64_t *publication) noexcept {
     try {
@@ -978,6 +1045,14 @@ void AudioEngine::start_voice(std::uint8_t note, float velocity, TrackId track,
             if (voice.active && voice.choke_group == settings.choke_group)
                 release_voice(voice, !settings.choke_release);
     auto selected = voices_.size();
+    std::size_t free_voices{};
+    for (const auto &candidate : voices_) free_voices += !candidate.active;
+    const auto reserved =
+        reserved_handoff_voices_.load(std::memory_order_acquire);
+    if (reserved && free_voices <= reserved) {
+        dropped_timeline_events_.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
     for (std::size_t i = 0; i < voices_.size(); ++i)
         if (!voices_[i].active) {
             selected = i;
@@ -1112,6 +1187,46 @@ void AudioEngine::start_voice(std::uint8_t note, float velocity, TrackId track,
     voice.active = true;
 }
 
+void AudioEngine::activate_gapless_handoff(std::uint64_t frame) noexcept {
+    auto *recorder = recording_.load(std::memory_order_acquire);
+    if (!recorder ||
+        gapless_handoff_.phase.load(std::memory_order_acquire) != 1 ||
+        recorder->state() != RecordingState::completed ||
+        frame < recorder->requested_stop_frame())
+        return;
+    std::uint8_t prepared = 1;
+    if (!gapless_handoff_.phase.compare_exchange_strong(
+            prepared, 2, std::memory_order_acq_rel))
+        return;
+    const auto version = gapless_handoff_.sample_version;
+    if (version >= sample_version_capacity_) return;
+    for (std::size_t i = 0; i < sample_version_capacity_; ++i)
+        if (i != version &&
+            sample_versions_[i].id.load(std::memory_order_acquire) ==
+                gapless_handoff_.slot.value &&
+            sample_versions_[i].state.load(std::memory_order_acquire) ==
+                SampleVersionState::active)
+            sample_versions_[i].state.store(SampleVersionState::retiring,
+                                            std::memory_order_release);
+    sample_versions_[version].state.store(SampleVersionState::active,
+                                          std::memory_order_release);
+    reserved_handoff_voices_.fetch_sub(1, std::memory_order_acq_rel);
+    SliceTarget target;
+    target.slot = gapless_handoff_.slot;
+    target.publication = sample_versions_[version].publication.load(
+        std::memory_order_acquire);
+    target.start_frame = 0;
+    target.end_frame = gapless_handoff_.loop_frames;
+    target.clip_total_frames = std::numeric_limits<std::uint64_t>::max();
+    target.audio_clip = true;
+    target.region.loop_enabled = true;
+    target.region.loop_end_frame = gapless_handoff_.loop_frames;
+    target.enabled = true;
+    start_voice(0, 1.0F, gapless_handoff_.track, gapless_handoff_.clip, 0,
+                true, &target);
+    gapless_handoff_.first_frame.store(frame, std::memory_order_release);
+}
+
 void AudioEngine::release_voice(Voice &voice, bool immediate) noexcept {
     release_sample_voice_modulation(voice.voice_modulation);
     if (immediate || voice.release_step >= 1.0F) {
@@ -1167,6 +1282,25 @@ void AudioEngine::stop_voices(bool timeline_only) noexcept {
 void AudioEngine::process(std::span<float> left,
                           std::span<float> right) noexcept {
     const auto callback_frame = callback_frame_.load(std::memory_order_relaxed);
+    activate_gapless_handoff(callback_frame);
+    if (!split_processing_) {
+        if (auto *recorder = recording_.load(std::memory_order_acquire)) {
+            const auto frames = std::min(left.size(), right.size());
+            const auto boundary = recorder->next_stop_boundary(callback_frame,
+                                                                frames);
+            if (boundary) {
+                const auto first = static_cast<std::size_t>(boundary - callback_frame);
+                split_processing_ = true;
+                process(left.first(first), right.first(first));
+                activate_gapless_handoff(boundary);
+                if (first < frames)
+                    process(left.subspan(first, frames - first),
+                            right.subspan(first, frames - first));
+                split_processing_ = false;
+                return;
+            }
+        }
+    }
     const auto monitoring = callback_monitor_.enabled();
     const auto callback_begin = monitoring
                                     ? std::chrono::steady_clock::now()
@@ -1706,6 +1840,10 @@ void AudioEngine::process(std::span<float> left,
                                                       event.value);
             } else if (event.type == MusicalEventType::audio_clip_on) {
                 const auto &clip = event.audio_clip;
+                // A prepared live-loop handoff owns this clip identity until
+                // the ordinary arrangement voice is ready. Replace it at the
+                // exact scheduler frame, never sum both voices.
+                stop_timeline_voice(event.track, event.id, 0, true);
                 SliceTarget target;
                 target.slot = SampleSlotId{clip.sample_slot};
                 target.publication = clip.sample_publication;
@@ -2296,10 +2434,11 @@ void AudioEngine::process(std::span<float> left,
             std::memory_order_relaxed);
     buffer_frames_.store(static_cast<std::uint32_t>(frames),
                          std::memory_order_relaxed);
+    std::size_t active_voices{};
+    for (const auto &voice : voices_)
+        active_voices += voice.active ? 1U : 0U;
+    active_voice_count_.store(active_voices, std::memory_order_release);
     if (monitoring) {
-        std::size_t active_voices{};
-        for (const auto &voice : voices_)
-            active_voices += voice.active ? 1U : 0U;
         const auto elapsed =
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                 std::chrono::steady_clock::now() - callback_begin)
@@ -2326,6 +2465,23 @@ void AudioEngine::recording_device_stopped() noexcept {
 void AudioEngine::process_duplex(std::span<float> left, std::span<float> right,
                                  std::span<const float> input,
                                  std::uint16_t channels) noexcept {
+    if (auto *recorder = recording_.load(std::memory_order_acquire)) {
+        const auto frames = std::min({left.size(), right.size(),
+                                      channels ? input.size() / channels : 0});
+        const auto start = callback_frame_.load(std::memory_order_relaxed);
+        const auto boundary = recorder->next_stop_boundary(start, frames);
+        if (boundary && boundary > start && boundary < start + frames) {
+            const auto first = static_cast<std::size_t>(boundary - start);
+            process_duplex(left.first(first), right.first(first),
+                           input.first(first * channels), channels);
+            process_duplex(left.subspan(first, frames - first),
+                           right.subspan(first, frames - first),
+                           input.subspan(first * channels,
+                                         (frames - first) * channels),
+                           channels);
+            return;
+        }
+    }
     capture_external_input(input, channels);
     duplex_input_ = input.data();
     duplex_input_samples_ = input.size();
@@ -2354,6 +2510,22 @@ void AudioEngine::process_io(std::span<float> output,
     if (output_channels == 0)
         return;
     const auto frames = output.size() / output_channels;
+    if (auto *recorder = recording_.load(std::memory_order_acquire)) {
+        const auto start = callback_frame_.load(std::memory_order_relaxed);
+        const auto boundary = recorder->next_stop_boundary(start, frames);
+        if (boundary && boundary > start && boundary < start + frames) {
+            const auto first = static_cast<std::size_t>(boundary - start);
+            process_io(output.first(first * output_channels), output_channels,
+                       input.first(std::min(input.size(),
+                                            first * input_channels)),
+                       input_channels);
+            process_io(output.subspan(first * output_channels), output_channels,
+                       input.subspan(std::min(input.size(),
+                                              first * input_channels)),
+                       input_channels);
+            return;
+        }
+    }
     std::array<float, maximum_mixer_block> left{}, right{};
     const auto count = std::min(frames, left.size());
     std::fill(output.begin(), output.end(), 0.0F);
