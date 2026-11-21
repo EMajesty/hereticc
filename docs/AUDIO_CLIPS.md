@@ -1,5 +1,8 @@
 # Audio clips
 
+Captured audio and live-loop launches create normal audio clips with the source
+sample/version references intact; no PCM flattening is performed.
+
 Audio and completed live-loop clips may be launched without duplicating PCM.
 They retain immutable sample ownership, stretch/loop settings, fades and parent-
 track routing.

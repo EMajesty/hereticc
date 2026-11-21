@@ -1,6 +1,7 @@
 #pragma once
 #include "neurogenic/timeline/model.hpp"
 #include <span>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -21,6 +22,8 @@ struct PreparedLaunch {
     std::uint64_t source_id{};
     LaunchBehavior behavior{LaunchBehavior::loop};
     bool preserve_phase{};
+    PerformanceSceneId scene{};
+    bool follow_transition{};
 };
 struct LaunchDiagnostics {
     std::size_t slot_capacity{maximum_launch_slots};
@@ -41,13 +44,17 @@ class PerformanceLauncher {
                        std::uint64_t now_frame, std::vector<PreparedLaunch> &,
                        std::string &);
     bool cancel(LaunchSlotId) noexcept;
-    void acknowledge(std::uint64_t activation_frame) noexcept;
+    void acknowledge(std::uint64_t activation_frame,
+                     std::vector<PreparedLaunch> *activated = nullptr) noexcept;
+    bool prepare_follow(const PreparedLaunch &, PreparedLaunch &, std::string &);
     [[nodiscard]] LaunchSlotId follow(LaunchSlotId, std::uint64_t repetition,
                                       std::span<const LaunchSlotId> eligible) const noexcept;
     [[nodiscard]] float velocity(float input, bool velocity_capable,
                                  bool full_level) const noexcept;
     [[nodiscard]] const LaunchDiagnostics &diagnostics() const noexcept { return diagnostics_; }
     [[nodiscard]] std::span<const PreparedLaunch> pending() const noexcept { return pending_; }
+    [[nodiscard]] std::vector<PreparedLaunch>
+    compose_session(std::span<const PreparedLaunch>) const;
 
   private:
     [[nodiscard]] const LaunchSlot *slot(LaunchSlotId) const noexcept;
@@ -57,6 +64,8 @@ class PerformanceLauncher {
     Timeline timeline_;
     std::uint32_t sample_rate_{};
     std::vector<PreparedLaunch> pending_;
+    std::map<LaunchSlotId, std::uint64_t> repetitions_;
+    std::map<TrackId, PreparedLaunch> active_;
     LaunchDiagnostics diagnostics_;
 };
 } // namespace neurogenic

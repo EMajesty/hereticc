@@ -430,6 +430,9 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
         {"preset.application", "project:current", "Preset preparation and activation state", DiscoveryValueKind::object, DiscoveryUpdateRate::state},
         {"preset.missing-assets", "project:current", "Unresolved preset dependencies", DiscoveryValueKind::collection, DiscoveryUpdateRate::state},
         {"arrangement.queued-pattern", "arrangement:main", "Queued launch", DiscoveryValueKind::object, DiscoveryUpdateRate::state},
+        {"performance.capture", "arrangement:main", "Performance capture phase, counts, and diagnostics", DiscoveryValueKind::object, DiscoveryUpdateRate::state},
+        {"performance.activation-history", "arrangement:main", "Acknowledged performance launches in the pending pass", DiscoveryValueKind::collection, DiscoveryUpdateRate::state},
+        {"performance.track-takeover", "arrangement:main", "Session-owned tracks and queued transitions", DiscoveryValueKind::collection, DiscoveryUpdateRate::state},
         {"validation.errors", "project:current", "Validation diagnostics", DiscoveryValueKind::collection, DiscoveryUpdateRate::state}};
     for (const auto &clip : state.audio_clips) {
         const auto parent = object_id("audio-clip", clip.clip.id);

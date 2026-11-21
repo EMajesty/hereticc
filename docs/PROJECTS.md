@@ -1,5 +1,9 @@
 # Project persistence
 
+Committed performance captures persist as ordinary arrangement clips. Timeline
+version 10 scene, slot, and follow definitions remain compatible; transient
+capture queues and active session ownership are not serialized.
+
 Timeline metadata version 10 stores launch slots, scenes and velocity policy.
 Queued commands and active voices remain transient; older projects migrate to
 an empty launcher without changing playback.

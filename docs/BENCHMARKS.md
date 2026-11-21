@@ -1,5 +1,9 @@
 # Performance monitoring and benchmarks
 
+Performance capture separates bounded activation acknowledgement handling from
+control-side arrangement commit. Hardware callback timing still requires N150
+and Raspberry Pi 5 measurements; CI results are not hardware claims.
+
 Control-side preparation/cancellation workloads cover 16 and 64 slots and are
 reported separately from the existing pattern/audio callback workloads.
 

@@ -1,5 +1,9 @@
 # Implementation status
 
+- Task 063: bounded follow-action execution, editable performance scenes,
+  acknowledged launch capture, and transactional conversion to ordinary
+  pattern/audio arrangement clips.
+
 - Task 062: stable pattern/audio/live-loop launch slots, bounded coordinated
   scenes, quantization through eight bars/custom subdivisions, deterministic
   follow selection, velocity policies, semantic actions/discovery and

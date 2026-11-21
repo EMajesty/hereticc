@@ -1,5 +1,6 @@
 #pragma once
 #include "neurogenic/timeline/edit.hpp"
+#include "neurogenic/timeline/performance_launching.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -26,12 +27,25 @@ struct CapturedAutomationChange {
     float value{};
     MusicalTick tick{};
 };
+struct CapturedPerformanceLaunch {
+    LaunchSlotId slot{};
+    TrackId track{};
+    PreparedLaunchOperation operation{PreparedLaunchOperation::start};
+    LaunchSourceType source_type{LaunchSourceType::pattern};
+    std::uint64_t source_id{};
+    MusicalTick tick{};
+    std::uint64_t frame{};
+    PerformanceSceneId scene{};
+    bool follow_transition{};
+    float velocity{1.0F};
+};
 struct ArrangementRecordingStatus {
     ArrangementRecordPhase phase{ArrangementRecordPhase::idle};
     ArrangementRecordMode mode{ArrangementRecordMode::replace};
     bool armed{}, automation_armed{};
     MusicalTick start_tick{}, stop_tick{}, count_in_ticks{};
     std::size_t captured_patterns{}, captured_automation{};
+    std::size_t captured_performance_launches{};
     std::uint64_t overflow_count{};
     std::string error;
 };
@@ -50,6 +64,10 @@ class ArrangementRecordingService {
     bool capture_chain(const Timeline &, MusicalTick) noexcept;
     bool capture_automation(std::string, float, MusicalTick,
                             MusicalTick thinning) noexcept;
+    bool capture_performance(const PreparedLaunch &, std::uint64_t actual_frame,
+                             PerformanceSceneId scene = 0,
+                             bool follow_transition = false,
+                             float velocity = 1.0F) noexcept;
     bool stop(MusicalTick, std::string &);
     void report_overflow(std::uint64_t count = 1) noexcept;
     bool commit(TimelineService &, std::string &);
@@ -62,6 +80,8 @@ class ArrangementRecordingService {
     automation() const {
         return automation_;
     }
+    [[nodiscard]] const std::vector<CapturedPerformanceLaunch> &
+    performance_launches() const noexcept { return performance_launches_; }
 
   private:
     bool reserve_event() noexcept;
@@ -69,5 +89,6 @@ class ArrangementRecordingService {
     ArrangementRecordingStatus status_;
     std::vector<CapturedPatternLaunch> patterns_;
     std::vector<CapturedAutomationChange> automation_;
+    std::vector<CapturedPerformanceLaunch> performance_launches_;
 };
 } // namespace neurogenic

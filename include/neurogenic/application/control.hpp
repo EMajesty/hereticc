@@ -293,6 +293,7 @@ struct ApplicationState {
     std::uint32_t arrangement_recording_api_version{1};
     std::vector<CapturedPatternLaunch> captured_pattern_launches;
     std::vector<CapturedAutomationChange> captured_automation_changes;
+    std::vector<CapturedPerformanceLaunch> captured_performance_launches;
     std::vector<MusicalEvent> arrangement_automation;
     MacroDiscoverySnapshot performance_macros;
     std::array<bool, maximum_midi_ports> midi_output_connected{};
@@ -371,6 +372,9 @@ class ApplicationService {
     CommandResult execute_locked(const ApplicationCommand &, std::uint64_t);
     bool publish_modulation_with_macros(const ModulationConfiguration &,
                                         std::string &);
+    bool publish_performance_launches(const Timeline &,
+                                      std::span<const PreparedLaunch>,
+                                      std::string &) const;
     void synchronize_locked() const;
     void changed_locked();
     AudioEngine &engine_;

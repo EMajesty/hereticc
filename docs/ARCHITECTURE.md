@@ -1,5 +1,10 @@
 # Architecture
 
+Performance activation acknowledgements feed the control-side arrangement
+recorder. It materializes resolved launches in one validated, undoable timeline
+transaction; follow actions prepare at most one future transition per
+acknowledgement and never traverse a graph in the callback.
+
 Performance launching is a control-side coordinator over the authoritative
 timeline. It validates slot/scene definitions and publishes prepared pattern or
 audio plans at an absolute frame; existing scheduling, SampleVoice ownership

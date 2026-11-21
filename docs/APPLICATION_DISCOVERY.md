@@ -1,5 +1,9 @@
 # Application discovery contract
 
+Performance capture reuses the arrangement-recording state and adds semantic
+capture, scene-editing, and follow-configuration actions. Acknowledged launch
+history is ordinary revisioned state rather than high-frequency telemetry.
+
 Task 062 adds launch-slot and launch-scene objects, capacities, typed actions
 and revisioned launcher state without prescribing layout.
 

@@ -63,7 +63,11 @@ bool PerformanceLauncher::configure(const Timeline &timeline, std::string &error
         }
     }
     timeline_ = timeline;
-    if (!preserve_pending) pending_.clear();
+    if (!preserve_pending) {
+        pending_.clear();
+        repetitions_.clear();
+        active_.clear();
+    }
     diagnostics_.used_slots = a.launch_slots.size();
     diagnostics_.used_scenes = a.performance_scenes.size();
     diagnostics_.pending = pending_.size();
@@ -145,7 +149,7 @@ bool PerformanceLauncher::prepare_scene(PerformanceSceneId id, MusicalTick now,
         const auto *value = slot(entry.slot);
         result.push_back({value->id, value->track, PreparedLaunchOperation::start,
             tick, frame, value->source_type, value->source_id, value->behavior,
-            value->behavior == LaunchBehavior::legato});
+            value->behavior == LaunchBehavior::legato, id});
     }
     pending_.insert(pending_.end(), result.begin(), result.end());
     diagnostics_.pending = pending_.size();
@@ -158,11 +162,100 @@ bool PerformanceLauncher::cancel(LaunchSlotId id) noexcept {
     diagnostics_.pending = pending_.size();
     return before != pending_.size();
 }
-void PerformanceLauncher::acknowledge(std::uint64_t activation_frame) noexcept {
-    std::erase_if(pending_, [&](const auto &value) {
-        return value.activation_frame <= activation_frame;
-    });
+void PerformanceLauncher::acknowledge(
+    std::uint64_t activation_frame, std::vector<PreparedLaunch> *activated) noexcept {
+    for (const auto &value : pending_)
+        if (value.activation_frame <= activation_frame) {
+            if (activated) activated->push_back(value);
+            if (value.operation == PreparedLaunchOperation::stop)
+                repetitions_.erase(value.slot), active_.erase(value.track);
+            else {
+                ++repetitions_[value.slot];
+                active_[value.track] = value;
+            }
+        }
+    std::erase_if(pending_, [&](const auto &value) { return value.activation_frame <= activation_frame; });
     diagnostics_.pending = pending_.size();
+}
+std::vector<PreparedLaunch> PerformanceLauncher::compose_session(
+    std::span<const PreparedLaunch> changes) const {
+    auto next = active_;
+    for (const auto &change : changes) {
+        if (change.operation == PreparedLaunchOperation::stop)
+            next.erase(change.track);
+        else
+            next[change.track] = change;
+    }
+    std::vector<PreparedLaunch> result;
+    result.reserve(next.size());
+    for (const auto &[track, launch] : next) {
+        (void)track;
+        result.push_back(launch);
+    }
+    if (!changes.empty())
+        for (auto &launch : result)
+            launch.activation_frame = changes.front().activation_frame,
+            launch.activation_tick = changes.front().activation_tick;
+    // Keep a stop marker when the last session-owned track is stopped.  It
+    // carries the authoritative activation boundary used to publish silence.
+    if (result.empty() && !changes.empty())
+        result.push_back(changes.front());
+    return result;
+}
+bool PerformanceLauncher::prepare_follow(const PreparedLaunch &active,
+                                         PreparedLaunch &result,
+                                         std::string &error) {
+    const auto *definition = slot(active.slot);
+    if (!definition || definition->follow == SlotFollowAction::none) {
+        error.clear();
+        return false;
+    }
+    std::vector<LaunchSlotId> eligible;
+    for (const auto &candidate : timeline_.arrangement.launch_slots)
+        if (candidate.track == active.track) eligible.push_back(candidate.id);
+    std::sort(eligible.begin(), eligible.end());
+    const auto repetition = repetitions_[active.slot];
+    if (!repetition || repetition % definition->follow_repetitions) {
+        error.clear();
+        return false;
+    }
+    const auto target = follow(active.slot, repetition, eligible);
+    MusicalTick duration = ticks_per_quarter * 4;
+    if (active.source_type == LaunchSourceType::pattern) {
+        const auto found = std::find_if(timeline_.arrangement.patterns.begin(),
+            timeline_.arrangement.patterns.end(), [&](const auto &pattern) {
+                return pattern.id == active.source_id;
+            });
+        if (found != timeline_.arrangement.patterns.end()) duration = found->length;
+    } else {
+        const auto found = std::find_if(timeline_.arrangement.audio_clips.begin(),
+            timeline_.arrangement.audio_clips.end(), [&](const auto &clip) {
+                return clip.id == active.source_id;
+            });
+        if (found != timeline_.arrangement.audio_clips.end()) duration = found->duration;
+    }
+    if (pending_.size() >= maximum_pending_launches) {
+        ++diagnostics_.rejected;
+        error = "pending follow launch capacity exceeded";
+        return false;
+    }
+    if (!target) {
+        result = active;
+        result.operation = PreparedLaunchOperation::stop;
+    } else {
+        const auto *next = slot(target);
+        result = {next->id, next->track, PreparedLaunchOperation::start, 0, 0,
+                  next->source_type, next->source_id, next->behavior,
+                  next->behavior == LaunchBehavior::legato};
+    }
+    result.activation_tick = active.activation_tick + duration;
+    result.activation_frame = active.activation_frame +
+        frame_at(result.activation_tick, active.activation_tick, 0);
+    result.follow_transition = true;
+    pending_.push_back(result);
+    diagnostics_.pending = pending_.size();
+    error.clear();
+    return true;
 }
 LaunchSlotId PerformanceLauncher::follow(LaunchSlotId id, std::uint64_t repetition,
                                          std::span<const LaunchSlotId> eligible) const noexcept {

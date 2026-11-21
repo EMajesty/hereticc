@@ -1,5 +1,8 @@
 # Live loop recording
 
+Completed live loops may be captured after launcher activation. Their gapless
+first-pass handoff remains independent and is never delayed for capture.
+
 Completed loops may be assigned after their gapless first-pass handoff. Slot
 assignment never delays first playback; subsequent launches use the ordinary
 audio-clip scheduler.

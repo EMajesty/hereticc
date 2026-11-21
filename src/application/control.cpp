@@ -179,6 +179,33 @@ ActionRegistry::ActionRegistry() {
                {"slot", ValueType::integer}}));
     add(action("performance.scene-launch.v1", "Launch performance scene",
                "Performance", {{"scene", ValueType::integer}}));
+    add(action("performance.scene-create.v1", "Create performance scene",
+               "Performance", {{"scene", ValueType::integer}, {"name", ValueType::text}}));
+    add(action("performance.scene-delete.v1", "Delete performance scene",
+               "Performance", {{"scene", ValueType::integer}}));
+    add(action("performance.scene-rename.v1", "Rename performance scene",
+               "Performance", {{"scene", ValueType::integer}, {"name", ValueType::text}}));
+    add(action("performance.scene-duplicate.v1", "Duplicate performance scene",
+               "Performance", {{"source", ValueType::integer}, {"scene", ValueType::integer},
+               {"name", ValueType::text, false}}));
+    add(action("performance.scene-slot-set.v1", "Assign slot to performance scene",
+               "Performance", {{"scene", ValueType::integer}, {"track", ValueType::integer},
+               {"slot", ValueType::integer}}));
+    add(action("performance.scene-slot-remove.v1", "Remove track from performance scene",
+               "Performance", {{"scene", ValueType::integer}, {"track", ValueType::integer}}));
+    add(action("performance.slot-follow-set.v1", "Set launch-slot follow action",
+               "Performance", {{"slot", ValueType::integer}, {"action", ValueType::text},
+               {"target", ValueType::integer, false}, {"repetitions", ValueType::integer, false},
+               {"seed", ValueType::integer, false}}));
+    add(action("performance.capture-arm.v1", "Arm performance capture",
+               "Performance", {{"armed", ValueType::boolean}}));
+    add(action("performance.capture-start.v1", "Start performance capture",
+               "Performance", {{"mode", ValueType::text},
+               {"quantization", ValueType::text, false}}));
+    add(action("performance.capture-stop.v1", "Stop performance capture", "Performance",
+               {{"quantization", ValueType::text, false}}));
+    add(action("performance.capture-commit.v1", "Commit performance capture", "Performance"));
+    add(action("performance.capture-discard.v1", "Discard performance capture", "Performance"));
     add(action("performance.velocity-policy.v1", "Set performance velocity policy",
                "Performance", {{"policy", ValueType::text},
                {"velocity", ValueType::real, false}}));
@@ -1348,6 +1375,60 @@ bool ApplicationService::publish_modulation_with_macros(
     }
     error.clear();
     return true;
+}
+bool ApplicationService::publish_performance_launches(
+    const Timeline &source, std::span<const PreparedLaunch> launches,
+    std::string &error) const {
+    if (launches.empty()) {
+        error = "performance launch batch is empty";
+        return false;
+    }
+    auto audible = source;
+    auto &a = audible.arrangement;
+    a.playback_mode = TimelinePlaybackMode::song;
+    a.clips.clear();
+    a.audio_clips.clear();
+    a.audio_crossfades.clear();
+    MusicalTick length = ticks_per_quarter * 4;
+    for (const auto &launch : launches) {
+        if (launch.operation == PreparedLaunchOperation::stop) continue;
+        if (launch.source_type == LaunchSourceType::pattern) {
+            const auto pattern = std::find_if(a.patterns.begin(), a.patterns.end(),
+                [&](const auto &value) { return value.id == launch.source_id; });
+            if (pattern == a.patterns.end()) {
+                error = "performance pattern source disappeared";
+                return false;
+            }
+            length = std::max(length, pattern->length);
+            a.clips.push_back({launch.slot, launch.source_id, 0, pattern->length,
+                launch.behavior == LaunchBehavior::loop});
+        } else {
+            const auto source_clip = std::find_if(source.arrangement.audio_clips.begin(),
+                source.arrangement.audio_clips.end(), [&](const auto &value) {
+                    return value.id == launch.source_id;
+                });
+            if (source_clip == source.arrangement.audio_clips.end()) {
+                error = "performance audio source disappeared";
+                return false;
+            }
+            auto clip = *source_clip;
+            clip.id = launch.slot;
+            clip.start = 0;
+            clip.track = launch.track;
+            clip.loop = launch.behavior == LaunchBehavior::loop ||
+                        launch.behavior == LaunchBehavior::legato;
+            length = std::max(length, clip.duration);
+            a.audio_clips.push_back(std::move(clip));
+        }
+    }
+    a.song_start = 0;
+    a.song_end = length;
+    a.loop_enabled = true;
+    a.loop_start = 0;
+    a.loop_end = length;
+    return engine_.queue_timeline_at(audible, launches.front().activation_frame,
+                                     VoiceTransitionPolicy::release_outgoing,
+                                     error);
 }
 void ApplicationService::set_midi_output_connections(
     const std::array<bool, maximum_midi_ports> &connections) {
@@ -4439,6 +4520,68 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                          TimelineCommitPolicy::next_audio_callback, error)) {
             } else
                 changed_locked();
+        } else if (command.action_id == "performance.scene-create.v1" ||
+                   command.action_id == "performance.scene-delete.v1" ||
+                   command.action_id == "performance.scene-rename.v1" ||
+                   command.action_id == "performance.scene-duplicate.v1" ||
+                   command.action_id == "performance.scene-slot-set.v1" ||
+                   command.action_id == "performance.scene-slot-remove.v1" ||
+                   command.action_id == "performance.slot-follow-set.v1") {
+            auto transaction = timeline_.edit();
+            auto &arrangement = transaction.timeline().arrangement;
+            if (command.action_id == "performance.slot-follow-set.v1") {
+                const auto id = static_cast<LaunchSlotId>(*argument<std::int64_t>(command, "slot"));
+                const auto found = std::find_if(arrangement.launch_slots.begin(), arrangement.launch_slots.end(),
+                    [=](const auto &slot) { return slot.id == id; });
+                if (found == arrangement.launch_slots.end()) error = "launch slot does not exist";
+                else {
+                    const auto &name = *argument<std::string>(command, "action");
+                    if (name == "none") found->follow = SlotFollowAction::none;
+                    else if (name == "stop") found->follow = SlotFollowAction::stop;
+                    else if (name == "repeat") found->follow = SlotFollowAction::repeat;
+                    else if (name == "next") found->follow = SlotFollowAction::next;
+                    else if (name == "previous") found->follow = SlotFollowAction::previous;
+                    else if (name == "specified") found->follow = SlotFollowAction::specified;
+                    else if (name == "random") found->follow = SlotFollowAction::random_eligible;
+                    else error = "unknown slot follow action";
+                    if (const auto v = argument<std::int64_t>(command, "target")) found->follow_target = *v;
+                    if (const auto v = argument<std::int64_t>(command, "repetitions"))
+                        found->follow_repetitions = static_cast<std::uint16_t>(std::max<std::int64_t>(1, *v));
+                    if (const auto v = argument<std::int64_t>(command, "seed")) found->random_seed = *v;
+                }
+            } else {
+                const auto id = static_cast<PerformanceSceneId>(*argument<std::int64_t>(command, "scene"));
+                auto found = std::find_if(arrangement.performance_scenes.begin(), arrangement.performance_scenes.end(),
+                    [=](const auto &scene) { return scene.id == id; });
+                if (command.action_id == "performance.scene-create.v1") {
+                    if (!id || found != arrangement.performance_scenes.end()) error = "performance scene already exists";
+                    else { PerformanceLaunchScene scene; scene.id = id; scene.name = *argument<std::string>(command, "name"); arrangement.performance_scenes.push_back(std::move(scene)); }
+                } else if (command.action_id == "performance.scene-delete.v1") {
+                    if (found == arrangement.performance_scenes.end()) error = "performance scene does not exist";
+                    else arrangement.performance_scenes.erase(found);
+                } else if (command.action_id == "performance.scene-duplicate.v1") {
+                    const auto source_id = static_cast<PerformanceSceneId>(*argument<std::int64_t>(command, "source"));
+                    const auto source = std::find_if(arrangement.performance_scenes.begin(), arrangement.performance_scenes.end(),
+                        [=](const auto &scene) { return scene.id == source_id; });
+                    if (source == arrangement.performance_scenes.end()) error = "source performance scene does not exist";
+                    else if (!id || found != arrangement.performance_scenes.end()) error = "performance scene already exists";
+                    else { auto copy = *source; copy.id = id; if (const auto n = argument<std::string>(command, "name")) copy.name = *n; arrangement.performance_scenes.push_back(std::move(copy)); }
+                } else if (found == arrangement.performance_scenes.end()) error = "performance scene does not exist";
+                else if (command.action_id == "performance.scene-rename.v1") found->name = *argument<std::string>(command, "name");
+                else {
+                    const auto track = static_cast<TrackId>(*argument<std::int64_t>(command, "track"));
+                    std::erase_if(found->entries, [=](const auto &entry) { return entry.track == track; });
+                    if (command.action_id == "performance.scene-slot-set.v1")
+                        found->entries.push_back({track, static_cast<LaunchSlotId>(*argument<std::int64_t>(command, "slot"))});
+                }
+            }
+            if (error.empty()) {
+                PerformanceLauncher validation(engine_.sample_rate());
+                if (validation.configure(transaction.timeline(), error) &&
+                    timeline_.commit(std::move(transaction), TimelineCommitPolicy::next_audio_callback, error)) {
+                    state_.project_dirty = true; changed_locked();
+                }
+            }
         } else if (command.action_id == "performance.slot-assign.v1" ||
                    command.action_id == "performance.slot-clear.v1" ||
                    command.action_id == "performance.slot-duplicate.v1" ||
@@ -4537,35 +4680,8 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     if (error.empty()) launches.push_back(launch);
                 }
                 if (error.empty() && !launches.empty()) {
-                    auto audible = snapshot.timeline;
-                    auto &a = audible.arrangement;
-                    a.playback_mode = TimelinePlaybackMode::song;
-                    a.clips.clear(); a.audio_clips.clear(); a.audio_crossfades.clear();
-                    MusicalTick length = ticks_per_quarter * 4;
-                    for (const auto &launch : launches) {
-                        if (launch.operation == PreparedLaunchOperation::stop) continue;
-                        if (launch.source_type == LaunchSourceType::pattern) {
-                            const auto p = std::find_if(a.patterns.begin(), a.patterns.end(),
-                                [&](const auto &value) { return value.id == launch.source_id; });
-                            length = std::max(length, p->length);
-                            a.clips.push_back({launch.slot, launch.source_id, 0, p->length,
-                                launch.behavior == LaunchBehavior::loop});
-                        } else {
-                            const auto source = std::find_if(snapshot.timeline.arrangement.audio_clips.begin(),
-                                snapshot.timeline.arrangement.audio_clips.end(),
-                                [&](const auto &value) { return value.id == launch.source_id; });
-                            auto clip = *source; clip.id = launch.slot; clip.start = 0;
-                            clip.track = launch.track;
-                            clip.loop = launch.behavior == LaunchBehavior::loop ||
-                                        launch.behavior == LaunchBehavior::legato;
-                            length = std::max(length, clip.duration);
-                            a.audio_clips.push_back(std::move(clip));
-                        }
-                    }
-                    a.song_start = 0; a.song_end = length; a.loop_enabled = true;
-                    a.loop_start = 0; a.loop_end = length;
-                    if (!engine_.queue_timeline_at(audible, launches.front().activation_frame,
-                                                   VoiceTransitionPolicy::release_outgoing, error))
+                    const auto session = performance_launcher_.compose_session(launches);
+                    if (!publish_performance_launches(snapshot.timeline, session, error))
                         ++state_.performance_launching.diagnostics.rejected;
                     else changed_locked();
                 }
@@ -4578,7 +4694,8 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 state_.selected_pattern = static_cast<std::uint64_t>(id);
                 changed_locked();
             }
-        } else if (command.action_id == "arrangement.record-arm.v1") {
+        } else if (command.action_id == "arrangement.record-arm.v1" ||
+                   command.action_id == "performance.capture-arm.v1") {
             if (arrangement_recording_.arm(*argument<bool>(command, "armed"),
                                            error))
                 changed_locked();
@@ -4594,7 +4711,8 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 automation_thinning_ticks_ = ticks;
                 changed_locked();
             }
-        } else if (command.action_id == "arrangement.record-start.v1") {
+        } else if (command.action_id == "arrangement.record-start.v1" ||
+                   command.action_id == "performance.capture-start.v1") {
             const auto &mode = *argument<std::string>(command, "mode");
             const auto bars = argument<std::int64_t>(command, "count_in_bars");
             const auto automation = argument<bool>(command, "automation");
@@ -4609,8 +4727,19 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     timeline.timeline.transport.time_signature_numerator * 4 /
                     timeline.timeline.transport.time_signature_denominator;
                 const auto prior = arrangement_recording_.status();
-                if (arrangement_recording_.start(
-                        state_.transport_tick,
+                auto capture_tick = state_.transport_tick;
+                if (command.action_id == "performance.capture-start.v1") {
+                    if (const auto q = argument<std::string>(command, "quantization")) {
+                        const auto quantum = *q == "beat" ? MusicalTick(ticks_per_quarter)
+                            : *q == "bar" ? bar : MusicalTick(0);
+                        if (*q != "immediate" && !quantum)
+                            error = "capture quantization must be immediate, beat, or bar";
+                        else if (quantum)
+                            capture_tick = ((capture_tick + quantum - 1) / quantum) * quantum;
+                    }
+                }
+                if (error.empty() && arrangement_recording_.start(
+                        capture_tick,
                         mode == "replace" ? ArrangementRecordMode::replace
                                           : ArrangementRecordMode::overdub,
                         (bars ? *bars : 0) * bar,
@@ -4622,23 +4751,41 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                         arrangement.active_pattern)
                         arrangement_recording_.capture_pattern(
                             arrangement.active_pattern,
-                            state_.transport_tick + (bars ? *bars : 0) * bar);
+                            capture_tick + (bars ? *bars : 0) * bar);
                     if (arrangement.chain_running)
                         arrangement_recording_.capture_chain(
                             timeline.timeline,
-                            state_.transport_tick + (bars ? *bars : 0) * bar);
+                            capture_tick + (bars ? *bars : 0) * bar);
                     changed_locked();
                 }
             }
-        } else if (command.action_id == "arrangement.record-stop.v1") {
-            if (arrangement_recording_.stop(state_.transport_tick, error))
+        } else if (command.action_id == "arrangement.record-stop.v1" ||
+                   command.action_id == "performance.capture-stop.v1") {
+            auto stop_tick = state_.transport_tick;
+            if (command.action_id == "performance.capture-stop.v1") {
+                if (const auto q = argument<std::string>(command, "quantization")) {
+                    const auto snapshot = timeline_.snapshot();
+                    const auto bar = static_cast<MusicalTick>(ticks_per_quarter) *
+                        snapshot.timeline.transport.time_signature_numerator * 4 /
+                        snapshot.timeline.transport.time_signature_denominator;
+                    const auto quantum = *q == "beat" ? MusicalTick(ticks_per_quarter)
+                        : *q == "bar" ? bar : MusicalTick(0);
+                    if (*q != "immediate" && !quantum)
+                        error = "capture quantization must be immediate, beat, or bar";
+                    else if (quantum)
+                        stop_tick = ((stop_tick + quantum - 1) / quantum) * quantum;
+                }
+            }
+            if (error.empty() && arrangement_recording_.stop(stop_tick, error))
                 changed_locked();
-        } else if (command.action_id == "arrangement.record-commit.v1") {
+        } else if (command.action_id == "arrangement.record-commit.v1" ||
+                   command.action_id == "performance.capture-commit.v1") {
             if (arrangement_recording_.commit(timeline_, error)) {
                 state_.project_dirty = true;
                 changed_locked();
             }
-        } else if (command.action_id == "arrangement.record-discard.v1") {
+        } else if (command.action_id == "arrangement.record-discard.v1" ||
+                   command.action_id == "performance.capture-discard.v1") {
             arrangement_recording_.discard();
             changed_locked();
         } else if (command.action_id == "pattern.create.v1" ||
@@ -7660,7 +7807,25 @@ void ApplicationService::synchronize_locked() const {
     AudioEngine::TimelineActivationEvent activation;
     while (engine_.pop_timeline_activation(activation)) {
         ++observed_timeline_activation_count_;
-        performance_launcher_.acknowledge(activation.frame);
+        std::vector<PreparedLaunch> activated_launches;
+        performance_launcher_.acknowledge(activation.frame, &activated_launches);
+        for (const auto &launch : activated_launches) {
+            arrangement_recording_.capture_performance(
+                launch, activation.frame, launch.scene,
+                launch.follow_transition,
+                timeline.timeline.arrangement.fixed_velocity);
+            PreparedLaunch follow;
+            std::string follow_error;
+            if (launch.operation != PreparedLaunchOperation::stop &&
+                performance_launcher_.prepare_follow(launch, follow, follow_error)) {
+                const auto session = performance_launcher_.compose_session(
+                    std::span(&follow, 1));
+                if (!publish_performance_launches(timeline.timeline, session,
+                                                  follow_error))
+                    state_.arrangement_error = follow_error;
+            } else if (!follow_error.empty())
+                state_.arrangement_error = follow_error;
+        }
         if (pending_record_frame_ && activation.frame < *pending_record_frame_)
             continue;
         const auto activation_tick = static_cast<MusicalTick>(
@@ -8042,6 +8207,8 @@ void ApplicationService::synchronize_locked() const {
     state_.arrangement_recording = arrangement_recording_.status();
     state_.captured_pattern_launches = arrangement_recording_.patterns();
     state_.captured_automation_changes = arrangement_recording_.automation();
+    state_.captured_performance_launches =
+        arrangement_recording_.performance_launches();
     state_.arrangement_automation = arrangement.automation;
     state_.patterns.clear();
     state_.patterns.reserve(arrangement.patterns.size());

@@ -1,5 +1,9 @@
 # Musical timeline
 
+Performance capture uses audio-engine activation acknowledgements and commits a
+single prepared timeline transaction; requested or canceled launches are not
+treated as musical activations.
+
 Live-loop boundaries derive from authoritative musical time and become bounded
 recorder frame offsets before capture.
 

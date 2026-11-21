@@ -57,6 +57,7 @@ bool ArrangementRecordingService::start(MusicalTick tick,
     }
     patterns_.clear();
     automation_.clear();
+    performance_launches_.clear();
     status_ = {ArrangementRecordPhase::recording,
                mode,
                true,
@@ -67,12 +68,13 @@ bool ArrangementRecordingService::start(MusicalTick tick,
                0,
                0,
                0,
+               0,
                {}};
     error.clear();
     return true;
 }
 bool ArrangementRecordingService::reserve_event() noexcept {
-    if (patterns_.size() + automation_.size() < capacity_)
+    if (patterns_.size() + automation_.size() + performance_launches_.size() < capacity_)
         return true;
     ++status_.overflow_count;
     status_.phase = ArrangementRecordPhase::overflow;
@@ -180,6 +182,21 @@ bool ArrangementRecordingService::capture_automation(
     status_.captured_automation = automation_.size();
     return true;
 }
+bool ArrangementRecordingService::capture_performance(
+    const PreparedLaunch &launch, std::uint64_t actual_frame,
+    PerformanceSceneId scene, bool follow_transition, float velocity) noexcept {
+    if (status_.phase != ArrangementRecordPhase::recording ||
+        launch.activation_tick < status_.start_tick || !launch.slot ||
+        !launch.track || !std::isfinite(velocity))
+        return false;
+    if (!reserve_event()) return false;
+    performance_launches_.push_back(
+        {launch.slot, launch.track, launch.operation, launch.source_type,
+         launch.source_id, launch.activation_tick, actual_frame, scene,
+         follow_transition, std::clamp(velocity, 0.0F, 1.0F)});
+    status_.captured_performance_launches = performance_launches_.size();
+    return true;
+}
 bool ArrangementRecordingService::stop(MusicalTick tick, std::string &error) {
     if (status_.phase != ArrangementRecordPhase::recording ||
         tick < status_.start_tick) {
@@ -209,11 +226,28 @@ bool ArrangementRecordingService::commit(TimelineService &service,
     }
     auto transaction = service.edit();
     auto &arrangement = transaction.timeline().arrangement;
-    if (status_.mode == ArrangementRecordMode::replace)
+    const auto source_audio_clips = arrangement.audio_clips;
+    arrangement.song_start = std::min(arrangement.song_start, status_.start_tick);
+    arrangement.song_end = std::max(arrangement.song_end, status_.stop_tick);
+    if (status_.mode == ArrangementRecordMode::replace) {
         std::erase_if(arrangement.clips, [&](const auto &clip) {
             return clip.start < status_.stop_tick &&
                    clip.start + clip.duration > status_.start_tick;
         });
+        std::erase_if(arrangement.audio_clips, [&](const auto &clip) {
+            return clip.start < status_.stop_tick &&
+                   clip.start + clip.duration > status_.start_tick;
+        });
+        std::erase_if(arrangement.audio_crossfades, [&](const auto &crossfade) {
+            const auto exists = [&](AudioClipId id) {
+                return std::any_of(arrangement.audio_clips.begin(),
+                                   arrangement.audio_clips.end(),
+                                   [=](const auto &clip) { return clip.id == id; });
+            };
+            return !exists(crossfade.outgoing_clip) ||
+                   !exists(crossfade.incoming_clip);
+        });
+    }
     ClipId next_clip = 1;
     for (const auto &clip : arrangement.clips)
         next_clip = std::max(next_clip, clip.id + 1);
@@ -230,6 +264,46 @@ bool ArrangementRecordingService::commit(TimelineService &service,
             status_.phase = ArrangementRecordPhase::conflict;
             status_.error = error;
             return false;
+        }
+    }
+    AudioClipId next_audio = 1;
+    for (const auto &clip : arrangement.audio_clips)
+        next_audio = std::max(next_audio, clip.id + 1);
+    for (std::size_t i = 0; i < performance_launches_.size(); ++i) {
+        const auto &captured = performance_launches_[i];
+        if (captured.operation == PreparedLaunchOperation::stop) continue;
+        auto end = status_.stop_tick;
+        for (std::size_t j = i + 1; j < performance_launches_.size(); ++j)
+            if (performance_launches_[j].track == captured.track) {
+                end = performance_launches_[j].tick;
+                break;
+            }
+        if (end <= captured.tick) continue;
+        if (captured.source_type == LaunchSourceType::pattern) {
+            if (!find_pattern(transaction.timeline(), captured.source_id)) continue;
+            if (!transaction.create_clip(
+                    {next_clip++, captured.source_id, captured.tick,
+                     end - captured.tick, true, 0, captured.velocity, true}, error)) {
+                status_.phase = ArrangementRecordPhase::conflict;
+                status_.error = error;
+                return false;
+            }
+        } else {
+            const auto source = std::find_if(
+                source_audio_clips.begin(), source_audio_clips.end(),
+                [&](const auto &clip) { return clip.id == captured.source_id; });
+            if (source == source_audio_clips.end()) continue;
+            auto clip = *source;
+            clip.id = next_audio++;
+            clip.track = captured.track;
+            clip.start = captured.tick;
+            clip.duration = end - captured.tick;
+            clip.enabled = true;
+            if (!transaction.create_audio_clip(std::move(clip), error)) {
+                status_.phase = ArrangementRecordPhase::conflict;
+                status_.error = error;
+                return false;
+            }
         }
     }
     if (status_.mode == ArrangementRecordMode::replace)
@@ -249,9 +323,6 @@ bool ArrangementRecordingService::commit(TimelineService &service,
         event.value = captured.value;
         arrangement.automation.push_back(std::move(event));
     }
-    arrangement.song_start =
-        std::min(arrangement.song_start, status_.start_tick);
-    arrangement.song_end = std::max(arrangement.song_end, status_.stop_tick);
     arrangement.playback_mode = TimelinePlaybackMode::song;
     if (!service.commit(std::move(transaction),
                         TimelineCommitPolicy::next_audio_callback, error)) {
@@ -267,6 +338,7 @@ bool ArrangementRecordingService::commit(TimelineService &service,
 void ArrangementRecordingService::discard() noexcept {
     patterns_.clear();
     automation_.clear();
+    performance_launches_.clear();
     status_ = {};
     status_.phase = ArrangementRecordPhase::discarded;
 }

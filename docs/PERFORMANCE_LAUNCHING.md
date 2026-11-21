@@ -1,5 +1,8 @@
 # Unified performance launching
 
+Acknowledged launches and resolved follow transitions can be recorded through
+the arrangement recorder; see [Performance capture](PERFORMANCE_CAPTURE.md).
+
 Task 062 adds a presentation-neutral launch coordinator above the existing
 timeline compiler, pattern materializer and audio-clip voices. It does not add
 another clip engine. Definitions are project data; queued commands and active
