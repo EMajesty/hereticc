@@ -474,6 +474,148 @@ bool SliceService::detect_transients(SampleSlotId id, std::uint64_t expected,
     error.clear();
     return true;
 }
+bool SliceService::apply_boundaries(
+    SampleSlotId id, std::uint64_t expected,
+    std::span<const std::uint64_t> supplied, bool create_regions, bool replace,
+    bool assign_pads, std::size_t starting_pad, std::string &error) {
+    std::lock_guard lock(mutex_);
+    synchronize_locked(id);
+    auto &slot = slots_[id.value];
+    if (!valid_revision_locked(id, expected, error))
+        return false;
+    std::vector<std::uint64_t> boundaries(supplied.begin(), supplied.end());
+    if (boundaries.size() < 2) {
+        error = "at least two analysis boundaries are required";
+        return false;
+    }
+    std::sort(boundaries.begin(), boundaries.end());
+    boundaries.erase(std::unique(boundaries.begin(), boundaries.end()),
+                     boundaries.end());
+    if (boundaries.size() < 2 || boundaries.front() >= boundaries.back() ||
+        boundaries.back() > slot.frames) {
+        error = "analysis boundaries are outside the sample";
+        return false;
+    }
+    for (std::size_t i = 1; i < boundaries.size(); ++i)
+        if (boundaries[i - 1] >= boundaries[i]) {
+            error = "analysis produced an empty interval";
+            return false;
+        }
+    const auto count = boundaries.size() - 1;
+    if (assign_pads && (starting_pad >= pads_.size() ||
+                        count > pads_.size() - starting_pad)) {
+        error = "analysis result exceeds available pad capacity";
+        return false;
+    }
+
+    auto staged_slices = slot.slices;
+    auto staged_regions = slot.regions;
+    auto staged_pads = pads_;
+    auto staged_region_pads = region_pads_;
+    if (replace) {
+        if (create_regions) {
+            for (auto &pad : staged_region_pads)
+                if (pad && std::any_of(staged_regions.begin(), staged_regions.end(),
+                    [&](const auto &region) { return region.id == *pad; }))
+                    pad.reset();
+            staged_regions.clear();
+        } else {
+            for (auto &pad : staged_pads)
+                if (pad && std::any_of(staged_slices.begin(), staged_slices.end(),
+                    [&](const auto &slice) { return slice.id == *pad; }))
+                    pad.reset();
+            staged_slices.clear();
+        }
+    }
+    std::vector<SliceId> new_slices;
+    std::vector<RegionId> new_regions;
+    for (std::size_t i = 0; i < count; ++i) {
+        if (create_regions) {
+            const auto region_id = next_region_id_++;
+            new_regions.push_back(region_id);
+            staged_regions.push_back({region_id, id, slot.sample_revision,
+                slot.sample_publication, boundaries[i], boundaries[i + 1],
+                "Analysis " + std::to_string(i + 1),
+                RegionDirection::forward, RegionFadeCurve::linear, 0, 0,
+                1.0F, false, boundaries[i], boundaries[i + 1], 0});
+        } else {
+            const auto slice_id = next_id_++;
+            new_slices.push_back(slice_id);
+            staged_slices.push_back({slice_id, id, slot.sample_revision,
+                slot.sample_publication, boundaries[i], boundaries[i + 1],
+                "Analysis " + std::to_string(i + 1), {}, 1.0F});
+        }
+    }
+    if (assign_pads)
+        for (std::size_t i = 0; i < count; ++i) {
+            const auto pad = starting_pad + i;
+            staged_pads[pad] = create_regions
+                                   ? std::optional<SliceId>{}
+                                   : std::optional<SliceId>{new_slices[i]};
+            staged_region_pads[pad] =
+                create_regions ? std::optional<RegionId>{new_regions[i]}
+                               : std::optional<RegionId>{};
+        }
+
+    // Queue changed mappings only after every boundary, identity and capacity
+    // check has succeeded. Deleted assignments must also be removed from the
+    // audio-active note map. The operation is bounded by the fixed 16 pads.
+    std::array<PadMappingActivation, 16> mappings{};
+    std::uint16_t changed_mask{};
+    for (std::size_t pad = 0; pad < pads_.size(); ++pad) {
+        if (staged_pads[pad] == pads_[pad] &&
+            staged_region_pads[pad] == region_pads_[pad])
+            continue;
+        changed_mask |= std::uint16_t{1} << pad;
+        auto &mapping = mappings[pad];
+        if (staged_pads[pad]) {
+            const auto found = std::find_if(
+                staged_slices.begin(), staged_slices.end(), [&](const auto &v) {
+                    return v.id == *staged_pads[pad];
+                });
+            if (found == staged_slices.end()) {
+                error = "staged pad target does not exist";
+                return false;
+            }
+            mapping = {found->slot, found->sample_publication,
+                       found->start_frame, found->end_frame, found->gain,
+                       pad_settings_[pad], {}, true};
+        } else if (staged_region_pads[pad]) {
+            const auto found = std::find_if(
+                staged_regions.begin(), staged_regions.end(), [&](const auto &v) {
+                    return v.id == *staged_region_pads[pad];
+                });
+            if (found == staged_regions.end()) {
+                error = "staged region target does not exist";
+                return false;
+            }
+            auto settings = pad_settings_[pad];
+            settings.reverse = found->direction == RegionDirection::reverse;
+            mapping = PadMappingActivation{
+                found->slot, found->sample_publication, found->start_frame,
+                found->end_frame, found->gain, settings,
+                SampleRegionPlayback{found->fade_in_frames,
+                                     found->fade_out_frames,
+                                     found->loop_start_frame,
+                                     found->loop_end_frame,
+                                     found->loop_crossfade_frames,
+                                     found->fade_curve,
+                                     found->loop_enabled},
+                true};
+        }
+    }
+    if (!engine_.publish_pad_mappings(mappings, changed_mask)) {
+        error = "atomic pad mapping queue is full";
+        return false;
+    }
+    slot.slices = std::move(staged_slices);
+    slot.regions = std::move(staged_regions);
+    pads_ = staged_pads;
+    region_pads_ = staged_region_pads;
+    ++slot.revision;
+    error.clear();
+    return true;
+}
 bool SliceService::publish_pad_locked(std::size_t pad, const SampleSlice *slice,
                                       std::string &error) {
     if (pad >= pads_.size()) {

@@ -1,5 +1,10 @@
 # Architecture
 
+Sample analysis workers retain immutable `SampleManager` versions and publish
+only transient control-side result snapshots. Accepted boundaries enter the
+existing `SliceService` region/slice model through a validated batch; the audio
+engine never analyzes PCM or observes editable candidate objects.
+
 Sample regions are control-side metadata compiled into bounded targets. A voice
 copies boundaries, fade/loop settings and an immutable sample-version reference
 at trigger time, so edits affect new triggers without mutating active voices.

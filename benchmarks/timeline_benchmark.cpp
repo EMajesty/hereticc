@@ -627,6 +627,27 @@ void slice_analysis_cases() {
                   .count();
     checksum += transients.size();
     result("transient_detection", 48000, 256, 0, elapsed);
+    neurogenic::SampleAnalysisSettings settings;
+    settings.algorithm = neurogenic::SampleAnalysisAlgorithm::transients;
+    settings.sensitivity = 0.2F;
+    settings.minimum_separation_frames = 1024;
+    begin = Clock::now();
+    const auto session_result = neurogenic::analyze_sample(
+        source, neurogenic::SampleSlotId{0}, 1, 1, settings);
+    elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                  Clock::now() - begin).count();
+    checksum += session_result.candidates.size();
+    result("sample_analysis_stereo_equivalent_4_seconds", 48000, 256, 0,
+           elapsed);
+    settings.algorithm = neurogenic::SampleAnalysisAlgorithm::quiet_regions;
+    begin = Clock::now();
+    const auto quiet = neurogenic::analyze_sample(
+        source, neurogenic::SampleSlotId{0}, 1, 1, settings);
+    elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                  Clock::now() - begin).count();
+    checksum += quiet.suggested_regions.size();
+    result("sample_analysis_quiet_noisy_4_seconds", 48000, 256, 0,
+           elapsed);
 }
 void gui_case(int width, int height) {
     neurogenic::AudioEngine engine;

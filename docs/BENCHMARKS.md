@@ -1,5 +1,10 @@
 # Performance monitoring and benchmarks
 
+`sample_analysis_stereo_equivalent_4_seconds` and
+`sample_analysis_quiet_noisy_4_seconds` report control-side preparation time.
+They do not report callback cost because analysis is never called by audio
+processing. Temporary storage is reported by the result API.
+
 Task 054 adds `region_fades_16_voices`, `region_loops_32_voices`, and
 `region_stretch_16_voices`. They measure callback playback separately from
 control-side editing and are host regressions, not Pi 5 or N150 claims.

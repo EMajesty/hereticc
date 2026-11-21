@@ -1,5 +1,9 @@
 # Implementation status
 
+- Task 055: immutable-version transient/quiet detection, equal and tempo-grid
+  boundaries, cancellable sessions, candidate editing, validated model apply,
+  pad-capacity checks and presentation-neutral discovery.
+
 - Task 054: stable nondestructive sample regions, source-frame fades, bounded
   forward/reverse loops and crossfades, slice conversion, pad playback,
   version-4 persistence/presets, actions and discovery are implemented.

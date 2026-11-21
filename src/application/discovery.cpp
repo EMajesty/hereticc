@@ -108,6 +108,8 @@ std::string action_target(std::string_view id) {
         id.rfind("region.", 0) == 0 ||
         id.rfind("pad.", 0) == 0)
         return "sample-slot";
+    if (id.rfind("sample-analysis.", 0) == 0)
+        return "sample-analysis-session";
     return {};
 }
 } // namespace
@@ -121,6 +123,7 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
         {"modulation-graph", 6, true, {}}, {"performance-macros", 2, true, {}},
         {"midi-routing", 2, true, {}}, {"audio-recording", 1, true, {}},
         {"sound-presets", 2, true, {}}, {"sample-regions", 1, true, {}},
+        {"sample-analysis", 1, true, {}},
         {"high-frequency-telemetry", 1, true, {}},
         {"typed-parameter-bindings", 1, true, {}}};
     result.object_types = {
@@ -130,6 +133,8 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
         {"instrument", "Instrument", true, true, true},
         {"sample-slot", "Sample slot", false, false, true},
         {"sample-region", "Sample region", true, true, true},
+        {"sample-analysis-session", "Sample analysis session", true, true, false},
+        {"sample-analysis-algorithm", "Sample analysis algorithm", false, false, false},
         {"pattern", "Pattern", true, true, true},
         {"clip", "Clip", true, true, true},
         {"arrangement", "Arrangement", false, false, true},
@@ -226,6 +231,26 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
             {"sample-region", object_id("sample-region", region.id),
              object_id("sample-slot", state.selected_sample_slot.value),
              region.name, true, region.id == state.selected_region, {}});
+    for (const auto algorithm : {
+             SampleAnalysisAlgorithm::transients,
+             SampleAnalysisAlgorithm::quiet_regions,
+             SampleAnalysisAlgorithm::equal_divisions,
+             SampleAnalysisAlgorithm::tempo_grid}) {
+        const auto name = std::string(sample_analysis_algorithm_name(algorithm));
+        result.objects.push_back({"sample-analysis-algorithm",
+                                  "sample-analysis-algorithm:" + name, {},
+                                  name, true, false, {}});
+    }
+    for (const auto &session : state.sample_analysis_sessions)
+        result.objects.push_back(
+            {"sample-analysis-session",
+             object_id("sample-analysis-session", session.id),
+             object_id("sample-slot", session.result.source_slot.value),
+             std::string(sample_analysis_algorithm_name(
+                 session.result.settings.algorithm)),
+             session.status != SampleAnalysisStatus::failed,
+             session.id == state.selected_analysis_session,
+             session.error});
     for (const auto &pattern : state.patterns)
         result.objects.push_back({"pattern", object_id("pattern", pattern.id),
                                   "arrangement:main", pattern.name, true,
@@ -335,6 +360,8 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
         {"clips", "arrangement:main", "Clip collection", DiscoveryValueKind::collection, DiscoveryUpdateRate::state},
         {"sample.regions", "project:current", "Sample region collection", DiscoveryValueKind::collection, DiscoveryUpdateRate::state},
         {"sample.region-assignments", "project:current", "Region pad assignments", DiscoveryValueKind::collection, DiscoveryUpdateRate::state},
+        {"sample.analysis-sessions", "project:current", "Transient sample analysis sessions", DiscoveryValueKind::collection, DiscoveryUpdateRate::state},
+        {"sample.analysis-progress", "project:current", "Sample analysis progress", DiscoveryValueKind::collection, DiscoveryUpdateRate::telemetry},
         {"mixer.meters", "master:main", "Mixer peak meters", DiscoveryValueKind::collection, DiscoveryUpdateRate::telemetry},
         {"modulation.outputs", "project:current", "Current modulator outputs", DiscoveryValueKind::collection, DiscoveryUpdateRate::telemetry},
         {"macros.effective-values", "project:current", "Effective macro values", DiscoveryValueKind::collection, DiscoveryUpdateRate::telemetry},
@@ -351,6 +378,9 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
                      {"modulation-connections", state.modulation.route_count, state.modulation.routes.size()},
                      {"performance-macros", state.performance_macros.macros.size(), state.performance_macros.macro_capacity},
                      {"performance-scenes", state.performance_macros.scenes.size(), state.performance_macros.scene_capacity}};
+    result.limits.push_back({"sample-analysis-sessions",
+                             state.sample_analysis_sessions.size(),
+                             SampleAnalysisService::maximum_sessions});
     if (!state.modulation_graph.valid && !state.modulation_graph.message.empty())
         result.validation_errors.push_back(state.modulation_graph.message);
     if (!state.preset_application.error.empty())

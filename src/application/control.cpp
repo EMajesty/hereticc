@@ -360,6 +360,25 @@ ActionRegistry::ActionRegistry() {
     add(action("slice.detect-transients.v1", "Detect transients", "Samples",
                {{"sensitivity", ValueType::real},
                 {"minimum_frames", ValueType::integer}}));
+    add(action("sample-analysis.start.v1", "Start sample analysis", "Samples",
+               {{"algorithm", ValueType::text},
+                {"sensitivity", ValueType::real, false},
+                {"minimum_frames", ValueType::integer, false},
+                {"divisions", ValueType::integer, false},
+                {"source_bpm", ValueType::real, false},
+                {"beats_per_slice", ValueType::real, false}}));
+    add(action("sample-analysis.cancel.v1", "Cancel sample analysis", "Samples"));
+    add(action("sample-analysis.discard.v1", "Discard sample analysis", "Samples"));
+    add(action("sample-analysis.candidate-add.v1", "Add analysis boundary", "Samples",
+               {{"frame", ValueType::integer}}));
+    add(action("sample-analysis.candidate-move.v1", "Move analysis boundary", "Samples",
+               {{"candidate_id", ValueType::integer}, {"frame", ValueType::integer}}));
+    add(action("sample-analysis.candidate-remove.v1", "Remove analysis boundary", "Samples",
+               {{"candidate_id", ValueType::integer}}));
+    add(action("sample-analysis.apply.v1", "Apply sample analysis", "Samples",
+               {{"target", ValueType::text}, {"mode", ValueType::text},
+                {"assign_pads", ValueType::boolean, false},
+                {"starting_pad", ValueType::integer, false}}));
     add(action("slice.pad-assign.v1", "Assign slice to pad", "Samples",
                {{"pad", ValueType::integer}}));
     add(action("slice.pad-clear.v1", "Clear pad slice", "Samples",
@@ -1023,7 +1042,8 @@ ApplicationService::ApplicationService(AudioEngine &engine,
                                        SampleManager &samples,
                                        std::size_t capacity)
     : engine_(engine), timeline_(timeline), samples_(samples),
-      slices_(engine, samples), recording_(engine.sample_rate()),
+      slices_(engine, samples), sample_analysis_(samples, slices_),
+      recording_(engine.sample_rate()),
       capacity_(capacity) {
     if (capacity_ == 0)
         throw std::invalid_argument(
@@ -5088,6 +5108,92 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     }
                 }
             }
+        } else if (command.action_id.rfind("sample-analysis.", 0) == 0) {
+            if (command.action_id == "sample-analysis.start.v1") {
+                SampleAnalysisSettings settings;
+                const auto algorithm = *argument<std::string>(command, "algorithm");
+                if (algorithm == "transients")
+                    settings.algorithm = SampleAnalysisAlgorithm::transients;
+                else if (algorithm == "quiet-regions")
+                    settings.algorithm = SampleAnalysisAlgorithm::quiet_regions;
+                else if (algorithm == "equal-divisions")
+                    settings.algorithm = SampleAnalysisAlgorithm::equal_divisions;
+                else if (algorithm == "tempo-grid")
+                    settings.algorithm = SampleAnalysisAlgorithm::tempo_grid;
+                else
+                    error = "unknown sample analysis algorithm";
+                if (const auto value = argument<double>(command, "sensitivity"))
+                    settings.sensitivity = static_cast<float>(*value);
+                if (const auto value = argument<std::int64_t>(command, "minimum_frames"))
+                    settings.minimum_separation_frames =
+                        static_cast<std::uint64_t>(std::max<std::int64_t>(0, *value));
+                if (const auto value = argument<std::int64_t>(command, "divisions"))
+                    settings.divisions = static_cast<std::uint32_t>(
+                        std::max<std::int64_t>(0, *value));
+                if (const auto value = argument<double>(command, "source_bpm"))
+                    settings.source_bpm = *value;
+                if (const auto value = argument<double>(command, "beats_per_slice"))
+                    settings.beats_per_slice = *value;
+                SampleAnalysisSessionId created{};
+                if (error.empty() && sample_analysis_.start(
+                                         state_.selected_sample_slot, settings,
+                                         created, error))
+                    state_.selected_analysis_session = created;
+            } else if (command.action_id == "sample-analysis.cancel.v1") {
+                (void)sample_analysis_.cancel(state_.selected_analysis_session,
+                                              error);
+            } else if (command.action_id == "sample-analysis.discard.v1") {
+                if (sample_analysis_.discard(state_.selected_analysis_session,
+                                             error))
+                    state_.selected_analysis_session = 0;
+            } else if (command.action_id == "sample-analysis.candidate-add.v1") {
+                const auto frame = *argument<std::int64_t>(command, "frame");
+                SampleAnalysisCandidateId created{};
+                if (frame < 0)
+                    error = "candidate frame must be nonnegative";
+                else
+                    (void)sample_analysis_.add_candidate(
+                        state_.selected_analysis_session,
+                        static_cast<std::uint64_t>(frame), created, error);
+            } else if (command.action_id == "sample-analysis.candidate-move.v1") {
+                const auto candidate = *argument<std::int64_t>(command, "candidate_id");
+                const auto frame = *argument<std::int64_t>(command, "frame");
+                if (candidate <= 0 || frame < 0)
+                    error = "candidate identity/frame is invalid";
+                else
+                    (void)sample_analysis_.move_candidate(
+                        state_.selected_analysis_session,
+                        static_cast<SampleAnalysisCandidateId>(candidate),
+                        static_cast<std::uint64_t>(frame), error);
+            } else if (command.action_id == "sample-analysis.candidate-remove.v1") {
+                const auto candidate = *argument<std::int64_t>(command, "candidate_id");
+                if (candidate <= 0)
+                    error = "candidate identity is invalid";
+                else
+                    (void)sample_analysis_.remove_candidate(
+                        state_.selected_analysis_session,
+                        static_cast<SampleAnalysisCandidateId>(candidate), error);
+            } else if (command.action_id == "sample-analysis.apply.v1") {
+                SampleAnalysisApplyOptions options;
+                const auto target = *argument<std::string>(command, "target");
+                const auto mode = *argument<std::string>(command, "mode");
+                if (target == "slices") options.target = SampleAnalysisApplyTarget::slices;
+                else if (target == "regions") options.target = SampleAnalysisApplyTarget::regions;
+                else error = "analysis target must be slices or regions";
+                if (mode == "replace") options.mode = SampleAnalysisApplyMode::replace;
+                else if (mode == "append") options.mode = SampleAnalysisApplyMode::append;
+                else error = "analysis apply mode must be replace or append";
+                if (const auto value = argument<bool>(command, "assign_pads"))
+                    options.assign_pads = *value;
+                if (const auto value = argument<std::int64_t>(command, "starting_pad"))
+                    options.starting_pad = static_cast<std::size_t>(
+                        std::max<std::int64_t>(0, *value));
+                if (error.empty())
+                    (void)sample_analysis_.apply(
+                        state_.selected_analysis_session, options, error);
+            }
+            state_.sample_analysis_sessions = sample_analysis_.snapshots();
+            if (error.empty()) changed_locked();
         } else if (command.action_id.rfind("slice.", 0) == 0 ||
                    command.action_id.rfind("region.", 0) == 0 ||
                    command.action_id == "sample.preview.v1" ||
@@ -7050,6 +7156,7 @@ void ApplicationService::synchronize_locked() const {
          state_.selected_pad_settings.stretch_quality,
          state_.effective_stretch_ratio, 1.0F, engine_.sample_rate()});
     state_.waveform_peaks = std::move(slice_state.waveform);
+    state_.sample_analysis_sessions = sample_analysis_.snapshots();
     state_.slices.clear();
     state_.slices.reserve(slice_state.slices.size());
     for (const auto &slice : slice_state.slices)

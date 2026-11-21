@@ -364,6 +364,31 @@ bool AudioEngine::map_note_to_region(
 bool AudioEngine::clear_note_slice(std::uint8_t note) noexcept {
     return slice_map_commands_.push({SliceMapCommand::Type::clear, note, {}});
 }
+bool AudioEngine::publish_pad_mappings(
+    const std::array<PadMappingActivation, 16> &mappings,
+    std::uint16_t changed_mask) noexcept {
+    PadMappingBatch batch;
+    batch.changed_mask = changed_mask;
+    for (std::size_t pad = 0; pad < mappings.size(); ++pad) {
+        if ((changed_mask & (std::uint16_t{1} << pad)) == 0) continue;
+        const auto &source = mappings[pad];
+        auto &target = batch.targets[pad];
+        if (!source.assigned) continue;
+        if (source.slot == invalid_sample_slot || source.publication == 0 ||
+            source.start_frame >= source.end_frame ||
+            !std::isfinite(source.gain) || source.gain < 0)
+            return false;
+        target.slot = source.slot;
+        target.publication = source.publication;
+        target.start_frame = source.start_frame;
+        target.end_frame = source.end_frame;
+        target.playback = source.playback;
+        target.playback.gain *= source.gain;
+        target.region = source.region;
+        target.enabled = true;
+    }
+    return changed_mask == 0 || pad_mapping_batches_.push(batch);
+}
 bool AudioEngine::configure_note_playback(
     std::uint8_t note, SamplePlaybackSettings settings) noexcept {
     SliceTarget target{};
@@ -1141,6 +1166,11 @@ void AudioEngine::process(std::span<float> left,
         else
             note_slices_[slice_map.note].playback = slice_map.target.playback;
     }
+    PadMappingBatch mapping_batch;
+    while (pad_mapping_batches_.pop(mapping_batch))
+        for (std::size_t pad = 0; pad < mapping_batch.targets.size(); ++pad)
+            if (mapping_batch.changed_mask & (std::uint16_t{1} << pad))
+                note_slices_[36 + pad] = mapping_batch.targets[pad];
 
     Pattern pattern;
     MidiClockOutputConfiguration midi_clock_configuration;

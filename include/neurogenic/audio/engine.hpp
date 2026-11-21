@@ -67,6 +67,14 @@ struct PresetPadActivation {
     SampleRegionPlayback region;
     bool assigned{};
 };
+struct PadMappingActivation {
+    SampleSlotId slot{invalid_sample_slot};
+    std::uint64_t publication{}, start_frame{}, end_frame{};
+    float gain{1.0F};
+    SamplePlaybackSettings playback;
+    SampleRegionPlayback region;
+    bool assigned{};
+};
 struct PresetActivationRequest {
     MixerConfiguration mixer;
     ModulationConfiguration modulation;
@@ -146,6 +154,9 @@ class AudioEngine {
         std::uint64_t start_frame, std::uint64_t end_frame, float gain,
         SamplePlaybackSettings, SampleRegionPlayback) noexcept;
     [[nodiscard]] bool clear_note_slice(std::uint8_t note) noexcept;
+    [[nodiscard]] bool publish_pad_mappings(
+        const std::array<PadMappingActivation, 16> &,
+        std::uint16_t changed_mask) noexcept;
     [[nodiscard]] bool configure_note_playback(std::uint8_t note,
                                                SamplePlaybackSettings) noexcept;
     void trigger_synth(
@@ -462,6 +473,10 @@ class AudioEngine {
         std::uint8_t note{};
         SliceTarget target;
     };
+    struct PadMappingBatch {
+        std::array<SliceTarget, 16> targets{};
+        std::uint16_t changed_mask{};
+    };
     struct SampleUpdate {
         enum class Type : std::uint8_t { install, unload };
         Type type{};
@@ -583,6 +598,7 @@ class AudioEngine {
     SpscQueue<MidiRoutingConfiguration, 5> midi_routing_configurations_;
     SpscQueue<MidiPacket, 257> midi_inputs_;
     SpscQueue<SliceMapCommand, 65> slice_map_commands_;
+    SpscQueue<PadMappingBatch, 5> pad_mapping_batches_;
     std::atomic<std::uint64_t> dropped_triggers_{}, dropped_patterns_{},
         dropped_timelines_{}, dropped_timeline_events_{},
         dropped_legacy_events_{}, dropped_transport_commands_{},

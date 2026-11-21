@@ -1,5 +1,9 @@
 # Nondestructive sample regions
 
+Offline boundary proposals are provided by version-aware analysis sessions;
+see [SAMPLE_ANALYSIS.md](SAMPLE_ANALYSIS.md). Applying candidates can create
+regions or legacy slices, while unaccepted candidates are never persisted.
+
 Sample regions are stable, project-persistent views into immutable sample PCM.
 A region owns an ID, sample slot/version reference, source-frame start and
 exclusive end, name, direction, gain, fades, and an optional loop. Editing a

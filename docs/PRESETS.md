@@ -1,5 +1,8 @@
 # Reusable sound presets
 
+Sample presets retain accepted slice/region metadata; analysis sessions and
+candidate confidence values are intentionally excluded from preset packages.
+
 NEUROGENIC presets are independent of projects. `PresetLibrary` is the typed,
 control-side API for saving, loading, enumerating, validating, duplicating,
 deleting, exporting and importing them. Preset work never runs in the audio

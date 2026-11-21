@@ -1,5 +1,8 @@
 # Project persistence
 
+Accepted analysis results persist as ordinary versioned slices/regions. Active
+analysis jobs and unaccepted candidates are transient and are not project data.
+
 Sample metadata version 4 persists stable regions, fades, loop boundaries and
 region pad assignments. Older sidecars migrate with an empty region set and
 unchanged playback. Grouped region Undo/Redo is not yet implemented.

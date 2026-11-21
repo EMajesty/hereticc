@@ -5,6 +5,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -95,6 +96,11 @@ class SliceService {
     bool detect_transients(SampleSlotId, std::uint64_t expected_revision,
                            float sensitivity, std::uint64_t minimum_separation,
                            std::string &error);
+    bool apply_boundaries(SampleSlotId, std::uint64_t expected_revision,
+                          std::span<const std::uint64_t> boundaries,
+                          bool create_regions, bool replace,
+                          bool assign_pads, std::size_t starting_pad,
+                          std::string &error);
     bool assign_pad(std::size_t pad, SliceId, std::uint64_t expected_revision,
                     std::string &error);
     bool clear_pad(std::size_t pad, std::uint64_t expected_revision,

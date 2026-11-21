@@ -1,5 +1,9 @@
 # Live sample management
 
+Transient, quiet-gap, equal and tempo-grid analysis is control-side and
+nondestructive. See [SAMPLE_ANALYSIS.md](SAMPLE_ANALYSIS.md). Results retain the
+source publication identity and are rejected after sample replacement.
+
 Nondestructive playback regions, fades, looping, slice conversion and stable
 pad assignments are documented in [SAMPLE_REGIONS.md](SAMPLE_REGIONS.md).
 Regions use source-frame coordinates and never alter immutable PCM.

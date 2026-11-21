@@ -1,5 +1,9 @@
 # Application discovery contract
 
+The `sample-analysis` capability exposes discoverable algorithm and session
+objects, bounded session usage, candidate-edit/apply actions, ordinary state and
+telemetry-rate progress. Waveform PCM is deliberately absent from discovery.
+
 Capability `sample-regions` version 1 exposes region objects and semantic edit
 actions. `sample.regions` and `sample.region-assignments` provide revisioned
 metadata without placing waveform PCM in ordinary snapshots.

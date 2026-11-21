@@ -13,6 +13,10 @@ The mixer supports bounded native track, group, aux and master effect chains. Se
 
 # NEUROGENIC
 
+Offline sample analysis now provides version-aware transient, quiet-gap, equal
+and tempo-grid boundary proposals before nondestructive application as slices or
+regions. See [sample analysis](docs/SAMPLE_ANALYSIS.md).
+
 Inspect the presentation-neutral application API without audio or GUI hardware:
 
 ```sh

@@ -1,6 +1,7 @@
 #pragma once
 #include "neurogenic/application/performance_macros.hpp"
 #include "neurogenic/audio/recording.hpp"
+#include "neurogenic/audio/sample_analysis.hpp"
 #include "neurogenic/audio/slicing.hpp"
 #include "neurogenic/performance/monitor.hpp"
 #include "neurogenic/project/project.hpp"
@@ -200,6 +201,8 @@ struct ApplicationState {
     std::array<std::optional<SliceId>, 16> slice_pad_assignments{};
     std::array<std::optional<RegionId>, 16> region_pad_assignments{};
     std::vector<WaveformPeak> waveform_peaks;
+    SampleAnalysisSessionId selected_analysis_session{};
+    std::vector<SampleAnalysisSnapshot> sample_analysis_sessions;
     std::uint64_t selected_pattern{};
     TimelinePlaybackMode playback_mode{TimelinePlaybackMode::legacy};
     PatternId active_pattern{}, queued_pattern{}, next_pattern{};
@@ -301,6 +304,9 @@ class ApplicationService {
     [[nodiscard]] ApplicationState snapshot() const;
     [[nodiscard]] std::uint64_t rejected_commands() const noexcept;
     [[nodiscard]] SliceService &slices() noexcept { return slices_; }
+    [[nodiscard]] SampleAnalysisService &sample_analysis() noexcept {
+        return sample_analysis_;
+    }
     [[nodiscard]] RecordingService &recording() noexcept { return recording_; }
     [[nodiscard]] ArrangementRecordingService &
     arrangement_recording() noexcept {
@@ -343,6 +349,7 @@ class ApplicationService {
     TimelineService &timeline_;
     SampleManager &samples_;
     mutable SliceService slices_;
+    mutable SampleAnalysisService sample_analysis_;
     mutable RecordingService recording_;
     mutable ArrangementRecordingService arrangement_recording_;
     mutable PerformanceMacroService performance_macros_;
