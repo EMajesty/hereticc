@@ -4,6 +4,8 @@ Session performances are committed as the same pattern and audio clip objects;
 actual activation ticks determine clip boundaries. See `PERFORMANCE_CAPTURE.md`.
 
 Patterns and audio clips may be referenced by stable performance launch slots.
+Hybrid session ownership suppresses arrangement material per track; unaffected
+lanes continue and explicit return resumes at the current song position.
 Session launches use the same compiler and transport; arrangement/session/hybrid
 intent is explicit. See `PERFORMANCE_LAUNCHING.md`.
 

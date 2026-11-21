@@ -28,10 +28,8 @@ undoable/redoable.
 ## Hybrid ownership
 
 Session launching owns tracks whose slots have activated. Partial scenes replace
-only listed session tracks; other active session tracks continue. Stop releases a
-track. The current conservative publication uses a session plan while launching
-is active; arbitrary merging with arrangement events on the same track remains
-unsupported.
+only listed tracks; unaffected arrangement and session tracks continue. Stop or
+explicit return restores arrangement material at its current transport phase.
 
 ## API, safety, and limits
 

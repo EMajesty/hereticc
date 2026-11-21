@@ -279,3 +279,7 @@ explicitly or select independent instances; compiled note and parameter events
 carry that numeric identity sample-accurately. Version-1/2 timelines migrate to
 shared synth instance 1. Changing a track's instrument/instance publishes a
 complete plan and existing timeline voices are cleaned up at activation.
+# Hybrid activation
+
+Arrangement and session playback share this scheduler. Prepared swaps carry a
+bounded affected-track set so cleanup does not interrupt unrelated tracks.

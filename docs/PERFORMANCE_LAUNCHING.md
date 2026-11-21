@@ -34,7 +34,7 @@ same position and tempo estimate as pattern playback. A late command never
 activates before the next valid boundary.
 
 The persistent mode is arrangement, session or hybrid. Semantic launches
-publish prepared session plans through `queue_timeline_at`. Pattern sources
+publish prepared hybrid plans through `queue_timeline_at`. Pattern sources
 become ordinary pattern clips and audio/live-loop sources become ordinary audio
 clips, preserving track FX, group/aux routing, stretch, fades, immutable sample
 ownership and recording taps. General merging into a song already in flight is
@@ -66,6 +66,5 @@ queued operations or voices. Older timelines load with an empty launcher in
 arrangement mode. Validation, scene preparation and persistence stay off the
 audio thread; playback uses only existing prepared timeline publication.
 
-Current limitations: scene editing has no dedicated semantic action, follow
-selection is not yet auto-committed, launch gestures are not yet arrangement-
-recorded, and arbitrary hybrid song/session merging remains deferred.
+Task 065 keeps arrangement material running on unaffected tracks and adds
+quantized one/all-track return. See [Hybrid playback](HYBRID_PLAYBACK.md).

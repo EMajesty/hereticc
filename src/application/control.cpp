@@ -179,6 +179,9 @@ ActionRegistry::ActionRegistry() {
                {"slot", ValueType::integer}}));
     add(action("performance.scene-launch.v1", "Launch performance scene",
                "Performance", {{"scene", ValueType::integer}}));
+    add(action("performance.return-arrangement.v1", "Return to arrangement",
+               "Performance", {{"track", ValueType::integer, false},
+               {"quantization", ValueType::text, false}}));
     add(action("performance.scene-create.v1", "Create performance scene",
                "Performance", {{"scene", ValueType::integer}, {"name", ValueType::text}}));
     add(action("performance.scene-delete.v1", "Delete performance scene",
@@ -1377,31 +1380,79 @@ bool ApplicationService::publish_modulation_with_macros(
     return true;
 }
 bool ApplicationService::publish_performance_launches(
-    const Timeline &source, std::span<const PreparedLaunch> launches,
+    const Timeline &source, std::span<const PreparedLaunch> session,
+    std::span<const PreparedLaunch> changes,
     std::string &error) const {
-    if (launches.empty()) {
+    if (changes.empty()) {
         error = "performance launch batch is empty";
         return false;
     }
     auto audible = source;
     auto &a = audible.arrangement;
-    a.playback_mode = TimelinePlaybackMode::song;
-    a.clips.clear();
-    a.audio_clips.clear();
-    a.audio_crossfades.clear();
-    MusicalTick length = ticks_per_quarter * 4;
-    for (const auto &launch : launches) {
+    if (a.playback_mode != TimelinePlaybackMode::song) {
+        error = "hybrid playback requires an arrangement song";
+        return false;
+    }
+    std::vector<TrackId> affected;
+    for (const auto &change : changes)
+        if (std::find(affected.begin(), affected.end(), change.track) ==
+            affected.end())
+            affected.push_back(change.track);
+    std::vector<TrackId> owned;
+    for (const auto &launch : session)
+        if (launch.operation != PreparedLaunchOperation::stop)
+            owned.push_back(launch.track);
+    const auto is_owned = [&](TrackId track) {
+        return std::find(owned.begin(), owned.end(), track) != owned.end();
+    };
+    for (auto &pattern : a.patterns)
+        std::erase_if(pattern.tracks,
+                      [&](const auto &track) { return is_owned(track.track); });
+    std::erase_if(a.audio_clips,
+                  [&](const auto &clip) { return is_owned(clip.track); });
+    std::erase_if(a.audio_crossfades, [&](const auto &crossfade) {
+        const auto present = [&](AudioClipId id) {
+            return std::any_of(a.audio_clips.begin(), a.audio_clips.end(),
+                               [&](const auto &clip) { return clip.id == id; });
+        };
+        return !present(crossfade.outgoing_clip) ||
+               !present(crossfade.incoming_clip);
+    });
+    PatternId next_pattern = 1;
+    ClipId next_clip = 1;
+    AudioClipId next_audio = 1;
+    for (const auto &pattern : a.patterns)
+        next_pattern = std::max(next_pattern, pattern.id + 1);
+    for (const auto &clip : a.clips)
+        next_clip = std::max(next_clip, clip.id + 1);
+    for (const auto &clip : a.audio_clips)
+        next_audio = std::max(next_audio, clip.id + 1);
+    const auto range_start = a.loop_enabled ? a.loop_start : a.song_start;
+    const auto range_end = a.loop_enabled ? a.loop_end : a.song_end;
+    const auto length = range_end - range_start;
+    for (const auto &launch : session) {
         if (launch.operation == PreparedLaunchOperation::stop) continue;
         if (launch.source_type == LaunchSourceType::pattern) {
-            const auto pattern = std::find_if(a.patterns.begin(), a.patterns.end(),
+            const auto pattern = std::find_if(source.arrangement.patterns.begin(),
+                source.arrangement.patterns.end(),
                 [&](const auto &value) { return value.id == launch.source_id; });
-            if (pattern == a.patterns.end()) {
+            if (pattern == source.arrangement.patterns.end()) {
                 error = "performance pattern source disappeared";
                 return false;
             }
-            length = std::max(length, pattern->length);
-            a.clips.push_back({launch.slot, launch.source_id, 0, pattern->length,
-                launch.behavior == LaunchBehavior::loop});
+            PatternDefinition definition = *pattern;
+            definition.id = next_pattern++;
+            definition.name = "Session " + std::to_string(launch.slot);
+            std::erase_if(definition.tracks, [&](const auto &track) {
+                return track.track != launch.track;
+            });
+            if (definition.tracks.empty()) {
+                error = "performance pattern has no content for destination track";
+                return false;
+            }
+            const auto id = definition.id;
+            a.patterns.push_back(std::move(definition));
+            a.clips.push_back({next_clip++, id, range_start, length, true});
         } else {
             const auto source_clip = std::find_if(source.arrangement.audio_clips.begin(),
                 source.arrangement.audio_clips.end(), [&](const auto &value) {
@@ -1412,23 +1463,18 @@ bool ApplicationService::publish_performance_launches(
                 return false;
             }
             auto clip = *source_clip;
-            clip.id = launch.slot;
-            clip.start = 0;
+            clip.id = next_audio++;
+            clip.start = range_start;
+            clip.duration = length;
             clip.track = launch.track;
             clip.loop = launch.behavior == LaunchBehavior::loop ||
                         launch.behavior == LaunchBehavior::legato;
-            length = std::max(length, clip.duration);
             a.audio_clips.push_back(std::move(clip));
         }
     }
-    a.song_start = 0;
-    a.song_end = length;
-    a.loop_enabled = true;
-    a.loop_start = 0;
-    a.loop_end = length;
-    return engine_.queue_timeline_at(audible, launches.front().activation_frame,
+    return engine_.queue_timeline_at(audible, changes.front().activation_frame,
                                      VoiceTransitionPolicy::release_outgoing,
-                                     error);
+                                     error, affected);
 }
 void ApplicationService::set_midi_output_connections(
     const std::array<bool, maximum_midi_ports> &connections) {
@@ -4681,7 +4727,33 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 }
                 if (error.empty() && !launches.empty()) {
                     const auto session = performance_launcher_.compose_session(launches);
-                    if (!publish_performance_launches(snapshot.timeline, session, error))
+                    if (!publish_performance_launches(snapshot.timeline, session,
+                                                      launches, error))
+                        ++state_.performance_launching.diagnostics.rejected;
+                    else changed_locked();
+                }
+            }
+        } else if (command.action_id == "performance.return-arrangement.v1") {
+            const auto snapshot = timeline_.snapshot();
+            if (performance_launcher_.configure(snapshot.timeline, error, true)) {
+                const auto track_argument = argument<std::int64_t>(command, "track");
+                if (track_argument && *track_argument < 0)
+                    error = "track ID must be nonnegative";
+                const auto track = track_argument && *track_argument >= 0
+                    ? static_cast<TrackId>(*track_argument) : TrackId{};
+                auto quantization = LaunchQuantization::bar;
+                if (const auto value = argument<std::string>(command, "quantization")) {
+                    if (*value == "immediate") quantization = LaunchQuantization::immediate;
+                    else if (*value == "quarter") quantization = LaunchQuantization::quarter;
+                    else if (*value != "bar") error = "unknown return quantization";
+                }
+                std::vector<PreparedLaunch> returns;
+                if (error.empty() && performance_launcher_.prepare_return(
+                        track, state_.transport_tick, engine_.frame_position(),
+                        quantization, returns, error)) {
+                    const auto session = performance_launcher_.compose_session(returns);
+                    if (!publish_performance_launches(snapshot.timeline, session,
+                                                      returns, error))
                         ++state_.performance_launching.diagnostics.rejected;
                     else changed_locked();
                 }
@@ -7820,8 +7892,9 @@ void ApplicationService::synchronize_locked() const {
                 performance_launcher_.prepare_follow(launch, follow, follow_error)) {
                 const auto session = performance_launcher_.compose_session(
                     std::span(&follow, 1));
-                if (!publish_performance_launches(timeline.timeline, session,
-                                                  follow_error))
+                if (!publish_performance_launches(
+                        timeline.timeline, session, std::span(&follow, 1),
+                        follow_error))
                     state_.arrangement_error = follow_error;
             } else if (!follow_error.empty())
                 state_.arrangement_error = follow_error;
@@ -8185,7 +8258,7 @@ void ApplicationService::synchronize_locked() const {
     state_.launch_quantization = arrangement.launch_quantization;
     if (performance_launcher_revision_ != timeline.revision) {
         std::string ignored;
-        if (performance_launcher_.configure(timeline.timeline, ignored))
+        if (performance_launcher_.configure(timeline.timeline, ignored, true))
             performance_launcher_revision_ = timeline.revision;
     }
     state_.performance_launching.slots = arrangement.launch_slots;
@@ -8194,7 +8267,8 @@ void ApplicationService::synchronize_locked() const {
     state_.performance_launching.velocity_policy = arrangement.velocity_policy;
     state_.performance_launching.fixed_velocity = arrangement.fixed_velocity;
     state_.performance_launching.pending.assign(performance_launcher_.pending().begin(),
-                                                performance_launcher_.pending().end());
+                                                 performance_launcher_.pending().end());
+    state_.performance_launching.ownership = performance_launcher_.ownership();
     state_.performance_launching.diagnostics = performance_launcher_.diagnostics();
     state_.song_start = arrangement.song_start;
     state_.song_end = arrangement.song_end;

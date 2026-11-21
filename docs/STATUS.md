@@ -475,3 +475,6 @@ capability/state/telemetry notifications with explicit overflow
 resynchronization. Dynamic FX and modulator parameters use their existing
 instance-aware semantic actions. Text metadata and per-field delta payloads
 remain future extensions.
+Task 065 implements per-track arrangement/session ownership, partial-scene
+takeover, track-scoped sample/synth/MIDI cleanup, quantized one/all-track return,
+phase-seeked arrangement restoration, follow invalidation and revisioned state.

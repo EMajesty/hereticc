@@ -399,9 +399,12 @@ void SubtractiveSynth::reset() noexcept {
     age_ = 0;
     modulation_frame_ = 0;
 }
-void SubtractiveSynth::release_timeline_voices(bool immediate) noexcept {
+void SubtractiveSynth::release_timeline_voices(
+    bool immediate, std::span<const std::uint64_t> tracks) noexcept {
     for (auto &voice : voices_)
-        if (voice.owner.track != 0) {
+        if (voice.owner.track != 0 &&
+            (tracks.empty() || std::find(tracks.begin(), tracks.end(),
+                                         voice.owner.track) != tracks.end())) {
             if (immediate)
                 voice.stage = EnvelopeStage::idle;
             else {

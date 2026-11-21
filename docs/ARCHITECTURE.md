@@ -15,6 +15,10 @@ timeline. It validates slot/scene definitions and publishes prepared pattern or
 audio plans at an absolute frame; existing scheduling, SampleVoice ownership
 and mixer routing remain the only playback paths.
 
+Hybrid plans combine arrangement and session material in that scheduler.
+Per-track ownership and a bounded affected-track list constrain voice cleanup;
+absolute-frame seek restores arrangement phase on return.
+
 Live looping composes the callback recorder, a prepared sample-version/voice
 handoff, immutable publication and audio-clip transactions. Overdub mixing and
 activation remain control-side.

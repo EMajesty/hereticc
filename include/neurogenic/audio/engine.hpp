@@ -218,7 +218,8 @@ class AudioEngine {
     bool queue_pattern(const Pattern &pattern) noexcept;
     bool queue_timeline(const Timeline &, std::string &error);
     bool queue_timeline_at(const Timeline &, std::uint64_t activation_frame,
-                           VoiceTransitionPolicy, std::string &error);
+                           VoiceTransitionPolicy, std::string &error,
+                           std::span<const TrackId> affected_tracks = {});
     [[nodiscard]] std::uint64_t
     last_timeline_activation_frame() const noexcept {
         return last_timeline_activation_frame_.load(std::memory_order_acquire);
@@ -562,9 +563,13 @@ class AudioEngine {
         std::unique_ptr<PlaybackPlan> plan;
     };
     struct TimelinePublication {
+        static constexpr std::size_t maximum_affected_tracks =
+            maximum_mixer_tracks;
         std::uint8_t slot{};
         std::uint64_t activation_frame{};
         VoiceTransitionPolicy voice_policy{VoiceTransitionPolicy::preserve};
+        std::array<TrackId, maximum_affected_tracks> affected_tracks{};
+        std::uint16_t affected_track_count{};
     };
     enum class TransportCommand : std::uint8_t {
         play,
@@ -590,7 +595,8 @@ class AudioEngine {
     void release_voice(Voice &, bool immediate = false) noexcept;
     void stop_voices(bool timeline_only = false) noexcept;
     void activate_timeline(const TimelinePublication &, std::uint64_t) noexcept;
-    void cleanup_timeline_voices(VoiceTransitionPolicy, std::uint64_t) noexcept;
+    void cleanup_timeline_voices(VoiceTransitionPolicy, std::uint64_t,
+                                 std::span<const TrackId> = {}) noexcept;
     void reclaim_retired_plans() noexcept;
     void reclaim_sample_versions_unlocked() noexcept;
     void activate_preset(std::size_t) noexcept;
@@ -689,6 +695,11 @@ class AudioEngine {
     MidiRouter midi_router_;
     std::array<std::array<std::array<bool, 128>, 16>, maximum_midi_ports>
         timeline_midi_notes_{};
+    using MidiNoteTrackOwners =
+        std::array<std::array<std::array<TrackId, 128>, 16>,
+                   maximum_midi_ports>;
+    std::unique_ptr<MidiNoteTrackOwners> timeline_midi_note_tracks_{
+        std::make_unique<MidiNoteTrackOwners>()};
     MidiClockOutputConfiguration midi_clock_configuration_{};
     bool accept_external_clock_{};
     bool external_clock_lost_{};

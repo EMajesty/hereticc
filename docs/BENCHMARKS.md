@@ -1,5 +1,13 @@
 # Performance monitoring and benchmarks
 
+Task 065 uses the bounded 16/64-slot preparation cases and integrated scene
+transitions to exercise hybrid publication. Track-scoped activation adds a
+fixed 32-ID payload and bounded cleanup, not callback graph work.
+On the 2026-11-21 Ryzen 7 7800X3D x86-64 Debug host (GCC 15.3), the 16/64-slot
+coordinator cases measured 1.57/3.16 microseconds preparation and 19/24 ns per
+idle callback iteration. These measure launcher bookkeeping, not a physical
+audio backend or a dense 16/32-track hybrid mix.
+
 Task 064 adds stretched overlaps, crossfades, scenes/follows, capture, external
 clock input, and gapless handoff to the bounded integration workload. The
 optional `--soak-seconds` run is excluded from CI. Current workstation numbers

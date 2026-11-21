@@ -67,6 +67,19 @@ bool PerformanceLauncher::configure(const Timeline &timeline, std::string &error
         pending_.clear();
         repetitions_.clear();
         active_.clear();
+    } else {
+        const auto valid = [&](const PreparedLaunch &launch) {
+            const auto *definition = slot(launch.slot);
+            return definition && definition->track == launch.track &&
+                   definition->source_type == launch.source_type &&
+                   definition->source_id == launch.source_id;
+        };
+        std::erase_if(pending_, [&](const auto &launch) {
+            return !valid(launch);
+        });
+        std::erase_if(active_, [&](const auto &entry) {
+            return !valid(entry.second);
+        });
     }
     diagnostics_.used_slots = a.launch_slots.size();
     diagnostics_.used_scenes = a.performance_scenes.size();
@@ -256,6 +269,81 @@ bool PerformanceLauncher::prepare_follow(const PreparedLaunch &active,
     diagnostics_.pending = pending_.size();
     error.clear();
     return true;
+}
+bool PerformanceLauncher::prepare_return(
+    TrackId track, MusicalTick now, std::uint64_t now_frame,
+    LaunchQuantization quantization, std::vector<PreparedLaunch> &result,
+    std::string &error) {
+    result.clear();
+    std::vector<TrackId> tracks;
+    for (const auto &[active_track, launch] : active_)
+        if (track == 0 || active_track == track)
+            tracks.push_back(active_track);
+    if (tracks.empty()) {
+        ++diagnostics_.rejected;
+        error = "track is not session-owned";
+        return false;
+    }
+    if (pending_.size() + tracks.size() > maximum_pending_launches) {
+        ++diagnostics_.rejected;
+        error = "pending return capacity exceeded";
+        return false;
+    }
+    MusicalTick quantum = 1;
+    if (quantization == LaunchQuantization::quarter)
+        quantum = ticks_per_quarter;
+    else if (quantization == LaunchQuantization::bar ||
+             quantization == LaunchQuantization::two_bars ||
+             quantization == LaunchQuantization::four_bars ||
+             quantization == LaunchQuantization::eight_bars) {
+        quantum = bar_ticks(timeline_.transport);
+        if (quantization == LaunchQuantization::two_bars) quantum *= 2;
+        else if (quantization == LaunchQuantization::four_bars) quantum *= 4;
+        else if (quantization == LaunchQuantization::eight_bars) quantum *= 8;
+    }
+    const auto tick = quantization == LaunchQuantization::immediate
+                          ? now
+                          : ((now + quantum - 1) / quantum) * quantum;
+    const auto frame = frame_at(tick, now, now_frame);
+    for (const auto active_track : tracks) {
+        std::erase_if(pending_, [&](const auto &pending) {
+            return pending.track == active_track;
+        });
+        auto value = active_.at(active_track);
+        value.operation = PreparedLaunchOperation::stop;
+        value.activation_tick = tick;
+        value.activation_frame = frame;
+        value.follow_transition = false;
+        result.push_back(value);
+    }
+    pending_.insert(pending_.end(), result.begin(), result.end());
+    diagnostics_.pending = pending_.size();
+    error.clear();
+    return true;
+}
+
+std::vector<TrackPlaybackOwnership> PerformanceLauncher::ownership() const {
+    std::map<TrackId, TrackPlaybackOwnership> result;
+    for (const auto &track : timeline_.tracks)
+        result.emplace(track.id, TrackPlaybackOwnership{track.id});
+    for (const auto &[track, launch] : active_)
+        result[track] = {track, TrackPlaybackOwner::session, 0, launch.slot};
+    for (const auto &launch : pending_) {
+        auto &value = result[launch.track];
+        value.track = launch.track;
+        value.owner = launch.operation == PreparedLaunchOperation::stop
+                          ? TrackPlaybackOwner::transitioning_to_arrangement
+                          : TrackPlaybackOwner::transitioning_to_session;
+        value.transition_frame = launch.activation_frame;
+        value.slot = launch.slot;
+    }
+    std::vector<TrackPlaybackOwnership> values;
+    values.reserve(result.size());
+    for (const auto &[track, value] : result) {
+        (void)track;
+        values.push_back(value);
+    }
+    return values;
 }
 LaunchSlotId PerformanceLauncher::follow(LaunchSlotId id, std::uint64_t repetition,
                                          std::span<const LaunchSlotId> eligible) const noexcept {

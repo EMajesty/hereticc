@@ -146,3 +146,8 @@ Current limitations: historical action descriptors do not all expose numeric
 ranges or enum choices; text project metadata is action-driven rather than a
 registered parameter; export is local rather than a network service; and no
 declarative renderer or UI Studio editor exists yet.
+# Hybrid playback state
+
+Performance launch state API version 2 exposes each track owner, pending frame
+and slot. `performance.return-arrangement.v1` returns one stable track or all
+session tracks with immediate, quarter or bar quantization.

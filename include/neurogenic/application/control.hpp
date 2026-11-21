@@ -173,10 +173,11 @@ struct AudioClipState {
     std::string validation_error;
 };
 struct PerformanceLaunchState {
-    static constexpr std::uint32_t api_version = 1;
+    static constexpr std::uint32_t api_version = 2;
     std::vector<LaunchSlot> slots;
     std::vector<PerformanceLaunchScene> scenes;
     std::vector<PreparedLaunch> pending;
+    std::vector<TrackPlaybackOwnership> ownership;
     PerformancePlaybackMode mode{PerformancePlaybackMode::arrangement};
     VelocityPolicy velocity_policy{VelocityPolicy::native};
     float fixed_velocity{1.0F};
@@ -373,6 +374,7 @@ class ApplicationService {
     bool publish_modulation_with_macros(const ModulationConfiguration &,
                                         std::string &);
     bool publish_performance_launches(const Timeline &,
+                                      std::span<const PreparedLaunch>,
                                       std::span<const PreparedLaunch>,
                                       std::string &) const;
     void synchronize_locked() const;

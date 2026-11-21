@@ -74,3 +74,8 @@ validation diagnostics and typed edit actions. It contains no PCM, UI geometry
 or controller assumptions. Current limits are 1,024 clips per arrangement, the
 global sample-voice budget, single-lane same-track overlap, and existing
 stretcher quality and latency.
+# Hybrid resume
+
+Returning a session-owned track republishes the ordinary clip plan and seeks it
+at the absolute transport frame. Existing stretch/loop source-offset handling
+restores phase without restarting the song.

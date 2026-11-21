@@ -12,6 +12,18 @@ inline constexpr std::size_t maximum_scene_entries = 64;
 inline constexpr std::size_t maximum_pending_launches = 128;
 
 enum class PreparedLaunchOperation : std::uint8_t { start, stop, retrigger };
+enum class TrackPlaybackOwner : std::uint8_t {
+    arrangement,
+    transitioning_to_session,
+    session,
+    transitioning_to_arrangement
+};
+struct TrackPlaybackOwnership {
+    TrackId track{};
+    TrackPlaybackOwner owner{TrackPlaybackOwner::arrangement};
+    std::uint64_t transition_frame{};
+    LaunchSlotId slot{};
+};
 struct PreparedLaunch {
     LaunchSlotId slot{};
     TrackId track{};
@@ -47,6 +59,9 @@ class PerformanceLauncher {
     void acknowledge(std::uint64_t activation_frame,
                      std::vector<PreparedLaunch> *activated = nullptr) noexcept;
     bool prepare_follow(const PreparedLaunch &, PreparedLaunch &, std::string &);
+    bool prepare_return(TrackId, MusicalTick, std::uint64_t,
+                        LaunchQuantization, std::vector<PreparedLaunch> &,
+                        std::string &);
     [[nodiscard]] LaunchSlotId follow(LaunchSlotId, std::uint64_t repetition,
                                       std::span<const LaunchSlotId> eligible) const noexcept;
     [[nodiscard]] float velocity(float input, bool velocity_capable,
@@ -55,6 +70,7 @@ class PerformanceLauncher {
     [[nodiscard]] std::span<const PreparedLaunch> pending() const noexcept { return pending_; }
     [[nodiscard]] std::vector<PreparedLaunch>
     compose_session(std::span<const PreparedLaunch>) const;
+    [[nodiscard]] std::vector<TrackPlaybackOwnership> ownership() const;
 
   private:
     [[nodiscard]] const LaunchSlot *slot(LaunchSlotId) const noexcept;

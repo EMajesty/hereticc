@@ -853,7 +853,13 @@ bool AudioEngine::queue_timeline(const Timeline &timeline, std::string &error) {
 bool AudioEngine::queue_timeline_at(const Timeline &timeline,
                                     std::uint64_t activation_frame,
                                     VoiceTransitionPolicy voice_policy,
-                                    std::string &error) {
+                                    std::string &error,
+                                    std::span<const TrackId> affected_tracks) {
+    if (affected_tracks.size() >
+        TimelinePublication::maximum_affected_tracks) {
+        error = "timeline transition track capacity exceeded";
+        return false;
+    }
     reclaim_retired_plans();
     std::size_t slot = timeline_plans_.size();
     for (std::size_t i = 0; i < timeline_plans_.size(); ++i)
@@ -880,8 +886,15 @@ bool AudioEngine::queue_timeline_at(const Timeline &timeline,
     timeline_plans_[slot].plan = std::move(plan);
     timeline_plans_[slot].state.store(PlanState::queued,
                                       std::memory_order_release);
-    if (!timelines_.push({static_cast<std::uint8_t>(slot), activation_frame,
-                          voice_policy})) {
+    TimelinePublication publication;
+    publication.slot = static_cast<std::uint8_t>(slot);
+    publication.activation_frame = activation_frame;
+    publication.voice_policy = voice_policy;
+    publication.affected_track_count =
+        static_cast<std::uint16_t>(affected_tracks.size());
+    std::copy(affected_tracks.begin(), affected_tracks.end(),
+              publication.affected_tracks.begin());
+    if (!timelines_.push(publication)) {
         timeline_plans_[slot].state.store(PlanState::free,
                                           std::memory_order_release);
         timeline_plans_[slot].plan.reset();
@@ -903,14 +916,19 @@ void AudioEngine::reclaim_retired_plans() noexcept {
 }
 
 void AudioEngine::cleanup_timeline_voices(VoiceTransitionPolicy policy,
-                                          std::uint64_t actual_frame) noexcept {
+                                          std::uint64_t actual_frame,
+                                          std::span<const TrackId> tracks) noexcept {
+    const auto affected = [&](TrackId track) {
+        return tracks.empty() ||
+               std::find(tracks.begin(), tracks.end(), track) != tracks.end();
+    };
     if (policy != VoiceTransitionPolicy::preserve) {
         const auto immediate = policy == VoiceTransitionPolicy::stop_outgoing;
         for (auto &voice : voices_)
-            if (voice.active && voice.timeline_owned)
+            if (voice.active && voice.timeline_owned && affected(voice.track))
                 release_voice(voice, immediate);
         for (auto &synth : synths_)
-            synth->release_timeline_voices(immediate);
+            synth->release_timeline_voices(immediate, tracks);
     }
     // A replaced plan cannot later schedule its outstanding MIDI note-offs.
     // Clean those exact timeline-owned notes under every transition policy;
@@ -921,7 +939,8 @@ void AudioEngine::cleanup_timeline_voices(VoiceTransitionPolicy policy,
                  channel < timeline_midi_notes_[port].size(); ++channel)
                 for (std::size_t note = 0;
                      note < timeline_midi_notes_[port][channel].size(); ++note)
-                    if (timeline_midi_notes_[port][channel][note]) {
+                    if (timeline_midi_notes_[port][channel][note] &&
+                        affected((*timeline_midi_note_tracks_)[port][channel][note])) {
                         MidiPacket packet;
                         packet.port = static_cast<MidiPortId>(port + 1);
                         packet.frame = actual_frame;
@@ -931,12 +950,16 @@ void AudioEngine::cleanup_timeline_voices(VoiceTransitionPolicy policy,
                         packet.size = 3;
                         (void)midi->enqueue(packet);
                         timeline_midi_notes_[port][channel][note] = false;
+                        (*timeline_midi_note_tracks_)[port][channel][note] = 0;
                     }
 }
 
 void AudioEngine::activate_timeline(const TimelinePublication &publication,
                                     std::uint64_t actual_frame) noexcept {
-    cleanup_timeline_voices(publication.voice_policy, actual_frame);
+    cleanup_timeline_voices(
+        publication.voice_policy, actual_frame,
+        std::span(publication.affected_tracks.data(),
+                  publication.affected_track_count));
     auto &next = timeline_plans_[publication.slot];
     auto *timeline = next.plan.get();
     timeline_scheduler_.set_plan(timeline, actual_frame);
@@ -1938,6 +1961,13 @@ void AudioEngine::process(std::span<float> left,
                             timeline_midi_notes_[event.midi_output_port -
                                                  1][channel][event.pitch] =
                                 event.type == MusicalEventType::note_on;
+                        if (event.midi_output_port > 0 &&
+                            event.midi_output_port <= maximum_midi_ports)
+                            (*timeline_midi_note_tracks_)[event.midi_output_port -
+                                                        1][channel][event.pitch] =
+                                event.type == MusicalEventType::note_on
+                                    ? event.track
+                                    : 0;
                     } else if (event.type == MusicalEventType::control_change) {
                         packet.bytes = {
                             static_cast<std::uint8_t>(0xB0 | channel),

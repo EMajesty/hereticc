@@ -39,6 +39,12 @@ Timeline fixture() {
     t.arrangement.performance_scenes.push_back(
         {301, "Both", {{1, 101}, {2, 102}}, LaunchQuantization::bar,
          ticks_per_quarter / 4});
+    t.arrangement.playback_mode = TimelinePlaybackMode::song;
+    t.arrangement.song_start = 0;
+    t.arrangement.song_end = ticks_per_quarter * 4;
+    t.arrangement.loop_enabled = true;
+    t.arrangement.loop_start = 0;
+    t.arrangement.loop_end = t.arrangement.song_end;
     return t;
 }
 }
@@ -70,6 +76,32 @@ int main() {
     assert(follow_launcher.prepare_follow(activated.front(), followed, error));
     assert(followed.slot == 103 && followed.follow_transition &&
            followed.activation_tick == launch.activation_tick + ticks_per_quarter * 4);
+    PerformanceLauncher hybrid(48000);
+    auto operation_ok = hybrid.configure(timeline, error);
+    assert(operation_ok);
+    PreparedLaunch takeover;
+    operation_ok = hybrid.prepare_slot(101, PreparedLaunchOperation::start, 0,
+                                       0, takeover, error);
+    assert(operation_ok);
+    auto ownership = hybrid.ownership();
+    assert(ownership[0].owner == TrackPlaybackOwner::transitioning_to_session);
+    hybrid.acknowledge(takeover.activation_frame);
+    ownership = hybrid.ownership();
+    assert(ownership[0].owner == TrackPlaybackOwner::session);
+    std::vector<PreparedLaunch> returning;
+    operation_ok = hybrid.prepare_return(
+        1, takeover.activation_tick, takeover.activation_frame,
+        LaunchQuantization::immediate, returning, error);
+    assert(operation_ok);
+    assert(returning.size() == 1 && returning.front().track == 1);
+    ownership = hybrid.ownership();
+    assert(ownership[0].owner ==
+           TrackPlaybackOwner::transitioning_to_arrangement);
+    hybrid.acknowledge(returning.empty() ? 0
+                                         : returning.front().activation_frame);
+    ownership = hybrid.ownership();
+    assert(ownership[0].owner == TrackPlaybackOwner::arrangement);
+    assert(ownership[1].owner == TrackPlaybackOwner::arrangement);
     const auto random = launcher.follow(102, 1, std::span(eligible));
     assert(random == launcher.follow(102, 1, std::span(eligible)));
     timeline.arrangement.velocity_policy = VelocityPolicy::fixed;
@@ -113,6 +145,69 @@ int main() {
     const auto discovery = discover_application(application);
     assert(std::any_of(discovery.objects.begin(), discovery.objects.end(),
         [](const auto &object) { return object.type == "performance-launch-slot"; }));
+    assert(application.actions().find("performance.return-arrangement.v1"));
+    result = application.execute({"performance.slot-launch.v1",
+        {{"slot", std::int64_t{101}}}, "test", 5});
+    assert(result.accepted);
+    std::vector<float> hybrid_left(64), hybrid_right(64);
+    engine.process(hybrid_left, hybrid_right);
+    auto hybrid_state = application.snapshot().performance_launching;
+    const auto track_one = std::find_if(
+        hybrid_state.ownership.begin(), hybrid_state.ownership.end(),
+        [](const auto &value) { return value.track == 1; });
+    assert(track_one != hybrid_state.ownership.end() &&
+           (track_one->owner == TrackPlaybackOwner::session ||
+            track_one->owner == TrackPlaybackOwner::transitioning_to_session));
+    result = application.execute({"performance.return-arrangement.v1",
+        {{"track", std::int64_t{1}},
+         {"quantization", std::string("immediate")}}, "test", 6});
+    assert(result.accepted);
+    engine.process(hybrid_left, hybrid_right);
+    hybrid_state = application.snapshot().performance_launching;
+    const auto returned = std::find_if(
+        hybrid_state.ownership.begin(), hybrid_state.ownership.end(),
+        [](const auto &value) { return value.track == 1; });
+    assert(returned != hybrid_state.ownership.end() &&
+           returned->owner == TrackPlaybackOwner::arrangement);
+    result = application.execute({"performance.return-arrangement.v1",
+        {{"track", std::int64_t{-1}}}, "test", 7});
+    assert(!result.accepted);
+
+    // A hybrid publication releases only affected timeline-owned voices.
+    Timeline sounding;
+    for (TrackId id = 1; id <= 2; ++id) {
+        Track track;
+        track.id = id;
+        track.name = "Synth " + std::to_string(id);
+        track.instrument_id = subtractive_instrument_id;
+        track.instrument_instance_id = id;
+        track.pattern.length = ticks_per_quarter * 4;
+        track.pattern.events.push_back(
+            {id, 0, MusicalEventType::note, static_cast<std::uint8_t>(59 + id),
+             1.0F, ticks_per_quarter * 3});
+        sounding.tracks.push_back(std::move(track));
+    }
+    const auto next_tick = static_cast<MusicalTick>(
+                               engine.frame_position() * ticks_per_quarter /
+                               24'000) +
+                           1;
+    for (auto &track : sounding.tracks)
+        track.pattern.events.front().tick = next_tick;
+    operation_ok = engine.queue_timeline(sounding, error);
+    assert(operation_ok);
+    engine.process(hybrid_left, hybrid_right);
+    assert(engine.synth_instance_state(1).active_voices == 1);
+    assert(engine.synth_instance_state(2).active_voices == 1);
+    auto silent = sounding;
+    for (auto &track : silent.tracks) track.pattern.events.clear();
+    const std::array<TrackId, 1> only_track_one{1};
+    operation_ok = engine.queue_timeline_at(
+        silent, engine.frame_position(), VoiceTransitionPolicy::stop_outgoing,
+        error, only_track_one);
+    assert(operation_ok);
+    engine.process(hybrid_left, hybrid_right);
+    assert(engine.synth_instance_state(1).active_voices == 0);
+    assert(engine.synth_instance_state(2).active_voices == 1);
 
     TimelineService capture_service([](const Timeline &, std::string &value) {
         value.clear(); return true;
