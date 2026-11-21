@@ -175,11 +175,56 @@ ActionRegistry::ActionRegistry() {
     add(action("arrangement.clip-update.v1", "Move or resize clip",
                "Arrangement",
                {{"id", ValueType::integer},
+                {"sample_slot", ValueType::integer, false},
+                {"region_id", ValueType::integer, false},
+                {"source_start", ValueType::integer, false},
+                {"source_end", ValueType::integer, false},
+                {"loop_start", ValueType::integer, false},
+                {"loop_end", ValueType::integer, false},
                 {"start", ValueType::integer, false},
                 {"duration", ValueType::integer, false},
                 {"transpose", ValueType::integer, false},
                 {"velocity", ValueType::real, false},
                 {"enabled", ValueType::boolean, false}}));
+    add(action("arrangement.audio-clip-create.v1", "Create audio clip",
+               "Arrangement",
+               {{"id", ValueType::integer, false},
+                {"track", ValueType::integer},
+                {"sample_slot", ValueType::integer},
+                {"region_id", ValueType::integer, false},
+                {"start", ValueType::integer},
+                {"duration", ValueType::integer},
+                {"source_start", ValueType::integer, false},
+                {"source_end", ValueType::integer, false},
+                {"loop", ValueType::boolean, false},
+                {"loop_start", ValueType::integer, false},
+                {"loop_end", ValueType::integer, false},
+                {"gain", ValueType::real, false},
+                {"pan", ValueType::real, false},
+                {"direction", ValueType::text, false},
+                {"stretch", ValueType::text, false},
+                {"source_bpm", ValueType::real, false},
+                {"pitch", ValueType::real, false}}));
+    add(action("arrangement.audio-clip-update.v1", "Edit audio clip",
+               "Arrangement",
+               {{"id", ValueType::integer},
+                {"start", ValueType::integer, false},
+                {"duration", ValueType::integer, false},
+                {"gain", ValueType::real, false},
+                {"pan", ValueType::real, false},
+                {"loop", ValueType::boolean, false},
+                {"enabled", ValueType::boolean, false},
+                {"direction", ValueType::text, false},
+                {"stretch", ValueType::text, false},
+                {"source_bpm", ValueType::real, false},
+                {"pitch", ValueType::real, false}}));
+    add(action("arrangement.audio-clip-duplicate.v1", "Duplicate audio clip",
+               "Arrangement",
+               {{"source", ValueType::integer},
+                {"id", ValueType::integer, false},
+                {"start", ValueType::integer, false}}));
+    add(action("arrangement.audio-clip-delete.v1", "Delete audio clip",
+               "Arrangement", {{"id", ValueType::integer}}));
     add(action("arrangement.range-set.v1", "Set song range", "Arrangement",
                {{"start", ValueType::integer}, {"end", ValueType::integer}}));
     add(action("arrangement.loop-set.v1", "Set arrangement loop", "Arrangement",
@@ -4288,6 +4333,10 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                    command.action_id == "arrangement.clip-create.v1" ||
                    command.action_id == "arrangement.clip-update.v1" ||
                    command.action_id == "arrangement.clip-delete.v1" ||
+                   command.action_id == "arrangement.audio-clip-create.v1" ||
+                   command.action_id == "arrangement.audio-clip-update.v1" ||
+                   command.action_id == "arrangement.audio-clip-duplicate.v1" ||
+                   command.action_id == "arrangement.audio-clip-delete.v1" ||
                    command.action_id == "arrangement.range-set.v1" ||
                    command.action_id == "arrangement.loop-set.v1" ||
                    command.action_id == "arrangement.automation-update.v1" ||
@@ -4586,6 +4635,269 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     error = "clip ID must be positive";
                 else
                     transaction.delete_clip(static_cast<ClipId>(id), error);
+            } else if (command.action_id ==
+                       "arrangement.audio-clip-create.v1") {
+                AudioClip clip;
+                const auto requested = argument<std::int64_t>(command, "id");
+                const auto track = *argument<std::int64_t>(command, "track");
+                const auto slot =
+                    *argument<std::int64_t>(command, "sample_slot");
+                if ((requested && *requested <= 0) || track <= 0 || slot < 0 ||
+                    slot >= static_cast<std::int64_t>(engine_.sample_slot_count()))
+                    error = "audio clip IDs, track, or sample slot are invalid";
+                const auto sample_status =
+                    error.empty()
+                        ? samples_.status(SampleSlotId{
+                              static_cast<std::uint32_t>(slot)})
+                        : SampleSlotStatus{};
+                if (error.empty() && !sample_status.has_sample)
+                    error = "audio clip source sample is not active";
+                clip.id = requested ? static_cast<AudioClipId>(*requested)
+                                    : transaction.next_audio_clip_id();
+                clip.track = static_cast<TrackId>(track);
+                clip.sample_slot = static_cast<std::uint32_t>(slot);
+                clip.sample_publication = sample_status.active_publication;
+                clip.asset_reference = sample_status.source_path.string();
+                clip.start = *argument<std::int64_t>(command, "start");
+                clip.duration = *argument<std::int64_t>(command, "duration");
+                clip.source_start_frame = 0;
+                clip.source_end_frame = sample_status.frames;
+                if (const auto value = argument<std::int64_t>(command,
+                                                              "source_start"))
+                    clip.source_start_frame = static_cast<std::uint64_t>(*value);
+                if (const auto value = argument<std::int64_t>(command,
+                                                              "source_end"))
+                    clip.source_end_frame = static_cast<std::uint64_t>(*value);
+                if (const auto value = argument<std::int64_t>(command,
+                                                              "region_id")) {
+                    const auto snapshot = slices_.snapshot(
+                        SampleSlotId{clip.sample_slot});
+                    const auto region = std::find_if(
+                        snapshot.regions.begin(), snapshot.regions.end(),
+                        [&](const auto &candidate) {
+                            return candidate.id ==
+                                   static_cast<RegionId>(*value);
+                        });
+                    if (region == snapshot.regions.end())
+                        error = "audio clip region does not exist in source slot";
+                    else {
+                        clip.region_id = region->id;
+                        clip.source_start_frame = region->start_frame;
+                        clip.source_end_frame = region->end_frame;
+                        clip.loop_start_frame = region->loop_start_frame;
+                        clip.loop_end_frame = region->loop_end_frame;
+                        clip.fade_in_frames = region->fade_in_frames;
+                        clip.fade_out_frames = region->fade_out_frames;
+                        clip.loop_crossfade_frames =
+                            region->loop_crossfade_frames;
+                        clip.fade_curve =
+                            region->fade_curve == RegionFadeCurve::equal_power
+                                ? AudioClipFadeCurve::equal_power
+                                : AudioClipFadeCurve::linear;
+                        clip.loop = region->loop_enabled;
+                        clip.gain = region->gain;
+                        clip.direction =
+                            region->direction == RegionDirection::reverse
+                                ? AudioClipDirection::reverse
+                                : AudioClipDirection::forward;
+                    }
+                }
+                if (const auto value = argument<bool>(command, "loop"))
+                    clip.loop = *value;
+                if (const auto value = argument<std::int64_t>(command,
+                                                              "loop_start"))
+                    clip.loop_start_frame = static_cast<std::uint64_t>(*value);
+                if (const auto value = argument<std::int64_t>(command,
+                                                              "loop_end"))
+                    clip.loop_end_frame = static_cast<std::uint64_t>(*value);
+                if (clip.loop && clip.loop_end_frame == 0) {
+                    clip.loop_start_frame = clip.source_start_frame;
+                    clip.loop_end_frame = clip.source_end_frame;
+                }
+                if (const auto value = argument<double>(command, "gain"))
+                    clip.gain = static_cast<float>(*value);
+                if (const auto value = argument<double>(command, "pan"))
+                    clip.pan = static_cast<float>(*value);
+                if (const auto value = argument<double>(command, "source_bpm"))
+                    clip.source_bpm = static_cast<float>(*value);
+                if (const auto value = argument<double>(command, "pitch"))
+                    clip.pitch_semitones = static_cast<float>(*value);
+                if (const auto value = argument<std::string>(command,
+                                                             "direction")) {
+                    if (*value == "reverse")
+                        clip.direction = AudioClipDirection::reverse;
+                    else if (*value != "forward")
+                        error = "audio clip direction must be forward or reverse";
+                }
+                if (const auto value = argument<std::string>(command,
+                                                             "stretch")) {
+                    if (*value == "tempo-sync")
+                        clip.stretch_mode = AudioClipStretchMode::tempo_sync;
+                    else if (*value != "native")
+                        error = "audio clip stretch must be native or tempo-sync";
+                }
+                if (error.empty() &&
+                    (clip.source_start_frame >= clip.source_end_frame ||
+                     clip.source_end_frame > sample_status.frames))
+                    error = "audio clip source range exceeds the active sample";
+                if (error.empty())
+                    transaction.create_audio_clip(std::move(clip), error);
+            } else if (command.action_id ==
+                       "arrangement.audio-clip-update.v1") {
+                const auto raw_id = *argument<std::int64_t>(command, "id");
+                auto found = std::find_if(
+                    transaction.timeline().arrangement.audio_clips.begin(),
+                    transaction.timeline().arrangement.audio_clips.end(),
+                    [&](const auto &clip) {
+                        return clip.id == static_cast<AudioClipId>(raw_id);
+                    });
+                if (raw_id <= 0 || found ==
+                                       transaction.timeline()
+                                           .arrangement.audio_clips.end())
+                    error = "audio clip does not exist";
+                else {
+                    auto clip = *found;
+                    if (const auto value =
+                            argument<std::int64_t>(command, "sample_slot")) {
+                        if (*value < 0 ||
+                            *value >= static_cast<std::int64_t>(
+                                          engine_.sample_slot_count()))
+                            error = "audio clip sample slot is invalid";
+                        else {
+                            const auto status = samples_.status(SampleSlotId{
+                                static_cast<std::uint32_t>(*value)});
+                            if (!status.has_sample)
+                                error = "audio clip source sample is not active";
+                            else {
+                                clip.sample_slot =
+                                    static_cast<std::uint32_t>(*value);
+                                clip.sample_publication = status.active_publication;
+                                clip.asset_reference = status.source_path.string();
+                                clip.region_id = 0;
+                                clip.source_start_frame = 0;
+                                clip.source_end_frame = status.frames;
+                            }
+                        }
+                    }
+                    if (const auto value =
+                            argument<std::int64_t>(command, "region_id")) {
+                        const auto snapshot =
+                            slices_.snapshot(SampleSlotId{clip.sample_slot});
+                        const auto region = std::find_if(
+                            snapshot.regions.begin(), snapshot.regions.end(),
+                            [&](const auto &candidate) {
+                                return candidate.id ==
+                                       static_cast<RegionId>(*value);
+                            });
+                        if (*value <= 0 || region == snapshot.regions.end())
+                            error = "audio clip region does not exist in source slot";
+                        else {
+                            clip.region_id = region->id;
+                            clip.source_start_frame = region->start_frame;
+                            clip.source_end_frame = region->end_frame;
+                            clip.fade_in_frames = region->fade_in_frames;
+                            clip.fade_out_frames = region->fade_out_frames;
+                            clip.loop_start_frame = region->loop_start_frame;
+                            clip.loop_end_frame = region->loop_end_frame;
+                            clip.loop_crossfade_frames =
+                                region->loop_crossfade_frames;
+                            clip.loop = region->loop_enabled;
+                            clip.gain = region->gain;
+                            clip.direction =
+                                region->direction == RegionDirection::reverse
+                                    ? AudioClipDirection::reverse
+                                    : AudioClipDirection::forward;
+                            clip.fade_curve =
+                                region->fade_curve == RegionFadeCurve::equal_power
+                                    ? AudioClipFadeCurve::equal_power
+                                    : AudioClipFadeCurve::linear;
+                        }
+                    }
+                    if (const auto value = argument<std::int64_t>(
+                            command, "source_start"))
+                        clip.source_start_frame =
+                            static_cast<std::uint64_t>(*value);
+                    if (const auto value = argument<std::int64_t>(
+                            command, "source_end"))
+                        clip.source_end_frame =
+                            static_cast<std::uint64_t>(*value);
+                    if (const auto value = argument<std::int64_t>(
+                            command, "loop_start"))
+                        clip.loop_start_frame =
+                            static_cast<std::uint64_t>(*value);
+                    if (const auto value = argument<std::int64_t>(
+                            command, "loop_end"))
+                        clip.loop_end_frame =
+                            static_cast<std::uint64_t>(*value);
+                    if (const auto value = argument<std::int64_t>(command, "start"))
+                        clip.start = *value;
+                    if (const auto value = argument<std::int64_t>(command, "duration"))
+                        clip.duration = *value;
+                    if (const auto value = argument<double>(command, "gain"))
+                        clip.gain = static_cast<float>(*value);
+                    if (const auto value = argument<double>(command, "pan"))
+                        clip.pan = static_cast<float>(*value);
+                    if (const auto value = argument<double>(command, "source_bpm"))
+                        clip.source_bpm = static_cast<float>(*value);
+                    if (const auto value = argument<double>(command, "pitch"))
+                        clip.pitch_semitones = static_cast<float>(*value);
+                    if (const auto value = argument<bool>(command, "loop"))
+                        clip.loop = *value;
+                    if (const auto value = argument<bool>(command, "enabled"))
+                        clip.enabled = *value;
+                    if (const auto value = argument<std::string>(command, "direction")) {
+                        if (*value == "forward") clip.direction = AudioClipDirection::forward;
+                        else if (*value == "reverse") clip.direction = AudioClipDirection::reverse;
+                        else error = "audio clip direction must be forward or reverse";
+                    }
+                    if (const auto value = argument<std::string>(command, "stretch")) {
+                        if (*value == "native") clip.stretch_mode = AudioClipStretchMode::native;
+                        else if (*value == "tempo-sync") clip.stretch_mode = AudioClipStretchMode::tempo_sync;
+                        else error = "audio clip stretch must be native or tempo-sync";
+                    }
+                    const auto source =
+                        samples_.status(SampleSlotId{clip.sample_slot});
+                    if (error.empty() &&
+                        (!source.has_sample ||
+                         clip.source_start_frame >= clip.source_end_frame ||
+                         clip.source_end_frame > source.frames))
+                        error = "audio clip source range exceeds the active sample";
+                    if (error.empty())
+                        transaction.update_audio_clip(std::move(clip), error);
+                }
+            } else if (command.action_id ==
+                       "arrangement.audio-clip-duplicate.v1") {
+                const auto source =
+                    *argument<std::int64_t>(command, "source");
+                const auto requested = argument<std::int64_t>(command, "id");
+                const auto found = std::find_if(
+                    transaction.timeline().arrangement.audio_clips.begin(),
+                    transaction.timeline().arrangement.audio_clips.end(),
+                    [&](const auto &clip) {
+                        return clip.id == static_cast<AudioClipId>(source);
+                    });
+                if (source <= 0 || (requested && *requested <= 0) ||
+                    found == transaction.timeline().arrangement.audio_clips.end())
+                    error = "audio clip duplication source or ID is invalid";
+                else {
+                    auto clip = *found;
+                    clip.id = requested ? static_cast<AudioClipId>(*requested)
+                                        : transaction.next_audio_clip_id();
+                    if (const auto start =
+                            argument<std::int64_t>(command, "start"))
+                        clip.start = *start;
+                    else
+                        clip.start += clip.duration;
+                    transaction.create_audio_clip(std::move(clip), error);
+                }
+            } else if (command.action_id ==
+                       "arrangement.audio-clip-delete.v1") {
+                const auto id = *argument<std::int64_t>(command, "id");
+                if (id <= 0)
+                    error = "audio clip ID must be positive";
+                else
+                    transaction.delete_audio_clip(
+                        static_cast<AudioClipId>(id), error);
             } else if (command.action_id == "arrangement.range-set.v1") {
                 transaction.set_song_range(
                     *argument<std::int64_t>(command, "start"),
@@ -7344,6 +7656,23 @@ void ApplicationService::synchronize_locked() const {
         state_.clips.push_back({clip.id, clip.pattern, clip.start,
                                 clip.duration, clip.loop, clip.enabled,
                                 clip.transpose, clip.velocity_scale});
+    state_.audio_clips.clear();
+    state_.audio_clips.reserve(arrangement.audio_clips.size());
+    for (const auto &clip : arrangement.audio_clips) {
+        const auto source = samples_.status(SampleSlotId{clip.sample_slot});
+        const auto available =
+            source.has_sample &&
+            (clip.sample_publication == 0 ||
+             clip.sample_publication == source.active_publication) &&
+            (clip.asset_reference.empty() ||
+             source.source_path.string() == clip.asset_reference) &&
+            clip.source_start_frame < clip.source_end_frame &&
+            clip.source_end_frame <= source.frames;
+        state_.audio_clips.push_back(
+            {clip, available,
+             available ? std::string{}
+                       : "source asset is missing or not audio-active"});
+    }
     state_.pattern_chain_id = arrangement.pattern_chain_id;
     state_.pattern_chain_position = arrangement.pattern_chain_position;
     state_.pattern_chain_loop = arrangement.chain_loop;

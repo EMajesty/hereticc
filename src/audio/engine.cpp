@@ -946,8 +946,9 @@ void AudioEngine::start_voice(std::uint8_t note, float velocity, TrackId track,
     const auto *sample = sample_versions_[sample_index].sample.get();
     const auto sample_frames = sample->frames();
     if (slice && slice->enabled &&
-        (sample_versions_[sample_index].publication.load(
-             std::memory_order_acquire) != slice->publication ||
+        ((slice->publication != 0 &&
+          sample_versions_[sample_index].publication.load(
+              std::memory_order_acquire) != slice->publication) ||
          slice->start_frame >= slice->end_frame ||
          slice->end_frame > sample_frames)) {
         missing_slot_triggers_.fetch_add(1, std::memory_order_relaxed);
@@ -1013,10 +1014,34 @@ void AudioEngine::start_voice(std::uint8_t note, float velocity, TrackId track,
         RealtimeTimeStretcher::reset(voice.stretch_state,
                                      voice.stretch_configuration);
         voice.stretch_duration = static_cast<double>(end - start) * time_ratio;
+        voice.stretch_state.output_frame = slice ? slice->source_offset_frames : 0;
+    } else if (slice && slice->source_offset_frames) {
+        const auto distance = static_cast<double>(slice->source_offset_frames) *
+                              voice.increment;
+        if (voice.region.loop_enabled) {
+            const auto loop_start = static_cast<double>(
+                voice.region.loop_start_frame);
+            const auto loop_length = static_cast<double>(
+                voice.region.loop_end_frame - voice.region.loop_start_frame);
+            const auto phase = std::fmod(distance, loop_length);
+            voice.position = voice.reverse
+                                 ? static_cast<double>(
+                                       voice.region.loop_end_frame - 1) - phase
+                                 : loop_start + phase;
+        } else {
+            voice.position = voice.reverse
+                                 ? std::max(static_cast<double>(start),
+                                            static_cast<double>(end - 1) -
+                                                distance)
+                                 : std::min(static_cast<double>(end - 1),
+                                            static_cast<double>(start) +
+                                                distance);
+        }
     }
     voice.gain = velocity * settings.gain * (slice ? slice->gain : 1.0F);
     voice.base_gain = voice.gain;
     voice.modulation_gain = 1.0F;
+    voice.base_pan = slice ? slice->pan : 0.0F;
     voice.sustain = settings.sustain;
     if (settings.attack_seconds > 0) {
         voice.envelope_level = 0;
@@ -1079,11 +1104,15 @@ void AudioEngine::release_note(std::uint8_t note, TrackId track, EventId event,
 }
 
 void AudioEngine::stop_timeline_voice(TrackId track, EventId event,
-                                      std::uint64_t occurrence) noexcept {
+                                      std::uint64_t occurrence,
+                                      bool immediate) noexcept {
     for (auto &voice : voices_)
         if (voice.active && voice.timeline_owned && voice.track == track &&
             voice.event == event && voice.occurrence == occurrence) {
-            release_note(voice.trigger_note, track, event, occurrence, true);
+            if (immediate)
+                release_voice(voice, true);
+            else
+                release_note(voice.trigger_note, track, event, occurrence, true);
             return;
         }
 }
@@ -1627,6 +1656,42 @@ void AudioEngine::process(std::span<float> left,
                     (void)mixer_.set_effect_parameter(event.instrument_instance,
                                                       event.parameter_id,
                                                       event.value);
+            } else if (event.type == MusicalEventType::audio_clip_on) {
+                const auto &clip = event.audio_clip;
+                SliceTarget target;
+                target.slot = SampleSlotId{clip.sample_slot};
+                target.publication = clip.sample_publication;
+                target.start_frame = clip.source_start_frame;
+                target.end_frame = clip.source_end_frame;
+                target.gain = clip.gain;
+                target.pan = clip.pan;
+                target.source_offset_frames = event.audio_source_offset;
+                target.playback.mode = SamplePlaybackMode::one_shot;
+                target.playback.reverse =
+                    clip.direction == AudioClipDirection::reverse;
+                target.playback.semitones = clip.pitch_semitones;
+                target.playback.stretch_mode =
+                    clip.stretch_mode == AudioClipStretchMode::tempo_sync
+                        ? StretchMode::realtime
+                        : StretchMode::off;
+                target.playback.source_bpm = clip.source_bpm;
+                target.region.loop_enabled = clip.loop;
+                target.region.loop_start_frame = clip.loop_start_frame;
+                target.region.loop_end_frame = clip.loop_end_frame;
+                target.region.fade_in_frames = clip.fade_in_frames;
+                target.region.fade_out_frames = clip.fade_out_frames;
+                target.region.loop_crossfade_frames =
+                    clip.loop_crossfade_frames;
+                target.region.fade_curve =
+                    clip.fade_curve == AudioClipFadeCurve::equal_power
+                        ? RegionFadeCurve::equal_power
+                        : RegionFadeCurve::linear;
+                target.enabled = true;
+                start_voice(0, 1.0F, event.track, event.id, 0, true,
+                            &target);
+            } else if (event.type == MusicalEventType::audio_clip_off) {
+                stop_timeline_voice(event.track, event.target_event_id, 0,
+                                    true);
             } else if (event.instrument == subtractive_instrument_key) {
                 const NoteIdentity owner{event.track, event.target_event_id,
                                          event.occurrence};
@@ -1835,8 +1900,9 @@ void AudioEngine::process(std::span<float> left,
             const auto level = voice.base_gain * voice.modulation_gain *
                                voice_modulation.gain * voice.envelope_level *
                                region_level;
-            const auto pan = std::clamp(
-                voice.modulation_pan + voice_modulation.pan, -1.0F, 1.0F);
+            const auto pan = std::clamp(voice.base_pan + voice.modulation_pan +
+                                            voice_modulation.pan,
+                                        -1.0F, 1.0F);
             sample_left *= pan > 0 ? 1.0F - pan : 1.0F;
             sample_right *= pan < 0 ? 1.0F + pan : 1.0F;
             const auto routed =

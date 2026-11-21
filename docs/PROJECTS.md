@@ -1,5 +1,9 @@
 # Project persistence
 
+Timeline v8 persists audio clips and asset references. Runtime publication IDs
+are rebuilt rather than serialized. Missing clip sources remain inspectable and
+are never rebound to an unrelated slot automatically.
+
 Processed WAV files use ordinary project sample references. Processing jobs,
 temporary PCM, progress and unpublished results are transient and are never
 embedded in project metadata.

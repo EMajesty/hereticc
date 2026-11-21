@@ -1,5 +1,9 @@
 # Musical timeline
 
+Timeline format v8 adds stable audio clips. Compilation keeps two edges per
+clip and computes loop iterations and seek phase arithmetically rather than
+expanding source loops into repeated triggers.
+
 The timeline also owns stable-ID reusable patterns and clip arrangements.
 Absolute song-position parameter events captured during performance live in
 `SongArrangement::automation`; they use the same stable event identity,

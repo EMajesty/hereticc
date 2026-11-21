@@ -10,6 +10,7 @@ using EventId = std::uint64_t;
 using TrackId = std::uint64_t;
 using PatternId = std::uint64_t;
 using ClipId = std::uint64_t;
+using AudioClipId = std::uint64_t;
 using PatternChainId = std::uint64_t;
 using InstrumentInstanceId = std::uint32_t;
 inline constexpr InstrumentInstanceId default_synth_instance_id = 1;
@@ -41,7 +42,9 @@ enum class MusicalEventType : std::uint8_t {
     parameter,
     control_change,
     program_change,
-    pitch_bend
+    pitch_bend,
+    audio_clip_on,
+    audio_clip_off
 };
 enum class TriggerCondition : std::uint8_t {
     always,
@@ -144,10 +147,33 @@ struct ArrangementClip {
     float velocity_scale{1.0F};
     bool enabled{true};
 };
+enum class AudioClipDirection : std::uint8_t { forward, reverse };
+enum class AudioClipStretchMode : std::uint8_t { native, tempo_sync };
+enum class AudioClipFadeCurve : std::uint8_t { linear, equal_power };
+struct AudioClip {
+    AudioClipId id{};
+    TrackId track{};
+    std::uint32_t sample_slot{};
+    std::uint64_t sample_publication{}; // Runtime binding; zero selects active.
+    std::string asset_reference;
+    std::uint64_t region_id{};
+    MusicalTick start{};
+    MusicalTick duration{ticks_per_quarter * 4};
+    std::uint64_t source_start_frame{}, source_end_frame{};
+    std::uint64_t loop_start_frame{}, loop_end_frame{};
+    std::uint64_t fade_in_frames{}, fade_out_frames{};
+    std::uint32_t loop_crossfade_frames{};
+    float gain{1.0F}, pan{}, source_bpm{}, pitch_semitones{};
+    AudioClipDirection direction{AudioClipDirection::forward};
+    AudioClipStretchMode stretch_mode{AudioClipStretchMode::native};
+    AudioClipFadeCurve fade_curve{AudioClipFadeCurve::linear};
+    bool loop{}, enabled{true};
+};
 struct SongArrangement {
     TimelinePlaybackMode playback_mode{TimelinePlaybackMode::legacy};
     std::vector<PatternDefinition> patterns;
     std::vector<ArrangementClip> clips;
+    std::vector<AudioClip> audio_clips;
     PatternId active_pattern{}, queued_pattern{};
     LaunchQuantization launch_quantization{LaunchQuantization::bar};
     std::vector<PatternId> pattern_chain;

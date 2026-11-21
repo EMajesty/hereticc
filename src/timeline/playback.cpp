@@ -15,13 +15,17 @@ __extension__ using WideInteger = __int128;
     "NEUROGENIC timeline scheduling requires a compiler with 128-bit integer support"
 #endif
 int type_order(MusicalEventType type) noexcept {
-    return type == MusicalEventType::note_off    ? 0
+    return type == MusicalEventType::note_off ||
+                   type == MusicalEventType::audio_clip_off
+               ? 0
            : type == MusicalEventType::parameter ? 1
            : type == MusicalEventType::control_change ||
                    type == MusicalEventType::program_change ||
                    type == MusicalEventType::pitch_bend
                ? 1
-           : type == MusicalEventType::note_on ? 2
+               : type == MusicalEventType::note_on ||
+                         type == MusicalEventType::audio_clip_on
+                     ? 2
                                                : 3;
 }
 bool scheduled_before(const TimelineScheduledEvent &a,
@@ -322,6 +326,32 @@ bool compile_timeline(const Timeline &timeline, PlaybackPlan &output,
                                track.instrument_instance_id, false, 0, 0, false,
                                track.midi_output_port, track.midi_channel});
     }
+    plan.audio_clips.reserve(timeline.arrangement.audio_clips.size());
+    for (const auto &clip : timeline.arrangement.audio_clips) {
+        if (!clip.enabled)
+            continue;
+        const auto owner = std::find_if(
+            timeline.tracks.begin(), timeline.tracks.end(),
+            [&](const auto &track) { return track.id == clip.track; });
+        if (owner == timeline.tracks.end() || owner->muted)
+            continue;
+        plan.audio_clips.push_back(
+            {clip.id, clip.track, clip.start, clip.duration, clip.sample_slot,
+             clip.sample_publication, clip.source_start_frame,
+             clip.source_end_frame, clip.loop_start_frame,
+             clip.loop_end_frame, clip.fade_in_frames,
+             clip.fade_out_frames, clip.loop_crossfade_frames, clip.gain,
+             clip.pan, clip.source_bpm, clip.pitch_semitones, clip.direction,
+             clip.stretch_mode, clip.fade_curve, clip.loop});
+    }
+    std::sort(plan.audio_clips.begin(), plan.audio_clips.end(),
+              [](const auto &left, const auto &right) {
+                  if (left.start != right.start)
+                      return left.start < right.start;
+                  if (left.track != right.track)
+                      return left.track < right.track;
+                  return left.id < right.id;
+              });
     output = std::move(plan);
     error.clear();
     return true;
@@ -428,6 +458,7 @@ void TimelineScheduler::seek(std::uint64_t start) noexcept {
     std::make_heap(plan_->scheduler_heap.begin(), plan_->scheduler_heap.end(),
                    after);
     expected_frame_ = start;
+    seeked_ = true;
 }
 
 void TimelineScheduler::set_plan(PlaybackPlan *plan,
@@ -455,6 +486,80 @@ std::size_t TimelineScheduler::schedule_range(
     if (end < start)
         end = start;
     std::size_t count{};
+    const auto event_offset = [&](std::uint64_t frame) noexcept {
+        return frame <= start || end == start
+                   ? 0U
+                   : static_cast<std::uint32_t>(
+                         (static_cast<WideInteger>(frame - start) *
+                          output_frames) /
+                         (end - start));
+    };
+    const auto emit_audio = [&](const PlaybackAudioClip &clip,
+                                MusicalEventType type,
+                                std::uint64_t absolute,
+                                std::uint64_t source_offset) {
+        if (count == output.size()) {
+            ++dropped_events_;
+            return false;
+        }
+        TimelineScheduledEvent event;
+        event.frame = event_offset(absolute);
+        event.track = clip.track;
+        event.id = clip.id;
+        event.target_event_id = clip.id;
+        event.type = type;
+        event.instrument = sample_instrument_key;
+        event.audio_clip = clip;
+        event.audio_source_offset = source_offset;
+        output[count++] = event;
+        return true;
+    };
+    for (const auto &clip : plan_->audio_clips) {
+        const auto relative_start = frame_at_tick(clip.start);
+        const auto relative_end = frame_at_tick(clip.start + clip.duration);
+        const auto cycle_frames =
+            plan_->song_end_behavior == SongEndBehavior::loop &&
+                    plan_->playback_length > 0
+                ? frame_at_tick(plan_->playback_length)
+                : 0;
+        auto cycle = cycle_frames ? start / cycle_frames : 0;
+        if (cycle_frames && cycle > 0 &&
+            static_cast<WideInteger>(cycle) * cycle_frames + relative_start >
+                start)
+            --cycle;
+        for (;;) {
+            const auto wide_origin = static_cast<WideInteger>(cycle) *
+                                     cycle_frames;
+            if (wide_origin > std::numeric_limits<std::uint64_t>::max())
+                break;
+            const auto origin = cycle_frames
+                                    ? static_cast<std::uint64_t>(wide_origin)
+                                    : 0;
+            const auto clip_start = origin + relative_start;
+            const auto clip_end = origin + relative_end;
+            const auto resume = seeked_ && start > clip_start && start < clip_end;
+            if ((clip_start >= start && clip_start < end) || resume) {
+                const auto activation = resume ? start : clip_start;
+                if (!emit_audio(clip, MusicalEventType::audio_clip_on,
+                                activation,
+                                resume ? start - clip_start : 0))
+                    break;
+            }
+            if (clip_end >= start && clip_end < end)
+                if (!emit_audio(clip, MusicalEventType::audio_clip_off,
+                                clip_end, 0))
+                    break;
+            if (!cycle_frames || origin > end ||
+                cycle == std::numeric_limits<std::uint64_t>::max())
+                break;
+            ++cycle;
+            if (static_cast<WideInteger>(cycle) * cycle_frames +
+                    relative_start >=
+                end)
+                break;
+        }
+    }
+    seeked_ = false;
     auto after = [this](std::size_t a, std::size_t b) {
         return track_after(a, b);
     };
@@ -517,7 +622,9 @@ std::size_t TimelineScheduler::schedule_range(
                                        ? event.parameter_instance
                                        : track.instrument_instance,
                                    track.midi_output_port,
-                                   track.midi_channel};
+                                   track.midi_channel,
+                                   {},
+                                   0};
         }
         std::pop_heap(plan_->scheduler_heap.begin(),
                       plan_->scheduler_heap.end(), after);

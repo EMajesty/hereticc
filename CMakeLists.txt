@@ -149,6 +149,12 @@ if(NEUROGENIC_BUILD_TESTS)
   set_tests_properties(neurogenic_sample_processing_tests PROPERTIES
     PASS_REGULAR_EXPRESSION "neurogenic.sample-processing-tests.v1 passed"
     TIMEOUT 10)
+  add_executable(neurogenic_audio_clip_tests tests/audio_clip_tests.cpp)
+  target_link_libraries(neurogenic_audio_clip_tests PRIVATE neurogenic_engine)
+  add_test(NAME neurogenic_audio_clip_tests COMMAND neurogenic_audio_clip_tests)
+  set_tests_properties(neurogenic_audio_clip_tests PROPERTIES
+    PASS_REGULAR_EXPRESSION "neurogenic.audio-clip-tests.v1 passed"
+    TIMEOUT 10)
   add_test(NAME neurogenic_diagnostics_stress
     COMMAND neurogenic_diagnostics --headless --stress 0.05 --buffer 127
       --sample-voices 8 --synth-voices 4)

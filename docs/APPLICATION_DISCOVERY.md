@@ -1,5 +1,9 @@
 # Application discovery contract
 
+Capability `audio-clips` version 1 exposes stable clip objects parented by
+tracks, source availability diagnostics, and typed create, update, duplicate
+and delete actions.
+
 The `sample-processing` capability version 1 exposes operation types, bounded
 job objects, typed editing/start/save/publish actions, progress and publication
 status. PCM buffers are deliberately absent from ordinary state snapshots.

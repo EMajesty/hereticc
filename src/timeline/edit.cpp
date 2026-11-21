@@ -526,6 +526,54 @@ bool TimelineTransaction::delete_clip(ClipId id, std::string &error) {
     error.clear();
     return true;
 }
+bool TimelineTransaction::create_audio_clip(AudioClip clip,
+                                            std::string &error) {
+    if (!clip.id || std::any_of(timeline_.arrangement.audio_clips.begin(),
+                                timeline_.arrangement.audio_clips.end(),
+                                [&](const auto &value) {
+                                    return value.id == clip.id;
+                                })) {
+        error = "invalid or duplicate audio clip";
+        return false;
+    }
+    timeline_.arrangement.audio_clips.push_back(std::move(clip));
+    if (!validate_arrangement(timeline_, error)) {
+        timeline_.arrangement.audio_clips.pop_back();
+        return false;
+    }
+    return true;
+}
+bool TimelineTransaction::update_audio_clip(AudioClip clip,
+                                            std::string &error) {
+    auto found = std::find_if(timeline_.arrangement.audio_clips.begin(),
+                              timeline_.arrangement.audio_clips.end(),
+                              [&](const auto &value) {
+                                  return value.id == clip.id;
+                              });
+    if (found == timeline_.arrangement.audio_clips.end()) {
+        error = "audio clip does not exist";
+        return false;
+    }
+    const auto previous = *found;
+    *found = std::move(clip);
+    if (!validate_arrangement(timeline_, error)) {
+        *found = previous;
+        return false;
+    }
+    return true;
+}
+bool TimelineTransaction::delete_audio_clip(AudioClipId id,
+                                            std::string &error) {
+    const auto before = timeline_.arrangement.audio_clips.size();
+    std::erase_if(timeline_.arrangement.audio_clips,
+                  [=](const auto &clip) { return clip.id == id; });
+    if (timeline_.arrangement.audio_clips.size() == before) {
+        error = "audio clip does not exist";
+        return false;
+    }
+    error.clear();
+    return true;
+}
 bool TimelineTransaction::update_arrangement_automation(EventId id,
                                                         MusicalTick tick,
                                                         float value,
@@ -703,6 +751,14 @@ ClipId TimelineTransaction::next_clip_id() const noexcept {
     ClipId next = 1;
     for (const auto &clip : timeline_.arrangement.clips)
         if (clip.id >= next && clip.id < std::numeric_limits<ClipId>::max())
+            next = clip.id + 1;
+    return next;
+}
+AudioClipId TimelineTransaction::next_audio_clip_id() const noexcept {
+    AudioClipId next = 1;
+    for (const auto &clip : timeline_.arrangement.audio_clips)
+        if (clip.id >= next &&
+            clip.id < std::numeric_limits<AudioClipId>::max())
             next = clip.id + 1;
     return next;
 }

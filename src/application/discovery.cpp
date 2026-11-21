@@ -127,6 +127,7 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
         {"sound-presets", 2, true, {}}, {"sample-regions", 1, true, {}},
         {"sample-analysis", 1, true, {}},
         {"sample-processing", 1, true, {}},
+        {"audio-clips", 1, true, {}},
         {"high-frequency-telemetry", 1, true, {}},
         {"typed-parameter-bindings", 1, true, {}}};
     result.object_types = {
@@ -142,6 +143,7 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
         {"sample-processing-operation", "Sample processing operation", false, false, false},
         {"pattern", "Pattern", true, true, true},
         {"clip", "Clip", true, true, true},
+        {"audio-clip", "Audio clip", true, true, true},
         {"arrangement", "Arrangement", false, false, true},
         {"mixer-group", "Mixer group", true, true, true},
         {"aux-bus", "Aux bus", false, false, true},
@@ -286,6 +288,12 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
         result.objects.push_back({"clip", object_id("clip", clip.id),
                                   "arrangement:main", "Clip " + std::to_string(clip.id),
                                   true, false, {}});
+    for (const auto &clip : state.audio_clips)
+        result.objects.push_back(
+            {"audio-clip", object_id("audio-clip", clip.clip.id),
+             object_id("track", clip.clip.track),
+             "Audio clip " + std::to_string(clip.clip.id),
+             clip.source_available, false, clip.validation_error});
     for (std::size_t i = 0; i < state.mixer.configuration.group_count; ++i) {
         const auto &group = state.mixer.configuration.groups[i];
         result.objects.push_back({"mixer-group", object_id("mixer-group", group.id),
@@ -385,6 +393,7 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
         {"tracks", "project:current", "Track collection", DiscoveryValueKind::collection, DiscoveryUpdateRate::state},
         {"patterns", "arrangement:main", "Pattern collection", DiscoveryValueKind::collection, DiscoveryUpdateRate::state},
         {"clips", "arrangement:main", "Clip collection", DiscoveryValueKind::collection, DiscoveryUpdateRate::state},
+        {"audio-clips", "arrangement:main", "Audio clip collection", DiscoveryValueKind::collection, DiscoveryUpdateRate::state},
         {"sample.regions", "project:current", "Sample region collection", DiscoveryValueKind::collection, DiscoveryUpdateRate::state},
         {"sample.region-assignments", "project:current", "Region pad assignments", DiscoveryValueKind::collection, DiscoveryUpdateRate::state},
         {"sample.analysis-sessions", "project:current", "Transient sample analysis sessions", DiscoveryValueKind::collection, DiscoveryUpdateRate::state},
@@ -399,6 +408,22 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
         {"preset.missing-assets", "project:current", "Unresolved preset dependencies", DiscoveryValueKind::collection, DiscoveryUpdateRate::state},
         {"arrangement.queued-pattern", "arrangement:main", "Queued launch", DiscoveryValueKind::object, DiscoveryUpdateRate::state},
         {"validation.errors", "project:current", "Validation diagnostics", DiscoveryValueKind::collection, DiscoveryUpdateRate::state}};
+    for (const auto &clip : state.audio_clips) {
+        const auto parent = object_id("audio-clip", clip.clip.id);
+        const auto prefix = parent + ".";
+        result.state_bindings.push_back(
+            {prefix + "start", parent, "Musical start",
+             DiscoveryValueKind::integer, DiscoveryUpdateRate::state});
+        result.state_bindings.push_back(
+            {prefix + "duration", parent, "Musical duration",
+             DiscoveryValueKind::integer, DiscoveryUpdateRate::state});
+        result.state_bindings.push_back(
+            {prefix + "source-range", parent, "Source frame range",
+             DiscoveryValueKind::object, DiscoveryUpdateRate::state});
+        result.state_bindings.push_back(
+            {prefix + "available", parent, "Source availability",
+             DiscoveryValueKind::boolean, DiscoveryUpdateRate::state});
+    }
     result.limits = {{"command-queue", 0, ApplicationService::default_queue_capacity},
                      {"mixer-tracks", state.mixer.configuration.track_count, maximum_mixer_tracks},
                      {"mixer-groups", state.mixer.configuration.group_count, maximum_mixer_groups},
@@ -413,6 +438,8 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
     result.limits.push_back({"sample-processing-jobs",
                              state.sample_processing_jobs.size(),
                              SampleProcessingService::maximum_jobs});
+    result.limits.push_back(
+        {"audio-clips", state.audio_clips.size(), 1024});
     if (!state.modulation_graph.valid && !state.modulation_graph.message.empty())
         result.validation_errors.push_back(state.modulation_graph.message);
     if (!state.preset_application.error.empty())

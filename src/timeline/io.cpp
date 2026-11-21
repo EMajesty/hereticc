@@ -192,6 +192,36 @@ Timeline load_timeline(const std::filesystem::path &path) {
                 clip.enabled = enabled != 0;
                 require_end(line);
                 timeline.arrangement.clips.push_back(clip);
+            } else if (kind == "audio_clip") {
+                if (version < 8)
+                    throw std::runtime_error("audio clip requires timeline v8");
+                AudioClip clip;
+                unsigned direction{}, stretch{}, fade_curve{}, loop{}, enabled{};
+                if (!(line >> clip.id >> clip.track >> clip.sample_slot >>
+                      std::quoted(clip.asset_reference) >> clip.region_id >>
+                      clip.start >> clip.duration >> clip.source_start_frame >>
+                      clip.source_end_frame >> clip.loop_start_frame >>
+                      clip.loop_end_frame >> clip.fade_in_frames >>
+                      clip.fade_out_frames >> clip.loop_crossfade_frames >>
+                      fade_curve >> clip.gain >> clip.pan >> direction >>
+                      stretch >> clip.source_bpm >>
+                      clip.pitch_semitones >> loop >> enabled) ||
+                    direction > static_cast<unsigned>(
+                                    AudioClipDirection::reverse) ||
+                    stretch > static_cast<unsigned>(
+                                  AudioClipStretchMode::tempo_sync) ||
+                    fade_curve > static_cast<unsigned>(
+                                     AudioClipFadeCurve::equal_power) ||
+                    loop > 1 || enabled > 1)
+                    throw std::runtime_error("invalid audio clip");
+                clip.direction = static_cast<AudioClipDirection>(direction);
+                clip.stretch_mode =
+                    static_cast<AudioClipStretchMode>(stretch);
+                clip.fade_curve = static_cast<AudioClipFadeCurve>(fade_curve);
+                clip.loop = loop != 0;
+                clip.enabled = enabled != 0;
+                require_end(line);
+                timeline.arrangement.audio_clips.push_back(std::move(clip));
             } else if (kind == "pattern_chain") {
                 PatternId id{};
                 if (!(line >> timeline.arrangement.pattern_chain_position))
@@ -429,5 +459,20 @@ void save_timeline(const Timeline &timeline,
                << ' ' << clip.duration << ' ' << (clip.loop ? 1 : 0) << ' '
                << static_cast<int>(clip.transpose) << ' ' << clip.velocity_scale
                << ' ' << (clip.enabled ? 1 : 0) << '\n';
+    for (const auto &clip : a.audio_clips)
+        output << "audio_clip " << clip.id << ' ' << clip.track << ' '
+               << clip.sample_slot << ' ' << std::quoted(clip.asset_reference)
+               << ' ' << clip.region_id << ' ' << clip.start << ' '
+               << clip.duration << ' ' << clip.source_start_frame << ' '
+               << clip.source_end_frame << ' ' << clip.loop_start_frame << ' '
+               << clip.loop_end_frame << ' ' << clip.fade_in_frames << ' '
+               << clip.fade_out_frames << ' ' << clip.loop_crossfade_frames
+               << ' ' << static_cast<unsigned>(clip.fade_curve) << ' '
+               << clip.gain << ' ' << clip.pan << ' '
+               << static_cast<unsigned>(clip.direction) << ' '
+               << static_cast<unsigned>(clip.stretch_mode) << ' '
+               << clip.source_bpm << ' ' << clip.pitch_semitones << ' '
+               << (clip.loop ? 1 : 0) << ' ' << (clip.enabled ? 1 : 0)
+               << '\n';
 }
 } // namespace neurogenic

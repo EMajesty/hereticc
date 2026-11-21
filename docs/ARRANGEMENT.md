@@ -1,5 +1,10 @@
 # Patterns, clips, and arrangements
 
+Song arrangements also contain first-class audio clips referencing immutable
+sample assets. They use a non-overlapping lane per track and the same transport,
+publication and Undo/Redo model as pattern clips. See
+[AUDIO_CLIPS.md](AUDIO_CLIPS.md).
+
 NEUROGENIC stores patterns and arrangements inside the authoritative
 revisioned `Timeline`. They are edited through `TimelineTransaction`, use the
 same bounded history as step edits, and compile into the existing immutable

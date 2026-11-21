@@ -1,5 +1,9 @@
 # Architecture
 
+Audio clips compile into bounded timeline start/stop edges and instantiate the
+existing timeline-owned sample voices. Audio follows the normal track →
+group/aux → master graph; there is no parallel clip mixer or sample engine.
+
 Offline processing workers retain immutable source versions, build new samples
 away from the callback, save WAV assets through sibling temporary files, and
 use the existing callback-acknowledged `SampleManager` publication path. Active

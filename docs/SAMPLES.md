@@ -1,5 +1,9 @@
 # Live sample management
 
+Arrangement audio clips reuse immutable sample versions and the sample voice
+pool. Active clips retain old versions across replacement; new activations use
+the current audio-active slot. See [AUDIO_CLIPS.md](AUDIO_CLIPS.md).
+
 Offline bounce is also control-side: an immutable source version is retained
 while an ordered processing job creates a new finite mono/stereo sample. WAV
 save and `SampleManager` publication are explicit; the original PCM and voices

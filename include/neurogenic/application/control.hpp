@@ -165,6 +165,11 @@ struct ClipState {
     int transpose{};
     float velocity_scale{1.0F};
 };
+struct AudioClipState {
+    AudioClip clip;
+    bool source_available{};
+    std::string validation_error;
+};
 struct PatternChainEntryState {
     PatternId pattern{};
     std::uint16_t repeats{};
@@ -215,6 +220,7 @@ struct ApplicationState {
     bool arrangement_loop_enabled{};
     std::vector<PatternState> patterns;
     std::vector<ClipState> clips;
+    std::vector<AudioClipState> audio_clips;
     PatternChainId pattern_chain_id{};
     std::vector<PatternChainEntryState> pattern_chain_entries;
     std::size_t pattern_chain_position{};

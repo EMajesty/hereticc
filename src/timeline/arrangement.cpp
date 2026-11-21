@@ -37,12 +37,14 @@ std::uint64_t random_word(std::uint64_t seed, PatternId pattern,
 bool validate_arrangement(const Timeline &timeline, std::string &error,
                           ArrangementLimits limits) {
     const auto &a = timeline.arrangement;
-    if (a.patterns.size() > limits.patterns || a.clips.size() > limits.clips) {
+    if (a.patterns.size() > limits.patterns || a.clips.size() > limits.clips ||
+        a.audio_clips.size() > limits.audio_clips) {
         error = "arrangement capacity exceeded";
         return false;
     }
     std::set<PatternId> pattern_ids;
     std::set<ClipId> clip_ids;
+    std::set<AudioClipId> audio_clip_ids;
     std::size_t pattern_tracks{};
     for (const auto &p : a.patterns) {
         if (!p.id || p.name.empty() || p.length <= 0 ||
@@ -140,6 +142,36 @@ bool validate_arrangement(const Timeline &timeline, std::string &error,
             return false;
         }
     }
+    for (const auto &clip : a.audio_clips) {
+        if (!clip.id || !audio_clip_ids.insert(clip.id).second ||
+            !track(timeline, clip.track) || clip.start < 0 ||
+            clip.duration <= 0 ||
+            clip.start > std::numeric_limits<MusicalTick>::max() -
+                             clip.duration ||
+            clip.source_start_frame >= clip.source_end_frame ||
+            clip.fade_in_frames >
+                clip.source_end_frame - clip.source_start_frame ||
+            clip.fade_out_frames >
+                clip.source_end_frame - clip.source_start_frame ||
+            !std::isfinite(clip.gain) || clip.gain < 0 || clip.gain > 4 ||
+            !std::isfinite(clip.pan) || clip.pan < -1 || clip.pan > 1 ||
+            !std::isfinite(clip.source_bpm) || clip.source_bpm < 0 ||
+            !std::isfinite(clip.pitch_semitones) ||
+            clip.pitch_semitones < -48 || clip.pitch_semitones > 48 ||
+            (clip.stretch_mode == AudioClipStretchMode::tempo_sync &&
+             clip.source_bpm <= 0) ||
+            (clip.loop &&
+             clip.stretch_mode == AudioClipStretchMode::tempo_sync) ||
+            (clip.loop &&
+             (clip.loop_start_frame < clip.source_start_frame ||
+              clip.loop_start_frame >= clip.loop_end_frame ||
+              clip.loop_end_frame > clip.source_end_frame ||
+              clip.loop_crossfade_frames >
+                  clip.loop_end_frame - clip.loop_start_frame))) {
+            error = "invalid audio clip";
+            return false;
+        }
+    }
     if (a.playback_mode == TimelinePlaybackMode::song) {
         if (a.song_start < 0 || a.song_end <= a.song_start) {
             error = "song range is invalid";
@@ -176,6 +208,31 @@ bool validate_arrangement(const Timeline &timeline, std::string &error,
                     }
             }
         }
+        // Audio clips use a conservative single-lane policy. Adjacent clips
+        // are valid; enabled clips on the same track may not overlap.
+        for (std::size_t i = 0; i < a.audio_clips.size(); ++i) {
+            if (!a.audio_clips[i].enabled)
+                continue;
+            const auto range_start = a.loop_enabled ? a.loop_start : a.song_start;
+            const auto range_end = a.loop_enabled ? a.loop_end : a.song_end;
+            if (a.audio_clips[i].start < range_start ||
+                a.audio_clips[i].start + a.audio_clips[i].duration >
+                    range_end) {
+                error = "audio clip lies outside the active song range";
+                return false;
+            }
+            for (std::size_t j = i + 1; j < a.audio_clips.size(); ++j)
+                if (a.audio_clips[j].enabled &&
+                    a.audio_clips[i].track == a.audio_clips[j].track &&
+                    a.audio_clips[i].start <
+                        a.audio_clips[j].start + a.audio_clips[j].duration &&
+                    a.audio_clips[j].start <
+                        a.audio_clips[i].start + a.audio_clips[i].duration) {
+                    error = "audio clips overlap on track " +
+                            std::to_string(a.audio_clips[i].track);
+                    return false;
+                }
+        }
         std::size_t expanded{};
         for (const auto &clip : a.clips) {
             if (!clip.enabled)
@@ -209,7 +266,8 @@ bool materialize_arrangement(const Timeline &source, Timeline &result,
     result = source;
     result.arrangement = {};
     const auto &a = source.arrangement;
-    if (a.playback_mode == TimelinePlaybackMode::legacy || a.patterns.empty()) {
+    if (a.playback_mode == TimelinePlaybackMode::legacy) {
+        result.arrangement.audio_clips = a.audio_clips;
         error.clear();
         return true;
     }
@@ -317,6 +375,19 @@ bool materialize_arrangement(const Timeline &source, Timeline &result,
     const auto range_start = a.loop_enabled ? a.loop_start : a.song_start;
     const auto range_end = a.loop_enabled ? a.loop_end : a.song_end;
     const auto song_length = range_end - range_start;
+    for (const auto &source_clip : a.audio_clips) {
+        if (!source_clip.enabled)
+            continue;
+        const auto start = std::max(source_clip.start, range_start);
+        const auto end = std::min(source_clip.start + source_clip.duration,
+                                  range_end);
+        if (start >= end)
+            continue;
+        auto clip = source_clip;
+        clip.start = start - range_start;
+        clip.duration = end - start;
+        result.arrangement.audio_clips.push_back(std::move(clip));
+    }
     for (auto &t : result.tracks)
         t.pattern.length = song_length;
     std::set<EventId> ids;

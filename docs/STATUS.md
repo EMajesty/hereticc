@@ -1,5 +1,11 @@
 # Implementation status
 
+- Task 057: stable arrangement audio clips, transactional edits, timeline-v8
+  persistence, bounded start/stop compilation, native looping, seek/song-loop
+  phase recovery, existing sample-voice/mixer routing, tempo-synced non-looping
+  stretch, actions and discovery are implemented. Same-track overlap, stretched
+  looping and general clip crossfades remain deferred.
+
 - Task 056: bounded offline processing jobs implement trim, peak/RMS
   normalization, reverse, gain, fades, silence, portable sinc resampling and
   mono/stereo conversion; region/slice bounce, PCM16/24/float32 atomic WAV save,

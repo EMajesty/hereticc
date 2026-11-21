@@ -1,5 +1,9 @@
 # Performance monitoring and benchmarks
 
+`audio_clips_8`, `audio_clips_32` and `audio_clips_128` separate control-side
+plan preparation from per-buffer clip-edge scheduling. Long loops retain the
+same two-edge plan representation.
+
 `sample_processing_stereo_4s_three_operations` measures a
 gain/fade/channel-conversion chain and `sample_processing_region_bounce`
 measures region preparation plus trim.

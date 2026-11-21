@@ -425,7 +425,7 @@ class AudioEngine {
         double stretch_duration{};
         std::uint64_t start_frame{}, end_frame{};
         SampleRegionPlayback region;
-        float gain{}, base_gain{}, modulation_gain{1.0F}, modulation_pan{},
+        float gain{}, base_gain{}, base_pan{}, modulation_gain{1.0F}, modulation_pan{},
             modulation_pitch{}, envelope_level{1.0F};
         SampleVoiceModulationState voice_modulation;
         enum class EnvelopeStage : std::uint8_t {
@@ -463,6 +463,8 @@ class AudioEngine {
         SampleSlotId slot{invalid_sample_slot};
         std::uint64_t publication{}, start_frame{}, end_frame{};
         float gain{1.0F};
+        float pan{};
+        std::uint64_t source_offset_frames{};
         SamplePlaybackSettings playback;
         SampleRegionPlayback region;
         bool enabled{};
@@ -558,8 +560,8 @@ class AudioEngine {
                      bool timeline_owned = false,
                      const SliceTarget *slice = nullptr, bool preview = false,
                      float pitch_offset = 0.0F) noexcept;
-    void stop_timeline_voice(TrackId, EventId,
-                             std::uint64_t occurrence) noexcept;
+    void stop_timeline_voice(TrackId, EventId, std::uint64_t occurrence,
+                             bool immediate = false) noexcept;
     void release_note(std::uint8_t, TrackId = 0, EventId = 0,
                       std::uint64_t occurrence = 0,
                       bool timeline_owned = false) noexcept;

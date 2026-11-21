@@ -67,19 +67,36 @@ int main() {
         execute(application, "pattern.create.v1",
                 {{"id", std::int64_t{71}}, {"name", std::string("Verse")},
                  {"length", std::int64_t{3840}}});
+        auto clip_sample = std::make_shared<const Sample>(
+            Sample{48000, 1, std::vector<float>(480, .25F)});
+        check(samples.publish_prepared(SampleSlotId{0}, clip_sample,
+                                       "discovery-clip.wav"),
+              "audio clip sample publication");
+        std::array<float, 64> left{}, right{};
+        engine.process(left, right);
+        execute(application, "arrangement.range-set.v1",
+                {{"start", std::int64_t{0}},
+                 {"end", std::int64_t{3840}}});
+        execute(application, "arrangement.mode-set.v1",
+                {{"mode", std::string("song")}});
+        execute(application, "arrangement.audio-clip-create.v1",
+                {{"id", std::int64_t{81}},
+                 {"track", std::int64_t{11}},
+                 {"sample_slot", std::int64_t{0}},
+                 {"start", std::int64_t{0}},
+                 {"duration", std::int64_t{960}}});
         execute(application, "macro.create.v1",
                 {{"name", std::string("Macro")}, {"owner", std::string("project")},
                  {"value", 0.25}});
         execute(application, "macro.scene-capture.v1",
                 {{"name", std::string("Scene")}});
-        std::array<float, 64> left{}, right{};
         engine.process(left, right);
 
         const auto populated = discover_application(application);
         check(validate_discovery(populated, error), "populated schema validation");
         for (const auto type : {"track", "mixer-group", "fx-instance",
                                 "modulator", "pattern", "performance-macro",
-                                "scene"})
+                                "scene", "audio-clip"})
             check(has_object(populated, type), "dynamic object discovery");
         check(std::any_of(populated.parameters.begin(), populated.parameters.end(),
                           [](const auto &parameter) {

@@ -92,6 +92,9 @@ class TimelineTransaction {
     bool create_clip(ArrangementClip, std::string &error);
     bool update_clip(ArrangementClip, std::string &error);
     bool delete_clip(ClipId, std::string &error);
+    bool create_audio_clip(AudioClip, std::string &error);
+    bool update_audio_clip(AudioClip, std::string &error);
+    bool delete_audio_clip(AudioClipId, std::string &error);
     bool update_arrangement_automation(EventId, MusicalTick, float,
                                        std::string &error);
     bool delete_arrangement_automation(EventId, std::string &error);
@@ -111,6 +114,7 @@ class TimelineTransaction {
                                std::string &error);
     [[nodiscard]] PatternId next_pattern_id() const noexcept;
     [[nodiscard]] ClipId next_clip_id() const noexcept;
+    [[nodiscard]] AudioClipId next_audio_clip_id() const noexcept;
     [[nodiscard]] TrackId next_track_id() const noexcept;
     [[nodiscard]] EventId next_event_id() const noexcept;
 
