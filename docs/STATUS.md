@@ -1,5 +1,10 @@
 # Implementation status
 
+- Task 060: stable live-loop sessions, immediate/subdivision/beat/bar capture,
+  immutable feedback overdub, replace, acknowledged clip activation and
+  feedback-loop validation are implemented. Zero-gap activation and PCM undo
+  remain deferred.
+
 - Task 059: same-track audio overlap, musical-time linear/equal-power fades,
   stable-ID crossfades, transactional cleanup, timeline-v9 migration and
   prepared voice-budget validation are implemented.

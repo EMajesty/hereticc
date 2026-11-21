@@ -624,6 +624,38 @@ ActionRegistry::ActionRegistry() {
         {{"path", ValueType::text}, {"format", ValueType::text, false}}));
     add(action("recording.assign-pad.v1", "Assign recording to pad",
                "Recording", {{"pad", ValueType::integer}}));
+    add(action("live-loop.create.v1", "Create live-loop session", "Recording",
+               {{"track", ValueType::integer}, {"slot", ValueType::integer},
+                {"source", ValueType::text}, {"source_id", ValueType::integer, false},
+                {"channels", ValueType::integer, false},
+                {"quantization", ValueType::text, false},
+                {"subdivision_ticks", ValueType::integer, false},
+                {"length_ticks", ValueType::integer},
+                {"feedback", ValueType::real, false},
+                {"monitoring", ValueType::text, false},
+                {"latency_frames", ValueType::integer, false}}));
+    add(action("live-loop.arm.v1", "Arm live-loop recording", "Recording",
+               {{"id", ValueType::integer}, {"mode", ValueType::text, false}}));
+    add(action("live-loop.start.v1", "Start live-loop recording", "Recording",
+               {{"id", ValueType::integer}}));
+    add(action("live-loop.stop.v1", "Stop live-loop recording", "Recording",
+               {{"id", ValueType::integer}}));
+    add(action("live-loop.overdub.v1", "Begin live-loop overdub", "Recording",
+               {{"id", ValueType::integer}}));
+    add(action("live-loop.replace.v1", "Replace live-loop audio", "Recording",
+               {{"id", ValueType::integer}}));
+    add(action("live-loop.cancel.v1", "Cancel live-loop operation", "Recording",
+               {{"id", ValueType::integer}}));
+    add(action("live-loop.source-set.v1", "Set live-loop source", "Recording",
+               {{"id", ValueType::integer}, {"source", ValueType::text},
+                {"source_id", ValueType::integer, false}}));
+    add(action("live-loop.quantization-set.v1", "Set live-loop quantization", "Recording",
+               {{"id", ValueType::integer}, {"quantization", ValueType::text},
+                {"subdivision_ticks", ValueType::integer, false}}));
+    add(action("live-loop.feedback-set.v1", "Set live-loop overdub feedback", "Recording",
+               {{"id", ValueType::integer}, {"feedback", ValueType::real}}));
+    add(action("live-loop.monitoring-set.v1", "Set live-loop monitoring", "Recording",
+               {{"id", ValueType::integer}, {"monitoring", ValueType::text}}));
     add(action("mixer.channel-select.v1", "Select mixer channel", "Mixer",
                {{"index", ValueType::integer}}));
     add(action("mixer.gain-set.v1", "Set mixer gain", "Mixer",
@@ -1127,6 +1159,7 @@ ApplicationService::ApplicationService(AudioEngine &engine,
       slices_(engine, samples), sample_analysis_(samples, slices_),
       sample_processing_(samples, slices_),
       recording_(engine.sample_rate()),
+      live_loops_(engine, recording_, samples, timeline),
       capacity_(capacity) {
     if (capacity_ == 0)
         throw std::invalid_argument(
@@ -1626,6 +1659,128 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
         if (error.empty() && command.action_id != "macro.query.v1") {
             project_.performance_macros = performance_macros_.project();
             state_.project_dirty = true;
+            changed_locked();
+        }
+    } else if (command.action_id.rfind("live-loop.", 0) == 0) {
+        const auto parse_source = [&](const std::string &value,
+                                      RecordingSource &source) {
+            if (value == "external-mono") source = RecordingSource::external_mono;
+            else if (value == "external-stereo") source = RecordingSource::external_stereo;
+            else if (value == "master-pre") source = RecordingSource::master_pre_effects;
+            else if (value == "master-post") source = RecordingSource::master_post_effects;
+            else if (value == "track") source = RecordingSource::track_channel;
+            else if (value == "aux") source = RecordingSource::auxiliary_bus;
+            else if (value == "physical-input") source = RecordingSource::physical_input;
+            else if (value == "external-fx-return") source = RecordingSource::external_fx_return;
+            else if (value == "external-fx-mix") source = RecordingSource::external_fx_mix;
+            else if (value == "group-pre") source = RecordingSource::group_pre_effects;
+            else if (value == "group-post") source = RecordingSource::group_post_effects;
+            else if (value == "group-fader") source = RecordingSource::group_post_fader;
+            else return false;
+            return true;
+        };
+        const auto parse_quantization = [&](const std::string &value,
+                                            LiveLoopQuantization &quantization) {
+            if (value == "immediate") quantization = LiveLoopQuantization::immediate;
+            else if (value == "subdivision") quantization = LiveLoopQuantization::subdivision;
+            else if (value == "beat") quantization = LiveLoopQuantization::beat;
+            else if (value == "bar") quantization = LiveLoopQuantization::bar;
+            else return false;
+            return true;
+        };
+        const auto id_argument = [&] {
+            return static_cast<LiveLoopSessionId>(
+                std::max<std::int64_t>(0, *argument<std::int64_t>(command, "id")));
+        };
+        if (command.action_id == "live-loop.create.v1") {
+            LiveLoopConfiguration configuration;
+            const auto track = *argument<std::int64_t>(command, "track");
+            const auto slot = *argument<std::int64_t>(command, "slot");
+            if (track <= 0 || slot < 0 ||
+                slot >= static_cast<std::int64_t>(engine_.sample_slot_count()))
+                error = "invalid live-loop track or sample slot";
+            else {
+                configuration.destination_track = static_cast<TrackId>(track);
+                configuration.destination_slot = SampleSlotId{static_cast<std::uint32_t>(slot)};
+                configuration.length_ticks = *argument<std::int64_t>(command, "length_ticks");
+                const auto source = *argument<std::string>(command, "source");
+                if (!parse_source(source, configuration.source)) error = "unknown live-loop source";
+                if (const auto value = argument<std::int64_t>(command, "source_id"))
+                    configuration.source_id = static_cast<std::uint64_t>(std::max<std::int64_t>(0, *value));
+                if (const auto value = argument<std::int64_t>(command, "channels"))
+                    configuration.channels = static_cast<std::uint16_t>(*value);
+                if (const auto value = argument<std::string>(command, "quantization"))
+                    if (!parse_quantization(*value, configuration.quantization))
+                        error = "unknown live-loop quantization";
+                if (const auto value = argument<std::int64_t>(command, "subdivision_ticks"))
+                    configuration.subdivision_ticks = *value;
+                if (const auto value = argument<double>(command, "feedback"))
+                    configuration.overdub_feedback = static_cast<float>(*value);
+                if (const auto value = argument<std::string>(command, "monitoring")) {
+                    if (*value == "off") configuration.monitoring = RecordingMonitorMode::off;
+                    else if (*value == "on") configuration.monitoring = RecordingMonitorMode::on;
+                    else if (*value == "auto") configuration.monitoring = RecordingMonitorMode::automatic;
+                    else error = "unknown live-loop monitoring mode";
+                }
+                if (const auto value = argument<std::int64_t>(command, "latency_frames"))
+                    configuration.latency_compensation_frames = *value;
+            }
+            if (error.empty() && !live_loops_.create(configuration, error))
+                if (error.empty()) error = "live-loop creation failed";
+        } else if (command.action_id == "live-loop.arm.v1" ||
+                   command.action_id == "live-loop.overdub.v1" ||
+                   command.action_id == "live-loop.replace.v1") {
+            auto mode = LiveLoopMode::capture;
+            if (command.action_id == "live-loop.overdub.v1") mode = LiveLoopMode::overdub;
+            else if (command.action_id == "live-loop.replace.v1") mode = LiveLoopMode::replace;
+            else if (const auto value = argument<std::string>(command, "mode")) {
+                if (*value == "overdub") mode = LiveLoopMode::overdub;
+                else if (*value == "replace") mode = LiveLoopMode::replace;
+                else if (*value != "capture") error = "unknown live-loop mode";
+            }
+            if (error.empty() && live_loops_.arm(id_argument(), mode, error) &&
+                command.action_id != "live-loop.arm.v1")
+                (void)live_loops_.start(id_argument(), error);
+        } else if (command.action_id == "live-loop.start.v1") {
+            (void)live_loops_.start(id_argument(), error);
+        } else if (command.action_id == "live-loop.stop.v1") {
+            (void)live_loops_.stop(id_argument(), error);
+        } else if (command.action_id == "live-loop.cancel.v1") {
+            (void)live_loops_.cancel(id_argument(), error);
+        } else {
+            const auto id = id_argument();
+            const auto *status = live_loops_.find(id);
+            if (!status) error = "live-loop session does not exist";
+            else {
+                auto configuration = status->configuration;
+                if (command.action_id == "live-loop.source-set.v1") {
+                    if (!parse_source(*argument<std::string>(command, "source"),
+                                      configuration.source))
+                        error = "unknown live-loop source";
+                    if (const auto value = argument<std::int64_t>(command, "source_id"))
+                        configuration.source_id = static_cast<std::uint64_t>(std::max<std::int64_t>(0, *value));
+                } else if (command.action_id == "live-loop.quantization-set.v1") {
+                    if (!parse_quantization(*argument<std::string>(command, "quantization"),
+                                            configuration.quantization))
+                        error = "unknown live-loop quantization";
+                    if (const auto value = argument<std::int64_t>(command, "subdivision_ticks"))
+                        configuration.subdivision_ticks = *value;
+                } else if (command.action_id == "live-loop.feedback-set.v1") {
+                    configuration.overdub_feedback = static_cast<float>(
+                        *argument<double>(command, "feedback"));
+                } else if (command.action_id == "live-loop.monitoring-set.v1") {
+                    const auto value = *argument<std::string>(command, "monitoring");
+                    if (value == "off") configuration.monitoring = RecordingMonitorMode::off;
+                    else if (value == "on") configuration.monitoring = RecordingMonitorMode::on;
+                    else if (value == "auto") configuration.monitoring = RecordingMonitorMode::automatic;
+                    else error = "unknown live-loop monitoring mode";
+                }
+                if (error.empty())
+                    (void)live_loops_.configure(id, configuration, error);
+            }
+        }
+        {
+            std::lock_guard lock(mutex_);
             changed_locked();
         }
     } else if (command.action_id.rfind("recording.", 0) == 0) {
@@ -3528,6 +3683,7 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                 return {true, sequence, snapshot().revision, {}};
             }
             if (command.action_id == "project.open.v1") {
+                live_loops_.clear();
                 const std::filesystem::path path =
                     *argument<std::string>(command, "path");
                 {
@@ -3790,6 +3946,7 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
             }
             if (command.action_id == "project.new.v1" ||
                 command.action_id == "project.close.v1") {
+                live_loops_.clear();
                 Project replacement;
                 if (const auto found = command.arguments.find("name");
                     found != command.arguments.end())
@@ -7280,6 +7437,8 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
     return {error.empty(), sequence, snapshot().revision, std::move(error)};
 }
 void ApplicationService::synchronize_locked() const {
+    live_loops_.update();
+    state_.live_loops = live_loops_.sessions();
     if (pending_preset_ && pending_preset_->published &&
         engine_.preset_activation_cancelled(
             pending_preset_->activation_sequence)) {

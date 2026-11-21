@@ -1,5 +1,8 @@
 # Application discovery contract
 
+Capability `live-looping` version 1 describes stable sessions, sources,
+quantization, lifecycle, progress, phase and semantic actions.
+
 Capability `audio-clips` version 2 exposes clip fades and stable
 `audio-crossfade` objects without assuming arrangement geometry.
 

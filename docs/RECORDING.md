@@ -1,5 +1,9 @@
 # Audio recording and internal resampling
 
+The bounded recorder also backs live-loop sessions. Prepared overdub/replace
+results publish without changing callback capture behavior; see
+[LIVE_LOOPING.md](LIVE_LOOPING.md).
+
 Track and aux taps include their native chains. Master pre-effects is before
 master gain/chain; master post-effects includes native and legacy processors.
 

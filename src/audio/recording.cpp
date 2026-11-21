@@ -358,14 +358,26 @@ Sample RecordingService::completed_sample() const {
 
 bool RecordingService::finalize_to_slot(SampleManager &samples,
                                         std::string &error) {
+    try {
+        return finalize_sample_to_slot(samples, completed_sample(), error);
+    } catch (const std::exception &exception) {
+        error_ = exception.what();
+        error = error_;
+        state_.store(RecordingState::error, std::memory_order_release);
+        return false;
+    }
+}
+bool RecordingService::finalize_sample_to_slot(SampleManager &samples,
+                                               Sample sample,
+                                               std::string &error) {
     if (state_.load(std::memory_order_acquire) ==
             RecordingState::publication_pending ||
         state_.load(std::memory_order_acquire) == RecordingState::audio_active)
         return true;
     const auto begin = std::chrono::steady_clock::now();
     try {
-        auto sample = std::make_shared<const Sample>(completed_sample());
-        if (!samples.publish_prepared(configuration_.destination, sample, {})) {
+        auto prepared = std::make_shared<const Sample>(std::move(sample));
+        if (!samples.publish_prepared(configuration_.destination, prepared, {})) {
             error = "recorded sample publication capacity is exhausted";
             return false;
         }

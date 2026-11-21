@@ -1,5 +1,8 @@
 # Audio clips
 
+Live-loop capture creates and updates these same clip objects; see
+[LIVE_LOOPING.md](LIVE_LOOPING.md).
+
 Same-track overlap, clip-time fades and explicit crossfades are documented in
 [AUDIO_CROSSFADES.md](AUDIO_CROSSFADES.md). Source-region fades remain a
 separate nondestructive layer.

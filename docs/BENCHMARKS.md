@@ -1,5 +1,9 @@
 # Performance monitoring and benchmarks
 
+Live-loop callback cost is the existing `internal_master_recording` path;
+overdub preparation and clip publication are control-side. Eight sessions are
+bounded, with one active capture.
+
 Task 059 adds bounded overlap-envelope processing to the existing sample voice
 path; clip scheduling remains two timeline edges per clip.
 

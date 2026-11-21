@@ -1,5 +1,8 @@
 # Project persistence
 
+Live-loop sessions are transient. Completed clips use existing metadata;
+durable restoration requires explicitly saving the recorded WAV asset.
+
 Timeline v9 adds `audio_clip_fade` and `audio_crossfade` records. Version 8
 clips migrate with unity clip envelopes and no crossfade references.
 

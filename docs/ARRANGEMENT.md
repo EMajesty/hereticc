@@ -1,5 +1,8 @@
 # Patterns, clips, and arrangements
 
+Completed live-loop passes become ordinary looping audio clips through a
+timeline transaction. No separate looper lane or mixer path exists.
+
 Audio lanes allow overlap. Overlap sums normally unless a validated stable-ID
 crossfade explicitly connects the clips.
 

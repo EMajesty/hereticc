@@ -1,6 +1,7 @@
 #pragma once
 #include "neurogenic/application/performance_macros.hpp"
 #include "neurogenic/audio/recording.hpp"
+#include "neurogenic/audio/live_loop.hpp"
 #include "neurogenic/audio/sample_analysis.hpp"
 #include "neurogenic/audio/sample_processing.hpp"
 #include "neurogenic/audio/slicing.hpp"
@@ -262,6 +263,7 @@ struct ApplicationState {
     std::vector<std::filesystem::path> missing_assets;
     PresetApplicationState preset_application;
     RecordingStatus recording;
+    std::vector<LiveLoopSessionStatus> live_loops;
     MixerState mixer;
     std::size_t selected_mixer_channel{};
     MixerBusId selected_group{};
@@ -321,6 +323,7 @@ class ApplicationService {
         return sample_processing_;
     }
     [[nodiscard]] RecordingService &recording() noexcept { return recording_; }
+    [[nodiscard]] LiveLoopService &live_loops() noexcept { return live_loops_; }
     [[nodiscard]] ArrangementRecordingService &
     arrangement_recording() noexcept {
         return arrangement_recording_;
@@ -365,6 +368,7 @@ class ApplicationService {
     mutable SampleAnalysisService sample_analysis_;
     mutable SampleProcessingService sample_processing_;
     mutable RecordingService recording_;
+    mutable LiveLoopService live_loops_;
     mutable ArrangementRecordingService arrangement_recording_;
     mutable PerformanceMacroService performance_macros_;
     RecordingConfiguration recording_configuration_;

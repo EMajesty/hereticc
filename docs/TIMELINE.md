@@ -1,5 +1,8 @@
 # Musical timeline
 
+Live-loop boundaries derive from authoritative musical time and become bounded
+recorder frame offsets before capture.
+
 Audio clips are polyphonic on a track. Equal-time activation is ordered by
 track and stable clip ID, with stops before starts. Envelopes are compiled in
 transport time rather than expanded into per-sample events.

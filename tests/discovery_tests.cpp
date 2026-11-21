@@ -85,6 +85,11 @@ int main() {
                  {"sample_slot", std::int64_t{0}},
                  {"start", std::int64_t{0}},
                  {"duration", std::int64_t{960}}});
+        execute(application, "live-loop.create.v1",
+                {{"track", std::int64_t{11}}, {"slot", std::int64_t{0}},
+                 {"source", std::string("master-post")},
+                 {"quantization", std::string("beat")},
+                 {"length_ticks", std::int64_t{960}}});
         execute(application, "macro.create.v1",
                 {{"name", std::string("Macro")}, {"owner", std::string("project")},
                  {"value", 0.25}});
@@ -96,7 +101,7 @@ int main() {
         check(validate_discovery(populated, error), "populated schema validation");
         for (const auto type : {"track", "mixer-group", "fx-instance",
                                 "modulator", "pattern", "performance-macro",
-                                "scene", "audio-clip"})
+                                "scene", "audio-clip", "live-loop-session"})
             check(has_object(populated, type), "dynamic object discovery");
         check(std::any_of(populated.parameters.begin(), populated.parameters.end(),
                           [](const auto &parameter) {

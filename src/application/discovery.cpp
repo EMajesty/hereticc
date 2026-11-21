@@ -128,6 +128,7 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
         {"sample-analysis", 1, true, {}},
         {"sample-processing", 1, true, {}},
         {"audio-clips", 2, true, {}},
+        {"live-looping", 1, true, {}},
         {"high-frequency-telemetry", 1, true, {}},
         {"typed-parameter-bindings", 1, true, {}}};
     result.object_types = {
@@ -138,6 +139,7 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
         {"sample-slot", "Sample slot", false, false, true},
         {"sample-region", "Sample region", true, true, true},
         {"sample-analysis-session", "Sample analysis session", true, true, false},
+        {"live-loop-session", "Live loop session", true, true, false},
         {"sample-analysis-algorithm", "Sample analysis algorithm", false, false, false},
         {"sample-processing-job", "Sample processing job", true, true, false},
         {"sample-processing-operation", "Sample processing operation", false, false, false},
@@ -294,6 +296,12 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
              object_id("track", clip.clip.track),
              "Audio clip " + std::to_string(clip.clip.id),
              clip.source_available, false, clip.validation_error});
+    for (const auto &session : state.live_loops)
+        result.objects.push_back(
+            {"live-loop-session", object_id("live-loop-session", session.id),
+             object_id("track", session.configuration.destination_track),
+             "Live loop " + std::to_string(session.id),
+             session.state != LiveLoopState::error, false, session.error});
     for (const auto &crossfade : state.audio_crossfades)
         result.objects.push_back(
             {"audio-crossfade", object_id("audio-crossfade", crossfade.id),
@@ -399,6 +407,7 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
         {"patterns", "arrangement:main", "Pattern collection", DiscoveryValueKind::collection, DiscoveryUpdateRate::state},
         {"clips", "arrangement:main", "Clip collection", DiscoveryValueKind::collection, DiscoveryUpdateRate::state},
         {"audio-clips", "arrangement:main", "Audio clip collection", DiscoveryValueKind::collection, DiscoveryUpdateRate::state},
+        {"recording.live-loops", "recording-session:main", "Live-loop sessions", DiscoveryValueKind::collection, DiscoveryUpdateRate::state},
         {"sample.regions", "project:current", "Sample region collection", DiscoveryValueKind::collection, DiscoveryUpdateRate::state},
         {"sample.region-assignments", "project:current", "Region pad assignments", DiscoveryValueKind::collection, DiscoveryUpdateRate::state},
         {"sample.analysis-sessions", "project:current", "Transient sample analysis sessions", DiscoveryValueKind::collection, DiscoveryUpdateRate::state},
@@ -454,6 +463,9 @@ ApplicationDiscovery discover_application(const ApplicationService &application)
                              SampleProcessingService::maximum_jobs});
     result.limits.push_back(
         {"audio-clips", state.audio_clips.size(), 1024});
+    result.limits.push_back(
+        {"live-loop-sessions", state.live_loops.size(),
+         LiveLoopService::maximum_sessions});
     if (!state.modulation_graph.valid && !state.modulation_graph.message.empty())
         result.validation_errors.push_back(state.modulation_graph.message);
     if (!state.preset_application.error.empty())

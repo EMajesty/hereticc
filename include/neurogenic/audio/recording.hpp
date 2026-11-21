@@ -86,6 +86,8 @@ class RecordingService {
     [[nodiscard]] RecordingStatus status() const;
     [[nodiscard]] bool monitoring_active() const noexcept;
     [[nodiscard]] bool finalize_to_slot(SampleManager &, std::string &error);
+    [[nodiscard]] bool finalize_sample_to_slot(SampleManager &, Sample,
+                                               std::string &error);
     void acknowledge_audio_active() noexcept;
     [[nodiscard]] bool save_wav(const std::filesystem::path &,
                                 RecordingWavFormat, std::string &error) const;
