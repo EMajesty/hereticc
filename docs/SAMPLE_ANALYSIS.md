@@ -1,5 +1,9 @@
 # Sample analysis
 
+Accepted candidates can be passed to the offline processing service as slice or
+region sources. Analysis results remain proposals; bounce creates a separate
+immutable sample and WAV asset.
+
 NEUROGENIC performs sample analysis on immutable, audio-active `Sample`
 versions. `SampleAnalysisService` retains a shared reference to the exact source
 version while a bounded control-side worker analyzes it. Analysis never runs in

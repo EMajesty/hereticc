@@ -1,5 +1,9 @@
 # Reusable sound presets
 
+Processed assets are referenced exactly like other sample assets; preset save
+does not embed a processing job or silently bundle its PCM. Portable export may
+copy the resulting WAV through the existing explicit asset packaging path.
+
 Sample presets retain accepted slice/region metadata; analysis sessions and
 candidate confidence values are intentionally excluded from preset packages.
 

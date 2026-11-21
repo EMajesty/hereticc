@@ -1,5 +1,9 @@
 # Application discovery contract
 
+The `sample-processing` capability version 1 exposes operation types, bounded
+job objects, typed editing/start/save/publish actions, progress and publication
+status. PCM buffers are deliberately absent from ordinary state snapshots.
+
 The `sample-analysis` capability exposes discoverable algorithm and session
 objects, bounded session usage, candidate-edit/apply actions, ordinary state and
 telemetry-rate progress. Waveform PCM is deliberately absent from discovery.

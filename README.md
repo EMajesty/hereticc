@@ -13,6 +13,11 @@ The mixer supports bounded native track, group, aux and master effect chains. Se
 
 # NEUROGENIC
 
+Offline sample processing now renders whole samples, slices and regions through
+ordered trim, normalization, reverse, gain, fade, silence, resampling and
+channel-conversion jobs. Results are new immutable WAV assets and become active
+only after callback acknowledgement. See [sample processing](docs/SAMPLE_PROCESSING.md).
+
 Offline sample analysis now provides version-aware transient, quiet-gap, equal
 and tempo-grid boundary proposals before nondestructive application as slices or
 regions. See [sample analysis](docs/SAMPLE_ANALYSIS.md).

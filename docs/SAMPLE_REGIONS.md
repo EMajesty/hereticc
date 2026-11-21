@@ -1,5 +1,10 @@
 # Nondestructive sample regions
 
+Regions and slices can be rendered by the offline processing service. Region
+direction, gain, fades and bounded looping are applied to a new immutable
+result; no source PCM or active voice is edited. Mixed transform chains do not
+currently remap region metadata automatically.
+
 Offline boundary proposals are provided by version-aware analysis sessions;
 see [SAMPLE_ANALYSIS.md](SAMPLE_ANALYSIS.md). Applying candidates can create
 regions or legacy slices, while unaccepted candidates are never persisted.

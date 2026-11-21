@@ -1,5 +1,10 @@
 # Performance monitoring and benchmarks
 
+`sample_processing_stereo_4s_three_operations` measures a
+gain/fade/channel-conversion chain and `sample_processing_region_bounce`
+measures region preparation plus trim.
+Both are offline control-side costs and are separate from callback benchmarks.
+
 `sample_analysis_stereo_equivalent_4_seconds` and
 `sample_analysis_quiet_noisy_4_seconds` report control-side preparation time.
 They do not report callback cost because analysis is never called by audio

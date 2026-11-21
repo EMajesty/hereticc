@@ -1,5 +1,10 @@
 # Architecture
 
+Offline processing workers retain immutable source versions, build new samples
+away from the callback, save WAV assets through sibling temporary files, and
+use the existing callback-acknowledged `SampleManager` publication path. Active
+voices retain old shared versions until normal control-side reclamation.
+
 Sample analysis workers retain immutable `SampleManager` versions and publish
 only transient control-side result snapshots. Accepted boundaries enter the
 existing `SliceService` region/slice model through a validated batch; the audio

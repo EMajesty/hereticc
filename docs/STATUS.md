@@ -1,5 +1,10 @@
 # Implementation status
 
+- Task 056: bounded offline processing jobs implement trim, peak/RMS
+  normalization, reverse, gain, fades, silence, portable sinc resampling and
+  mono/stereo conversion; region/slice bounce, PCM16/24/float32 atomic WAV save,
+  and callback-acknowledged immutable publication are implemented. Automatic
+  metadata remapping and offline tempo-stretch/pitch-shift remain deferred.
 - Task 055: immutable-version transient/quiet detection, equal and tempo-grid
   boundaries, cancellable sessions, candidate editing, validated model apply,
   pad-capacity checks and presentation-neutral discovery.

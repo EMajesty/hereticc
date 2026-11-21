@@ -649,6 +649,39 @@ void slice_analysis_cases() {
     result("sample_analysis_quiet_noisy_4_seconds", 48000, 256, 0,
            elapsed);
 }
+void sample_processing_cases() {
+    neurogenic::Sample source{48000, 2,
+                              std::vector<float>(48000 * 4 * 2, 0.25F)};
+    neurogenic::SampleProcessingOperation gain;
+    gain.type = neurogenic::SampleProcessingOperationType::gain;
+    gain.value = -3;
+    neurogenic::SampleProcessingOperation fade;
+    fade.type = neurogenic::SampleProcessingOperationType::fade;
+    fade.start_frame = fade.end_frame = 480;
+    neurogenic::SampleProcessingOperation channels;
+    channels.type = neurogenic::SampleProcessingOperationType::channel_convert;
+    channels.channels = 1;
+    const std::array operations{gain, fade, channels};
+    auto begin = Clock::now();
+    const auto processed = neurogenic::process_sample_offline(source, operations);
+    const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                             Clock::now() - begin).count();
+    checksum += processed.frames();
+    result("sample_processing_stereo_4s_three_operations", 48000, 256, 0,
+           elapsed);
+    neurogenic::SampleProcessingOperation trim;
+    trim.type = neurogenic::SampleProcessingOperationType::trim;
+    trim.start_frame = 12000;
+    trim.end_frame = 36000;
+    begin = Clock::now();
+    const auto region = neurogenic::process_sample_offline(source, {&trim, 1});
+    const auto region_elapsed =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - begin)
+            .count();
+    checksum += region.frames();
+    result("sample_processing_region_bounce", 48000, 256, 0,
+           region_elapsed);
+}
 void gui_case(int width, int height) {
     neurogenic::AudioEngine engine;
     neurogenic::TimelineService timeline_service(
@@ -1728,6 +1761,7 @@ int main(int argc, char **argv) {
                            1, true);
     stretch_preparation_case();
     slice_analysis_cases();
+    sample_processing_cases();
     gui_case(1920, 1200);
     gui_case(1024, 800);
     gui_case(1024, 600);

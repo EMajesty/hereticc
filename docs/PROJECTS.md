@@ -1,5 +1,9 @@
 # Project persistence
 
+Processed WAV files use ordinary project sample references. Processing jobs,
+temporary PCM, progress and unpublished results are transient and are never
+embedded in project metadata.
+
 Accepted analysis results persist as ordinary versioned slices/regions. Active
 analysis jobs and unaccepted candidates are transient and are not project data.
 

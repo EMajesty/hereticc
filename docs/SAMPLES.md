@@ -1,5 +1,10 @@
 # Live sample management
 
+Offline bounce is also control-side: an immutable source version is retained
+while an ordered processing job creates a new finite mono/stereo sample. WAV
+save and `SampleManager` publication are explicit; the original PCM and voices
+already using it remain valid. See [SAMPLE_PROCESSING.md](SAMPLE_PROCESSING.md).
+
 Transient, quiet-gap, equal and tempo-grid analysis is control-side and
 nondestructive. See [SAMPLE_ANALYSIS.md](SAMPLE_ANALYSIS.md). Results retain the
 source publication identity and are rejected after sample replacement.

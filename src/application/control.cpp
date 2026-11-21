@@ -379,6 +379,27 @@ ActionRegistry::ActionRegistry() {
                {{"target", ValueType::text}, {"mode", ValueType::text},
                 {"assign_pads", ValueType::boolean, false},
                 {"starting_pad", ValueType::integer, false}}));
+    add(action("sample-processing.create.v1", "Create sample processing job", "Samples",
+               {{"source", ValueType::text}, {"source_id", ValueType::integer, false},
+                {"loop_frames", ValueType::integer, false}}));
+    add(action("sample-processing.operation-add.v1", "Add processing operation", "Samples",
+               {{"operation", ValueType::text}, {"value", ValueType::real, false},
+                {"start_frame", ValueType::integer, false}, {"end_frame", ValueType::integer, false},
+                {"frames", ValueType::integer, false}, {"sample_rate", ValueType::integer, false},
+                {"channels", ValueType::integer, false}}));
+    add(action("sample-processing.operation-remove.v1", "Remove processing operation", "Samples",
+               {{"operation_id", ValueType::integer}}));
+    add(action("sample-processing.operation-move.v1", "Reorder processing operation", "Samples",
+               {{"operation_id", ValueType::integer}, {"position", ValueType::integer}}));
+    add(action("sample-processing.validate.v1", "Validate sample processing", "Samples"));
+    add(action("sample-processing.start.v1", "Start sample processing", "Samples"));
+    add(action("sample-processing.cancel.v1", "Cancel sample processing", "Samples"));
+    add(action("sample-processing.discard.v1", "Discard sample processing", "Samples"));
+    add(action("sample-processing.save.v1", "Save processed sample", "Samples",
+               {{"path", ValueType::text}, {"format", ValueType::text},
+                {"overwrite", ValueType::boolean, false}}));
+    add(action("sample-processing.publish.v1", "Load processed sample into slot", "Samples",
+               {{"slot_id", ValueType::integer}}));
     add(action("slice.pad-assign.v1", "Assign slice to pad", "Samples",
                {{"pad", ValueType::integer}}));
     add(action("slice.pad-clear.v1", "Clear pad slice", "Samples",
@@ -1043,6 +1064,7 @@ ApplicationService::ApplicationService(AudioEngine &engine,
                                        std::size_t capacity)
     : engine_(engine), timeline_(timeline), samples_(samples),
       slices_(engine, samples), sample_analysis_(samples, slices_),
+      sample_processing_(samples, slices_),
       recording_(engine.sample_rate()),
       capacity_(capacity) {
     if (capacity_ == 0)
@@ -5108,6 +5130,91 @@ ApplicationService::execute_locked(const ApplicationCommand &command,
                     }
                 }
             }
+        } else if (command.action_id.rfind("sample-processing.", 0) == 0) {
+            const auto job_id = state_.selected_processing_job;
+            if (command.action_id == "sample-processing.create.v1") {
+                SampleProcessingSource source;
+                source.slot = state_.selected_sample_slot;
+                const auto kind = *argument<std::string>(command, "source");
+                if (kind == "sample") source.kind = SampleProcessingSourceKind::sample;
+                else if (kind == "region") {
+                    source.kind = SampleProcessingSourceKind::region;
+                    source.region = argument<std::int64_t>(command, "source_id")
+                        ? static_cast<RegionId>(*argument<std::int64_t>(command, "source_id"))
+                        : state_.selected_region;
+                } else if (kind == "slice") {
+                    source.kind = SampleProcessingSourceKind::slice;
+                    source.slice = argument<std::int64_t>(command, "source_id")
+                        ? static_cast<SliceId>(*argument<std::int64_t>(command, "source_id"))
+                        : state_.selected_slice;
+                } else error = "processing source must be sample, region or slice";
+                if (const auto frames = argument<std::int64_t>(command, "loop_frames"))
+                    source.loop_output_frames = static_cast<std::uint64_t>(
+                        std::max<std::int64_t>(0, *frames));
+                SampleProcessingJobId created{};
+                if (error.empty() && sample_processing_.create(source, created, error))
+                    state_.selected_processing_job = created;
+            } else if (command.action_id == "sample-processing.operation-add.v1") {
+                SampleProcessingOperation operation;
+                const auto type = *argument<std::string>(command, "operation");
+                const std::array names{
+                    std::pair{"trim", SampleProcessingOperationType::trim},
+                    std::pair{"normalize-peak", SampleProcessingOperationType::normalize_peak},
+                    std::pair{"normalize-rms", SampleProcessingOperationType::normalize_rms},
+                    std::pair{"reverse", SampleProcessingOperationType::reverse},
+                    std::pair{"gain", SampleProcessingOperationType::gain},
+                    std::pair{"fade", SampleProcessingOperationType::fade},
+                    std::pair{"insert-silence", SampleProcessingOperationType::insert_silence},
+                    std::pair{"resample", SampleProcessingOperationType::resample},
+                    std::pair{"channel-convert", SampleProcessingOperationType::channel_convert}};
+                const auto matched = std::find_if(names.begin(), names.end(),
+                    [&](const auto &v){ return v.first == type; });
+                if (matched == names.end()) error = "unknown sample processing operation";
+                else operation.type = matched->second;
+                if (const auto value = argument<double>(command, "value")) operation.value = *value;
+                if (const auto value = argument<std::int64_t>(command, "start_frame")) operation.start_frame = static_cast<std::uint64_t>(std::max<std::int64_t>(0, *value));
+                if (const auto value = argument<std::int64_t>(command, "end_frame")) operation.end_frame = static_cast<std::uint64_t>(std::max<std::int64_t>(0, *value));
+                if (const auto value = argument<std::int64_t>(command, "frames")) operation.frames = static_cast<std::uint64_t>(std::max<std::int64_t>(0, *value));
+                if (const auto value = argument<std::int64_t>(command, "sample_rate")) operation.sample_rate = static_cast<std::uint32_t>(std::max<std::int64_t>(0, *value));
+                if (const auto value = argument<std::int64_t>(command, "channels")) operation.channels = static_cast<std::uint16_t>(std::max<std::int64_t>(0, *value));
+                SampleProcessingOperationId created{};
+                if (error.empty()) (void)sample_processing_.add_operation(job_id, operation, created, error);
+            } else if (command.action_id == "sample-processing.operation-remove.v1") {
+                (void)sample_processing_.remove_operation(job_id,
+                    static_cast<SampleProcessingOperationId>(*argument<std::int64_t>(command, "operation_id")), error);
+            } else if (command.action_id == "sample-processing.operation-move.v1") {
+                const auto position = *argument<std::int64_t>(command, "position");
+                if (position < 0) error = "operation position must be nonnegative";
+                else (void)sample_processing_.move_operation(job_id,
+                    static_cast<SampleProcessingOperationId>(*argument<std::int64_t>(command, "operation_id")),
+                    static_cast<std::size_t>(position), error);
+            } else if (command.action_id == "sample-processing.validate.v1") {
+                (void)sample_processing_.validate(job_id, error);
+            } else if (command.action_id == "sample-processing.start.v1") {
+                (void)sample_processing_.start(job_id, error);
+            } else if (command.action_id == "sample-processing.cancel.v1") {
+                (void)sample_processing_.cancel(job_id, error);
+            } else if (command.action_id == "sample-processing.discard.v1") {
+                if (sample_processing_.discard(job_id, error)) state_.selected_processing_job = 0;
+            } else if (command.action_id == "sample-processing.save.v1") {
+                SampleWavFormat format{};
+                const auto value = *argument<std::string>(command, "format");
+                if (value == "pcm16") format = SampleWavFormat::pcm16;
+                else if (value == "pcm24") format = SampleWavFormat::pcm24;
+                else if (value == "float32") format = SampleWavFormat::float32;
+                else error = "processing WAV format must be pcm16, pcm24 or float32";
+                const auto overwrite_value = argument<bool>(command, "overwrite");
+                const auto overwrite = overwrite_value && *overwrite_value;
+                if (error.empty()) (void)sample_processing_.save(job_id,
+                    *argument<std::string>(command, "path"), format, overwrite, error);
+            } else if (command.action_id == "sample-processing.publish.v1") {
+                const auto slot = *argument<std::int64_t>(command, "slot_id");
+                if (slot < 0) error = "destination slot must be nonnegative";
+                else (void)sample_processing_.publish_to_slot(job_id,
+                    SampleSlotId{static_cast<std::uint32_t>(slot)}, error);
+            }
+            state_.sample_processing_jobs = sample_processing_.snapshots();
+            if (error.empty()) changed_locked();
         } else if (command.action_id.rfind("sample-analysis.", 0) == 0) {
             if (command.action_id == "sample-analysis.start.v1") {
                 SampleAnalysisSettings settings;
@@ -7157,6 +7264,7 @@ void ApplicationService::synchronize_locked() const {
          state_.effective_stretch_ratio, 1.0F, engine_.sample_rate()});
     state_.waveform_peaks = std::move(slice_state.waveform);
     state_.sample_analysis_sessions = sample_analysis_.snapshots();
+    state_.sample_processing_jobs = sample_processing_.snapshots();
     state_.slices.clear();
     state_.slices.reserve(slice_state.slices.size());
     for (const auto &slice : slice_state.slices)
